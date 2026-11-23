@@ -1,310 +1,567 @@
 @page "/"
 @page "/dashboard"
+@using Microsoft.JSInterop
 @using RemotePCDiagnostics.Core.Checks
 @using RemotePCDiagnostics.Core.Osquery
 @using RemotePCDiagnostics.Core.Sensors
+@using RemotePCDiagnostics.Core.Session
 @inherits StoreAwareComponent
 @inject NavigationManager Nav
 @inject ChecksScreenState Screen
-@inject RemotePCDiagnostics.Core.Session.ISessionContext Session
+@inject ISessionContext Session
+@inject AppServices App
+@inject IJSRuntime JS
 @implements IAsyncDisposable
 @{
     var hw = Store.Get(ModuleSlugs.Osquery);
     var inv = hw.Payload as HardwareInventory;
+    var hwBusy = hw.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
+
     var th = Store.Get(LibreHardwareMonitorModule.ModuleName);
     var thBusy = th.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
     var sensors = th.Payload as SensorReport;
     var cpuGroup = sensors?.Groups.FirstOrDefault(g => g.Id == "cpu");
     var cpuTemp = cpuGroup?.Hottest;
-    var querying = hw.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
-    var all = Diagnostics.Modules.Select(m => Store.Get(m.Name)).ToList();
-    var checkModules = Diagnostics.Modules.Where(m => m.IncludeInRunAll).ToList();
-    var nonCardChecks = checkModules.Where(m => m.Name is not (ModuleSlugs.Osquery or LibreHardwareMonitorModule.ModuleName or ModuleSlugs.DriveHealth)).ToList();
-    var checking = Screen.RunningGroup == CheckGroup.Checks || nonCardChecks.Any(m => Store.Get(m.Name).Status == DiagnosticStatus.Running);
-    var checkItems = checking ? Screen.LiveCheckItems(Store) : [];
-    var completedChecks = checkItems.Count(c => c.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error);
-    var totalChecks = checkItems.Count;
-    var checkFraction = totalChecks > 0 ? Math.Clamp(checkItems.Sum(c => c.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error ? 1.0 : c.Status == DiagnosticStatus.Running && c.Total > 0 ? Math.Clamp(c.Fraction, 0.0, 0.95) : 0.0) / totalChecks, 0.0, 1.0) : 0.0;
-    var activeCheck = checkItems.FirstOrDefault(c => c.Status == DiagnosticStatus.Running);
-    var checksNotRunCount = nonCardChecks.Count(m => Store.Get(m.Name).Status == DiagnosticStatus.NotRun);
-    var stressBusy = suiteBusy || Diagnostics.IsAnyStressRunning;
-    var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled, CheckEnableRules.IsTurnedOff(r)); }), suite);
-    var last = nonCardChecks.Select(m => Store.Get(m.Name)).Where(r => r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running)).Select(r => (DateTimeOffset?)r.Timestamp).Max();
-    var problemRanks = summary.Problems.ToDictionary(p => p.Name, p => p.IsError ? 0 : 1, StringComparer.OrdinalIgnoreCase);
-    if (_cardRanks is null || (!checking && !stressBusy && !all.Any(r => r.Status == DiagnosticStatus.Running)))
-        _cardRanks = problemRanks;
-    string[] fixedCards = [LibreHardwareMonitorModule.ModuleName, ModuleSlugs.Osquery, ModuleSlugs.DriveHealth]; // always shown (auto-run at launch)
-    // Drive health is detectable: it isn't in Diagnostics.Modules until its drive detection finishes (or at all when no drive is
-    // found), so its card waits for the module instead of failing the first render. Sensors and Osquery have their own cards.
-    var cards = fixedCards.Where(name => name is LibreHardwareMonitorModule.ModuleName or ModuleSlugs.Osquery
-            || Diagnostics.Modules.Any(m => m.Name == name)).Concat(Diagnostics.Modules.Select(m => m.Name)
-        .Where(name => !fixedCards.Contains(name) && _cardRanks.ContainsKey(name)))
-        .OrderBy(name => _cardRanks.GetValueOrDefault(name, 2)).ToList();
-    var attentionCount = cards.Count(_cardRanks.ContainsKey);
-    var now = DateTimeOffset.Now;
-}
-<div class="toolbar"><h1 data-rpcd-page="dashboard" data-rpcd-contract="@BrowserContract.Dashboard" data-testid="dashboard-title">Dashboard</h1></div>
 
-<div class="toolbar dash-controls" data-testid="dashboard-controls">
-    <div class="meta">
-        <div class="banner-sub">
-            <span data-testid="dashboard-last-checked">@(last is { } l ? $"Last checked {RemotePCDiagnostics.Core.History.TimeText.Ago(l, now)}" : "Live readings only, checks not run")</span>
-            @if (checksNotRunCount > 0 && !checking)
-            {
-                <span> · </span><a href="checks" class="banner-more banner-more-small" data-testid="dashboard-checks-notrun">@checksNotRunCount system @(checksNotRunCount == 1 ? "check" : "checks") not run</a>
-            }
-            @if (summary.StressNotRunCount > 0)
-            {
-                <span> · </span><a href="stress" class="banner-more banner-more-small" data-testid="dashboard-notrun-count" title="@summary.StressNotRunNote">@summary.StressNotRunCount on-demand @(summary.StressNotRunCount == 1 ? "test" : "tests") not run</a>
-            }
-            @if (summary.AuditNotRun)
-            {
-                <span> · </span><a href="security-audit" class="banner-more banner-more-small" data-testid="dashboard-audit-notrun">security audit not run</a>
-            }
-        </div>
-    </div>
-    <div class="banner-actions">
-        <button class="btn btn-primary" data-testid="dashboard-runall" disabled="@(checking || stressBusy)" @onclick="RunAll" title="Runs every read-only check">
-            <Icon Name="@(checking ? "refresh" : "play")" Size="14" />@(checking ? (totalChecks > 0 ? $"Checking… ({completedChecks}/{totalChecks})" : "Checking…") : "Run all checks")</button>
-        <button class="btn btn-outline" data-testid="dashboard-runall-stress-short" disabled="@(checking || stressBusy)" @onclick="() => RunSuite(StressSuiteMode.Short)"
-                title="Short: ~1 min per stress test, about 5 min in all">
-            <Icon Name="play" Size="12" />Run checks + stress tests (short)</button>
-        <button class="btn btn-outline" data-testid="dashboard-runall-stress-extended" disabled="@(checking || stressBusy)" @onclick="() => RunSuite(StressSuiteMode.Extended)"
-                title="Extended: ~5 min per stress test, about 25 min in all">
-            <Icon Name="play" Size="12" />Run checks + stress tests (extended)</button>
-        <a class="btn btn-outline" href="certificates" data-testid="dashboard-bench-qa" title="10-minute refurbisher bench intake &amp; Buyer Hardware QA QR Certificate">
-            <Icon Name="cert" Size="14" />10-min QA check</a>
-    </div>
-</div>
+    var settings = App.CheckSettings?.Settings ?? new CheckSettings();
+    var allCheckModules = Diagnostics.Modules.Where(m => m.IncludeInRunAll).ToList();
+    var orderedAll = CheckEnableRules.ApplyOrder(allCheckModules, m => m.Name, settings.Order);
+    var enabledModules = orderedAll.Where(m => settings.IsEnabled(m.Name)).ToList();
 
-@if (suite is { } sp && (suiteBusy || sp.Finished))
-{
-    <section class="card suite-status @(suiteBusy ? "card-with-visual" : "")" data-testid="dashboard-suite-status">
-        <div class="card-main">
-            <div class="suite-line">
-                <strong data-testid="dashboard-suite-progress">@(suiteBusy ? sp.Headline : sp.Message)</strong>
-                @if (suiteBusy)
-                {
-                    <button class="btn" data-testid="dashboard-suite-cancel" disabled="@cancelling" @onclick="CancelSuite">@(cancelling ? "Cancelling…" : "Cancel")</button>
-                }
-            </div>
-            <ul class="suite-steps">
-                @foreach (var st in sp.Steps)
-                {
-                    <li data-testid="dashboard-suite-step-@st.ModuleName.ToLowerInvariant()"><span class="@DotClass(StepStatus(st.State))"></span>@st.DisplayName: @StepText(st.State)</li>
-                }
-            </ul>
-        </div>
-        @if (suiteBusy)
+    var enabledResults = enabledModules.Select(m => (Module: m, Result: Store.Get(m.Name))).ToList();
+    var runningCount = enabledResults.Count(x => x.Result.Status == DiagnosticStatus.Running);
+    var completedCount = enabledResults.Count(x => x.Result.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error);
+    var checking = Screen.RunningGroup == CheckGroup.Checks || runningCount > 0;
+
+    var problems = enabledResults
+        .Where(x => x.Result.Status is DiagnosticStatus.Error or DiagnosticStatus.Warning
+                    && !x.Result.Cancelled && !CheckEnableRules.IsTurnedOff(x.Result))
+        .OrderBy(x => x.Result.Status == DiagnosticStatus.Error ? 0 : 1)
+        .ToList();
+    var errorCount = problems.Count(x => x.Result.Status == DiagnosticStatus.Error);
+    var warningCount = problems.Count(x => x.Result.Status == DiagnosticStatus.Warning);
+
+    var summary = DashboardSummary.Build(
+        Diagnostics.Modules.Select(m =>
         {
-            var activeStep = sp.Steps.FirstOrDefault(st => st.State == StressSuiteStepState.Running);
-            <TestRunningVisual Slug="@(activeStep?.ModuleName ?? "benchmark")" TestId="dashboard-suite-visual" />
-        }
-    </section>
+            var r = Store.Get(m.Name);
+            return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled, CheckEnableRules.IsTurnedOff(r));
+        }),
+        Diagnostics.LastStressSuiteProgress);
+
+    var checkChoices = Diagnostics.CheckChoices();
+    var availableChoices = checkChoices.Where(c => c.Available).ToList();
+    var allOrderIds = orderedAll.Select(m => m.Name).ToList();
 }
 
-@if (checking && totalChecks > 0)
-{
-    <div class="progress run-progress wf-overall-progress" data-testid="dashboard-checks-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@totalChecks" aria-valuenow="@completedChecks">
-        <div class="progress-bar" style="width:@($"{checkFraction * 100:0.#}%")"></div>
-    </div>
-    <section class="card wf-section" data-testid="dashboard-checking-list" style="margin-bottom: 14px">
-        <div class="card-head">
-            <strong data-testid="dashboard-checking-headline">@(activeCheck is { } ac ? $"Running {ac.Title}: {ac.Message}" : "Checks in progress")</strong>
-            <span class="meta" data-testid="dashboard-checking-count">@completedChecks of @totalChecks completed</span>
-            @if (Screen.RunningGroup == CheckGroup.Checks)
-            {
-                <button class="btn-small btn-stop" data-testid="dashboard-checks-stop" @onclick="Screen.Stop">Stop</button>
-            }
-        </div>
-        <div class="wf-check-rows">
-            @foreach (var c in checkItems)
-            {
-                var dot = c.Status switch
-                {
-                    DiagnosticStatus.Ok => "ok",
-                    DiagnosticStatus.Warning => "warning",
-                    DiagnosticStatus.Error => "error",
-                    DiagnosticStatus.Running => "running",
-                    _ => "neutral",
-                };
-                var chipClass = c.Status switch
-                {
-                    DiagnosticStatus.Ok => "chip-ok",
-                    DiagnosticStatus.Warning => "chip-warn",
-                    DiagnosticStatus.Error => "chip-bad",
-                    DiagnosticStatus.Running => "chip-run",
-                    _ => "chip-na",
-                };
-                var chipLabel = c.Status switch
-                {
-                    DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error => "Done",
-                    DiagnosticStatus.Running => "Running",
-                    _ => "Waiting",
-                };
-                <div class="wf-check-row @(c.Status == DiagnosticStatus.Running ? "wf-check-active" : "")" data-testid="dashboard-check-row-@c.Id.ToLowerInvariant()">
-                    <div class="wf-check-main">
-                        <span class="dot dot-@dot"></span>
-                        <strong class="wf-check-name">@c.Title</strong>
-                        <span class="meta wf-check-msg" data-testid="dashboard-check-msg-@c.Id.ToLowerInvariant()">@c.Message</span>
-                    </div>
-                    <div class="wf-check-side">
-                        @if (c.Status == DiagnosticStatus.Running && c.HasProgress)
-                        {
-                            <span class="meta wf-check-step" data-testid="dashboard-check-step-@c.Id.ToLowerInvariant()">@c.Step / @c.Total</span>
-                        }
-                        <span class="chip @chipClass">@chipLabel</span>
-                    </div>
-                    @if (c.Status == DiagnosticStatus.Running && c.HasProgress)
+<div class="dash-page" data-rpcd-page="dashboard" data-rpcd-contract="@BrowserContract.Dashboard">
+    <h1 class="sr-only" data-testid="dashboard-title">Dashboard</h1>
+
+    @* Zone 1: Compact Machine Identity Strip *@
+    <section class="card dash-identity-strip" data-testid="dashboard-identity">
+        <div class="dash-identity-main">
+            <span class="icon-badge"><Icon Name="@Icon.ForModule(ModuleSlugs.Osquery)" /></span>
+            <div class="dash-identity-text">
+                <div class="dash-identity-host">
+                    <strong>@(string.IsNullOrWhiteSpace(Session.MachineName) ? "This PC" : Session.MachineName)</strong>
+                </div>
+                <div class="meta dash-identity-specs" data-testid="dashboard-status">
+                    @if (hwBusy)
                     {
-                        <div class="progress run-progress wf-check-bar" data-testid="dashboard-check-bar-@c.Id.ToLowerInvariant()" role="progressbar" aria-valuemin="0" aria-valuemax="@c.Total" aria-valuenow="@c.Step">
-                            <div class="progress-bar" style="width:@($"{c.Fraction * 100:0.#}%")"></div>
-                        </div>
+                        <span>Querying hardware…</span>
+                    }
+                    else if (hw.Status == DiagnosticStatus.Error || inv is null)
+                    {
+                        <span>@hw.Message</span>
+                    }
+                    else
+                    {
+                        <span>@inv.FriendlySummary()</span>
                     }
                 </div>
+            </div>
+        </div>
+        <button type="button" class="linklike dash-identity-link" data-testid="dashboard-open-hw" @onclick="() => InspectCardAsync(ModuleSlugs.Osquery)">
+            Hardware inventory →
+        </button>
+    </section>
+
+    @* Zone 2: Health Verdict Bar + Single Refresh/Stop Action *@
+    <section class="card dash-verdict-bar" data-testid="dashboard-controls">
+        <div class="dash-verdict-main">
+            @{
+                var verdictKind = enabledModules.Count == 0 ? "na"
+                    : checking ? "run"
+                    : errorCount > 0 ? "bad"
+                    : warningCount > 0 ? "warn"
+                    : completedCount > 0 ? "ok" : "na";
+            }
+            <span class="dash-verdict-icon dash-verdict-@verdictKind" aria-hidden="true">
+                <Icon Name="@(checking ? "refresh" : errorCount > 0 || warningCount > 0 ? "crash" : "sec")" Size="20" />
+            </span>
+            <div class="dash-verdict-text">
+                <div class="dash-verdict-top">
+                    <strong class="dash-verdict-title" data-testid="dashboard-verdict-title">
+                        @if (enabledModules.Count == 0)
+                        {
+                            <span>No checks enabled</span>
+                        }
+                        else if (checking)
+                        {
+                            <span>Checking… (@completedCount / @enabledModules.Count)</span>
+                        }
+                        else if (problems.Count > 0)
+                        {
+                            <span>@problems.Count @(problems.Count == 1 ? "thing needs" : "things need") attention</span>
+                        }
+                        else if (completedCount > 0)
+                        {
+                            <span>System looks healthy</span>
+                        }
+                        else
+                        {
+                            <span>System overview</span>
+                        }
+                    </strong>
+                    @if (errorCount > 0 || warningCount > 0)
+                    {
+                        <span class="chip @(errorCount > 0 ? "chip-bad" : "chip-warn")" data-testid="dashboard-verdict-pill">
+                            @if (errorCount > 0 && warningCount > 0) { @($"{errorCount} {(errorCount == 1 ? "error" : "errors")} · {warningCount} {(warningCount == 1 ? "warning" : "warnings")}") }
+                            else if (errorCount > 0) { @($"{errorCount} {(errorCount == 1 ? "error" : "errors")}") }
+                            else { @($"{warningCount} {(warningCount == 1 ? "warning" : "warnings")}") }
+                        </span>
+                    }
+                    else if (!checking && completedCount > 0 && enabledModules.Count > 0)
+                    {
+                        <span class="chip chip-ok" data-testid="dashboard-verdict-pill">@completedCount / @enabledModules.Count passed</span>
+                    }
+                </div>
+                <div class="meta dash-verdict-sub" data-testid="dashboard-last-checked">
+                    @if (enabledModules.Count == 0)
+                    {
+                        <span>Open Customize to enable system checks.</span>
+                    }
+                    else if (checking)
+                    {
+                        <span>Cards update as each check finishes.</span>
+                    }
+                    else if (problems.Count > 0)
+                    {
+                        <span>@(enabledModules.Count - problems.Count) of @enabledModules.Count enabled checks passed.</span>
+                    }
+                    else if (completedCount > 0)
+                    {
+                        <span>No errors or warnings in enabled checks.</span>
+                    }
+                    else
+                    {
+                        <span>@enabledModules.Count checks ready.</span>
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="dash-verdict-actions">
+            @if (checking && Screen.RunningGroup == CheckGroup.Checks)
+            {
+                <button type="button" class="btn btn-stop" data-testid="dashboard-refresh" @onclick="Screen.Stop">
+                    Stop
+                </button>
+            }
+            else
+            {
+                <button type="button" class="btn btn-primary" data-testid="dashboard-refresh" disabled="@(checking || enabledModules.Count == 0)" @onclick="RefreshAll" title="Refresh all enabled checks">
+                    <span class="@(checking ? "dash-spin" : "")"><Icon Name="refresh" Size="14" /></span>
+                    <span>Refresh</span>
+                </button>
             }
         </div>
     </section>
-}
 
-<div class="dash-grid">
-    @for (var index = 0; index < cards.Count; index++)
+    @* Zone 3: Needs Attention (errors first, expands card in place on Inspect) *@
+    @if (problems.Count > 0)
     {
-        var name = cards[index];
-        @if (attentionCount > 0 && (index == 0 || index == attentionCount))
-        {
-            <h2 class="ct-section-label" style="grid-column: 1 / -1">@(index == 0 ? $"Needs attention · {attentionCount}" : "Other checks")</h2>
-        }
-        if (name == LibreHardwareMonitorModule.ModuleName)
-        {
-    <div @key="name" class="card dash-card gauge-card card-click" data-testid="dashboard-card-sensors" role="link" tabindex="0"
-         @onclick='() => Open(LibreHardwareMonitorModule.ModuleName)' @onkeydown='e => Key(e, LibreHardwareMonitorModule.ModuleName)'>
-        <div class="card-head"><span class="icon-badge"><Icon Name="temp" /></span><strong>Temperatures &amp; fans</strong>
-            <StatusChip Status="@(cpuTemp is null && !thBusy ? DiagnosticStatus.NotRun : th.Status)" Text="@(cpuTemp is null && !thBusy ? "No reading" : null)" /></div>
-        <div class="gauge gauge-@Level(cpuGroup)" data-testid="dashboard-cpu-gauge">
-            <svg viewBox="0 0 120 120" role="img" aria-label="@(cpuTemp is { } a ? $"CPU temperature {a:0} degrees" : "No CPU temperature reading")">
-                <circle class="gauge-track" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="75 100" transform="rotate(135 60 60)" />
-                @if (cpuTemp is { } t)
+        <section class="dash-triage" data-testid="dashboard-triage">
+            <div class="dash-section-head">
+                <h2 class="ct-section-label">Needs attention · @problems.Count</h2>
+            </div>
+            <div class="card dash-triage-list">
+                @foreach (var item in problems)
                 {
-                    <circle class="gauge-fill" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="@($"{Math.Clamp(t, 0, 100) * 0.75:0.#} 100")" transform="rotate(135 60 60)" />
+                    var mod = item.Module;
+                    var res = item.Result;
+                    var isErr = res.Status == DiagnosticStatus.Error;
+                    <div class="dash-triage-row" data-testid="dashboard-triage-@mod.Name.ToLowerInvariant()">
+                        <span class="dot @(isErr ? "dot-error" : "dot-warning")"></span>
+                        <div class="dash-triage-body">
+                            <strong>@mod.DisplayName</strong>
+                            <div class="meta">@res.Message</div>
+                        </div>
+                        <button type="button" class="btn-small" data-testid="dashboard-inspect-@mod.Name.ToLowerInvariant()" @onclick="() => InspectCardAsync(mod.Name)">
+                            Inspect →
+                        </button>
+                    </div>
                 }
-                <text class="gauge-num" x="60" y="62" text-anchor="middle">@(cpuTemp is { } v ? $"{v:0}°C" : "—")</text>
-                <text class="gauge-sub" x="60" y="80" text-anchor="middle">@(cpuTemp is null ? (thBusy ? "Checking…" : "No reading") : "CPU temp")</text>
-            </svg>
-        </div>
-        <div class="desc" data-testid="dashboard-thermal">@if (thBusy) { <span>Checking temperatures…</span> } else { <CardList Text="@th.Message" /> }</div>
-    </div>
+            </div>
+        </section>
+    }
 
-        }
-        else if (name == ModuleSlugs.Osquery)
+    @* Zone 4: Customizable, Drag-and-Drop System Checks Grid (In-Place Expand/Collapse) *@
+    <section class="dash-checks-section">
+        <div class="dash-section-head">
+            <h2 class="ct-section-label">System checks (@enabledModules.Count)</h2>
+            @if (App.CheckSettings is not null)
+            {
+                <button type="button" class="btn-small" data-testid="dashboard-customize" @onclick="OpenCustomize">
+                    Customize
+                </button>
+            }
+        </div>
+
+        @if (enabledModules.Count == 0)
         {
-    <div @key="name" class="card dash-card card-click" data-testid="dashboard-card-osquery" role="link" tabindex="0"
-         @onclick='() => Open(ModuleSlugs.Osquery)' @onkeydown='e => Key(e, ModuleSlugs.Osquery)'>
-        <div class="card-head"><span class="icon-badge icon-@StatusChip.Kind(hw.Status)"><Icon Name="@Icon.ForModule(ModuleSlugs.Osquery)" /></span><strong>Hardware inventory</strong>
-            <StatusChip Status="@(querying ? DiagnosticStatus.Running : hw.Status)" Text="@(querying ? "Checking…" : null)" /></div>
-        <div data-testid="dashboard-status" class="@(hw.Status == DiagnosticStatus.Error ? "card-msg error-text" : "card-msg card-msg-full")">
-            @if (querying) { <span>Querying hardware…</span> }
-            else if (hw.Status == DiagnosticStatus.Error || inv is null) { <span>@hw.Message</span> }
-            else { <CardList Text="@inv.FriendlySummary()" Strong="true" /> }
-        </div>
-        @if (!querying) { <div class="meta card-foot updated-ago" title="@hw.Timestamp.ToLocalTime().ToString("g")">Updated @RemotePCDiagnostics.Core.History.TimeText.Ago(hw.Timestamp, now)</div> }
-    </div>
-
+            <div class="card dash-empty" data-testid="dashboard-empty">
+                <p class="meta">No checks enabled. Click <strong>Customize</strong> to turn checks on.</p>
+            </div>
         }
         else
         {
-        var m = Diagnostics.Modules.FirstOrDefault(module => module.Name == name);
-        if (m is null) continue; // the module list changed since the card list was built
-        var r = Store.Get(name);
-        <div @key="name" class="card dash-card card-click" data-testid="dashboard-card-@m.Name.ToLowerInvariant()" role="link" tabindex="0"
-             @onclick="() => Open(name)" @onkeydown="e => Key(e, name)">
-            <div class="card-head"><span class="icon-badge icon-@StatusChip.Kind(r.Status)"><Icon Name="@Icon.ForModule(m.Name)" /></span><strong title="@m.DisplayName">@m.DisplayName</strong>
-                <StatusChip Status="@r.Status" /></div>
-            @if (r.Status == DiagnosticStatus.Running)
-            {
-                <div class="card-msg card-msg-full"><span>Checking…</span></div>
-            }
-            else if (r.Status != DiagnosticStatus.NotRun)
-            {
-                <div class="card-msg card-msg-full"><CardList Text="@r.Message" Strong="true" /></div>
-                <div class="meta card-foot updated-ago" title="@r.Timestamp.ToLocalTime().ToString("g")">Updated @RemotePCDiagnostics.Core.History.TimeText.Ago(r.Timestamp, now)</div>
-            }
-        </div>
+            <div class="dash-grid">
+                @foreach (var mod in enabledModules)
+                {
+                    var m = mod;
+                    var name = m.Name;
+                    var r = Store.Get(name);
+                    var expanded = _expanded.Contains(name);
+                    var isDragging = string.Equals(_dragId, name, StringComparison.OrdinalIgnoreCase);
+                    var isDropTarget = string.Equals(_dropId, name, StringComparison.OrdinalIgnoreCase) && !isDragging;
+                    var isRunning = r.Status == DiagnosticStatus.Running;
+                    var cardClasses = $"card dash-card drag-card {(expanded ? "dash-card-expanded" : "")} {(isDragging ? "dragging" : "")} {(isDropTarget ? "drop-target" : "")}";
+
+                    <div @key="name"
+                         class="@cardClasses"
+                         data-testid="dashboard-card-@name.ToLowerInvariant()"
+                         draggable="true"
+                         @ondragstart="() => OnDragStart(name)"
+                         @ondragover="() => OnDragOver(name)"
+                         @ondragover:preventDefault="true"
+                         @ondragleave="() => OnDragLeave(name)"
+                         @ondrop="() => OnDropAsync(name, allOrderIds)"
+                         @ondragend="OnDragEnd">
+                        <div class="card-head dash-card-head" role="button" tabindex="0" aria-expanded="@(expanded ? "true" : "false")"
+                             @onclick="() => ToggleExpand(name)" @onkeydown="e => CardKey(e, name)">
+                            <span class="dash-grip" aria-hidden="true" title="Drag to reorder">⋮⋮</span>
+                            <span class="icon-badge icon-@StatusChip.Kind(r.Status)"><Icon Name="@Icon.ForModule(name)" /></span>
+                            <strong class="dash-card-title" title="@m.DisplayName">@m.DisplayName</strong>
+                            @if (expanded)
+                            {
+                                <button type="button"
+                                        class="icon-refresh-btn"
+                                        data-testid="dashboard-card-refresh-@name.ToLowerInvariant()"
+                                        title="Refresh @m.DisplayName"
+                                        aria-label="Refresh @m.DisplayName"
+                                        disabled="@isRunning"
+                                        @onclick="() => RunSingle(m)"
+                                        @onclick:stopPropagation="true">
+                                    <span class="@(isRunning ? "dash-spin" : "")"><Icon Name="refresh" Size="14" /></span>
+                                </button>
+                            }
+                            <span class="dash-card-head-right">
+                                @if (name == LibreHardwareMonitorModule.ModuleName)
+                                {
+                                    <StatusChip Status="@(cpuTemp is null && !thBusy ? DiagnosticStatus.NotRun : th.Status)" Text="@(cpuTemp is null && !thBusy ? "No reading" : null)" />
+                                }
+                                else
+                                {
+                                    <StatusChip Status="@r.Status" />
+                                }
+                                <span class="chevron-icon @(expanded ? "is-open" : "")" aria-hidden="true">▾</span>
+                            </span>
+                        </div>
+
+                        <div class="dash-card-body" @onclick="() => ToggleExpand(name)">
+                            @if (name == LibreHardwareMonitorModule.ModuleName)
+                            {
+                                <div class="dash-sensor-compact">
+                                    <div class="gauge gauge-compact gauge-@Level(cpuGroup)" data-testid="dashboard-cpu-gauge">
+                                        <svg viewBox="0 0 120 120" role="img" aria-label="@(cpuTemp is { } a ? $"CPU temperature {a:0} degrees" : "No CPU temperature reading")">
+                                            <circle class="gauge-track" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="75 100" transform="rotate(135 60 60)" />
+                                            @if (cpuTemp is { } t)
+                                            {
+                                                <circle class="gauge-fill" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="@($"{Math.Clamp(t, 0, 100) * 0.75:0.#} 100")" transform="rotate(135 60 60)" />
+                                            }
+                                            <text class="gauge-num" x="60" y="62" text-anchor="middle">@(cpuTemp is { } v ? $"{v:0}°C" : "—")</text>
+                                            <text class="gauge-sub" x="60" y="80" text-anchor="middle">@(cpuTemp is null ? (thBusy ? "Checking…" : "No reading") : "CPU temp")</text>
+                                        </svg>
+                                    </div>
+                                    <div class="desc" data-testid="dashboard-thermal">
+                                        @if (thBusy) { <span>Checking temperatures…</span> }
+                                        else { <CardList Text="@th.Message" /> }
+                                    </div>
+                                </div>
+                            }
+                            else if (name == ModuleSlugs.Osquery)
+                            {
+                                <div class="@(hw.Status == DiagnosticStatus.Error ? "card-msg error-text" : "card-msg card-msg-full")">
+                                    @if (hwBusy) { <span>Querying hardware…</span> }
+                                    else if (hw.Status == DiagnosticStatus.Error || inv is null) { <span>@hw.Message</span> }
+                                    else { <CardList Text="@inv.FriendlySummary()" Strong="true" /> }
+                                </div>
+                            }
+                            else if (isRunning)
+                            {
+                                <div class="card-msg card-msg-full"><span>Checking…</span></div>
+                            }
+                            else if (r.Status != DiagnosticStatus.NotRun)
+                            {
+                                <div class="card-msg card-msg-full"><CardList Text="@r.Message" Strong="true" /></div>
+                            }
+                        </div>
+
+                        @if (expanded)
+                        {
+                            <div class="dash-card-details" data-testid="dashboard-card-details-@name.ToLowerInvariant()">
+                                <ModuleDetailsView DiagnosticModule="m" />
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
         }
-    }
+    </section>
+
+    @* Zone 5: Other Tools Coverage Strip *@
+    <section class="dash-tools-section">
+        <h2 class="ct-section-label">Other tools</h2>
+        <div class="dash-tools-grid">
+            <a class="card dash-tool-tile" href="stress" data-testid="dashboard-tool-stress">
+                <span class="meta">Stress tests</span>
+                <strong>@(summary.StressNotRunCount > 0 ? $"{summary.StressNotRunCount} not run" : "Completed")</strong>
+            </a>
+            <a class="card dash-tool-tile" href="security-audit" data-testid="dashboard-tool-audit">
+                <span class="meta">Security audit</span>
+                <strong>@(summary.AuditNotRun ? "Not run" : "Completed")</strong>
+            </a>
+            <a class="card dash-tool-tile" href="history" data-testid="dashboard-tool-history">
+                <span class="meta">History</span>
+                <strong>View past runs →</strong>
+            </a>
+        </div>
+    </section>
 </div>
 
-@code {
-    private Dictionary<string, int>? _cardRanks;
-    private void Open(string module)
-    {
-        Screen.FocusModule(module);
-        Nav.NavigateTo(Screen.PageFor(module)); // Checks, Stress tests or Security audit, whichever shows this module
-    }
-    private void Key(KeyboardEventArgs e, string module) { if (e.Key is "Enter" or " ") Open(module); }
-    private void RunAll() => _ = Screen.RunAllChecksAsync();
+@* Customize Modal (Mobile + Desktop friendly, shares CheckSettings with Checks page) *@
+@if (_customizeOpen && App.CheckSettings is not null)
+{
+    var orderedChoices = CheckEnableRules.ApplyOrder(availableChoices, c => c.Id, settings.Order);
+    var enabledChoices = orderedChoices.Where(c => c.Enabled).ToList();
+    var disabledChoices = orderedChoices.Where(c => !c.Enabled).ToList();
+    var modalList = enabledChoices.Concat(disabledChoices).ToList();
+    var allOn = availableChoices.Count > 0 && enabledChoices.Count == availableChoices.Count;
 
-    private StressSuiteProgress? suite;
-    private bool suiteBusy => Diagnostics.IsStressSuiteRunning;
-    private bool cancelling;
+    <div class="dash-modal-backdrop" data-testid="dashboard-customize-modal" @onclick="CloseCustomize">
+        <div class="card dash-modal" role="dialog" aria-modal="true" aria-label="Customize checks" @onclick:stopPropagation="true">
+            <div class="dash-modal-head">
+                <div>
+                    <strong>Customize checks</strong>
+                    <div class="meta">@enabledChoices.Count of @availableChoices.Count enabled</div>
+                </div>
+                <button type="button" class="btn-small" data-testid="dashboard-customize-close" @onclick="CloseCustomize">Done</button>
+            </div>
+            <div class="dash-modal-toolbar">
+                <label class="dash-master-check">
+                    <input type="checkbox"
+                           @ref="_modalMasterCheckbox"
+                           data-testid="dashboard-customize-toggle-all"
+                           checked="@allOn"
+                           disabled="@ChecksLocked"
+                           @onclick="() => ToggleAllChecksAsync(!allOn)"
+                           @onclick:preventDefault="true" />
+                    <span>@(allOn ? "Disable all" : "Enable all")</span>
+                </label>
+            </div>
+            <div class="dash-modal-list">
+                @for (var i = 0; i < modalList.Count; i++)
+                {
+                    var choice = modalList[i];
+                    var idx = i;
+                    var isEnabled = choice.Enabled;
+                    <div @key="choice.Id"
+                         class="dash-modal-row @(isEnabled ? "is-enabled" : "")"
+                         draggable="@(isEnabled ? "true" : "false")"
+                         @ondragstart="() => OnDragStart(choice.Id)"
+                         @ondragover="() => OnDragOver(choice.Id)"
+                         @ondragover:preventDefault="true"
+                         @ondrop="() => OnDropAsync(choice.Id, orderedChoices.Select(c => c.Id))"
+                         @ondragend="OnDragEnd">
+                        <label class="dash-modal-check">
+                            <input type="checkbox"
+                                   data-testid="dash-check-toggle-@choice.Id"
+                                   checked="@isEnabled"
+                                   disabled="@ChecksLocked"
+                                   @onclick="() => ToggleCheckAsync(choice)"
+                                   @onclick:preventDefault="true" />
+                            <span>@choice.Title</span>
+                        </label>
+                        @if (isEnabled)
+                        {
+                            <div class="dash-modal-move">
+                                <button type="button" class="btn-small" title="Move up" aria-label="Move @choice.Title up"
+                                        disabled="@(idx == 0)" @onclick="() => MoveOrderAsync(choice.Id, -1, enabledChoices.Select(c => c.Id).ToList())">↑</button>
+                                <button type="button" class="btn-small" title="Move down" aria-label="Move @choice.Title down"
+                                        disabled="@(idx >= enabledChoices.Count - 1)" @onclick="() => MoveOrderAsync(choice.Id, +1, enabledChoices.Select(c => c.Id).ToList())">↓</button>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private readonly HashSet<string> _expanded = new(StringComparer.OrdinalIgnoreCase);
+    private bool _customizeOpen;
+    private bool _remotePrefsLoaded;
+    private string? _dragId;
+    private string? _dropId;
+    private ElementReference _modalMasterCheckbox;
+
+    private bool ChecksLocked => Screen.IsBusy || Diagnostics.IsAnyRunning;
+    private bool PersistToHost => Session.Mode != SessionMode.Remote;
 
     protected override void OnInitialized()
     {
         base.OnInitialized();
-        suite = Diagnostics.LastStressSuiteProgress;
-        Diagnostics.StressSuiteProgressChanged += OnSuite;
         Screen.Changed += OnScreenChanged;
-        // Keep "Updated 3 min ago" current without any user action.
-        _tick = new System.Threading.Timer(_ => { try { _ = InvokeAsync(StateHasChanged); } catch { } }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
-    }
-    private System.Threading.Timer? _tick;
-    private void OnSuite(object? s, StressSuiteProgress p) { suite = p; if (p.Finished) cancelling = false; _ = InvokeAsync(StateHasChanged); }
-    private void OnScreenChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
-    public async ValueTask DisposeAsync()
-    {
-        Diagnostics.StressSuiteProgressChanged -= OnSuite;
-        Screen.Changed -= OnScreenChanged;
-        if (_tick is not null) await _tick.DisposeAsync();
-        Dispose();
+        if (App.CheckSettings is { } cs) cs.Changed += OnScreenChanged;
     }
 
-    private async Task RunSuite(StressSuiteMode mode)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (Diagnostics.IsStressSuiteRunning) return;
-        Diagnostics.Log.Info($"Stress suite ({StressSuite.RunLabel(mode)}) requested from the Dashboard by the {(Session.Mode == RemotePCDiagnostics.Core.Session.SessionMode.Remote ? "remote user" : "local user")}");
-        cancelling = false;
-        try { await Diagnostics.RunStressSuiteAsync(mode, null); }
-        catch (InvalidOperationException) { /* already running: the other click won */ }
-        catch (Exception ex) { Diagnostics.Log.Warn($"Stress suite failed: {ex.Message}"); }
-        StateHasChanged();
-    }
-    private void CancelSuite() { cancelling = true; Diagnostics.CancelStressSuite(); }
-
-    private static DiagnosticStatus StepStatus(StressSuiteStepState s) => s switch
-    {
-        StressSuiteStepState.Running => DiagnosticStatus.Running,
-        StressSuiteStepState.Passed => DiagnosticStatus.Ok,
-        StressSuiteStepState.Problem => DiagnosticStatus.Warning,
-        _ => DiagnosticStatus.NotRun,
-    };
-    private static string StepText(StressSuiteStepState s) => s switch
-    {
-        StressSuiteStepState.Pending => "Waiting",
-        StressSuiteStepState.Running => "Running…",
-        StressSuiteStepState.Passed => "Passed",
-        StressSuiteStepState.Problem => "Needs a look",
-        StressSuiteStepState.Skipped => "Skipped (not available on this PC)",
-        _ => "Not run",
-    };
-
-    private static string Level(SensorGroup? g) => g is null || g.Readings.Count == 0 ? "na" : g.Level switch { SensorLevel.Critical => "err", SensorLevel.Warning => "warn", _ => "ok" };
-
-    protected override void OnAfterRender(bool firstRender)
-    {
-        base.OnAfterRender(firstRender);
         if (firstRender)
         {
             RemotePCDiagnostics.Core.StartupProfiler.Mark("DashboardFirstRender");
+            if (Session.Mode == SessionMode.Remote && !_remotePrefsLoaded && App.CheckSettings is { } cs)
+            {
+                _remotePrefsLoaded = true;
+                await HydrateRemotePrefsAsync(cs);
+            }
+        }
+
+        if (_customizeOpen && App.CheckSettings is not null)
+        {
+            var available = Diagnostics.CheckChoices().Where(c => c.Available).ToList();
+            var enabledCount = available.Count(c => c.Enabled);
+            var indeterminate = enabledCount > 0 && enabledCount < available.Count;
+            try { await JS.InvokeVoidAsync("rpdSetIndeterminate", _modalMasterCheckbox, indeterminate); } catch { }
         }
     }
+
+    private async Task HydrateRemotePrefsAsync(CheckSettingsService cs)
+    {
+        try
+        {
+            var json = await JS.InvokeAsync<string?>("rpdCheckPrefs.load");
+            var prefs = CheckSettings.FromJson(json);
+            if (prefs is null) return;
+            cs.ApplyRemotePrefs(prefs);
+            StateHasChanged();
+        }
+        catch { }
+    }
+
+    private async Task SaveRemotePrefsIfNeededAsync()
+    {
+        if (Session.Mode != SessionMode.Remote || App.CheckSettings is null) return;
+        try { await JS.InvokeVoidAsync("rpdCheckPrefs.save", App.CheckSettings.Settings.ToJson()); } catch { }
+    }
+
+    private void OnScreenChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
+
+    public ValueTask DisposeAsync()
+    {
+        Screen.Changed -= OnScreenChanged;
+        if (App.CheckSettings is { } cs) cs.Changed -= OnScreenChanged;
+        Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    private void RefreshAll() => _ = Screen.RunAllChecksAsync();
+
+    private void RunSingle(IDiagnosticModule m) => _ = Screen.RunSingleAsync(m);
+
+    private void ToggleExpand(string name)
+    {
+        if (!_expanded.Remove(name)) _expanded.Add(name);
+    }
+
+    private void CardKey(KeyboardEventArgs e, string name)
+    {
+        if (e.Key is "Enter" or " ") ToggleExpand(name);
+    }
+
+    private async Task InspectCardAsync(string name)
+    {
+        if (App.CheckSettings is { } cs && !cs.IsEnabled(name))
+        {
+            cs.SetEnabled(name, on: true, available: true, persistToHost: PersistToHost);
+            await SaveRemotePrefsIfNeededAsync();
+        }
+        _expanded.Add(name);
+        StateHasChanged();
+        await Task.Yield();
+        try { await JS.InvokeVoidAsync("rpdScrollTo", $"[data-testid='dashboard-card-{name.ToLowerInvariant()}']"); } catch { }
+    }
+
+    private void OpenCustomize() => _customizeOpen = true;
+    private void CloseCustomize() => _customizeOpen = false;
+
+    private async Task ToggleCheckAsync(CheckChoice check)
+    {
+        if (ChecksLocked || App.CheckSettings is null) return;
+        var nextOn = !check.Enabled;
+        App.CheckSettings.SetEnabled(check.Id, nextOn, check.Available, persistToHost: PersistToHost);
+        await SaveRemotePrefsIfNeededAsync();
+        if (nextOn)
+        {
+            var mod = Diagnostics.Modules.FirstOrDefault(m => string.Equals(m.Name, check.Id, StringComparison.OrdinalIgnoreCase));
+            if (mod is not null && Store.Get(mod.Name).Status == DiagnosticStatus.NotRun)
+                _ = Screen.RunSingleAsync(mod);
+        }
+    }
+
+    private async Task ToggleAllChecksAsync(bool on)
+    {
+        if (ChecksLocked || App.CheckSettings is null) return;
+        var availableIds = Diagnostics.CheckChoices().Where(c => c.Available).Select(c => c.Id).ToList();
+        App.CheckSettings.SetAll(availableIds, on, persistToHost: PersistToHost);
+        await SaveRemotePrefsIfNeededAsync();
+    }
+
+    private async Task MoveOrderAsync(string id, int delta, List<string> enabledOrder)
+    {
+        if (App.CheckSettings is null) return;
+        var i = enabledOrder.FindIndex(x => string.Equals(x, id, StringComparison.OrdinalIgnoreCase));
+        var target = i + delta;
+        if (i < 0 || target < 0 || target >= enabledOrder.Count) return;
+        App.CheckSettings.Reorder(id, enabledOrder[target], enabledOrder, persistToHost: PersistToHost);
+        await SaveRemotePrefsIfNeededAsync();
+    }
+
+    private void OnDragStart(string id) { _dragId = id; _dropId = null; }
+    private void OnDragOver(string id) { if (_dragId is not null && !string.Equals(_dragId, id, StringComparison.OrdinalIgnoreCase)) _dropId = id; }
+    private void OnDragLeave(string id) { if (string.Equals(_dropId, id, StringComparison.OrdinalIgnoreCase)) _dropId = null; }
+    private void OnDragEnd() { _dragId = null; _dropId = null; }
+
+    private async Task OnDropAsync(string targetId, IEnumerable<string> allIds)
+    {
+        var fromId = _dragId;
+        _dragId = null;
+        _dropId = null;
+        if (App.CheckSettings is null || string.IsNullOrWhiteSpace(fromId) || string.Equals(fromId, targetId, StringComparison.OrdinalIgnoreCase)) return;
+        App.CheckSettings.Reorder(fromId, targetId, allIds, persistToHost: PersistToHost);
+        await SaveRemotePrefsIfNeededAsync();
+    }
+
+    private static string Level(SensorGroup? g) => g is null || g.Readings.Count == 0 ? "na" : g.Level switch { SensorLevel.Critical => "err", SensorLevel.Warning => "warn", _ => "ok" };
 }

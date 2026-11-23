@@ -150,16 +150,69 @@ public class CheckEnablementTests
         Assert.Contains("data-testid=\"checks-settings-toggle\"", page, StringComparison.Ordinal);
         Assert.Contains("aria-expanded=\"@(_checksOpen ? \"true\" : \"false\")\"", page, StringComparison.Ordinal);
         Assert.Contains("open=\"@_checksOpen\"", page, StringComparison.Ordinal);
-        Assert.Contains("data-testid=\"checks-enable-all\"", page, StringComparison.Ordinal);
-        Assert.Contains("data-testid=\"checks-disable-all\"", page, StringComparison.Ordinal);
+        Assert.Contains("data-testid=\"checks-toggle-all\"", page, StringComparison.Ordinal);
+        Assert.Contains("data-testid=\"checks-refresh\"", page, StringComparison.Ordinal);
         Assert.Contains("data-testid=\"@CheckEnableRules.Control(check.Id)\"", page, StringComparison.Ordinal);
         Assert.Contains("data-check-id=\"@check.Id\"", page, StringComparison.Ordinal);
         Assert.Contains("data-enabled=\"@(check.Enabled ? \"true\" : \"false\")\"", page, StringComparison.Ordinal);
         Assert.Contains("data-available=\"true\"", page, StringComparison.Ordinal);
         Assert.Contains("@onclick=\"() => ToggleCheck(check)\" @onclick:preventDefault=\"true\"", page, StringComparison.Ordinal);
-        Assert.Contains("App.CheckSettings.SetEnabled(check.Id, !check.Enabled, check.Available)", page, StringComparison.Ordinal);
-        Assert.Contains("App.CheckSettings.SetAll(Diagnostics.CheckChoices().Where(c => c.Available).Select(c => c.Id), on)", page, StringComparison.Ordinal);
+        Assert.Contains("App.CheckSettings.SetEnabled(check.Id, !check.Enabled, check.Available, persistToHost: PersistToHost)", page, StringComparison.Ordinal);
+        Assert.Contains("App.CheckSettings.SetAll(Diagnostics.CheckChoices().Where(c => c.Available).Select(c => c.Id), on, persistToHost: PersistToHost)", page, StringComparison.Ordinal);
         Assert.Contains("BrowserContract.Checks", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Order_persists_backwards_compatibly_and_ApplyRemotePrefs_does_not_overwrite_host_store()
+    {
+        // Legacy JSON without Order deserializes cleanly to empty Order.
+        var legacy = CheckSettings.FromJson("""{"SchemaVersion":1,"Disabled":["Osquery"]}""");
+        Assert.NotNull(legacy);
+        Assert.Empty(legacy.Order);
+
+        var store = new MemoryCheckSettingsStore();
+        var svc = new CheckSettingsService(store);
+        var all = new[] { ModuleSlugs.Osquery, ModuleSlugs.DriveHealth, ModuleSlugs.BatteryPower };
+
+        svc.Reorder(ModuleSlugs.BatteryPower, ModuleSlugs.Osquery, all);
+        Assert.Equal([ModuleSlugs.BatteryPower, ModuleSlugs.Osquery, ModuleSlugs.DriveHealth], svc.Settings.Order);
+        Assert.Equal(svc.Settings.Order, store.State!.Order);
+
+        var applied = CheckEnableRules.ApplyOrder(all, id => id, svc.Settings.Order);
+        Assert.Equal([ModuleSlugs.BatteryPower, ModuleSlugs.Osquery, ModuleSlugs.DriveHealth], applied);
+
+        var roundTripped = CheckSettings.FromJson(svc.Settings.ToJson());
+        Assert.NotNull(roundTripped);
+        Assert.Equal(svc.Settings.Order, roundTripped.Order);
+
+        // Remote prefs update in-memory session without overwriting host store.
+        var hostSnapshot = store.State;
+        svc.ApplyRemotePrefs(new CheckSettings { Disabled = [ModuleSlugs.DriveHealth], Order = [ModuleSlugs.Osquery, ModuleSlugs.BatteryPower] });
+        Assert.False(svc.IsEnabled(ModuleSlugs.DriveHealth));
+        Assert.Equal([ModuleSlugs.Osquery, ModuleSlugs.BatteryPower], svc.Settings.Order);
+        Assert.Same(hostSnapshot, store.State);
+    }
+
+    [Fact]
+    public async Task AutoRun_StartEnabledChecksAsync_runs_enabled_checks_and_skips_disabled_checks()
+    {
+        var os = new PlainCheck(ModuleSlugs.Osquery, ModuleIds.Osquery, "Hardware inventory");
+        var battery = new PlainCheck(ModuleSlugs.BatteryPower, ModuleIds.BatteryPower, "Battery & power plan");
+        var drivers = new PlainCheck(ModuleSlugs.DeviceDrivers, ModuleIds.DeviceDrivers, "Device Manager & drivers");
+        var store = new MemoryCheckSettingsStore();
+        var settings = new CheckSettingsService(store);
+        settings.SetEnabled(drivers.Name, on: false, available: true);
+        var diag = new DiagnosticsService(new ResultStore(), [os, battery, drivers], checks: settings);
+
+        await AutoRun.StartEnabledChecksAsync(diag, settings, _ => null, log: null, maxConcurrency: 2);
+
+        Assert.Equal(1, os.Runs);
+        Assert.Equal(1, battery.Runs);
+        Assert.Equal(0, drivers.Runs);
+
+        // Respects REMOTEPC_AUTORUN=0
+        await AutoRun.StartEnabledChecksAsync(diag, settings, k => k == AutoRun.EnvironmentVariable ? "0" : null, log: null);
+        Assert.Equal(1, os.Runs);
     }
 
     private static JsonSerializerOptions AgentJson() => new()

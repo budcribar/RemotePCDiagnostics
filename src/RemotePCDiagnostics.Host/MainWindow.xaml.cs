@@ -170,12 +170,20 @@ public partial class MainWindow : Window
             _ = Task.Run(async () =>
             {
                 await Task.Delay(2000).ConfigureAwait(false);
-                AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Loggers.CreateLogger(typeof(AutoRun).FullName!), ModuleSlugs.Osquery, LibreHardwareMonitorModule.ModuleName);
+                await AutoRun.StartEnabledChecksAsync(
+                    provider.GetRequiredService<DiagnosticsService>(),
+                    provider.GetService<RemotePCDiagnostics.Core.Checks.CheckSettingsService>(),
+                    Environment.GetEnvironmentVariable,
+                    App.Loggers.CreateLogger(typeof(AutoRun).FullName!)).ConfigureAwait(false);
             });
         }
         else
         {
-            AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Loggers.CreateLogger(typeof(AutoRun).FullName!), ModuleSlugs.Osquery, LibreHardwareMonitorModule.ModuleName);
+            _ = AutoRun.StartEnabledChecksAsync(
+                provider.GetRequiredService<DiagnosticsService>(),
+                provider.GetService<RemotePCDiagnostics.Core.Checks.CheckSettingsService>(),
+                Environment.GetEnvironmentVariable,
+                App.Loggers.CreateLogger(typeof(AutoRun).FullName!));
         }
         StartupProfiler.Mark("AutoRunDispatched");
 

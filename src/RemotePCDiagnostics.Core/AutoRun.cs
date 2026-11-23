@@ -27,4 +27,64 @@ public static class AutoRun
         }
         return tasks;
     }
+
+    /// <summary>
+    /// Starts all enabled read-only checks (<see cref="IDiagnosticModule.IncludeInRunAll"/>) in the background, prioritizing
+    /// <see cref="ModuleSlugs.Osquery"/> and <see cref="Sensors.LibreHardwareMonitorModule.ModuleName"/> first and throttling
+    /// concurrency so older PCs stay responsive. Respects <see cref="EnvironmentVariable"/> and <see cref="Checks.CheckSettings"/>.
+    /// </summary>
+    public static Task StartEnabledChecksAsync(
+        DiagnosticsService service,
+        Checks.CheckSettingsService? settings,
+        Func<string, string?> getEnv,
+        ILogger? log,
+        int maxConcurrency = 3,
+        CancellationToken ct = default)
+    {
+        if (!IsEnabled(getEnv))
+        {
+            log.Info("Auto-run disabled via " + EnvironmentVariable);
+            return Task.CompletedTask;
+        }
+
+        var checkSettings = settings?.Settings ?? new Checks.CheckSettings();
+        var priority = new[] { ModuleSlugs.Osquery, Sensors.LibreHardwareMonitorModule.ModuleName };
+        var enabledOrdered = Checks.CheckEnableRules.ApplyOrder(
+            service.Modules.Where(m => m.IncludeInRunAll && checkSettings.IsEnabled(m.Name)).Select(m => m.Name),
+            id => id,
+            checkSettings.Order);
+
+        var queue = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in priority)
+            if (checkSettings.IsEnabled(p) && service.CanRun(p) && seen.Add(p))
+                queue.Add(p);
+        foreach (var name in enabledOrdered)
+            if (service.CanRun(name) && seen.Add(name))
+                queue.Add(name);
+
+        if (queue.Count == 0) return Task.CompletedTask;
+
+        var limit = Math.Max(1, maxConcurrency);
+        return Task.Run(async () =>
+        {
+            using var gate = new SemaphoreSlim(limit, limit);
+            var tasks = queue.Select(async name =>
+            {
+                await gate.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    if (ct.IsCancellationRequested) return;
+                    if (settings is not null && !settings.IsEnabled(name)) return;
+                    log.Info($"Auto-run: starting {name}");
+                    var result = await service.RunAsync(name, ct).ConfigureAwait(false);
+                    log.Info($"Auto-run: {name} finished: {result.Status}");
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception ex) { log.Info($"Auto-run: {name} failed: {ex.Message}"); }
+                finally { gate.Release(); }
+            }).ToList();
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }, ct);
+    }
 }

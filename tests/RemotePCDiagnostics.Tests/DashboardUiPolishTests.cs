@@ -13,15 +13,17 @@ public class DashboardUiPolishTests : BunitContext
 {
     private void RegisterDashboardServices(ResultStore store, params IDiagnosticModule[] modules)
     {
+        JSInterop.Mode = JSRuntimeMode.Loose;
         var diagnostics = new DiagnosticsService(store, modules);
         Services.AddSingleton(store);
         Services.AddSingleton(diagnostics);
         Services.AddSingleton(new ChecksScreenState(diagnostics, store));
         Services.AddSingleton<ISessionContext>(new SessionContext(SessionMode.Local));
+        Services.AddSingleton(new AppServices());
     }
 
     [Fact]
-    public void Dashboard_DriveHealthNotRun_ShowsNotRunPillWithoutRedundantNotCheckedYet()
+    public void Dashboard_DriveHealthNotRun_ShowsNotRunPillAndSingleRefreshAction()
     {
         var store = new ResultStore();
         var driveMod = new FakeModule(ModuleSlugs.DriveHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DriveHealth)));
@@ -32,17 +34,53 @@ public class DashboardUiPolishTests : BunitContext
         var card = cut.Find("[data-testid='dashboard-card-drivehealth']");
         Assert.Equal("Not run", card.QuerySelector(".chip")?.TextContent.Trim());
         Assert.DoesNotContain("Not checked yet", card.TextContent, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("Not run yet", card.TextContent, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Updated ", card.TextContent, StringComparison.OrdinalIgnoreCase);
 
-        var subtitle = cut.Find("[data-testid='dashboard-last-checked']").TextContent;
-        Assert.Equal("Live readings only, checks not run", subtitle);
-        Assert.DoesNotContain("not run yet", subtitle, StringComparison.OrdinalIgnoreCase);
+        // Verdict bar has single Refresh button and no 10-min QA / stress suite clutter.
+        Assert.NotNull(cut.Find("[data-testid='dashboard-refresh']"));
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-bench-qa']"));
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-runall-stress-short']"));
+    }
+
+    [Fact]
+    public void Dashboard_Card_ExpandsInPlace_WithInlineRefreshButton()
+    {
+        var store = new ResultStore();
+        var driveMod = new FakeModule(ModuleSlugs.DriveHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DriveHealth)));
+        store.Set(new DiagnosticResult(ModuleSlugs.DriveHealth, DiagnosticStatus.Ok, "C: 164 GB free", DateTimeOffset.Now));
+        RegisterDashboardServices(store, driveMod);
+
+        var cut = Render<Dashboard>();
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-card-details-drivehealth']"));
+
+        cut.Find("[data-testid='dashboard-card-drivehealth'] .dash-card-head").Click();
+        Assert.NotNull(cut.Find("[data-testid='dashboard-card-details-drivehealth']"));
+        Assert.NotNull(cut.Find("[data-testid='dashboard-card-refresh-drivehealth']"));
+    }
+
+    [Fact]
+    public void NavRail_ShowsSeparateRedErrorAndYellowWarningBadges()
+    {
+        var store = new ResultStore();
+        var m1 = new FakeModule(ModuleSlugs.DriveHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DriveHealth)));
+        var m2 = new FakeModule(ModuleSlugs.Crashes, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.Crashes)));
+        var m3 = new FakeModule(ModuleSlugs.EventLog, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.EventLog)));
+        store.Set(new DiagnosticResult(ModuleSlugs.DriveHealth, DiagnosticStatus.Error, "SMART failure", DateTimeOffset.Now));
+        store.Set(new DiagnosticResult(ModuleSlugs.Crashes, DiagnosticStatus.Warning, "2 app faults", DateTimeOffset.Now));
+        store.Set(new DiagnosticResult(ModuleSlugs.EventLog, DiagnosticStatus.Warning, "4 errors", DateTimeOffset.Now));
+        RegisterDashboardServices(store, m1, m2, m3);
+
+        var cut = Render<NavRail>();
+
+        Assert.Equal("1", cut.Find("[data-testid='nav-checks-errors']").TextContent.Trim());
+        Assert.Equal("2", cut.Find("[data-testid='nav-checks-warnings']").TextContent.Trim());
     }
 
     [Fact]
     public void Dashboard_SensorsCard_OmitsUnreadGpuAndUnreportedFanSpeed()
     {
         var store = new ResultStore();
+        var sensorMod = new FakeModule(LibreHardwareMonitorModule.ModuleName, _ => Task.FromResult(FakeModule.Ok(LibreHardwareMonitorModule.ModuleName)));
         var snap = new SensorSnapshot([
             new("Snapdragon X Elite", HardwareKind.Cpu, "CPU Package", SensorKind.Temperature, 65, 55, 70, "°C"),
             new("NVMe Drive", HardwareKind.Storage, "Composite Temperature", SensorKind.Temperature, 42, 38, 45, "°C"),
@@ -50,7 +88,7 @@ public class DashboardUiPolishTests : BunitContext
         var report = LibreHardwareMonitorModule.BuildReport(snap);
         var msg = LibreHardwareMonitorModule.Summarize(report);
         store.Set(new DiagnosticResult<SensorReport>(LibreHardwareMonitorModule.ModuleName, DiagnosticStatus.Ok, msg, DateTimeOffset.Now, report));
-        RegisterDashboardServices(store);
+        RegisterDashboardServices(store, sensorMod);
 
         var cut = Render<Dashboard>();
 

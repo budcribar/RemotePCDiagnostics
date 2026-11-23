@@ -588,6 +588,29 @@
         hookControl();
     }).observe(document.body, { childList: true, subtree: true, characterData: true });
 
+    window.rpdCheckPrefs = {
+        load() {
+            try { return window.localStorage ? window.localStorage.getItem('rpcd.checkPrefs.v1') : null; }
+            catch (_) { return null; }
+        },
+        save(json) {
+            try { if (window.localStorage) window.localStorage.setItem('rpcd.checkPrefs.v1', json || ''); }
+            catch (_) { }
+        }
+    };
+
+    window.rpdScrollTo = function (selector) {
+        try {
+            const el = document.querySelector(selector);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } catch (_) { }
+    };
+
+    window.rpdSetIndeterminate = function (el, value) {
+        try { if (el) el.indeterminate = !!value; }
+        catch (_) { }
+    };
+
     refresh();
     markDesktopHost();
     updateDocumentTitle();

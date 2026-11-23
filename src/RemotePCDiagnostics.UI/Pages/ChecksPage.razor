@@ -1,5 +1,6 @@
 @using RemotePCDiagnostics.Core.Areas
 @using RemotePCDiagnostics.Core.Checks
+@using RemotePCDiagnostics.Core.Session
 @page "/checks"
 @page "/stress"
 @using Microsoft.JSInterop
@@ -9,6 +10,7 @@
 @inject RemotePCDiagnostics.Core.History.IHistoryStore History
 @inject NavigationManager Nav
 @inject AppServices App
+@inject ISessionContext Session
 @* Two pages share this screen: /checks (read-only system checks) and /stress (stress tests, audio, webcam, NPU). The list is on the left,
    the selected test's real page on the right. *@
 @{
@@ -20,9 +22,20 @@
     var checkChoices = _group == CheckGroup.Checks ? Diagnostics.CheckChoices() : [];
     var availableChecks = checkChoices.Where(c => c.Available).ToList();
     var enabledChecks = availableChecks.Count(c => c.Enabled);
+    var allChecksOn = availableChecks.Count > 0 && enabledChecks == availableChecks.Count;
+    var checksRunning = Screen.RunningGroup == CheckGroup.Checks || Screen.Modules(CheckGroup.Checks).Any(m => Store.Get(m.Name).Status == DiagnosticStatus.Running);
 }
 <div class="ct-page">
     <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="dash" Size="20" /></span><h1 data-rpcd-page="@(_group == CheckGroup.Stress ? "stress" : "checks")" data-rpcd-contract="@(_group == CheckGroup.Stress ? BrowserContract.Stress : BrowserContract.Checks)" data-testid="checks-title">@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")</h1>
+        @if (_group == CheckGroup.Checks)
+        {
+            <button type="button" class="icon-refresh-btn" data-testid="checks-refresh"
+                    title="@(checksRunning ? "Stop checks" : "Refresh enabled checks")"
+                    aria-label="@(checksRunning ? "Stop checks" : "Refresh enabled checks")"
+                    @onclick="RefreshOrStopChecks">
+                <span class="@(checksRunning ? "dash-spin" : "")"><Icon Name="refresh" Size="15" /></span>
+            </button>
+        }
         <span class="ct-expand-group">
             <button class="btn-small" data-testid="checks-expand-all" @onclick="() => Screen.SetAllCollapsed(false)">Expand all</button>
             <button class="btn-small" data-testid="checks-collapse-all" @onclick="() => Screen.SetAllCollapsed(true)">Collapse all</button>
@@ -57,15 +70,23 @@
             <summary class="bench-customize-summary" data-testid="checks-settings-toggle" aria-expanded="@(_checksOpen ? "true" : "false")"
                      @onclick="ToggleChecksPanel" @onclick:preventDefault="true">
                 <span class="bench-customize-title">
-                    <span class="bench-customize-caret" aria-hidden="true">▸</span>
                     <span>Which checks run</span>
                     <span class="meta">(@enabledChecks of @availableChecks.Count on)</span>
                 </span>
+                <span class="chevron-icon @(_checksOpen ? "is-open" : "")" aria-hidden="true">▾</span>
             </summary>
             <div class="bench-customize-body">
                 <div class="bench-preset-group">
-                    <button type="button" class="btn-small" data-testid="checks-enable-all" disabled="@ChecksLocked" @onclick="() => SetAllChecks(true)">Enable all</button>
-                    <button type="button" class="btn-small" data-testid="checks-disable-all" disabled="@ChecksLocked" @onclick="() => SetAllChecks(false)">Disable all</button>
+                    <label class="dash-master-check">
+                        <input type="checkbox"
+                               @ref="_masterCheckRef"
+                               data-testid="checks-toggle-all"
+                               checked="@allChecksOn"
+                               disabled="@ChecksLocked"
+                               @onclick="() => SetAllChecks(!allChecksOn)"
+                               @onclick:preventDefault="true" />
+                        <span>@(allChecksOn ? "Disable all" : "Enable all")</span>
+                    </label>
                 </div>
                 <div class="bench-kinds">
                     @foreach (var choice in availableChecks)
@@ -168,10 +189,24 @@
 
     private void OnScreenChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
 
+    private ElementReference _masterCheckRef;
+    private string? _dragCheckId;
+    private string? _dropCheckId;
+    private bool PersistToHost => Session.Mode != SessionMode.Remote;
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender) return;
-        try { await JS.InvokeVoidAsync("rpdSplit.init"); } catch { /* no JS helper (older host page): fixed 55% split */ }
+        if (firstRender)
+        {
+            try { await JS.InvokeVoidAsync("rpdSplit.init"); } catch { /* no JS helper (older host page): fixed 55% split */ }
+        }
+        if (_group == CheckGroup.Checks && _checksOpen)
+        {
+            var available = Diagnostics.CheckChoices().Where(c => c.Available).ToList();
+            var enabled = available.Count(c => c.Enabled);
+            var indeterminate = enabled > 0 && enabled < available.Count;
+            try { await JS.InvokeVoidAsync("rpdSetIndeterminate", _masterCheckRef, indeterminate); } catch { }
+        }
     }
 
     public override void Dispose()
@@ -188,16 +223,45 @@
 
     private void ToggleChecksPanel() => _checksOpen = !_checksOpen;
 
+    private void RefreshOrStopChecks()
+    {
+        if (Screen.RunningGroup == CheckGroup.Checks) Screen.Stop();
+        else _ = Screen.RunAllChecksAsync();
+    }
+
+    private async Task SaveRemotePrefsIfNeededAsync()
+    {
+        if (Session.Mode != SessionMode.Remote || App.CheckSettings is null) return;
+        try { await JS.InvokeVoidAsync("rpdCheckPrefs.save", App.CheckSettings.Settings.ToJson()); } catch { }
+    }
+
     private void ToggleCheck(CheckChoice check)
     {
         if (ChecksLocked || App.CheckSettings is null) return;
-        App.CheckSettings.SetEnabled(check.Id, !check.Enabled, check.Available);
+        App.CheckSettings.SetEnabled(check.Id, !check.Enabled, check.Available, persistToHost: PersistToHost);
+        _ = SaveRemotePrefsIfNeededAsync();
     }
 
     private void SetAllChecks(bool on)
     {
         if (ChecksLocked || App.CheckSettings is null) return;
-        App.CheckSettings.SetAll(Diagnostics.CheckChoices().Where(c => c.Available).Select(c => c.Id), on);
+        App.CheckSettings.SetAll(Diagnostics.CheckChoices().Where(c => c.Available).Select(c => c.Id), on, persistToHost: PersistToHost);
+        _ = SaveRemotePrefsIfNeededAsync();
+    }
+
+    private void OnCheckDragStart(string id) { _dragCheckId = id; _dropCheckId = null; }
+    private void OnCheckDragOver(string id) { if (_dragCheckId is not null && !string.Equals(_dragCheckId, id, StringComparison.OrdinalIgnoreCase)) _dropCheckId = id; }
+    private void OnCheckDragLeave(string id) { if (string.Equals(_dropCheckId, id, StringComparison.OrdinalIgnoreCase)) _dropCheckId = null; }
+    private void OnCheckDragEnd() { _dragCheckId = null; _dropCheckId = null; }
+
+    private void OnCheckDrop(string targetId, IEnumerable<string> allIds)
+    {
+        var fromId = _dragCheckId;
+        _dragCheckId = null;
+        _dropCheckId = null;
+        if (App.CheckSettings is null || string.IsNullOrWhiteSpace(fromId) || string.Equals(fromId, targetId, StringComparison.OrdinalIgnoreCase)) return;
+        App.CheckSettings.Reorder(fromId, targetId, allIds, persistToHost: PersistToHost);
+        _ = SaveRemotePrefsIfNeededAsync();
     }
 
     /// <summary>The Stress tests page's state for browser agents (stress-data).</summary>
@@ -266,7 +330,8 @@
         var attentionCount = 0;
         if (g == CheckGroup.Checks)
         {
-            var results = mods.Select(m => (Module: m, Kind: CheckRows.KindOf(Store.Get(m.Name)))).ToList();
+            var orderedMods = CheckEnableRules.ApplyOrder(mods, m => m.Name, App.CheckSettings?.Settings.Order);
+            var results = orderedMods.Select(m => (Module: m, Kind: CheckRows.KindOf(Store.Get(m.Name)))).ToList();
             if (!running && results.All(r => r.Kind != RowKind.Running))
             {
                 foreach (var result in results)
@@ -278,9 +343,10 @@
                     };
             }
             int Rank(IDiagnosticModule m) => _checkRanks.GetValueOrDefault(m.Name, 2);
-            checkModules = mods.OrderBy(Rank).ToList();
+            checkModules = orderedMods.OrderBy(Rank).ToList();
             attentionCount = checkModules.Count(m => Rank(m) < 2);
         }
+        var allRowIds = checkModules.Select(m => m.Name).ToList();
         var id = g.ToString().ToLowerInvariant();
         var pills = CheckRows.Pills(mods.Select(m => CheckRows.KindOf(Store.Get(m.Name))));
         <div class="card ct-group" data-testid="checks-group-@id">
@@ -330,7 +396,17 @@
                         var isSel = string.Equals(Screen.SelectedModule, m.Name, StringComparison.OrdinalIgnoreCase);
                         var prog = kind == RowKind.Running ? Diagnostics.GetProgress(m.Name) : null;
                         var line = kind == RowKind.NotRun ? "Not run" : kind == RowKind.Running ? (string.IsNullOrWhiteSpace(r.Message) || r.Message == "Running..." ? "In progress" : r.Message) : r.Message;
-                        <div @key="mod.Name" class="ct-row @(isSel ? "selected" : "") @(kind == RowKind.Running ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")" @ref="_rowRefs[mod.Name]"
+                        var rowDragging = g == CheckGroup.Checks && string.Equals(_dragCheckId, m.Name, StringComparison.OrdinalIgnoreCase);
+                        var rowDrop = g == CheckGroup.Checks && string.Equals(_dropCheckId, m.Name, StringComparison.OrdinalIgnoreCase) && !rowDragging;
+                        <div @key="mod.Name" class="ct-row @(isSel ? "selected" : "") @(kind == RowKind.Running ? "is-running" : "") @(rowDragging ? "dragging" : "") @(rowDrop ? "drop-target" : "")"
+                             role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")" @ref="_rowRefs[mod.Name]"
+                             draggable="@(g == CheckGroup.Checks ? "true" : "false")"
+                             @ondragstart="() => { if (g == CheckGroup.Checks) OnCheckDragStart(mod.Name); }"
+                             @ondragover="() => { if (g == CheckGroup.Checks) OnCheckDragOver(mod.Name); }"
+                             @ondragover:preventDefault="@(g == CheckGroup.Checks)"
+                             @ondragleave="() => { if (g == CheckGroup.Checks) OnCheckDragLeave(mod.Name); }"
+                             @ondrop="() => { if (g == CheckGroup.Checks) OnCheckDrop(mod.Name, allRowIds); }"
+                             @ondragend="OnCheckDragEnd"
                              data-testid="checks-row-@m.Name.ToLowerInvariant()" @onclick="() => SelectAndShowAsync(mod)" @onkeydown="e => RowKey(e, mod)" @onkeydown:preventDefault="false">
                             <button class="ct-check" role="checkbox" aria-checked="@(Screen.IsSelected(m.Name) ? "true" : "false")" aria-label="Include @m.DisplayName"
                                     data-testid="checks-select-@m.Name.ToLowerInvariant()" @onclick="() => Screen.SetSelected(mod.Name, !Screen.IsSelected(mod.Name))" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">@(Screen.IsSelected(m.Name) ? "✓" : "")</button>
@@ -382,22 +458,23 @@
             <div class="ct-card-top">
                 <span class="icon-badge"><Icon Name="@Icon.ForModule(m.Name)" /></span>
                 <h2 data-testid="checks-detail-title">@m.DisplayName</h2>
+                @if (m is ICancellableScan scan && kind == RowKind.Running)
+                {
+                    <button type="button" class="btn btn-stop ct-run-one" data-testid="checks-cancel-scan" data-action="cancel-check" data-check-id="@m.Name" @onclick="scan.Cancel">Cancel scan</button>
+                }
+                else if (!HasOwnStart(m))
+                {
+                    var runText = kind == RowKind.NotRun ? "Run this check" : "Refresh this check";
+                    <button type="button" class="icon-refresh-btn ct-run-one" data-testid="checks-run-one" data-check-id="@m.Name" data-action="run-check" data-blocked-by="@Screen.BlockingIntegrityScan(m)?.Name" disabled="@(!canRun)"
+                            aria-label="@runText" title="@(canRun ? runText : ChecksScreenState.UnavailableTooltip)" @onclick="() => { _ = Screen.RunSingleAsync(m); }">
+                        <span class="@(kind == RowKind.Running ? "dash-spin" : "")"><Icon Name="refresh" Size="14" /></span>
+                    </button>
+                }
                 <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-detail-status" title="@(done ? $"Finished {r.Timestamp.ToLocalTime():g}" : null)">@CheckRows.Label(kind, RunLabel(m))</span>
                 <span class="ct-card-actions">
                     @* History opens this check's trend in place (its key numbers over time, then its runs); the History page has every run. *@
                     <button type="button" class="linklike ct-history-link" data-testid="checks-detail-history" data-check-id="@m.Name" aria-expanded="@(historyOpen ? "true" : "false")"
                             aria-controls="ct-trend-@m.Name" @onclick="() => ToggleHistory(m.Name)"><Icon Name="hist" Size="14" /> History</button>
-                    @* Stress tests, the security audit and the audio tests have their own Start/Stop (with length) below, so no second start button here. *@
-                    @if (m is ICancellableScan scan && kind == RowKind.Running)
-                    {
-                        <button type="button" class="btn btn-stop ct-run-one" data-testid="checks-cancel-scan" data-action="cancel-check" data-check-id="@m.Name" @onclick="scan.Cancel">Cancel scan</button>
-                    }
-                    else if (!HasOwnStart(m))
-                    {
-                        var runText = kind == RowKind.NotRun ? "Run this check" : "Run again";
-                        <button class="btn btn-outline ct-run-one ct-play" data-testid="checks-run-one" data-check-id="@m.Name" data-action="run-check" data-blocked-by="@Screen.BlockingIntegrityScan(m)?.Name" disabled="@(!canRun)"
-                                aria-label="@runText" title="@(canRun ? runText : ChecksScreenState.UnavailableTooltip)" @onclick="() => { _ = Screen.RunSingleAsync(m); }"><Icon Name="play" Size="14" /></button>
-                    }
                 </span>
             </div>
             <div class="ct-detail-title meta" data-testid="checks-detail-sub">

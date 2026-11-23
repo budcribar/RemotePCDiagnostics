@@ -1,8 +1,33 @@
+@using RemotePCDiagnostics.Core.Checks
 @inherits StoreAwareComponent
+@{
+    var checkResults = Diagnostics.Modules
+        .Where(m => m.IncludeInRunAll)
+        .Select(m => Store.Get(m.Name))
+        .Where(r => !r.Cancelled && !CheckEnableRules.IsTurnedOff(r))
+        .ToList();
+    var errorCount = checkResults.Count(r => r.Status == DiagnosticStatus.Error);
+    var warningCount = checkResults.Count(r => r.Status == DiagnosticStatus.Warning);
+}
 <nav id="main-navigation" class="rail" aria-label="Main" @onclick="HandleNavClick">
     <NavLink title="Dashboard" href="dashboard" Match="NavLinkMatch.All" data-testid="nav-dashboard"><Icon Name="dash" /><span class="nav-text">Dashboard</span></NavLink>
     <NavLink title="Service workflow" href="workflow" data-testid="nav-workflow"><Icon Name="play" /><span class="nav-text">Service workflow</span></NavLink>
-    <NavLink title="Checks" href="checks" data-testid="nav-checks"><Icon Name="dash" /><span class="nav-text">Checks</span></NavLink>
+    <NavLink title="Checks" href="checks" data-testid="nav-checks">
+        <Icon Name="dash" /><span class="nav-text">Checks</span>
+        @if (errorCount > 0 || warningCount > 0)
+        {
+            <span class="nav-badges" aria-label="@($"{errorCount} errors, {warningCount} warnings")">
+                @if (errorCount > 0)
+                {
+                    <span class="nav-badge nav-badge-err" data-testid="nav-checks-errors" title="@($"{errorCount} {(errorCount == 1 ? "error" : "errors")}")">@errorCount</span>
+                }
+                @if (warningCount > 0)
+                {
+                    <span class="nav-badge nav-badge-warn" data-testid="nav-checks-warnings" title="@($"{warningCount} {(warningCount == 1 ? "warning" : "warnings")}")">@warningCount</span>
+                }
+            </span>
+        }
+    </NavLink>
     <NavLink title="Stress tests" href="stress" data-testid="nav-stress"><Icon Name="cpu" /><span class="nav-text">Stress tests</span></NavLink>
     <NavLink title="Interactive tests" href="interactive" data-testid="nav-interactive"><Icon Name="eye" /><span class="nav-text">Interactive tests</span></NavLink>
     <NavLink title="Security audit" href="security-audit" data-testid="nav-security-audit"><Icon Name="sec" /><span class="nav-text">Security audit</span></NavLink>

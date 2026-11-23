@@ -22,12 +22,16 @@ public sealed record CheckSettings
     /// <summary>Check ids turned off. Empty means every diagnostic check is enabled.</summary>
     public IReadOnlyList<string> Disabled { get; init; } = [];
 
+    /// <summary>Preferred display order of check ids (Dashboard cards and Checks list). Empty uses catalog order.</summary>
+    public IReadOnlyList<string> Order { get; init; } = [];
+
     public bool IsEnabled(string checkId) =>
         !Disabled.Any(id => string.Equals(id, checkId, StringComparison.OrdinalIgnoreCase));
 
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
 
-    public string ToJson() => JsonSerializer.Serialize(this with { Disabled = CheckEnableRules.Normalize(Disabled) }, Json);
+    public string ToJson() => JsonSerializer.Serialize(
+        this with { Disabled = CheckEnableRules.Normalize(Disabled), Order = CheckEnableRules.NormalizeOrder(Order) }, Json);
 
     public static CheckSettings? FromJson(string? json)
     {
@@ -42,6 +46,7 @@ public sealed record CheckSettings
             {
                 SchemaVersion = CheckSettings.CurrentSchemaVersion,
                 Disabled = CheckEnableRules.Normalize(state.Disabled),
+                Order = CheckEnableRules.NormalizeOrder(state.Order),
             };
         }
         catch (JsonException) { return null; }
@@ -97,6 +102,53 @@ public static class CheckEnableRules
             foreach (var id in ids)
                 if (!string.IsNullOrWhiteSpace(id)) set.Add(id.Trim());
         return set.OrderBy(id => id, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>Deduplicates and trims check ids while preserving their explicit display order.</summary>
+    public static List<string> NormalizeOrder(IEnumerable<string>? ids)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var list = new List<string>();
+        if (ids is not null)
+        {
+            foreach (var id in ids)
+            {
+                var trimmed = id?.Trim();
+                if (!string.IsNullOrWhiteSpace(trimmed) && seen.Add(trimmed))
+                    list.Add(trimmed);
+            }
+        }
+        return list;
+    }
+
+    /// <summary>Orders <paramref name="items"/> according to <paramref name="order"/>; unlisted items retain their original relative order at the end.</summary>
+    public static List<T> ApplyOrder<T>(IEnumerable<T> items, Func<T, string> getId, IReadOnlyList<string>? order)
+    {
+        var list = items.ToList();
+        if (order is null || order.Count == 0 || list.Count <= 1) return list;
+        var rank = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < order.Count; i++)
+            rank.TryAdd(order[i], i);
+        return list
+            .Select((item, idx) => (item, r: rank.TryGetValue(getId(item), out var pos) ? pos : int.MaxValue, idx))
+            .OrderBy(x => x.r).ThenBy(x => x.idx)
+            .Select(x => x.item)
+            .ToList();
+    }
+
+    /// <summary>Moves <paramref name="fromId"/> to the position of <paramref name="toId"/> across the combined ordered list.</summary>
+    public static IReadOnlyList<string> Reorder(IReadOnlyList<string> currentOrder, IEnumerable<string> allIds, string fromId, string toId)
+    {
+        if (string.IsNullOrWhiteSpace(fromId) || string.IsNullOrWhiteSpace(toId) || string.Equals(fromId, toId, StringComparison.OrdinalIgnoreCase))
+            return NormalizeOrder(currentOrder);
+        var combined = ApplyOrder(NormalizeOrder(allIds), id => id, currentOrder);
+        var fromIdx = combined.FindIndex(id => string.Equals(id, fromId, StringComparison.OrdinalIgnoreCase));
+        var toIdx = combined.FindIndex(id => string.Equals(id, toId, StringComparison.OrdinalIgnoreCase));
+        if (fromIdx < 0 || toIdx < 0 || fromIdx == toIdx) return combined;
+        var moved = combined[fromIdx];
+        combined.RemoveAt(fromIdx);
+        combined.Insert(toIdx, moved);
+        return combined;
     }
 
     /// <summary>The disabled list after turning <paramref name="checkId"/> on or off. Turning an unavailable check on leaves the list as it was.</summary>
@@ -204,18 +256,36 @@ public sealed class CheckSettingsService
         return true;
     }
 
-    public void SetEnabled(string checkId, bool on, bool available) =>
-        Save(Settings with { Disabled = CheckEnableRules.WithEnabled(Settings, checkId, on, available) });
+    public void SetEnabled(string checkId, bool on, bool available) => SetEnabled(checkId, on, available, persistToHost: true);
 
-    public void SetAll(IEnumerable<string> availableIds, bool on) =>
-        Save(Settings with { Disabled = CheckEnableRules.WithAll(Settings, availableIds, on) });
+    public void SetEnabled(string checkId, bool on, bool available, bool persistToHost) =>
+        Save(Settings with { Disabled = CheckEnableRules.WithEnabled(Settings, checkId, on, available) }, persistToHost);
 
-    private void Save(CheckSettings settings)
+    public void SetAll(IEnumerable<string> availableIds, bool on) => SetAll(availableIds, on, persistToHost: true);
+
+    public void SetAll(IEnumerable<string> availableIds, bool on, bool persistToHost) =>
+        Save(Settings with { Disabled = CheckEnableRules.WithAll(Settings, availableIds, on) }, persistToHost);
+
+    public void SetOrder(IEnumerable<string> orderedIds, bool persistToHost = true) =>
+        Save(Settings with { Order = CheckEnableRules.NormalizeOrder(orderedIds) }, persistToHost);
+
+    public void Reorder(string fromId, string toId, IEnumerable<string> allIds, bool persistToHost = true) =>
+        Save(Settings with { Order = CheckEnableRules.Reorder(Settings.Order, allIds, fromId, toId) }, persistToHost);
+
+    /// <summary>Applies a remote technician's saved preferences to this session without overwriting the customer PC's host settings file.</summary>
+    public void ApplyRemotePrefs(CheckSettings prefs) => Save(prefs, persistToHost: false);
+
+    private void Save(CheckSettings settings, bool persistToHost = true)
     {
         CheckSettings saved;
         lock (_gate)
-            _state = saved = settings with { SchemaVersion = CheckSettings.CurrentSchemaVersion, Disabled = CheckEnableRules.Normalize(settings.Disabled) };
-        _store.Save(saved);
+            _state = saved = settings with
+            {
+                SchemaVersion = CheckSettings.CurrentSchemaVersion,
+                Disabled = CheckEnableRules.Normalize(settings.Disabled),
+                Order = CheckEnableRules.NormalizeOrder(settings.Order),
+            };
+        if (persistToHost) _store.Save(saved);
         Raise();
     }
 
