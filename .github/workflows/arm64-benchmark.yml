@@ -10,20 +10,15 @@ on:
         description: 'Number of warm runs per architecture'
         required: false
         default: '5'
-      include_no_r2r:
-        description: 'Also benchmark standard JIT (PublishReadyToRun=false)'
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
 jobs:
-  benchmark-arm64-vs-x64:
-    name: Benchmark win-arm64 vs win-x64 on Windows 11 ARM64
-    runs-on: windows-11-arm
-    timeout-minutes: 25
+  publish-both:
+    name: Publish win-x64 and win-arm64
+    runs-on: windows-latest
+    timeout-minutes: 20
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
@@ -34,15 +29,45 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Publish win-x64 and win-arm64 (ReadyToRun)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $proj = 'src/RemotePCDiagnostics.Host/RemotePCDiagnostics.Host.csproj'
+          foreach ($rid in @('win-x64', 'win-arm64')) {
+            $outDir = "artifacts/benchmark/arm64-vs-x64/stage-$rid-r2r"
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            Write-Host ">>> Publishing $rid -> $outDir ..." -ForegroundColor Cyan
+            dotnet publish $proj -c Release -r $rid --self-contained true -p:PublishProfile=Installer -p:PublishReadyToRun=true -o $outDir
+            if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed for $rid ($LASTEXITCODE)" }
+          }
+
+      - name: Upload Staged Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-vs-x64-staged
+          path: artifacts/benchmark/arm64-vs-x64/
+          retention-days: 1
+
+  benchmark-arm64-vs-x64:
+    name: Benchmark win-arm64 vs win-x64 on Windows 11 ARM64
+    needs: publish-both
+    runs-on: windows-11-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Staged Binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: arm64-vs-x64-staged
+          path: artifacts/benchmark/arm64-vs-x64/
+
       - name: Run ARM64 vs x64 Startup Benchmark
         shell: pwsh
         run: |
           $runs = if ('${{ inputs.runs }}') { [int]'${{ inputs.runs }}' } else { 5 }
-          $argsList = @('-NoProfile', '-File', 'scripts/benchmark-arm64-vs-x64.ps1', '-Runs', $runs)
-          if ('${{ inputs.include_no_r2r }}' -eq 'true') {
-            $argsList += '-IncludeNoR2R'
-          }
-          & pwsh @argsList
+          pwsh -NoProfile -File scripts/benchmark-arm64-vs-x64.ps1 -SkipPublish -Runs $runs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload Benchmark Results
