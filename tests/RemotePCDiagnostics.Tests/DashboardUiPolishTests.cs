@@ -123,6 +123,17 @@ public class DashboardUiPolishTests : BunitContext
     }
 
     [Fact]
+    public void AppCss_DashCardTitle_OverridesCardHeadStrongMinWidthSoPillsStayInsideCard()
+    {
+        var root = RepoRoot();
+        var css = File.ReadAllText(Path.Combine(root, "src", "RemotePCDiagnostics.UI", "wwwroot", "app.css"));
+
+        // .card-head strong (specificity 0,1,1) sets min-width: min(9em, 100%).
+        // .dash-card-head .dash-card-title (specificity 0,2,0) must override min-width: 0 so right-side status pills never overflow the card boundary.
+        Assert.Contains(".dash-card-head .dash-card-title { flex: 1 1 0; min-width: 0;", css);
+    }
+
+    [Fact]
     public void ThemeSwitcher_UpdatesActiveButtonAndTriggersThumbSync()
     {
         Services.AddSingleton(new AppServices());
