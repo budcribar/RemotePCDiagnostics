@@ -24,7 +24,7 @@ public static class FixCatalog
     /// <summary>Single repair steps a technician picks on purpose: listed, but not ticked to start with.
     /// Stopping a device from waking the PC changes how the customer wakes it, so it is listed but left for the technician to tick.</summary>
     private static bool OptIn(RemediationKind k) => k is RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStoreFromImage
-        or RemediationKind.DisableDeviceWake;
+        or RemediationKind.DisableDeviceWake or RemediationKind.InstallBiosUpdate;
 
     /// <summary>Memory actions that persist across a restart and need nobody at the keyboard.</summary>
     public static readonly IReadOnlySet<MemoryActionType> UnattendedMemoryActions = new HashSet<MemoryActionType>
@@ -48,7 +48,7 @@ public static class FixCatalog
 
     private static readonly Dictionary<string, string> AreaNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        [ModuleSlugs.DeviceDrivers] = "Drivers & devices", [ModuleSlugs.Programs] = "Windows updates", [ModuleSlugs.ResourceHogs] = "Performance & power",
+        [ModuleSlugs.DeviceDrivers] = "Drivers & devices", [ModuleSlugs.BiosFirmware] = "BIOS & firmware", [ModuleSlugs.Programs] = "Windows updates", [ModuleSlugs.ResourceHogs] = "Performance & power",
         [ModuleSlugs.BatteryPower] = "Performance & power", [ModuleSlugs.SleepWake] = "Performance & power", [ModuleSlugs.Network] = "Network", [ModuleSlugs.DriveHealth] = "Storage", [ModuleSlugs.Services] = "Services",
         [ModuleSlugs.SecurityEssentials] = "Security",
         [ModuleSlugs.DismScanHealth] = RepairArea, [ModuleSlugs.SfcVerifyOnly] = RepairArea,
@@ -65,6 +65,7 @@ public static class FixCatalog
         RemediationKind.CleanUpComponentStore => CleanupOrder,
         RemediationKind.RepairComponentStoreFromImage => DismRepairOrder,
         RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates => 90,
+        RemediationKind.InstallBiosUpdate => 95,
         _ => 50,
     };
 
@@ -73,7 +74,7 @@ public static class FixCatalog
         RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.InstallUpdate
             or RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles or RemediationKind.SetPublicDns
             or RemediationKind.ResetDhcpDns or RemediationKind.DisableSystemProxy or RemediationKind.RestartDevice or RemediationKind.EnableDevice
-            or RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStoreFromImage => SuggestionRisk.Medium,
+            or RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStoreFromImage or RemediationKind.InstallBiosUpdate => SuggestionRisk.Medium,
         _ => SuggestionRisk.Low,
     };
 

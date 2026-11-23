@@ -49,6 +49,8 @@ public enum RemediationKind
     /// <summary>Stops one device from waking the PC (<c>powercfg /devicedisablewake</c>). Target = the device's name exactly as
     /// <c>powercfg /devicequery wake_armed</c> lists it; it must still be on that list when the fix runs. Undo arms it again.</summary>
     DisableDeviceWake,
+    /// <summary>Downloads, verifies, and stages the latest vendor BIOS/UEFI firmware update via <c>IBiosUpdateService</c>. Target = target BIOS version.</summary>
+    InstallBiosUpdate,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>

@@ -17,7 +17,6 @@ public static class BrowserContract
     public const int Certificates = 1;
     public const int History = 4;
     public const int About = 2;
-    public const int Bios = 1;
     public const int Module = 5;
 
     /// <summary>Every page marker value and its version.</summary>
@@ -33,7 +32,6 @@ public static class BrowserContract
         ["certificates"] = Certificates,
         ["history"] = History,
         ["about"] = About,
-        ["bios"] = Bios,
         ["module"] = Module,
     };
 }

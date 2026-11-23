@@ -42,6 +42,7 @@ public class ModuleIdsTests
         ["DuplicateFiles"] = "e22a8740-410a-4da5-a912-21ea7f7d195f",
         ["SleepWake"] = "d8665737-c11d-44ad-b1d3-72b14dcdaedd",
         ["DeveloperSetup"] = "c4e8a912-3f7b-4d61-9b5e-2e8f1a7c4d03",
+        ["BiosFirmware"] = "7f3c9b2e-5d1a-4c8f-a6e0-9b4d2e1f8a3c",
     };
 
     [Fact]

@@ -67,6 +67,8 @@ public static class ModuleIds
     public static readonly Guid SleepWake = new("d8665737-c11d-44ad-b1d3-72b14dcdaedd");
     /// <summary>Slug <c>DeveloperSetup</c>.</summary>
     public static readonly Guid DeveloperSetup = new("c4e8a912-3f7b-4d61-9b5e-2e8f1a7c4d03");
+    /// <summary>Slug <c>BiosFirmware</c>.</summary>
+    public static readonly Guid BiosFirmware = new("7f3c9b2e-5d1a-4c8f-a6e0-9b4d2e1f8a3c");
 
     /// <summary>Every built-in id with its slug (the module's Name). Includes modules that are not registered on every build.</summary>
     public static IReadOnlyDictionary<Guid, string> BuiltIn { get; } = new Dictionary<Guid, string>
@@ -101,6 +103,7 @@ public static class ModuleIds
         [DuplicateFiles] = ModuleSlugs.DuplicateFiles,
         [SleepWake] = ModuleSlugs.SleepWake,
         [DeveloperSetup] = ModuleSlugs.DeveloperSetup,
+        [BiosFirmware] = ModuleSlugs.BiosFirmware,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -146,4 +149,5 @@ public static class ModuleSlugs
     public const string DuplicateFiles = "DuplicateFiles";
     public const string SleepWake = "SleepWake";
     public const string DeveloperSetup = "DeveloperSetup";
+    public const string BiosFirmware = "BiosFirmware";
 }

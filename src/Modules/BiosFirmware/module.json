@@ -1,0 +1,12 @@
+{
+  "id": "7f3c9b2e-5d1a-4c8f-a6e0-9b4d2e1f8a3c",
+  "slug": "BiosFirmware",
+  "displayName": "BIOS & firmware",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.BiosFirmware.BiosFirmwarePlugin",
+  "needsAdmin": false,
+  "hasUi": false,
+  "outOfProcess": false,
+  "portableUi": false,
+  "detailsReplaceReport": false
+}

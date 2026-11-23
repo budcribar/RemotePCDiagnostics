@@ -81,7 +81,8 @@ public sealed class RemediationService(
     RebootResumeCoordinator? rebootResume = null,
     Changes.IChangeJournal? journal = null,
     RetrimLog? retrimLog = null,
-    ISystemSettings? settings = null)
+    ISystemSettings? settings = null,
+    Bios.IBiosUpdateService? bios = null)
 {
     /// <summary>This app's record of successful retrims (so Drive health stops offering it right away).</summary>
     public RetrimLog? RetrimLog => retrimLog;
@@ -312,6 +313,16 @@ public sealed class RemediationService(
                 ? new(action, $"{sf.ButtonText}?", sf.WhatItIs, sf.WhatHappens, sf.Caveat, true)
                 : new(action, action.ButtonText, "", "This setting isn't one this app changes.", "This setting isn't one this app changes.", Allowed: false),
 
+            RemediationKind.InstallBiosUpdate => new(
+                action,
+                string.IsNullOrWhiteSpace(label) ? "Update BIOS to latest version?" : $"Update BIOS to {label}?",
+                "Downloads, verifies, and stages the official vendor BIOS/UEFI firmware update for this PC.",
+                "Checks AC power, battery level, BitLocker, and administrator prerequisites, suspends BitLocker for one reboot if active, verifies the signed vendor package, and stages the BIOS update. Not undoable.",
+                bios is null
+                    ? "BIOS update service is not available in this session."
+                    : "Requires administrator privileges, AC power, and a restart to finish flashing. Do not turn off or unplug the PC while the BIOS update is applying.",
+                bios is not null),
+
             _ => new(action, action.ButtonText, "", "", null, true),
         };
     }
@@ -359,7 +370,7 @@ public sealed class RemediationService(
                 // Permanent changes are journaled too, so "Undo all" can say what it left as is. Update checks that installed nothing changed nothing.
                 // Temp cleanup writes its own TempFiles record (with the amount freed), so it isn't recorded twice.
                 var permanent = Changes.Undoability.Of(action.Kind) == Changes.UndoSupport.None && action.Kind != RemediationKind.CleanTempFiles
-                    && (action.Kind is not (RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.InstallUpdate) || result.UpdatesInstalled > 0);
+                    && (action.Kind is not (RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.InstallUpdate or RemediationKind.InstallBiosUpdate) || result.UpdatesInstalled > 0);
                 if (result.Success && permanent)
                     try { journal?.Add(Changes.Undoability.Permanent($"{action.Kind}:{action.Target}:{Guid.NewGuid():N}", $"{plan.Title.TrimEnd('?')}: {result.Message}", actor)); }
                     catch (Exception ex) { Log($"journal: {ex.Message}"); }
@@ -477,6 +488,8 @@ public sealed class RemediationService(
 
         RemediationKind.DisableDeviceWake => await RunDisableDeviceWakeAsync(action, ct).ConfigureAwait(false),
 
+        RemediationKind.InstallBiosUpdate => await RunInstallBiosUpdateAsync(ct).ConfigureAwait(false),
+
         RemediationKind.OptimizeSsd => await RunAgentScriptAsync(
             AgentScripts.Of(AgentScripts.OptimizeVolume, DriveLetters(action.Target)),
             $"Optimized / Retrimmed {Display(action)}.",
@@ -485,6 +498,44 @@ public sealed class RemediationService(
 
         _ => new(false, "Unsupported action."),
     };
+
+    private async Task<RemediationResult> RunInstallBiosUpdateAsync(CancellationToken ct)
+    {
+        if (bios is null)
+            return new(false, "BIOS update service is not available in this session.");
+
+        RepairProgress?.Report("Checking current BIOS version and vendor catalog…");
+        var outcome = await bios.CheckForUpdateAsync(ct).ConfigureAwait(false);
+        if (outcome.Latest.Status == Bios.BiosCheckStatus.UpToDate)
+            return new(true, string.IsNullOrWhiteSpace(outcome.Latest.Message) ? "BIOS is already up to date." : outcome.Latest.Message);
+
+        if (outcome.Latest.Status != Bios.BiosCheckStatus.UpdateAvailable)
+            return new(false, outcome.Latest.Message ?? "No installable BIOS update is available.");
+
+        var request = new Bios.BiosInstallRequest(
+            System: outcome.System,
+            Current: outcome.Current,
+            Target: outcome.Latest,
+            Approved: true,
+            ApprovedBy: Actor,
+            AllowReboot: false,
+            SuspendBitLocker: true);
+
+        IProgress<Bios.BiosInstallProgress>? progress = RepairProgress is { } rp
+            ? new Progress<Bios.BiosInstallProgress>(p =>
+            {
+                var msg = string.IsNullOrWhiteSpace(p.Detail) ? p.Stage.ToString() : p.Detail;
+                rp.Report(p.Percent is > 0 and < 100 ? $"{msg} ({p.Percent}%)" : msg);
+            })
+            : null;
+
+        var install = await bios.InstallUpdateAsync(request, progress, ct).ConfigureAwait(false);
+        var message = string.IsNullOrWhiteSpace(install.Message)
+            ? (install.Succeeded ? $"BIOS update to {install.TargetVersion} staged." : "BIOS update failed.")
+            : install.Message;
+        var installedCount = install.Succeeded && install.Status != Bios.BiosInstallStatus.AlreadyUpToDate ? 1 : 0;
+        return new(install.Succeeded, message, UpdatesInstalled: installedCount, RestartNeeded: install.RequiresReboot);
+    }
 
     /// <summary>Only a device Windows lists as wake-armed right now, by the name Windows gives it.</summary>
     private async Task<RemediationResult> RunDisableDeviceWakeAsync(AreaAction action, CancellationToken ct)

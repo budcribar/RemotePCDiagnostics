@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>RemotePCDiagnostics.Modules.BiosFirmware</AssemblyName>
+  </PropertyGroup>
+</Project>

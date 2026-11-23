@@ -109,6 +109,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "DeveloperSetup", "Developer
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules.DeveloperSetup", "src\Modules\DeveloperSetup\RemotePCDiagnostics.Modules.DeveloperSetup.csproj", "{96B6F98E-74B7-4086-9286-77E20ED8AA34}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "BiosFirmware", "BiosFirmware", "{FF787A49-A8C1-5AEA-722A-D1B55891734D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules.BiosFirmware", "src\Modules\BiosFirmware\RemotePCDiagnostics.Modules.BiosFirmware.csproj", "{EFE7B9BA-F3A6-4842-A322-641B70328BA5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -671,6 +675,18 @@ Global
 		{96B6F98E-74B7-4086-9286-77E20ED8AA34}.Release|x64.Build.0 = Release|Any CPU
 		{96B6F98E-74B7-4086-9286-77E20ED8AA34}.Release|x86.ActiveCfg = Release|Any CPU
 		{96B6F98E-74B7-4086-9286-77E20ED8AA34}.Release|x86.Build.0 = Release|Any CPU
+		{EFE7B9BA-F3A6-4842-A322-641B70328BA5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EFE7B9BA-F3A6-4842-A322-641B70328BA5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EFE7B9BA-F3A6-4842-A322-641B70328BA5}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{EFE7B9BA-F3A6-4842-A322-641B70328BA5}.Debug|x64.Build.0 = Debug|Any CPU
+		{EFE7B9BA-F3A6-4842-A322-641B70328BA5}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{EFE7B9BA-F3A6-4842-A322-641B70328BA5}.Debug|x86.Build.0 = Debug|Any CPU
+		{EFE7B9BA-F3A6-4842-A322-641B70328BA5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EFE7B9BA-F3A6-4842-A322-641B70328BA5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EFE7B9BA-F3A6-4842-A322-641B70328BA5}.Release|x64.ActiveCfg = Release|Any CPU
+		{EFE7B9BA-F3A6-4842-A322-641B70328BA5}.Release|x64.Build.0 = Release|Any CPU
+		{EFE7B9BA-F3A6-4842-A322-641B70328BA5}.Release|x86.ActiveCfg = Release|Any CPU
+		{EFE7B9BA-F3A6-4842-A322-641B70328BA5}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -724,5 +740,7 @@ Global
 		{EC447DCF-ABFA-6E24-52A5-D7FD48A5C558} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{19B16321-CA38-3220-CAD3-D551C8A3A8BE} = {EC447DCF-ABFA-6E24-52A5-D7FD48A5C558}
 		{96B6F98E-74B7-4086-9286-77E20ED8AA34} = {19B16321-CA38-3220-CAD3-D551C8A3A8BE}
+		{FF787A49-A8C1-5AEA-722A-D1B55891734D} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
+		{EFE7B9BA-F3A6-4842-A322-641B70328BA5} = {FF787A49-A8C1-5AEA-722A-D1B55891734D}
 	EndGlobalSection
 EndGlobal
