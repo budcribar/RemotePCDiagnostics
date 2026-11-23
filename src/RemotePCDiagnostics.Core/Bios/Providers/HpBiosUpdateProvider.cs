@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using RemotePCDiagnostics.Core.Areas;
@@ -178,42 +179,39 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
         }
 
         var isWin11 = BiosVendorIdentity.IsWindows11(system.OsVersion);
-        var usedOs = isWin11 ? "11.0" : "10.0";
-        var primaryUrl = BuildCatalogUrl(_catalogUrlTemplate, systemId, usedOs);
+        var isArm64 = !string.IsNullOrWhiteSpace(system.Architecture)
+            ? system.Architecture.Contains("arm64", StringComparison.OrdinalIgnoreCase)
+            : RuntimeInformation.OSArchitecture == Architecture.Arm64;
+        var candidates = BuildCatalogCandidates(_catalogUrlTemplate, systemId, isWin11, isArm64);
 
         try
         {
-            var response = await BiosProviderHttp.GetFollowingAllowedRedirectsAsync(
-                _http,
-                primaryUrl,
-                AllowedHostSuffixes,
-                HttpCompletionOption.ResponseHeadersRead,
-                ct).ConfigureAwait(false);
-
+            HttpResponseMessage? response = null;
+            var usedOs = candidates[0].OsVersion;
             try
             {
-                if (response.StatusCode == HttpStatusCode.NotFound && isWin11)
+                for (var i = 0; i < candidates.Count; i++)
                 {
-                    var fallbackUrl = BuildCatalogUrl(_catalogUrlTemplate, systemId, "10.0");
-                    if (!string.Equals(fallbackUrl, primaryUrl, StringComparison.OrdinalIgnoreCase))
-                    {
-                        response.Dispose();
-                        usedOs = "10.0";
-                        response = await BiosProviderHttp.GetFollowingAllowedRedirectsAsync(
-                            _http,
-                            fallbackUrl,
-                            AllowedHostSuffixes,
-                            HttpCompletionOption.ResponseHeadersRead,
-                            ct).ConfigureAwait(false);
-                    }
+                    var candidate = candidates[i];
+                    usedOs = candidate.OsVersion;
+                    response?.Dispose();
+                    response = await BiosProviderHttp.GetFollowingAllowedRedirectsAsync(
+                        _http,
+                        candidate.Url,
+                        AllowedHostSuffixes,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        ct).ConfigureAwait(false);
+
+                    if (response.StatusCode != HttpStatusCode.NotFound)
+                        break;
                 }
 
-                if (!response.IsSuccessStatusCode)
+                if (response is null || !response.IsSuccessStatusCode)
                 {
                     return BiosProviderHttp.ClassifyHttpStatus(
                         VendorId,
                         DisplayName,
-                        response.StatusCode,
+                        response?.StatusCode ?? HttpStatusCode.NotFound,
                         $"SystemId {systemId}");
                 }
 
@@ -237,7 +235,7 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
             }
             finally
             {
-                response.Dispose();
+                response?.Dispose();
             }
         }
         catch (Exception ex)
@@ -570,6 +568,67 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
             .Replace("{SYSTEMID}", systemId.ToUpperInvariant(), StringComparison.Ordinal)
             .Replace("{osVersion}", osVersion, StringComparison.Ordinal)
             .Replace("{os}", osVersion, StringComparison.Ordinal);
+
+    private static IReadOnlyList<(string Url, string OsVersion)> BuildCatalogCandidates(
+        string template,
+        string systemId,
+        bool isWin11,
+        bool isArm64)
+    {
+        var list = new List<(string Url, string OsVersion)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string urlTemplate, string osVer)
+        {
+            var url = BuildCatalogUrl(urlTemplate, systemId, osVer);
+            if (seen.Add(url))
+                list.Add((url, osVer));
+        }
+
+        // HP HPIA S3 buckets store case-sensitive lowercase feature-release CABs
+        // (e.g., 8cbe_arm64_11.0.24h2.cab, 880d_64_11.0.25h2.cab).
+        var arm64Template = template.Contains("_64_", StringComparison.Ordinal)
+            ? template.Replace("_64_", "_arm64_", StringComparison.Ordinal)
+            : null;
+
+        string[] win11FeatureReleases = ["11.0.25h2", "11.0.24h2", "11.0.23h2", "11.0.22h2"];
+
+        if (isArm64 && arm64Template is not null)
+        {
+            if (isWin11)
+            {
+                foreach (var ver in win11FeatureReleases) Add(arm64Template, ver);
+                Add(arm64Template, "11.0");
+            }
+            else
+            {
+                Add(arm64Template, "10.0");
+                Add(arm64Template, "10.0.22h2");
+            }
+        }
+
+        // Preserve primary + legacy bare-version fallback order for x64 (and as fallback on ARM64).
+        if (isWin11)
+        {
+            Add(template, "11.0");
+            Add(template, "10.0");
+            foreach (var ver in win11FeatureReleases) Add(template, ver);
+
+            // Also probe ARM64 CABs as a fallback when running under x64 emulation on ARM64 hardware.
+            if (!isArm64 && arm64Template is not null)
+                foreach (var ver in win11FeatureReleases) Add(arm64Template, ver);
+
+            Add(template, "10.0.22h2");
+        }
+        else
+        {
+            Add(template, "10.0");
+            Add(template, "10.0.22h2");
+            Add(template, "10.0.21h2");
+        }
+
+        return list;
+    }
 
     private static bool IsBiosCategory(string? category, string? name)
     {

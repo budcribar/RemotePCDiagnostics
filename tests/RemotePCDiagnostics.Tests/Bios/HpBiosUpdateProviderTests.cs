@@ -256,6 +256,93 @@ public sealed class HpBiosUpdateProviderTests
     }
 
     [Fact]
+    public async Task GetLatestVersionAsync_Arm64VersionedCatalog_Resolves8cbeOmniBookX()
+    {
+        const string xml = """
+            <ImagePal>
+              <UpdateInfo>
+                <Id>sp160001</Id>
+                <Category>BIOS</Category>
+                <Name>HP Consumer Notebook System BIOS Update (ARM64)</Name>
+                <Version>F.36</Version>
+                <DateReleased>2026-09-15</DateReleased>
+                <Url>https://ftp.hp.com/pub/softpaq/sp160001-160500/sp160001.exe</Url>
+              </UpdateInfo>
+            </ImagePal>
+            """;
+
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://hpia.hpcloud.hp.com/ref/8cbe/8cbe_arm64_11.0.24h2.cab", xml, "application/xml");
+
+        var provider = HpBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Hp(
+            model: "HP OmniBook X Laptop 14-fe0xxx",
+            boardProduct: "8CBE",
+            biosVersion: "F.34",
+            osVersion: "Microsoft Windows 11 Home 10.0.26100") with { Architecture = "ARM64" };
+        var current = await provider.GetCurrentVersionAsync(identity);
+
+        var latest = await provider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UpdateAvailable, latest.Status);
+        Assert.Equal("F.36", latest.LatestVersion);
+        Assert.Equal("11.0.24h2", latest.Metadata?["osVersion"]);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.EndsWith("8cbe_arm64_11.0.25h2.cab", handler.Requests[0].RequestUri!.AbsoluteUri, StringComparison.Ordinal);
+        Assert.EndsWith("8cbe_arm64_11.0.24h2.cab", handler.Requests[1].RequestUri!.AbsoluteUri, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_X64Emulation_FallsBackToArm64VersionedCatalog()
+    {
+        const string xml = """
+            <ImagePal>
+              <UpdateInfo>
+                <Id>sp160001</Id>
+                <Category>BIOS</Category>
+                <Name>HP Consumer Notebook System BIOS Update (ARM64)</Name>
+                <Version>F.36</Version>
+                <Url>https://ftp.hp.com/pub/softpaq/sp160001-160500/sp160001.exe</Url>
+              </UpdateInfo>
+            </ImagePal>
+            """;
+
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://hpia.hpcloud.hp.com/ref/8cbe/8cbe_arm64_11.0.24h2.cab", xml, "application/xml");
+
+        var provider = HpBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Hp(
+            model: "HP OmniBook X Laptop 14-fe0xxx",
+            boardProduct: "8CBE",
+            biosVersion: "F.34",
+            osVersion: "Microsoft Windows 11 Home 10.0.26100");
+        var current = await provider.GetCurrentVersionAsync(identity);
+
+        var latest = await provider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UpdateAvailable, latest.Status);
+        Assert.Equal("F.36", latest.LatestVersion);
+        Assert.Equal("11.0.24h2", latest.Metadata?["osVersion"]);
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_Win11FeatureReleaseFallback_ResolvesLowercase25h2()
+    {
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://hpia.hpcloud.hp.com/ref/880d/880d_64_11.0.25h2.cab", SampleHpCatalogXml, "application/xml");
+
+        var provider = HpBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Hp(osVersion: "Microsoft Windows 11 Pro 10.0.26100");
+        var current = await provider.GetCurrentVersionAsync(identity);
+
+        var latest = await provider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UpdateAvailable, latest.Status);
+        Assert.Equal("01.15.00", latest.LatestVersion);
+        Assert.Equal("11.0.25h2", latest.Metadata?["osVersion"]);
+    }
+
+    [Fact]
     public async Task GetLatestVersionAsync_Md5ChecksumInCatalog_IsIgnoredNotTreatedAsSha256()
     {
         const string xml = """
