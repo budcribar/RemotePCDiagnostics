@@ -831,6 +831,28 @@ public sealed class BiosProviderInfrastructureTests
         Assert.False(Directory.Exists(Path.GetDirectoryName(observedOutDir)!));
     }
 
+    [Fact]
+    public async Task ExtractXmlFromCabOrPlain_PureCSharpLzxExtractsWithoutExpandExe()
+    {
+        // Odd-length XML payload across multiple CFDATA blocks to cover LZX-21 (0x1503) multi-block & pad-byte handling.
+        var expectedXml = "<ImagePal><SystemInfo><SystemID>8CBE</SystemID></SystemInfo>"
+            + new string(' ', 128)
+            + "<Solutions><UpdateInfo><Category>BIOS</Category><Version>F.35</Version></UpdateInfo></Solutions></ImagePal>";
+        Assert.Equal(1, Encoding.UTF8.GetByteCount(expectedXml) & 1);
+
+        var lzxCab = TestCabBuilder.CreateLzxUncompressed(
+            new Dictionary<string, byte[]> { ["8cbe_ARM64_11.0.24H2.xml"] = Encoding.UTF8.GetBytes(expectedXml) },
+            maxBlockSize: 64);
+
+        var unusedLauncher = new RecordingProcessLauncher(_ => new ProcessResult(1, "", "should not be called"));
+        var unusedCommands = RecordingProcessLauncher.CreateCommandRunner(unusedLauncher);
+
+        // Extracts purely in memory even when commands is null or a launcher is supplied — zero expand.exe calls.
+        Assert.Equal(expectedXml, await BiosArchiveAndXml.ExtractXmlFromCabOrPlainAsync(lzxCab, "hp-8CBE", commands: null));
+        Assert.Equal(expectedXml, await BiosArchiveAndXml.ExtractXmlFromCabOrPlainAsync(lzxCab, "hp-8CBE", unusedCommands));
+        Assert.Empty(unusedLauncher.Calls);
+    }
+
     // -------------------------------------------------------------------------
     // F8: BiosVendorIdentity
     // -------------------------------------------------------------------------
