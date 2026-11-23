@@ -176,12 +176,13 @@ try {
   console.log('History page:', await page.getByTestId('history-empty').count() ? 'empty state' : `${await page.getByTestId('history-row').count()} row(s)`);
   await page.screenshot({ path: `${outDir}/history.png`, fullPage: true });
 
-  // QA Certificate & Shop Branding page: renders live 1-page QR certificate preview, 10-min QA preset, physical QA checks, and hosted relay publishing controls.
+  // QA Certificate page: renders Hardware QA Check (with select all/none) and live 1-page QR certificate preview.
   await page.getByTestId('nav-certificates').click();
   await page.getByTestId('branding-title').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('bench-qa-select-all').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('bench-qa-start').waitFor({ state: 'visible', timeout: 15_000 });
-  await page.getByTestId('relay-publish-card').waitFor({ state: 'visible', timeout: 15_000 });
-  await page.getByTestId('publish-hosted-cert').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('qa-cert-card').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('qa-save-html').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('qa-preview-frame').waitFor({ state: 'visible', timeout: 15_000 });
   console.log('QA Certificate ID:', await page.getByTestId('qa-live-id').innerText());
   await page.screenshot({ path: `${outDir}/certificates.png`, fullPage: true });
