@@ -659,7 +659,7 @@ else
         _analyzingDump = true;
         _analyzedDump = path;
         _dumpAnalysis = null;
-        try { _dumpAnalysis = await CrashDumpDebugger.AnalyzeAsync(path); }
+        try { _dumpAnalysis = await CrashDumpDebugger.AnalyzeAsync(path, App.Commands); }
         finally { _analyzingDump = false; }
     }
 

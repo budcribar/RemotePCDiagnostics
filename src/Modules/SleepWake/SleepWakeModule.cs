@@ -281,12 +281,25 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
         if (timers is null) return AreaCard.Failed("timers", Title, "Couldn't read wake timers (this needs administrator rights).");
         var byTimer = wakes.Count(w => w.ByTimer);
         var level = byTimer > 0 ? AreaLevel.Warning : timers.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok;
+        var rows = timers.Select(t =>
+        {
+            IReadOnlyList<AreaAction>? actions = DeviceWake.TryExtractTaskPath(t.Reason, out var taskPath)
+                ? [new AreaAction(RemediationKind.DisableWakeTimer, "Stop it waking the PC", taskPath, DeviceWake.ShortTaskName(taskPath))]
+                : null;
+            return new AreaRow(AreaLevel.Neutral, [SleepWakeParsers.ShortRequester(t.Owner), t.Expires, t.Reason],
+                Key: actions is not null ? actions[0].Target : null, Actions: actions);
+        }).ToList();
+        var hasAction = rows.Any(r => r.Actions is { Count: > 0 });
+        var note = byTimer > 0
+            ? "To stop timers waking the PC on battery: Control Panel > Power Options > Change plan settings > Change advanced power settings > Sleep > Allow wake timers > On battery: Disable."
+            : hasAction ? "Stopping a scheduled task from waking the PC leaves the task enabled while the PC is awake, and is undoable."
+            : null;
         return new("timers", Title, level,
             timers.Count == 0 ? "No wake timers set" : AreaModuleBase.Plural(timers.Count, "wake timer") + " set",
             byTimer > 0 ? $"Timers woke the PC {AreaModuleBase.Plural(byTimer, "time")} in {EventDays} days" : "Scheduled tasks and apps can set timers that wake the PC",
-            cols, timers.Select(t => new AreaRow(AreaLevel.Neutral, [SleepWakeParsers.ShortRequester(t.Owner), t.Expires, t.Reason])).ToList(),
+            cols, rows,
             EmptyText: "Nothing has asked Windows to wake the PC.",
-            Note: byTimer > 0 ? "To stop timers waking the PC on battery: Control Panel > Power Options > Change plan settings > Change advanced power settings > Sleep > Allow wake timers > On battery: Disable." : null);
+            Note: note);
     }
 
     private static AreaCard BlockersCard(IReadOnlyList<PowerRequest>? requests, List<string> parts)

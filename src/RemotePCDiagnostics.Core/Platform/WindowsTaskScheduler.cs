@@ -152,6 +152,45 @@ public static class WindowsTaskScheduler
         }
     }
 
+    /// <summary>Sets <c>Settings.WakeToRun</c> on a scheduled task without disabling the task itself. Returns false if the task doesn't exist.</summary>
+    [SupportedOSPlatform("windows")]
+    public static bool SetTaskWakeToRun(string folderPath, string taskName, bool wakeToRun)
+    {
+        object? serviceObj = null;
+        object? folderObj = null;
+        object? taskObj = null;
+        object? defObj = null;
+        object? registeredObj = null;
+        try
+        {
+            serviceObj = ConnectService();
+            dynamic service = serviceObj;
+            folderObj = service.GetFolder(NormalizeFolder(folderPath));
+            dynamic folder = folderObj;
+            taskObj = folder.GetTask(taskName);
+            dynamic task = taskObj;
+            defObj = task.Definition;
+            dynamic def = defObj;
+            def.Settings.WakeToRun = wakeToRun;
+            int logonType = (int)def.Principal.LogonType;
+            // TASK_CREATE_OR_UPDATE = 6; passing null user/password preserves the task's existing principal.
+            registeredObj = folder.RegisterTaskDefinition(taskName, def, 6, null, null, logonType, null);
+            return true;
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+        finally
+        {
+            SafeReleaseCom(registeredObj);
+            SafeReleaseCom(defObj);
+            SafeReleaseCom(taskObj);
+            SafeReleaseCom(folderObj);
+            SafeReleaseCom(serviceObj);
+        }
+    }
+
     /// <summary>
     /// Counts non-disabled tasks across all folders except those under <paramref name="excludedFolderPrefix"/>
     /// (for example <c>"\\Microsoft\\Windows\\"</c>, matching PowerShell's <c>-notlike '\Microsoft\Windows\*'</c>).

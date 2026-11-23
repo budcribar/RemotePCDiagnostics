@@ -380,4 +380,45 @@ public class SleepWakeTests
         Assert.All(wake, f => Assert.Equal("Performance & power", f.Area));
         Assert.Equal("rem:disabledevicewake:hid keyboard device", wake[0].Id);
     }
+
+    [Fact]
+    public void ScheduledTaskWakeTimer_ExtractsPath_AttachesAction_AndPlansAgentScript()
+    {
+        const string reason = "Windows will execute 'NT TASK\\Hewlett-Packard\\HP Diagnostics\\SmartCheckTest' scheduled task that requested waking the computer.";
+        Assert.True(DeviceWake.TryExtractTaskPath(reason, out var taskPath));
+        Assert.Equal(@"\Hewlett-Packard\HP Diagnostics\SmartCheckTest", taskPath);
+        Assert.Equal("SmartCheckTest", DeviceWake.ShortTaskName(taskPath));
+        Assert.False(DeviceWake.TryExtractTaskPath("Some app timer without a task", out _));
+        Assert.False(DeviceWake.IsSafeTaskPath(@"..\escape"));
+
+        var facts = Facts() with
+        {
+            Timers = [new WakeTimer(@"[SERVICE] \Device\HarddiskVolume3\Windows\System32\svchost.exe (SystemEventsBroker)", "7:59:30 AM on 11/30/2026", reason)]
+        };
+        var report = SleepWakeModule.Build(facts, DateTimeOffset.Now);
+        var timers = report.Cards.Single(c => c.Id == "timers");
+        var row = Assert.Single(timers.Rows);
+        var action = Assert.Single(row.Actions!);
+        Assert.Equal(RemediationKind.DisableWakeTimer, action.Kind);
+        Assert.Equal(taskPath, action.Target);
+        Assert.Equal("SmartCheckTest", action.TargetLabel);
+
+        var plan = RemotePCDiagnostics.Core.Session.AgentScripts.Plan(
+            RemotePCDiagnostics.Core.Session.AgentScripts.Of(RemotePCDiagnostics.Core.Session.AgentScripts.TaskWakeToRun, taskPath, "false"),
+            null, out var refusal);
+        Assert.Null(refusal);
+        var native = Assert.IsType<RemotePCDiagnostics.Core.Session.SetTaskWakeToRunAction>(plan!.Native);
+        Assert.Equal((taskPath, false), (native.TaskPath, native.WakeToRun));
+
+        Assert.Null(RemotePCDiagnostics.Core.Session.AgentScripts.Plan(
+            RemotePCDiagnostics.Core.Session.AgentScripts.Of(RemotePCDiagnostics.Core.Session.AgentScripts.TaskWakeToRun, @"..\bad", "false"),
+            null, out _));
+
+        var svc = new RemediationService(new SystemCommandRunner());
+        var remPlan = svc.Plan(action);
+        Assert.True(remPlan.Allowed);
+        Assert.Contains("WakeToRun", remPlan.WhatWillHappen);
+        Assert.Equal(UndoSupport.Full, Undoability.Of(RemediationKind.DisableWakeTimer));
+        Assert.Equal("disablewaketimer", FixKeys.Of(RemediationKind.DisableWakeTimer));
+    }
 }

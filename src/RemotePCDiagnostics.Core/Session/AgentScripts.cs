@@ -40,6 +40,10 @@ public static class AgentScripts
     public const string ResumeTaskRegister = "resume_task_register";
     /// <summary>Args: <see cref="RebootTask"/> or <see cref="WorkflowTask"/>. Fails only when the task is still there afterwards.</summary>
     public const string ResumeTaskRemove = "resume_task_remove";
+    /// <summary>Args: full Task Scheduler path (e.g. <c>\Folder\Task</c>) and <c>"false"</c> or <c>"true"</c>.</summary>
+    public const string TaskWakeToRun = "task_wake_to_run";
+    /// <summary>Args: allowlisted system dump path under <c>%SystemRoot%\Minidump</c>, <c>LiveKernelReports</c>, or <c>MEMORY.DMP</c>.</summary>
+    public const string AnalyzeCrashDump = "analyze_crash_dump";
 
     public const string RebootTask = "reboot";
     public const string WorkflowTask = "workflow";
@@ -121,6 +125,16 @@ public static class AgentScripts
 
             case ResumeTaskRemove:
                 return a.Count == 1 && TaskName(Arg(0)) is { } remove ? Native(new RemoveTaskAction(remove)) : Refuse("That isn't a sign-in task this app creates.");
+
+            case TaskWakeToRun:
+                if (a.Count != 2 || !Areas.DeviceWake.IsSafeTaskPath(Arg(0)) || Arg(1) is not ("true" or "false"))
+                    return Refuse("That isn't a valid scheduled task wake setting.");
+                return Native(new SetTaskWakeToRunAction(Arg(0)!, Arg(1) == "true"));
+
+            case AnalyzeCrashDump:
+                if (a.Count != 1 || !Areas.CrashDumpDebugger.IsAllowedSystemDumpPath(Arg(0)))
+                    return Refuse("That dump path isn't in a Windows system dump folder.");
+                return Native(new AnalyzeCrashDumpAction(Arg(0)!.Trim()));
 
             default:
                 return Refuse($"Unknown script '{request.Name}'.");

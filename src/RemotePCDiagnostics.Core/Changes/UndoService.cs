@@ -226,6 +226,12 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 return wr is { ExitCode: 0 } ? Ok($"{c.Target} can wake the PC again.")
                     : Fail("Windows didn't allow it (administrator rights needed, or the device is no longer connected).");
 
+            case ChangeKind.WakeTimer:
+                if (!DeviceWake.IsSafeTaskPath(c.Target)) return Fail("The scheduled task wasn't recorded, so it was left as is.");
+                var tr = await commands.RunAgentScriptAsync(Session.AgentScripts.Of(Session.AgentScripts.TaskWakeToRun, c.Target, "true"), null, ct).ConfigureAwait(false);
+                return tr is { ExitCode: 0 } ? Ok($"{DeviceWake.ShortTaskName(c.Target)} can wake the PC again.")
+                    : Fail("Windows didn't allow it (administrator rights needed, or the scheduled task no longer exists).");
+
             case ChangeKind.SystemProxy:
                 return Set(c, s => s.SetUserProxyEnable(Dword(c.Previous)), "System proxy setting restored.");
 

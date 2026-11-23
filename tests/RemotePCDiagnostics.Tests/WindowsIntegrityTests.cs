@@ -271,6 +271,28 @@ public class WindowsIntegrityTests
         Assert.Contains(steps, s => s.Step == 42 && s.Message == "Scanning…");
     }
 
+    [Fact]
+    public async Task Sfc_TrimsVerificationPercentLinesFromOutput()
+    {
+        var raw = string.Join("\r\n",
+            "Beginning system scan.  This process will take some time.",
+            "",
+            "",
+            "Beginning verification phase of system scan.",
+            "Verification 0% complete.",
+            "Verification 1% complete.",
+            "Verification 50% complete.",
+            "Verification 100% complete.",
+            "",
+            "Windows Resource Protection did not find any integrity violations.");
+        var r = await Sfc(new(0, raw, "")).RefreshAsync(null);
+        var rep = Assert.IsType<AreaReport>(r.Payload);
+        var output = rep.Cards.Single().Rows.Single(row => row.Values[0] == "Output").Values[1];
+        Assert.DoesNotContain("% complete", output);
+        Assert.Contains("Beginning system scan.", output);
+        Assert.Contains("Windows Resource Protection did not find any integrity violations.", output);
+    }
+
     private sealed class StreamingLauncher(IReadOnlyList<string> lines, ProcessResult result) : IProcessLauncher
     {
         public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct) =>

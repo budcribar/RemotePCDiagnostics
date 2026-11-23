@@ -82,7 +82,8 @@ public sealed class RemediationService(
     Changes.IChangeJournal? journal = null,
     RetrimLog? retrimLog = null,
     ISystemSettings? settings = null,
-    Bios.IBiosUpdateService? bios = null)
+    Bios.IBiosUpdateService? bios = null,
+    IRecycleBinDeleter? recycleBin = null)
 {
     /// <summary>This app's record of successful retrims (so Drive health stops offering it right away).</summary>
     public RetrimLog? RetrimLog => retrimLog;
@@ -205,6 +206,14 @@ public sealed class RemediationService(
                 DeviceWake.IsSafeName(action.Target) ? "Requires administrator privileges." : "This isn't a device name this app can change.",
                 DeviceWake.IsSafeName(action.Target)),
 
+            RemediationKind.DisableWakeTimer => new(
+                action,
+                $"Stop {label} from waking the PC?",
+                $"Scheduled task '{action.Target}' has a wake timer set so it can wake this PC from sleep.",
+                $"Turns off 'Wake the computer to run this task' (WakeToRun) on '{action.Target}'. The task still runs normally when the PC is awake. Undo turns WakeToRun back on.",
+                DeviceWake.IsSafeTaskPath(action.Target) ? "Requires administrator privileges." : "This isn't a scheduled task path this app can change.",
+                DeviceWake.IsSafeTaskPath(action.Target)),
+
             // 3. Network & Connectivity Fixes
             RemediationKind.DisableSystemProxy => new(
                 action,
@@ -249,6 +258,8 @@ public sealed class RemediationService(
                 "Frees disk space without touching personal documents, downloads, or active app files.",
                 null,
                 true),
+
+            RemediationKind.DeleteDuplicateFiles => PlanDeleteDuplicates(action),
 
             RemediationKind.OptimizeSsd => new(
                 action,
@@ -477,6 +488,8 @@ public sealed class RemediationService(
 
         RemediationKind.CleanTempFiles => await RunCleanTempFilesAsync(ct).ConfigureAwait(false),
 
+        RemediationKind.DeleteDuplicateFiles => await RunDeleteDuplicateFilesAsync(action, ct).ConfigureAwait(false),
+
         RemediationKind.ApplySecuritySetting => Security.SecurityFixes.Find(action.Target) is { } sf
             ? await RunAgentScriptAsync(AgentScripts.Of(AgentScripts.SecurityApply, sf.Key), sf.Done,
                 $"Couldn't change {sf.Label.ToLowerInvariant()} (Windows refused the change; Tamper Protection or an organization policy may be blocking it).", ct).ConfigureAwait(false)
@@ -489,6 +502,14 @@ public sealed class RemediationService(
         RemediationKind.InstallUpdate => await RunInstallUpdateAsync(action, ct).ConfigureAwait(false),
 
         RemediationKind.DisableDeviceWake => await RunDisableDeviceWakeAsync(action, ct).ConfigureAwait(false),
+
+        RemediationKind.DisableWakeTimer => DeviceWake.IsSafeTaskPath(action.Target)
+            ? await RunAgentScriptAsync(
+                AgentScripts.Of(AgentScripts.TaskWakeToRun, action.Target, "false"),
+                $"Stopped {Display(action)} from waking the PC (the task still runs when the PC is awake).",
+                $"Couldn't update scheduled task '{action.Target}' (administrator rights required).",
+                ct).ConfigureAwait(false)
+            : new(false, "This isn't a scheduled task path this app can change."),
 
         RemediationKind.InstallBiosUpdate => await RunInstallBiosUpdateAsync(ct).ConfigureAwait(false),
 
@@ -932,6 +953,37 @@ public sealed class RemediationService(
         }
     }
 
+    private static RemediationPlan PlanDeleteDuplicates(AreaAction action)
+    {
+        if (!DuplicateFilesModule.TryParseDeletionSets(action.Target, out var sets))
+        {
+            return new(action, "Delete duplicate files?", "No valid duplicate file set was provided.", "Nothing will be deleted.", "Rescan Duplicate files and try again.", false);
+        }
+        int totalFiles = sets.Sum(s => s.Delete.Count);
+        string title = totalFiles == 1
+            ? "Move 1 duplicate file to the Recycle Bin?"
+            : $"Move {totalFiles} duplicate files to the Recycle Bin?";
+        string whatItIs = sets.Count == 1
+            ? $"Keeping: {sets[0].Keep}. Moving to Recycle Bin: {string.Join(", ", sets[0].Delete)}."
+            : $"Moves {totalFiles} extra copies across {sets.Count} duplicate sets to the Recycle Bin while keeping 1 original copy in each set.";
+        return new(
+            action,
+            title,
+            whatItIs,
+            "Each file is re-verified by SHA-256 hash against the kept copy immediately before moving it to the Recycle Bin.",
+            "Files are sent to the Recycle Bin where supported by the drive; drives or folders that bypass the Recycle Bin may delete them permanently.",
+            true);
+    }
+
+    private async Task<RemediationResult> RunDeleteDuplicateFilesAsync(AreaAction action, CancellationToken ct)
+    {
+        if (!DuplicateFilesModule.TryParseDeletionSets(action.Target, out var sets))
+            return new(false, "No valid duplicate files were specified.");
+        var module = new DuplicateFilesModule(log, recycleBin);
+        var (ok, message, freedBytes, removedFiles) = await Task.Run(() => module.DeleteDuplicates(sets, ct), ct).ConfigureAwait(false);
+        return new(ok, message, FreedDiskBytes: freedBytes, RemovedFiles: removedFiles);
+    }
+
     // ---- Undo support: what a setting was before a reversible fix changes it ----
 
 
@@ -964,6 +1016,10 @@ public sealed class RemediationService(
                     var armed = await DeviceWake.QueryArmedAsync(commands, ct).ConfigureAwait(false);
                     return armed is not null && DeviceWake.FindArmed(armed, action.Target) is { } device
                         ? Rec(Changes.ChangeKind.DeviceWake, device, "armed", $"{device} can't wake the PC") : null;
+                case RemediationKind.DisableWakeTimer:
+                    return DeviceWake.IsSafeTaskPath(action.Target)
+                        ? Rec(Changes.ChangeKind.WakeTimer, action.Target, "true", $"{DeviceWake.ShortTaskName(action.Target)} can't wake the PC")
+                        : null;
                 case RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns when SystemSettingsRules.IsAdapterName(action.Target):
                     var dns = settings?.GetAdapterDns(action.Target);
                     return dns is null ? null : Rec(Changes.ChangeKind.AdapterDns, action.Target, dns,

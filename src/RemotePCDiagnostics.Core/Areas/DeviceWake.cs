@@ -38,4 +38,46 @@ public static class DeviceWake
     /// <summary>The device's name exactly as Windows lists it among the wake-armed devices, or null when it isn't one of them.</summary>
     public static string? FindArmed(IReadOnlyList<string> armed, string? target) =>
         IsSafeName(target) ? armed.FirstOrDefault(a => string.Equals(a, target, StringComparison.OrdinalIgnoreCase)) : null;
+
+    /// <summary>
+    /// Extracts a Task Scheduler full path (e.g. <c>\Hewlett-Packard\HP Diagnostics\SmartCheckTest</c>) from a
+    /// <c>powercfg /waketimers</c> reason such as <c>Windows will execute 'NT TASK\Hewlett-Packard\HP Diagnostics\SmartCheckTest' scheduled task…</c>.
+    /// </summary>
+    public static bool TryExtractTaskPath(string? reason, out string taskPath)
+    {
+        taskPath = "";
+        if (string.IsNullOrWhiteSpace(reason)) return false;
+        const string marker = "'NT TASK\\";
+        var start = reason.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (start < 0) return false;
+        var pathStart = start + marker.Length - 1; // keep leading '\'
+        var end = reason.IndexOf('\'', pathStart);
+        if (end <= pathStart) return false;
+        var candidate = reason[pathStart..end].Trim();
+        if (!IsSafeTaskPath(candidate)) return false;
+        taskPath = candidate;
+        return true;
+    }
+
+    /// <summary>A Task Scheduler full path this app will modify: starts with <c>\</c>, no quotes/control chars/traversal, and has a non-empty task name.</summary>
+    public static bool IsSafeTaskPath(string? path) => TrySplitTaskPath(path, out _, out _);
+
+    /// <summary>Splits <c>\Folder\Sub\TaskName</c> into <c>\Folder\Sub</c> (or <c>\</c>) and <c>TaskName</c>.</summary>
+    public static bool TrySplitTaskPath(string? path, out string folderPath, out string taskName)
+    {
+        folderPath = "";
+        taskName = "";
+        if (string.IsNullOrWhiteSpace(path) || path.Length > 260 || path != path.Trim() || !path.StartsWith('\\')) return false;
+        if (path.Any(c => char.IsControl(c) || c == '"' || c == '\'')) return false;
+        if (path.Contains("..", StringComparison.Ordinal)) return false;
+        var lastSlash = path.LastIndexOf('\\');
+        if (lastSlash < 0 || lastSlash == path.Length - 1) return false;
+        folderPath = lastSlash == 0 ? "\\" : path[..lastSlash];
+        taskName = path[(lastSlash + 1)..];
+        return !string.IsNullOrWhiteSpace(taskName);
+    }
+
+    /// <summary>The trailing task name for display (e.g. <c>SmartCheckTest</c>).</summary>
+    public static string ShortTaskName(string taskPath) =>
+        TrySplitTaskPath(taskPath, out _, out var name) ? name : taskPath;
 }

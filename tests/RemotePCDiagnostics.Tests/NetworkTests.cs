@@ -29,6 +29,17 @@ public class NetworkTests
     }
 
     [Fact]
+    public void Bluetooth_MediaDisconnected_ShowsNotConnected()
+    {
+        var bt = new NetworkAdapter("Bluetooth Network Connection", "Bluetooth Device (Personal Area Network)", "Microsoft",
+            "58:CD:C9:7F:9B:14", "7", true, true, 3_000_000, null, null, null, null, null, null);
+        Assert.Equal("Not connected", bt.FriendlyConnection);
+        var rep = NetworkModule.Build([bt]);
+        Assert.Equal("Not connected", rep.Cards.Single().Headline);
+        Assert.DoesNotContain("Cable", rep.Cards.Single().Headline, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task BlankCounters_FilledFromAdapterStatistics()
     {
         const string osq = """[{"connection_id":"Ethernet 4","description":"Microsoft Hyper-V Network Adapter","mac":"e4:fa","connection_status":"2","enabled":"1","physical_adapter":"1","speed":"0","ipackets":"","ierrors":"","oerrors":""}]""";

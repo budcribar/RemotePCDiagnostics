@@ -12,7 +12,7 @@ public static class FixCatalog
     /// </summary>
     public static readonly IReadOnlySet<RemediationKind> SkippedRemediation = new HashSet<RemediationKind>
         { RemediationKind.ScheduleCleanRestart, RemediationKind.CancelScheduledRestart, RemediationKind.EndProcessGroup, RemediationKind.DisableFastStartup,
-          RemediationKind.AnalyzeComponentStore };
+          RemediationKind.AnalyzeComponentStore, RemediationKind.DeleteDuplicateFiles };
 
     /// <summary>
     /// Offered on a check's own card but listed differently here: the repairs come from <see cref="RepairFixes"/> (with the scan's
@@ -24,7 +24,7 @@ public static class FixCatalog
     /// <summary>Single repair steps a technician picks on purpose: listed, but not ticked to start with.
     /// Stopping a device from waking the PC changes how the customer wakes it, so it is listed but left for the technician to tick.</summary>
     private static bool OptIn(RemediationKind k) => k is RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStoreFromImage
-        or RemediationKind.DisableDeviceWake or RemediationKind.InstallBiosUpdate;
+        or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer or RemediationKind.InstallBiosUpdate;
 
     /// <summary>Memory actions that persist across a restart and need nobody at the keyboard.</summary>
     public static readonly IReadOnlySet<MemoryActionType> UnattendedMemoryActions = new HashSet<MemoryActionType>
@@ -58,9 +58,9 @@ public static class FixCatalog
     private static int OrderOf(RemediationKind k) => k switch
     {
         RemediationKind.SetBalancedPowerPlan or RemediationKind.DisableFastStartup or RemediationKind.DisableSystemProxy
-            or RemediationKind.DisableDeviceWake => 10,
+            or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer => 10,
         RemediationKind.EnableDevice or RemediationKind.RestartDevice or RemediationKind.ScanHardwareChanges => 30,
-        RemediationKind.CleanTempFiles or RemediationKind.OptimizeSsd => 40,
+        RemediationKind.CleanTempFiles or RemediationKind.DeleteDuplicateFiles or RemediationKind.OptimizeSsd => 40,
         RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns or RemediationKind.FlushDnsAndRenewIp => 60,
         RemediationKind.CleanUpComponentStore => CleanupOrder,
         RemediationKind.RepairComponentStoreFromImage => DismRepairOrder,
@@ -112,7 +112,7 @@ public static class FixCatalog
                         why += $" {a.ButtonText}. {card.Note} Measured during the network scan at {r.Timestamp:O}.";
                     list.Add(new(id, title, why, area, RiskOf(a.Kind), FixSource.Remediation, OrderOf(a.Kind), Remediation: a,
                         NeedsAdmin: a.Kind == RemediationKind.ApplySecuritySetting || plan?.Warning?.Contains("administrator", StringComparison.OrdinalIgnoreCase) == true,
-                        Slow: a.Kind is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates || (OptIn(a.Kind) && a.Kind != RemediationKind.DisableDeviceWake),
+                        Slow: a.Kind is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates || (OptIn(a.Kind) && a.Kind is not (RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer)),
                         Undo: Changes.Undoability.Of(a.Kind), AreaKey: area,
                         DefaultOn: !OptIn(a.Kind) && (a.Kind != RemediationKind.ApplySecuritySetting || Security.SecurityFixes.Find(a.Target)?.DefaultOn != false)));
                 }
@@ -176,6 +176,7 @@ public static class FixCatalog
                 RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns => Has(Changes.ChangeKind.AdapterDns, a.Target),
                 RemediationKind.ApplySecuritySetting => Has(Changes.ChangeKind.SecuritySetting, a.Target),
                 RemediationKind.DisableDeviceWake => Has(Changes.ChangeKind.DeviceWake, a.Target),
+                RemediationKind.DisableWakeTimer => Has(Changes.ChangeKind.WakeTimer, a.Target),
                 _ => false,
             };
         }

@@ -119,6 +119,66 @@ public sealed class DuplicateFilesTests : IDisposable
         Assert.DoesNotContain("Couldn't scan", r.Message);
     }
 
+    [Fact]
+    public async Task BuildReport_AttachesDeleteActions_AndRemediationServiceMovesExtrasToRecycleBin()
+    {
+        var recycle = new MockRecycleBin();
+        var m = new DuplicateFilesModule(recycleBin: recycle, searchRoots: [_tmp], minFileSizeBytes: 5000);
+
+        byte[] payloadA = new byte[8_000];
+        Array.Fill(payloadA, (byte)0x11);
+        var origA = Path.Combine(_tmp, "installer.msi");
+        var copyA = Path.Combine(_tmp, "installer (1).msi");
+        File.WriteAllBytes(origA, payloadA);
+        File.WriteAllBytes(copyA, payloadA);
+        File.SetLastWriteTimeUtc(origA, new DateTime(2026, 11, 23, 12, 0, 0, DateTimeKind.Utc));
+        File.SetLastWriteTimeUtc(copyA, new DateTime(2026, 11, 23, 12, 5, 0, DateTimeKind.Utc));
+
+        byte[] payloadB = new byte[6_000];
+        Array.Fill(payloadB, (byte)0x22);
+        var origB = Path.Combine(_tmp, "archive.zip");
+        var copyB1 = Path.Combine(_tmp, "archive (1).zip");
+        var copyB2 = Path.Combine(_tmp, "archive (2).zip");
+        File.WriteAllBytes(origB, payloadB);
+        File.WriteAllBytes(copyB1, payloadB);
+        File.WriteAllBytes(copyB2, payloadB);
+        File.SetLastWriteTimeUtc(origB, new DateTime(2026, 11, 23, 10, 0, 0, DateTimeKind.Utc));
+        File.SetLastWriteTimeUtc(copyB1, new DateTime(2026, 11, 23, 10, 1, 0, DateTimeKind.Utc));
+        File.SetLastWriteTimeUtc(copyB2, new DateTime(2026, 11, 23, 10, 2, 0, DateTimeKind.Utc));
+
+        var report = m.Scan([_tmp], minSizeBytes: 5000, progress: null, CancellationToken.None);
+        var card = Assert.Single(report.Cards);
+        Assert.Equal(2, card.Rows.Count);
+
+        // Card-level action appears when there are multiple duplicate sets.
+        var cardAction = Assert.Single(card.Actions!);
+        Assert.Equal(RemediationKind.DeleteDuplicateFiles, cardAction.Kind);
+        Assert.Equal("Delete all 3 extra copies", cardAction.ButtonText);
+
+        // Per-row action on the 2-copy set keeps the older file and targets the newer copy.
+        var rowA = card.Rows.Single(r => r.Values[0] == "installer.msi");
+        Assert.Contains("[1 · keep]", rowA.Detail);
+        var rowAction = Assert.Single(rowA.Actions!);
+        Assert.Equal(RemediationKind.DeleteDuplicateFiles, rowAction.Kind);
+        Assert.Equal("Delete extra copy", rowAction.ButtonText);
+
+        var svc = new RemediationService(new SystemCommandRunner(), recycleBin: recycle);
+        var plan = svc.Plan(rowAction);
+        Assert.True(plan.Allowed);
+        Assert.Contains(origA, plan.WhatItIs);
+        Assert.Contains(copyA, plan.WhatItIs);
+
+        var res = await svc.ExecuteAsync(rowAction);
+        Assert.True(res.Success);
+        Assert.Equal(1, res.RemovedFiles);
+        Assert.Equal(8_000, res.FreedDiskBytes);
+        Assert.Equal([copyA], recycle.Deleted);
+
+        // Unattended workflow must skip DeleteDuplicateFiles.
+        Assert.Contains(RemediationKind.DeleteDuplicateFiles, RemotePCDiagnostics.Core.Workflow.FixCatalog.SkippedRemediation);
+        Assert.Equal("deleteduplicatefiles", RemotePCDiagnostics.Core.Workflow.FixKeys.Of(RemediationKind.DeleteDuplicateFiles));
+    }
+
     /// <summary>Calls <c>Cancel()</c> on the module the first time the scan reports progress, as cancel_check does mid-scan.</summary>
     private sealed class CancelOnFirstReport(ICancellableScan scan) : IProgress<string>
     {

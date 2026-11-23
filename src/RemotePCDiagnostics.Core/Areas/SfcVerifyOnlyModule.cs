@@ -13,6 +13,23 @@ public sealed class SfcVerifyOnlyModule(SystemCommandRunner commands) : WindowsI
     protected override string ToolExe => "sfc.exe";
     protected override string[] Arguments => ["/verifyonly"];
 
+    // SFC prints "Verification 1% complete." .. "Verification 100% complete." with blank padding; strip those progress lines.
+    protected override string CleanOutput(string output)
+    {
+        var lines = output.Split(['\r', '\n'])
+            .Select(l => l.Trim())
+            .Where(l => !System.Text.RegularExpressions.Regex.IsMatch(l, @"^Verification\s+\d{1,3}%\s+complete\.?$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            .ToList();
+        var compact = new List<string>(lines.Count);
+        foreach (var line in lines)
+        {
+            if (line.Length == 0 && (compact.Count == 0 || compact[^1].Length == 0)) continue;
+            compact.Add(line);
+        }
+        return string.Join("\n", compact).Trim();
+    }
+
     /// <summary>Violations found: offer the repair, and the restart that can be needed to finish it.</summary>
     protected override IReadOnlyList<AreaAction>? CardActions(DiagnosticStatus status) => status == DiagnosticStatus.Warning
         ? [new(RemediationKind.RepairSystemFiles, "Repair system files", "", "Protected system files"), PendingUpdates.RestartAction]

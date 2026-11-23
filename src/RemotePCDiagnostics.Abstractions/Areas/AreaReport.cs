@@ -51,6 +51,10 @@ public enum RemediationKind
     DisableDeviceWake,
     /// <summary>Downloads, verifies, and stages the latest vendor BIOS/UEFI firmware update via <c>IBiosUpdateService</c>. Target = target BIOS version.</summary>
     InstallBiosUpdate,
+    /// <summary>Moves extra copies in one or more duplicate file sets to the Recycle Bin after re-verifying SHA-256 hashes against the kept copy. Target = JSON array of <c>DuplicateDeletionSet</c>.</summary>
+    DeleteDuplicateFiles,
+    /// <summary>Stops a scheduled task from waking the PC by turning off its WakeToRun setting. Target = full Task Scheduler path (e.g. <c>\Hewlett-Packard\HP Diagnostics\SmartCheckTest</c>). Undo turns WakeToRun back on.</summary>
+    DisableWakeTimer,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>

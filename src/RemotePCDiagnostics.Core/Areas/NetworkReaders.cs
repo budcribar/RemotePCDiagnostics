@@ -30,10 +30,14 @@ public sealed record NetworkAdapter(
     /// <summary>A real speed: WMI reports long.MaxValue (and osquery 0) when it doesn't know.</summary>
     internal static long? Positive(long? v) => v is > 0 and < long.MaxValue / 1_000_000 ? v : null;
 
+    public bool IsBluetooth =>
+        Name.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase)
+        || Description.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>Win32_NetworkAdapter NetConnectionStatus codes (osquery reports the number).</summary>
     public string FriendlyConnection => ConnectionStatus switch
     {
-        "2" => "Connected", "7" => "Cable unplugged / no signal", "0" => "Disconnected", "1" => "Connecting", "3" => "Disconnecting",
+        "2" => "Connected", "7" => IsBluetooth ? "Not connected" : "Cable unplugged / no signal", "0" => "Disconnected", "1" => "Connecting", "3" => "Disconnecting",
         "4" => "Hardware not present", "5" => "Hardware disabled", "6" => "Hardware problem", "8" => "Authenticating", "9" => "Authenticated",
         "10" => "Authentication failed", "11" => "Invalid address", "12" => "Credentials required",
         "" => Enabled == false ? "Turned off" : "Unknown",

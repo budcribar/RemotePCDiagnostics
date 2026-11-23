@@ -30,6 +30,12 @@ public sealed record RegisterTaskAction(string TaskName, string User, string Tas
 /// <summary>Removes the task <paramref name="TaskName"/>; a missing task is fine, and it fails only when the task is still there afterwards.</summary>
 public sealed record RemoveTaskAction(string TaskName) : AgentNativeAction;
 
+/// <summary>Sets <c>Settings.WakeToRun</c> on the scheduled task at <paramref name="TaskPath"/> (e.g. <c>\Folder\Task</c>).</summary>
+public sealed record SetTaskWakeToRunAction(string TaskPath, bool WakeToRun) : AgentNativeAction;
+
+/// <summary>Runs the installed Windows kernel debugger on an allowlisted system dump file as the elevated Agent.</summary>
+public sealed record AnalyzeCrashDumpAction(string DumpPath) : AgentNativeAction;
+
 /// <summary>What the Agent does for an <see cref="AdminPipeScript"/>: PowerShell it built (<see cref="Script"/>) or a change it makes itself (<see cref="Native"/>).</summary>
 public sealed record AgentPlan(string? Script, AgentNativeAction? Native);
 
@@ -167,6 +173,8 @@ public sealed partial class WindowsAgentNativeOps : IAgentNativeOps
                 OptimizeVolumeAction optimize => Task.FromResult(OptimizeVolumes(optimize.DriveLetters)),
                 RegisterTaskAction register => Task.FromResult(RegisterTask(register)),
                 RemoveTaskAction remove => Task.FromResult(RemoveTask(remove.TaskName)),
+                SetTaskWakeToRunAction wake => Task.FromResult(SetTaskWakeToRun(wake)),
+                AnalyzeCrashDumpAction dump => AnalyzeCrashDumpAsync(dump, ct),
                 _ => RunOtherAsync(action, ct),
             };
         }
@@ -278,4 +286,20 @@ public sealed partial class WindowsAgentNativeOps : IAgentNativeOps
     [SupportedOSPlatform("windows")]
     private static ProcessResult RemoveTask(string name) =>
         Platform.WindowsTaskScheduler.RemoveTask(name) ? Ok() : Failed($"The task '{name}' is still there.");
+
+    [SupportedOSPlatform("windows")]
+    private static ProcessResult SetTaskWakeToRun(SetTaskWakeToRunAction wake) =>
+        Areas.DeviceWake.TrySplitTaskPath(wake.TaskPath, out var folder, out var name)
+            && Platform.WindowsTaskScheduler.SetTaskWakeToRun(folder, name, wake.WakeToRun)
+            ? Ok()
+            : Failed($"Couldn't update the scheduled task '{wake.TaskPath}'.");
+
+    [SupportedOSPlatform("windows")]
+    private static async Task<ProcessResult> AnalyzeCrashDumpAsync(AnalyzeCrashDumpAction dump, CancellationToken ct)
+    {
+        if (!Areas.CrashDumpDebugger.IsAllowedSystemDumpPath(dump.DumpPath))
+            return Failed("That dump path isn't in a Windows system dump folder.");
+        var output = await Areas.CrashDumpDebugger.AnalyzeLocalAsync(dump.DumpPath, ct).ConfigureAwait(false);
+        return new ProcessResult(0, output, "");
+    }
 }

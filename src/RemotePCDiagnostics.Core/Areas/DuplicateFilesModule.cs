@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text.Json;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Storage;
 
@@ -283,6 +284,33 @@ public sealed class DuplicateFilesModule(
         return BuildReport(confirmedDuplicates.OrderByDescending(g => g.WastedBytes).ToList(), minSizeBytes);
     }
 
+    public sealed record DuplicateDeletionSet(string Keep, IReadOnlyList<string> Delete);
+
+    private static readonly JsonSerializerOptions DeletionJson = new(JsonSerializerDefaults.Web);
+
+    public static string SerializeDeletionSets(IReadOnlyList<DuplicateDeletionSet> sets) =>
+        JsonSerializer.Serialize(sets, DeletionJson);
+
+    public static bool TryParseDeletionSets(string? target, out IReadOnlyList<DuplicateDeletionSet> sets)
+    {
+        sets = [];
+        if (string.IsNullOrWhiteSpace(target)) return false;
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<List<DuplicateDeletionSet>>(target, DeletionJson);
+            if (parsed is null || parsed.Count == 0) return false;
+            var valid = parsed
+                .Where(s => !string.IsNullOrWhiteSpace(s.Keep) && s.Delete is { Count: > 0 })
+                .Select(s => new DuplicateDeletionSet(s.Keep, s.Delete.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase).ToList()))
+                .Where(s => s.Delete.Count > 0)
+                .ToList();
+            if (valid.Count == 0) return false;
+            sets = valid;
+            return true;
+        }
+        catch (JsonException) { return false; }
+    }
+
     public static AreaReport BuildReport(IReadOnlyList<DuplicateGroup> groups, long minSizeBytes)
     {
         var cards = new List<AreaCard>();
@@ -290,23 +318,48 @@ public sealed class DuplicateFilesModule(
         int totalDuplicateFiles = groups.Sum(g => g.FilePaths.Count - 1);
 
         string[] cols = ["File Name", "Size", "Copies", "Wasted Space", "Locations"];
+        var allDeletionSets = new List<DuplicateDeletionSet>();
         var rows = groups.Select(g =>
         {
-            string fileName = Path.GetFileName(g.FilePaths[0]);
-            string filePathsSummary = string.Join("; ", g.FilePaths.Select(p => Path.GetDirectoryName(p) ?? p));
+            var ordered = g.FilePaths
+                .OrderBy(FileLastWriteUtcSafe)
+                .ThenBy(p => p.Length)
+                .ThenBy(p => p, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            string fileName = Path.GetFileName(ordered[0]);
+            string filePathsSummary = string.Join("; ", ordered.Select(p => Path.GetDirectoryName(p) ?? p));
             string detail = $"Duplicate set for '{fileName}' ({HardwareInventory.FormatBytes(g.SizeBytes)}):\n" +
-                            string.Join("\n", g.FilePaths.Select((p, idx) => $"  [{idx + 1}] {p} (Last modified: {FileLastWriteSafe(p)})"));
+                            string.Join("\n", ordered.Select((p, idx) => $"  [{(idx == 0 ? "1 · keep" : (idx + 1).ToString(CultureInfo.InvariantCulture))}] {p} (Last modified: {FileLastWriteSafe(p)})"));
+
+            var deletionSet = new DuplicateDeletionSet(ordered[0], ordered.Skip(1).ToList());
+            allDeletionSets.Add(deletionSet);
+            int extraCount = ordered.Count - 1;
+            string buttonText = extraCount == 1 ? "Delete extra copy" : $"Delete {extraCount} extra copies";
+            AreaAction deleteAction = new(
+                RemediationKind.DeleteDuplicateFiles,
+                buttonText,
+                SerializeDeletionSets([deletionSet]),
+                $"{fileName} ({HardwareInventory.FormatBytes(g.WastedBytes)})");
 
             return new AreaRow(
                 AreaLevel.Neutral,
-                [fileName, HardwareInventory.FormatBytes(g.SizeBytes), g.FilePaths.Count.ToString(CultureInfo.InvariantCulture), HardwareInventory.FormatBytes(g.WastedBytes), filePathsSummary],
-                SortKeys: [fileName, g.SizeBytes.ToString("D19"), g.FilePaths.Count.ToString("D5"), g.WastedBytes.ToString("D19"), filePathsSummary],
+                [fileName, HardwareInventory.FormatBytes(g.SizeBytes), ordered.Count.ToString(CultureInfo.InvariantCulture), HardwareInventory.FormatBytes(g.WastedBytes), filePathsSummary],
+                SortKeys: [fileName, g.SizeBytes.ToString("D19"), ordered.Count.ToString("D5"), g.WastedBytes.ToString("D19"), filePathsSummary],
+                Key: g.HashHex,
+                Actions: [deleteAction],
                 Detail: detail);
         }).ToList();
 
         string headline = groups.Count > 0
             ? $"{groups.Count} sets of identical files found ({HardwareInventory.FormatBytes(totalWastedBytes)} reclaimable)"
             : "No duplicate files found";
+
+        IReadOnlyList<AreaAction>? cardActions = groups.Count > 1
+            ? [new(RemediationKind.DeleteDuplicateFiles,
+                $"Delete all {totalDuplicateFiles} extra copies",
+                SerializeDeletionSets(allDeletionSets),
+                $"{totalDuplicateFiles} extra copies ({HardwareInventory.FormatBytes(totalWastedBytes)})")]
+            : null;
 
         cards.Add(new AreaCard(
             "duplicates",
@@ -316,13 +369,47 @@ public sealed class DuplicateFilesModule(
             groups.Count > 0 ? "Deletions request moving files to the Recycle Bin where supported." : $"Files >= {HardwareInventory.FormatBytes(minSizeBytes)} checked.",
             cols,
             rows,
-            EmptyText: $"No duplicate files larger than {HardwareInventory.FormatBytes(minSizeBytes)} were found."));
+            EmptyText: $"No duplicate files larger than {HardwareInventory.FormatBytes(minSizeBytes)} were found.",
+            Actions: cardActions));
 
         string summary = groups.Count > 0
             ? $"Found {groups.Count} duplicate sets ({totalDuplicateFiles} extra copies, {HardwareInventory.FormatBytes(totalWastedBytes)} wasted space)"
             : "No duplicate files found";
 
         return new AreaReport(cards, summary, DiagnosticStatus.Ok);
+    }
+
+    /// <summary>Moves each extra copy in <paramref name="sets"/> to the Recycle Bin after re-verifying SHA-256 against its kept copy.</summary>
+    public (bool Success, string Message, long FreedBytes, int RemovedFiles) DeleteDuplicates(IReadOnlyList<DuplicateDeletionSet> sets, CancellationToken ct = default)
+    {
+        int removed = 0, failed = 0;
+        long freedBytes = 0;
+        string? firstError = null;
+        foreach (var set in sets)
+        {
+            foreach (var target in set.Delete)
+            {
+                ct.ThrowIfCancellationRequested();
+                long size = 0;
+                try { if (File.Exists(target)) size = new FileInfo(target).Length; } catch { }
+                if (DeleteToRecycleBin(target, set.Keep, out var err))
+                {
+                    removed++;
+                    freedBytes += size;
+                }
+                else
+                {
+                    failed++;
+                    firstError ??= err ?? $"Couldn't delete {Path.GetFileName(target)}.";
+                }
+            }
+        }
+        if (removed == 0)
+            return (false, firstError ?? "No duplicate files were deleted.", 0, 0);
+        var noun = removed == 1 ? "duplicate file" : "duplicate files";
+        if (failed > 0)
+            return (true, $"Moved {removed} {noun} to the Recycle Bin ({HardwareInventory.FormatBytes(freedBytes)} freed); {failed} skipped ({firstError}).", freedBytes, removed);
+        return (true, $"Moved {removed} {noun} to the Recycle Bin ({HardwareInventory.FormatBytes(freedBytes)} freed).", freedBytes, removed);
     }
 
     /// <summary>
@@ -432,6 +519,12 @@ public sealed class DuplicateFilesModule(
         }
         catch (OperationCanceledException) { throw; }
         catch { return null; }
+    }
+
+    private static DateTime FileLastWriteUtcSafe(string path)
+    {
+        try { return File.GetLastWriteTimeUtc(path); }
+        catch { return DateTime.MaxValue; }
     }
 
     private static string FileLastWriteSafe(string path)
