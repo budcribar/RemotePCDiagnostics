@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace RemotePCDiagnostics.Core.Session;
@@ -683,10 +684,12 @@ public static class RpcdGitHubRelease
     public const string PrereleaseTag = "prerelease";
     public const string AgentMsiPrefix = "RemotePCDiagnostics.Agent-";
     public const string AgentMsiSuffix = "-win-x64.msi";
+    public const string AgentMsiArm64Suffix = "-win-arm64.msi";
     public const string AgentMsiMissing = "The release has no Agent MSI (RemotePCDiagnostics.Agent-<version>-win-x64.msi). The update was not installed.";
     public const string AgentMsiChecksumMissing = "The GitHub release has no SHA-256 checksum for the Agent MSI. The update was not installed.";
     private const string SetupPrefix = "RemotePCDiagnostics-Setup-";
     private const string SetupSuffix = "-win-x64.exe";
+    private const string SetupArm64Suffix = "-win-arm64.exe";
 
     public static string? NormalizeChannel(string? channel)
     {
@@ -838,7 +841,10 @@ public static class RpcdGitHubRelease
         return AppVersionComparer.Normalize(token);
     }
 
-    public static RpcdReleaseFetch Parse(string json, string? fallbackTag)
+    public static RpcdReleaseFetch Parse(string json, string? fallbackTag) =>
+        Parse(json, fallbackTag, RuntimeInformation.OSArchitecture);
+
+    public static RpcdReleaseFetch Parse(string json, string? fallbackTag, Architecture targetArch)
     {
         try
         {
@@ -860,10 +866,13 @@ public static class RpcdGitHubRelease
             if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
                 return new RpcdReleaseFetch(null, "The GitHub release did not list any files.");
 
-            string? exeUrl = null;
-            string? exeName = null;
+            string? x64ExeUrl = null;
+            string? x64ExeName = null;
+            string? arm64ExeUrl = null;
+            string? arm64ExeName = null;
             var shaByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var agentMsi = new List<(string Name, string Url)>();
+            var x64AgentMsi = new List<(string Name, string Url)>();
+            var arm64AgentMsi = new List<(string Name, string Url)>();
             foreach (var asset in assets.EnumerateArray())
             {
                 var name = asset.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
@@ -877,17 +886,32 @@ public static class RpcdGitHubRelease
                     shaByName[name] = url;
                     continue;
                 }
-                if (exeUrl is null
-                    && name.StartsWith(SetupPrefix, StringComparison.OrdinalIgnoreCase)
-                    && name.EndsWith(SetupSuffix, StringComparison.OrdinalIgnoreCase))
+                if (name.StartsWith(SetupPrefix, StringComparison.OrdinalIgnoreCase))
                 {
-                    exeName = name;
-                    exeUrl = url;
+                    if (arm64ExeUrl is null && name.EndsWith(SetupArm64Suffix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        arm64ExeName = name;
+                        arm64ExeUrl = url;
+                    }
+                    else if (x64ExeUrl is null && name.EndsWith(SetupSuffix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        x64ExeName = name;
+                        x64ExeUrl = url;
+                    }
                 }
-                if (name.StartsWith(AgentMsiPrefix, StringComparison.OrdinalIgnoreCase)
-                    && name.EndsWith(AgentMsiSuffix, StringComparison.OrdinalIgnoreCase))
-                    agentMsi.Add((name, url));
+                if (name.StartsWith(AgentMsiPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (name.EndsWith(AgentMsiArm64Suffix, StringComparison.OrdinalIgnoreCase))
+                        arm64AgentMsi.Add((name, url));
+                    else if (name.EndsWith(AgentMsiSuffix, StringComparison.OrdinalIgnoreCase))
+                        x64AgentMsi.Add((name, url));
+                }
             }
+
+            var preferArm64 = targetArch == Architecture.Arm64;
+            var exeUrl = (preferArm64 && arm64ExeUrl is not null) ? arm64ExeUrl : x64ExeUrl;
+            var exeName = (preferArm64 && arm64ExeUrl is not null) ? arm64ExeName : x64ExeName;
+            var agentMsi = (preferArm64 && arm64AgentMsi.Count > 0) ? arm64AgentMsi : x64AgentMsi;
 
             if (exeUrl is null || exeName is null)
                 return new RpcdReleaseFetch(null, "The release has no production installer. TestShop bundles are not installed by an update.");
@@ -997,19 +1021,24 @@ public static class RpcdGitHubRelease
 
     public static string? AgentMsiFileVersion(string name)
     {
-        if (!name.StartsWith(AgentMsiPrefix, StringComparison.OrdinalIgnoreCase)
-            || !name.EndsWith(AgentMsiSuffix, StringComparison.OrdinalIgnoreCase))
+        if (!name.StartsWith(AgentMsiPrefix, StringComparison.OrdinalIgnoreCase))
             return null;
-        return AppVersionComparer.Normalize(name[AgentMsiPrefix.Length..^AgentMsiSuffix.Length]);
+        if (name.EndsWith(AgentMsiArm64Suffix, StringComparison.OrdinalIgnoreCase))
+            return AppVersionComparer.Normalize(name[AgentMsiPrefix.Length..^AgentMsiArm64Suffix.Length]);
+        if (name.EndsWith(AgentMsiSuffix, StringComparison.OrdinalIgnoreCase))
+            return AppVersionComparer.Normalize(name[AgentMsiPrefix.Length..^AgentMsiSuffix.Length]);
+        return null;
     }
 
     private static string? FilenameVersion(string exeName)
     {
-        if (!exeName.StartsWith(SetupPrefix, StringComparison.OrdinalIgnoreCase)
-            || !exeName.EndsWith(SetupSuffix, StringComparison.OrdinalIgnoreCase))
+        if (!exeName.StartsWith(SetupPrefix, StringComparison.OrdinalIgnoreCase))
             return null;
-        var version = exeName[SetupPrefix.Length..^SetupSuffix.Length];
-        return AppVersionComparer.Normalize(version);
+        if (exeName.EndsWith(SetupArm64Suffix, StringComparison.OrdinalIgnoreCase))
+            return AppVersionComparer.Normalize(exeName[SetupPrefix.Length..^SetupArm64Suffix.Length]);
+        if (exeName.EndsWith(SetupSuffix, StringComparison.OrdinalIgnoreCase))
+            return AppVersionComparer.Normalize(exeName[SetupPrefix.Length..^SetupSuffix.Length]);
+        return null;
     }
 
     private static async Task<RpcdReleaseFetch> GetReleaseAsync(HttpClient http, string url, CancellationToken ct)

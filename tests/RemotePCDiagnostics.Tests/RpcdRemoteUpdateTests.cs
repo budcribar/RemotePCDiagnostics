@@ -403,6 +403,87 @@ public class RpcdRemoteUpdateTests
     }
 
     [Fact]
+    public void Release_parse_selects_arm64_assets_on_arm64_and_x64_assets_on_x64()
+    {
+        var x64Setup = "RemotePCDiagnostics-Setup-1.2.0-win-x64.exe";
+        var arm64Setup = "RemotePCDiagnostics-Setup-1.2.0-win-arm64.exe";
+        var x64Msi = "RemotePCDiagnostics.Agent-1.2.0-win-x64.msi";
+        var arm64Msi = "RemotePCDiagnostics.Agent-1.2.0-win-arm64.msi";
+        var root = "https://github.com/budcribar/RemotePCDiagnostics/releases/download/prerelease/";
+        var json = "{\"tag_name\":\"prerelease\",\"body\":\"Build version: `" + NewVersion + "`\\n\",\"assets\":["
+            + Asset(x64Setup, root + x64Setup) + ","
+            + Asset(x64Setup + ".sha256", root + x64Setup + ".sha256") + ","
+            + Asset(arm64Setup, root + arm64Setup) + ","
+            + Asset(arm64Setup + ".sha256", root + arm64Setup + ".sha256") + ","
+            + Asset(x64Msi, root + x64Msi) + ","
+            + Asset(x64Msi + ".sha256", root + x64Msi + ".sha256") + ","
+            + Asset(arm64Msi, root + arm64Msi) + ","
+            + Asset(arm64Msi + ".sha256", root + arm64Msi + ".sha256")
+            + "]}";
+
+        var arm = RpcdGitHubRelease.Parse(json, null, System.Runtime.InteropServices.Architecture.Arm64);
+        Assert.Null(arm.Error);
+        Assert.Equal(root + arm64Setup, arm.Choice!.InstallerUrl);
+        Assert.Equal(root + arm64Setup + ".sha256", arm.Choice.Sha256Url);
+        Assert.Equal(root + arm64Msi, arm.Choice.AgentMsiUrl);
+        Assert.Equal(root + arm64Msi + ".sha256", arm.Choice.AgentMsiSha256Url);
+        Assert.Equal("1.2.0", arm.Choice.FilenameVersion);
+
+        var x64 = RpcdGitHubRelease.Parse(json, null, System.Runtime.InteropServices.Architecture.X64);
+        Assert.Null(x64.Error);
+        Assert.Equal(root + x64Setup, x64.Choice!.InstallerUrl);
+        Assert.Equal(root + x64Msi, x64.Choice.AgentMsiUrl);
+    }
+
+    [Fact]
+    public void Release_parse_falls_back_to_x64_on_arm64_when_arm64_assets_are_absent()
+    {
+        var x64Setup = "RemotePCDiagnostics-Setup-1.2.0-win-x64.exe";
+        var x64Msi = "RemotePCDiagnostics.Agent-1.2.0-win-x64.msi";
+        var root = "https://github.com/budcribar/RemotePCDiagnostics/releases/download/v1.2.0/";
+        var json = "{\"tag_name\":\"v1.2.0\",\"assets\":["
+            + Asset(x64Setup, root + x64Setup) + ","
+            + Asset(x64Setup + ".sha256", root + x64Setup + ".sha256") + ","
+            + Asset(x64Msi, root + x64Msi) + ","
+            + Asset(x64Msi + ".sha256", root + x64Msi + ".sha256")
+            + "]}";
+
+        var arm = RpcdGitHubRelease.Parse(json, null, System.Runtime.InteropServices.Architecture.Arm64);
+        Assert.Null(arm.Error);
+        Assert.Equal(root + x64Setup, arm.Choice!.InstallerUrl);
+        Assert.Equal(root + x64Msi, arm.Choice.AgentMsiUrl);
+    }
+
+    [Fact]
+    public void Release_feed_channel_resolves_arm64_downloads_with_x64_fallback()
+    {
+        var withArm = new AppUpdateInstaller.ReleaseFeedChannel(
+            "1.2.0", "https://example/rel",
+            "https://example/x64.exe", "https://example/x64.exe.sha256",
+            "https://example/x64.msi", "https://example/x64.msi.sha256",
+            "https://example/arm64.exe", "https://example/arm64.exe.sha256",
+            "https://example/arm64.msi", "https://example/arm64.msi.sha256");
+
+        var armPick = withArm.ResolveDownloads(System.Runtime.InteropServices.Architecture.Arm64);
+        Assert.Equal("https://example/arm64.exe", armPick.InstallerUrl);
+        Assert.Equal("https://example/arm64.exe.sha256", armPick.InstallerSha256Url);
+        Assert.Equal("https://example/arm64.msi", armPick.AgentMsiUrl);
+        Assert.Equal("https://example/arm64.msi.sha256", armPick.AgentMsiSha256Url);
+
+        var x64Pick = withArm.ResolveDownloads(System.Runtime.InteropServices.Architecture.X64);
+        Assert.Equal("https://example/x64.exe", x64Pick.InstallerUrl);
+        Assert.Equal("https://example/x64.msi", x64Pick.AgentMsiUrl);
+
+        var x64Only = new AppUpdateInstaller.ReleaseFeedChannel(
+            "1.2.0", "https://example/rel",
+            "https://example/x64.exe", "https://example/x64.exe.sha256",
+            "https://example/x64.msi", "https://example/x64.msi.sha256");
+        var fallback = x64Only.ResolveDownloads(System.Runtime.InteropServices.Architecture.Arm64);
+        Assert.Equal("https://example/x64.exe", fallback.InstallerUrl);
+        Assert.Equal("https://example/x64.msi", fallback.AgentMsiUrl);
+    }
+
+    [Fact]
     public void Reconcile_does_not_succeed_when_the_agent_service_is_still_old()
     {
         var now = DateTimeOffset.UtcNow;

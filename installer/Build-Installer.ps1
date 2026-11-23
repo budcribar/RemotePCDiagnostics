@@ -12,6 +12,8 @@
 [CmdletBinding()]
 param(
     [string] $Version = '',
+    [ValidateSet('win-x64', 'win-arm64')]
+    [string] $Rid = 'win-x64',
     [string] $StageDir = '',
     [string] $OutputDir = '',
     [string] $OutputBaseName = '',
@@ -57,7 +59,11 @@ while ($VersionParts.Count -lt 4) { $VersionParts += 0 }
 $NumericVersion = ($VersionParts[0..3] -join '.')
 
 if ([string]::IsNullOrWhiteSpace($StageDir)) {
-    $StageDir = Join-Path $RepoRoot 'artifacts/installer-stage'
+    $StageDir = if ($Rid -eq 'win-x64') {
+        Join-Path $RepoRoot 'artifacts/installer-stage'
+    } else {
+        Join-Path $RepoRoot "artifacts/installer-stage-$Rid"
+    }
 }
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = Join-Path $RepoRoot 'artifacts/installer'
@@ -88,7 +94,7 @@ if (-not $SkipPublish) {
         'publish'
         (Join-Path $RepoRoot 'src/RemotePCDiagnostics.Host/RemotePCDiagnostics.Host.csproj')
         '-c', 'Release'
-        '-r', 'win-x64'
+        '-r', $Rid
         '--self-contained', 'true'
         '-p:PublishProfile=Installer'
         '-p:GeneratePackageOnBuild=false'
@@ -121,12 +127,12 @@ if (-not $SkipPublish) {
                 Pop-Location
             }
         }
-        Write-Host "Publishing Remote PC Diagnostics $Version using sibling RemoteBlazorWebView source ($ResolvedRbwv) ..." -ForegroundColor Cyan
+        Write-Host "Publishing Remote PC Diagnostics $Version ($Rid) using sibling RemoteBlazorWebView source ($ResolvedRbwv) ..." -ForegroundColor Cyan
         $PublishArgs += '-p:UseRbwvSource=true'
         $PublishArgs += "-p:RbwvSourceRoot=$ResolvedRbwv"
     }
     else {
-        Write-Host "Publishing Remote PC Diagnostics $Version (win-x64 self-contained) ..." -ForegroundColor Cyan
+        Write-Host "Publishing Remote PC Diagnostics $Version ($Rid self-contained) ..." -ForegroundColor Cyan
     }
 
     $PublishArgs += @('-o', $StageDir)
@@ -236,7 +242,7 @@ $Iscc = Find-IsccExecutable -ExplicitPath $IsccPath
 $IssFile = Join-Path $PSScriptRoot 'RemotePCDiagnostics.iss'
 
 if ([string]::IsNullOrWhiteSpace($OutputBaseName)) {
-    $OutputBaseName = "RemotePCDiagnostics-Setup-$Version-win-x64"
+    $OutputBaseName = "RemotePCDiagnostics-Setup-$Version-$Rid"
 }
 
 $IsccArgs = @(
@@ -246,6 +252,7 @@ $IsccArgs = @(
     "/DPublishDir=$StageDir"
     "/DOutputDir=$OutputDir"
     "/DOutputBaseName=$OutputBaseName"
+    "/DRid=$Rid"
 )
 
 if (-not [string]::IsNullOrWhiteSpace($RemoteServerUrl)) {

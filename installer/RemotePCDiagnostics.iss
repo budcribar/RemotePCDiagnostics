@@ -17,8 +17,11 @@
   #define OutputDir "..\artifacts\installer"
 #endif
 
+#ifndef Rid
+  #define Rid "win-x64"
+#endif
 #ifndef OutputBaseName
-  #define OutputBaseName "RemotePCDiagnostics-Setup-" + AppVersion + "-win-x64"
+  #define OutputBaseName "RemotePCDiagnostics-Setup-" + AppVersion + "-" + Rid
 #endif
 #ifndef RemoteServerUrl
   #define RemoteServerUrl "https://remoteblazorwebview.com:34544"
@@ -96,7 +99,10 @@ AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\RemotePCDiagnostics
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-#if VER >= EncodeVer(6,3,0,0)
+#if Rid == "win-arm64"
+ArchitecturesAllowed=arm64
+ArchitecturesInstallIn64BitMode=arm64
+#elif VER >= EncodeVer(6,3,0,0)
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 #else
