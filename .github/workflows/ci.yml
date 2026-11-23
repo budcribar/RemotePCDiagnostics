@@ -439,23 +439,24 @@ jobs:
             -p:DebugType=None -o $agentPubDir
           if ($LASTEXITCODE -ne 0) { throw "win-arm64 Agent publish failed ($LASTEXITCODE)" }
 
-          $agentOutDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts/agent-arm64'
-          New-Item -ItemType Directory -Force $agentOutDir | Out-Null
+          $armOutDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts/arm64-release'
+          if (Test-Path $armOutDir) { Remove-Item $armOutDir -Recurse -Force }
+          New-Item -ItemType Directory -Force $armOutDir | Out-Null
           $agentFileName = "RemotePCDiagnostics.Agent-$ver-win-arm64.exe"
-          $agentDest = Join-Path $agentOutDir $agentFileName
+          $agentDest = Join-Path $armOutDir $agentFileName
           Copy-Item -LiteralPath (Join-Path $agentPubDir 'RemotePCDiagnostics.Agent.exe') -Destination $agentDest -Force
 
           $hash = (Get-FileHash -LiteralPath $agentDest -Algorithm SHA256).Hash.ToLowerInvariant()
           $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
           [System.IO.File]::WriteAllText("$agentDest.sha256", "$hash  $agentFileName", $utf8NoBom)
 
-          pwsh -NoProfile -File msi/Build-AgentMsi.ps1 -Version $ver -Rid win-arm64 -SkipPublish -AgentExePath $agentDest -OutputDir $agentOutDir
+          pwsh -NoProfile -File msi/Build-AgentMsi.ps1 -Version $ver -Rid win-arm64 -SkipPublish -AgentExePath $agentDest -OutputDir $armOutDir
           if ($LASTEXITCODE -ne 0) { throw "Build-AgentMsi.ps1 (win-arm64) failed ($LASTEXITCODE)" }
 
-          $agentMsi = Join-Path $agentOutDir "RemotePCDiagnostics.Agent-$ver-win-arm64.msi"
+          $agentMsi = Join-Path $armOutDir "RemotePCDiagnostics.Agent-$ver-win-arm64.msi"
           if (-not (Test-Path -LiteralPath $agentMsi)) { throw "ARM64 Agent MSI missing: $agentMsi" }
 
-          pwsh -NoProfile -File installer/Build-Installer.ps1 -Rid win-arm64 -SkipVerify -Compression $env:INSTALLER_COMPRESSION -AgentMsiPath $agentMsi
+          pwsh -NoProfile -File installer/Build-Installer.ps1 -Rid win-arm64 -SkipVerify -Compression $env:INSTALLER_COMPRESSION -AgentMsiPath $agentMsi -OutputDir $armOutDir
           if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 (win-arm64) failed ($LASTEXITCODE)" }
 
           # Verify staged Host and Agent executables are genuine ARM64 PE binaries (0xAA64).
@@ -471,7 +472,7 @@ jobs:
             } finally { $fs.Dispose() }
           }
 
-          $setup = Get-ChildItem artifacts/installer -Filter 'RemotePCDiagnostics-Setup-*-win-arm64.exe' | Select-Object -First 1
+          $setup = Get-ChildItem $armOutDir -Filter 'RemotePCDiagnostics-Setup-*-win-arm64.exe' | Select-Object -First 1
           if (-not $setup) { throw 'ARM64 Setup executable was not produced' }
           "Built ARM64 release assets: $($setup.Name), $agentFileName, $(Split-Path -Leaf $agentMsi)"
 
@@ -481,12 +482,12 @@ jobs:
         with:
           name: RemotePCDiagnostics-Arm64
           path: |
-            artifacts/installer/RemotePCDiagnostics-Setup-*-win-arm64.exe
-            artifacts/installer/RemotePCDiagnostics-Setup-*-win-arm64.exe.sha256
-            artifacts/agent-arm64/RemotePCDiagnostics.Agent-*-win-arm64.exe
-            artifacts/agent-arm64/RemotePCDiagnostics.Agent-*-win-arm64.exe.sha256
-            artifacts/agent-arm64/RemotePCDiagnostics.Agent-*-win-arm64.msi
-            artifacts/agent-arm64/RemotePCDiagnostics.Agent-*-win-arm64.msi.sha256
+            artifacts/arm64-release/RemotePCDiagnostics-Setup-*-win-arm64.exe
+            artifacts/arm64-release/RemotePCDiagnostics-Setup-*-win-arm64.exe.sha256
+            artifacts/arm64-release/RemotePCDiagnostics.Agent-*-win-arm64.exe
+            artifacts/arm64-release/RemotePCDiagnostics.Agent-*-win-arm64.exe.sha256
+            artifacts/arm64-release/RemotePCDiagnostics.Agent-*-win-arm64.msi
+            artifacts/arm64-release/RemotePCDiagnostics.Agent-*-win-arm64.msi.sha256
           if-no-files-found: error
           retention-days: 5
 
@@ -949,8 +950,8 @@ jobs:
             sha256sum --check --strict "$f.sha256"
             count=$((count + 1))
           done
-          if [[ $count -lt 5 ]]; then
-            echo "::error::Expected at least 5 release binaries, found $count"
+          if [[ $count -lt 8 ]]; then
+            echo "::error::Expected at least 8 release binaries (5 x64 + 3 arm64), found $count"
             exit 1
           fi
 
