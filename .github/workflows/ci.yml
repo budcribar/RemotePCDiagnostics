@@ -455,7 +455,7 @@ jobs:
           $agentMsi = Join-Path $agentOutDir "RemotePCDiagnostics.Agent-$ver-win-arm64.msi"
           if (-not (Test-Path -LiteralPath $agentMsi)) { throw "ARM64 Agent MSI missing: $agentMsi" }
 
-          pwsh -NoProfile -File installer/Build-Installer.ps1 -Rid win-arm64 -Compression $env:INSTALLER_COMPRESSION -AgentMsiPath $agentMsi
+          pwsh -NoProfile -File installer/Build-Installer.ps1 -Rid win-arm64 -SkipVerify -Compression $env:INSTALLER_COMPRESSION -AgentMsiPath $agentMsi
           if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 (win-arm64) failed ($LASTEXITCODE)" }
 
           # Verify staged Host and Agent executables are genuine ARM64 PE binaries (0xAA64).

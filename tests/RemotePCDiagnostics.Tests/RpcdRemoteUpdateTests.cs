@@ -424,7 +424,7 @@ public class RpcdRemoteUpdateTests
         var arm = RpcdGitHubRelease.Parse(json, null, System.Runtime.InteropServices.Architecture.Arm64);
         Assert.Null(arm.Error);
         Assert.Equal(root + arm64Setup, arm.Choice!.InstallerUrl);
-        Assert.Equal(root + arm64Setup + ".sha256", arm.Choice.InstallerSha256Url);
+        Assert.Equal(root + arm64Setup + ".sha256", arm.Choice.Sha256Url);
         Assert.Equal(root + arm64Msi, arm.Choice.AgentMsiUrl);
         Assert.Equal(root + arm64Msi + ".sha256", arm.Choice.AgentMsiSha256Url);
         Assert.Equal("1.2.0", arm.Choice.FilenameVersion);
