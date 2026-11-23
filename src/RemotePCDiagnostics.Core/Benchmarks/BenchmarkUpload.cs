@@ -83,7 +83,7 @@ public static class BenchmarkUpload
 }
 
 /// <summary>
-/// Reads the PC's model, processor, memory and graphics card with one PowerShell CIM query a standard user may run (no admin).
+/// Reads the PC's model, processor, memory and graphics card via in-process WMI (standard user, no admin, no PowerShell).
 /// Anything it cannot read is left unknown; it never fails the upload.
 /// </summary>
 public static class HardwareIdentityProbe
@@ -106,6 +106,9 @@ public static class HardwareIdentityProbe
     {
         try
         {
+            if (!commands.IsScripted && OperatingSystem.IsWindows())
+                return await Task.Run(ReadWindows, ct).ConfigureAwait(false);
+
             var result = await commands.RunPowerShellAsync(Script, ct).ConfigureAwait(false);
             return result is { ExitCode: 0, TimedOut: false } ? Parse(result.StdOut) : new BenchmarkHardware();
         }
@@ -113,6 +116,91 @@ public static class HardwareIdentityProbe
         {
             return new BenchmarkHardware();
         }
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    internal static BenchmarkHardware ReadWindows()
+    {
+        string? manufacturer = null, model = null, processor = null, os = null;
+        double? memoryBytes = null;
+        int cores = 0, logical = 0;
+        var gpus = new List<string>();
+
+        static string? Clean(object? v) => v?.ToString()?.Trim() is { Length: > 0 } s ? s : null;
+
+        try
+        {
+            using var s = new System.Management.ManagementObjectSearcher("SELECT Manufacturer, Model, TotalPhysicalMemory FROM Win32_ComputerSystem");
+            using var res = s.Get();
+            foreach (System.Management.ManagementObject o in res)
+            {
+                using (o)
+                {
+                    manufacturer = Clean(o["Manufacturer"]);
+                    model = Clean(o["Model"]);
+                    if (o["TotalPhysicalMemory"] is { } mem)
+                        memoryBytes = Convert.ToDouble(mem, System.Globalization.CultureInfo.InvariantCulture);
+                    break;
+                }
+            }
+        }
+        catch { }
+
+        try
+        {
+            using var s = new System.Management.ManagementObjectSearcher("SELECT Name, NumberOfCores, NumberOfLogicalProcessors FROM Win32_Processor");
+            using var res = s.Get();
+            foreach (System.Management.ManagementObject o in res)
+            {
+                using (o)
+                {
+                    processor ??= Clean(o["Name"]);
+                    if (o["NumberOfCores"] is { } c) cores += Convert.ToInt32(c, System.Globalization.CultureInfo.InvariantCulture);
+                    if (o["NumberOfLogicalProcessors"] is { } l) logical += Convert.ToInt32(l, System.Globalization.CultureInfo.InvariantCulture);
+                }
+            }
+        }
+        catch { }
+
+        try
+        {
+            using var s = new System.Management.ManagementObjectSearcher("SELECT Name FROM Win32_VideoController");
+            using var res = s.Get();
+            foreach (System.Management.ManagementObject o in res)
+            {
+                using (o)
+                {
+                    if (Clean(o["Name"]) is { } g) gpus.Add(g);
+                }
+            }
+        }
+        catch { }
+
+        try
+        {
+            using var s = new System.Management.ManagementObjectSearcher("SELECT Caption, Version FROM Win32_OperatingSystem");
+            using var res = s.Get();
+            foreach (System.Management.ManagementObject o in res)
+            {
+                using (o)
+                {
+                    var combined = $"{Clean(o["Caption"])} {Clean(o["Version"])}".Trim();
+                    if (combined.Length > 0) os = combined;
+                    break;
+                }
+            }
+        }
+        catch { }
+
+        return new BenchmarkHardware(
+            Manufacturer: manufacturer,
+            Model: model,
+            Processor: processor,
+            Cores: cores > 0 ? cores : null,
+            LogicalProcessors: logical > 0 ? logical : null,
+            MemoryGb: memoryBytes is > 0 and var b ? Math.Round(b / (1024d * 1024 * 1024), 1) : null,
+            Gpu: gpus.Count > 0 ? string.Join(", ", gpus) : null,
+            OperatingSystem: os);
     }
 
     /// <summary>Reads the probe's JSON line; a field that is missing, empty or the wrong type stays null.</summary>

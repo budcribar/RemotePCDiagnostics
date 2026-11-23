@@ -27,34 +27,74 @@ public static class DevProjects
         finally { Gate.Release(); }
     }
 
-    /// <summary>Asks the Windows Search index for project files (only folders Windows indexes; quick when the service runs).</summary>
-    public static string SearchIndexScript => RemotePCDiagnostics.Core.Scripts.PowerShellScripts.Get("SearchIndexProjects");
+    private const string SearchIndexSql =
+        "SELECT TOP 5000 System.ItemPathDisplay FROM SYSTEMINDEX WHERE " +
+        "System.FileName = 'project.assets.json' OR System.FileExtension = '.sln' OR System.FileExtension = '.slnx' OR System.FileExtension = '.csproj'";
 
     private static async Task<IReadOnlyList<string>> SearchIndexAsync(ILogger? log, CancellationToken ct)
     {
-        var psi = new ProcessStartInfo(RemotePCDiagnostics.Core.Areas.SystemCommandRunner.PowerShell)
-        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var a in RemotePCDiagnostics.Core.Areas.SystemCommandRunner.PowerShellArgs(SearchIndexScript)) psi.ArgumentList.Add(a);
-
-        using var p = Process.Start(psi)!;
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(20));
         try
         {
-            var outTask = p.StandardOutput.ReadToEndAsync(timeout.Token);
-            var errTask = p.StandardError.ReadToEndAsync(timeout.Token);
-            await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-            var output = await outTask.ConfigureAwait(false);
-            if (p.ExitCode != 0) { log.Info("[projects] search index unavailable: " + (await errTask.ConfigureAwait(false)).Trim()); return []; }
-            return output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return await Task.Run(() => QuerySearchIndex(ct), CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(20), ct)
+                .ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (TimeoutException)
         {
-            try { p.Kill(true); } catch { }
-            if (ct.IsCancellationRequested) throw;
             log.Warn("[projects] search index timed out");
             return [];
         }
+        catch (Exception ex)
+        {
+            log.Info("[projects] search index unavailable: " + ex.Message);
+            return [];
+        }
+    }
+
+    private static List<string> QuerySearchIndex(CancellationToken ct)
+    {
+        var results = new List<string>();
+        object? connObj = null;
+        object? rsObj = null;
+        try
+        {
+            var connType = Type.GetTypeFromProgID("ADODB.Connection")
+                ?? throw new InvalidOperationException("ADODB.Connection is not registered.");
+            connObj = Activator.CreateInstance(connType)
+                ?? throw new InvalidOperationException("Could not create ADODB.Connection.");
+            dynamic conn = connObj;
+            conn.Open("Provider=Search.CollatorDSO;Extended Properties='Application=Windows';");
+            rsObj = conn.Execute(SearchIndexSql);
+            dynamic rs = rsObj;
+            while (!(bool)rs.EOF)
+            {
+                ct.ThrowIfCancellationRequested();
+                var val = rs.Fields.Item(0).Value?.ToString();
+                if (!string.IsNullOrWhiteSpace(val))
+                    results.Add(val.Trim());
+                rs.MoveNext();
+            }
+            try { rs.Close(); } catch { }
+            try { conn.Close(); } catch { }
+        }
+        finally
+        {
+            SafeReleaseCom(rsObj);
+            SafeReleaseCom(connObj);
+        }
+        return results;
+    }
+
+    private static void SafeReleaseCom(object? obj)
+    {
+        if (obj is null) return;
+        try
+        {
+            if (System.Runtime.InteropServices.Marshal.IsComObject(obj))
+                System.Runtime.InteropServices.Marshal.FinalReleaseComObject(obj);
+        }
+        catch { }
     }
 
     /// <summary>Visual Studio's own build tools (full paths, as Defender process exclusions require). dotnet.exe is left out: it also runs every .NET app.</summary>

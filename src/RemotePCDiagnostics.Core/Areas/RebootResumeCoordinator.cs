@@ -227,7 +227,7 @@ public sealed class RebootResumeCoordinator(
         if (SystemCommandRunner.AgentFailure(task) is { } noAgent)
         {
             Log($"The Agent didn't register the resume task ({noAgent}); registering the app's own task with limited rights.");
-            task = await commands.RunPowerShellAsync(BuildRegisterResumeTaskScript(ExecutablePath, resumeCmd, CurrentUser(), DateTimeOffset.Now), ct).ConfigureAwait(false);
+            task = await RegisterLimitedResumeTaskAsync(ExecutablePath, resumeCmd, CurrentUser(), DateTimeOffset.Now, ct).ConfigureAwait(false);
             how = "task-limited";
         }
         int? regExit = null;
@@ -249,10 +249,36 @@ public sealed class RebootResumeCoordinator(
     private static string CurrentUser() => $"{Environment.UserDomainName}\\{Environment.UserName}";
 
     /// <summary>
-    /// PowerShell that registers the app's own <see cref="ResumeTaskName"/>, for when the Agent isn't there to register its launcher's:
-    /// at <paramref name="user"/>'s sign-in, start the app with limited (normal) rights, never highest. The trigger stops firing after
-    /// <see cref="SessionLaunchOptions.PendingRebootMaxAge"/>, so a task that was never cleaned up can't start the app at sign-ins long after the restart.
-    /// (The Agent's task: <see cref="AgentScripts.ResumeTaskRegister"/>.)
+    /// Builds the Task Scheduler XML for the app's own <see cref="ResumeTaskName"/> (when the Agent isn't available):
+    /// limited rights only, with <see cref="SessionLaunchOptions.PendingRebootMaxAge"/> end boundary.
+    /// </summary>
+    public static string BuildRegisterResumeTaskXml(string executablePath, string resumeCommandLine, string user, DateTimeOffset now)
+    {
+        var exe = executablePath.Trim('"');
+        var args = string.Join(' ', ResumeTaskScript.LaunchArguments(exe, resumeCommandLine));
+        var slash = exe.LastIndexOfAny(['\\', '/']); // not Path.GetDirectoryName: a Windows path must split the same way wherever this runs
+        var workDir = slash > 0 ? exe[..slash] : null;
+        return ResumeTaskXml.Build(exe, args, workDir, user, now.Add(SessionLaunchOptions.PendingRebootMaxAge), highest: false);
+    }
+
+    private async Task<ProcessResult?> RegisterLimitedResumeTaskAsync(string executablePath, string resumeCommandLine, string user, DateTimeOffset now, CancellationToken ct)
+    {
+        if (commands.IsScripted || !OperatingSystem.IsWindows())
+            return await commands.RunPowerShellAsync(BuildRegisterResumeTaskScript(executablePath, resumeCommandLine, user, now), ct).ConfigureAwait(false);
+
+        try
+        {
+            var xml = BuildRegisterResumeTaskXml(executablePath, resumeCommandLine, user, now);
+            await Task.Run(() => Platform.WindowsTaskScheduler.RegisterTask(ResumeTaskName, user, xml), ct).ConfigureAwait(false);
+            return new ProcessResult(0, "", "");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { return new ProcessResult(1, "", ex.Message); }
+    }
+
+    /// <summary>
+    /// PowerShell that registers the app's own <see cref="ResumeTaskName"/>, kept for scripted tests; runtime on Windows uses
+    /// <see cref="BuildRegisterResumeTaskXml"/> with <see cref="Platform.WindowsTaskScheduler"/>.
     /// </summary>
     public static string BuildRegisterResumeTaskScript(string executablePath, string resumeCommandLine, string user, DateTimeOffset now)
     {
@@ -275,7 +301,16 @@ public sealed class RebootResumeCoordinator(
         // The Agent removes the task it registered; without it, the app removes its own (limited) one.
         var removed = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.ResumeTaskRemove, AgentScripts.RebootTask), null, ct).ConfigureAwait(false);
         if (SystemCommandRunner.AgentFailure(removed) is not null)
-            await commands.RunPowerShellAsync(ResumeTaskScript.Remove(ResumeTaskName), ct).ConfigureAwait(false);
+        {
+            if (commands.IsScripted || !OperatingSystem.IsWindows())
+                await commands.RunPowerShellAsync(ResumeTaskScript.Remove(ResumeTaskName), ct).ConfigureAwait(false);
+            else
+            {
+                try { await Task.Run(() => Platform.WindowsTaskScheduler.RemoveTask(ResumeTaskName), ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception ex) { LogWarn($"Couldn't remove limited resume task: {ex.Message}"); }
+            }
+        }
         Log("Cleared pending reboot state, the resume task and the RunOnce entry.");
     }
 

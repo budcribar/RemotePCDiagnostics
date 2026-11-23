@@ -18,8 +18,6 @@ public sealed record DefenderInfo(bool Active, IReadOnlyList<string> ProjectFold
 /// <summary>Reads Defender's status and exclusions, and works out which exclusions are still missing.</summary>
 public static class DefenderProbe
 {
-    public static string Script => Scripts.PowerShellScripts.Get("DefenderExclusions");
-
     public sealed record Status(bool Active, IReadOnlyList<string> Paths, IReadOnlyList<string> Processes, bool ExclusionsReadable);
 
     /// <summary>Null when the output can't be read. Non-admin reads return "N/A: Must be an administrator…" instead of the lists.</summary>

@@ -176,29 +176,11 @@ internal sealed class ScheduledSetupWait : IDisposable
 
     private static string? QueryTaskState(string taskName)
     {
-        var exe = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
-        if (!File.Exists(exe))
-            exe = "powershell.exe";
+        if (!OperatingSystem.IsWindows())
+            return null;
         try
         {
-            using var proc = Process.Start(new ProcessStartInfo
-            {
-                FileName = exe,
-                ArgumentList = { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ScheduledSetup.StateQuery(taskName) },
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            });
-            if (proc is null)
-                return null;
-            var output = proc.StandardOutput.ReadToEnd();
-            if (!proc.WaitForExit(20_000))
-            {
-                try { proc.Kill(); } catch { /* Already gone. */ }
-                return null;
-            }
-            return proc.ExitCode == 0 ? output.Trim() : null;
+            return RemotePCDiagnostics.Core.Platform.WindowsTaskScheduler.GetTaskState("\\", taskName);
         }
         catch
         {

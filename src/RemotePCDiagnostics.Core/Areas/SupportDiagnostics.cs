@@ -151,10 +151,15 @@ public sealed class SupportDiagnostics(IProcessLauncher launcher)
 
     public async Task<IReadOnlyList<DockDevice>?> ReadDockAsync(CancellationToken ct)
     {
-        var raw = await ReadAsync(SystemCommandRunner.PowerShell,
-            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", PowerShellScripts.Get("DockDevices")], ct).ConfigureAwait(false);
-        try { return raw is null ? null : JsonSerializer.Deserialize<DockDevice[]>(raw); }
-        catch (JsonException) { return null; }
+        if (!OperatingSystem.IsWindows()) return null;
+        try
+        {
+            return await Task.Run(() => Platform.WindowsDockDeviceReader.Read(ct), CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(15), ct)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception) { return null; }
     }
 
     public static IEnumerable<DockDevice> MissingDevices(IEnumerable<DockDevice> before, IEnumerable<DockDevice> after)

@@ -75,8 +75,8 @@ internal sealed class WindowsDeveloperEnvironmentProbe(
                 return DefenderProbe.Parse(json);
 
             // Fallback non-admin read (returns real-time state, with "N/A" for exclusions)
-            var r = await commands.RunAsync(SystemCommandRunner.PowerShell, SystemCommandRunner.PowerShellArgs(DefenderProbe.Script), ct).ConfigureAwait(false);
-            return r is { ExitCode: 0 } ? DefenderProbe.Parse(r.StdOut) : null;
+            var fallbackJson = await Task.Run(RemotePCDiagnostics.Core.Platform.WindowsDefenderWmi.ReadStatusJson, ct).ConfigureAwait(false);
+            return DefenderProbe.Parse(fallbackJson);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

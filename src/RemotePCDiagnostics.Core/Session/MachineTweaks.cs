@@ -32,7 +32,7 @@ public interface IMachineTweaks
     Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct);
     /// <summary>Puts back sizes saved by <see cref="PageFileSettings.Encode"/>.</summary>
     Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct);
-    /// <summary>The <see cref="DefenderProbe.Script"/> output (Defender's state and its exclusions, which only an administrator can read).</summary>
+    /// <summary>The <see cref="Platform.WindowsDefenderWmi.ReadStatusJson"/> output (Defender's state and its exclusions, which only an administrator can read).</summary>
     Task<string?> ReadDefenderAsync(CancellationToken ct);
     /// <summary>Adds the exclusions and returns them read back (<see cref="DefenderProbe.Confirmed"/>); Ok = false when Windows refused.</summary>
     Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct);
@@ -658,22 +658,48 @@ public sealed class WindowsMachineTweaks(ILogger? log = null, IProcessLauncher? 
 
     public async Task<string?> ReadDefenderAsync(CancellationToken ct)
     {
-        var r = await PowerShellAsync(DefenderProbe.Script, ct).ConfigureAwait(false);
-        return r.ExitCode == 0 ? r.StdOut : null;
+        try
+        {
+            return await Task.Run(Platform.WindowsDefenderWmi.ReadStatusJson, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            Log($"Defender status read failed: {ex.Message}");
+            return null;
+        }
     }
 
     public async Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct)
     {
-        var r = await PowerShellAsync(DefenderProbe.AddScript(folders, processes), ct).ConfigureAwait(false);
-        Log($"Defender exclusions add ({folders.Count} folder(s), {processes.Count} program(s)): exit {r.ExitCode}");
-        return r.ExitCode == 0 ? (true, r.StdOut) : (false, null);
+        try
+        {
+            var json = await Task.Run(() => Platform.WindowsDefenderWmi.AddExclusions(folders, processes), ct).ConfigureAwait(false);
+            Log($"Defender exclusions add ({folders.Count} folder(s), {processes.Count} program(s)): ok");
+            return (true, json);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            Log($"Defender exclusions add ({folders.Count} folder(s), {processes.Count} program(s)) failed: {ex.Message}");
+            return (false, null);
+        }
     }
 
     public async Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct)
     {
-        var r = await PowerShellAsync(DefenderProbe.RemoveScript(folders, processes), ct).ConfigureAwait(false);
-        Log($"Defender exclusions remove ({folders.Count} folder(s), {processes.Count} program(s)): exit {r.ExitCode}");
-        return r.ExitCode == 0;
+        try
+        {
+            await Task.Run(() => Platform.WindowsDefenderWmi.RemoveExclusions(folders, processes), ct).ConfigureAwait(false);
+            Log($"Defender exclusions remove ({folders.Count} folder(s), {processes.Count} program(s)): ok");
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            Log($"Defender exclusions remove ({folders.Count} folder(s), {processes.Count} program(s)) failed: {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>
@@ -719,11 +745,4 @@ public sealed class WindowsMachineTweaks(ILogger? log = null, IProcessLauncher? 
 
     public Task<bool> RemoveTempDevDriveAsync(string vhdxPath, CancellationToken ct) =>
         new WindowsDevDriveManager(log, _launcher).RemoveAsync(vhdxPath, ct);
-
-    private async Task<ProcessResult> PowerShellAsync(string script, CancellationToken ct)
-    {
-        var r = await _launcher.RunAsync(SystemCommandRunner.PowerShell, SystemCommandRunner.PowerShellArgs(script), TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
-        if (r.ExitCode != 0) Log($"PowerShell exit {r.ExitCode}: {r.StdErr.Trim()}");
-        return r;
-    }
 }

@@ -61,6 +61,20 @@ public static class AppRemovalAgent
     public static async Task<Result> SetScheduledTaskAsync(IProcessLauncher launcher, string? path, bool enabled, CancellationToken ct)
     {
         if (!ScheduledTaskAllowlist.IsAllowed(path)) return new(false, $"{path} isn't a scheduled task this app may change.");
+        if (OperatingSystem.IsWindows() && launcher is SystemProcessLauncher)
+        {
+            var (folder, name) = ScheduledTaskAllowlist.Split(path!);
+            if (folder is null) return new(false, $"{path} isn't a scheduled task this app may change.");
+            try
+            {
+                var nativeState = await Task.Run(() => Platform.WindowsTaskScheduler.SetTaskEnabled(folder, name, enabled), CancellationToken.None)
+                    .WaitAsync(TaskTimeout, ct).ConfigureAwait(false);
+                return new(true, ExitCode: 0, TaskState: nativeState);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (TimeoutException) { return new(false, "Task Scheduler didn't answer in time.", ExitCode: -1); }
+            catch (Exception ex) { return new(false, ex.Message, ExitCode: 1); }
+        }
         var r = await launcher.RunAsync(SystemCommandRunner.PowerShell, SystemCommandRunner.PowerShellArgs(ScheduledTaskAllowlist.SetScript(path!, enabled)), TaskTimeout, ct).ConfigureAwait(false);
         var state = r.ExitCode == 0 && !r.TimedOut
             ? r.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault()

@@ -1,1 +1,0 @@
-$ErrorActionPreference='SilentlyContinue';$s=Get-MpComputerStatus;$p=Get-MpPreference;[pscustomobject]@{On=[string]([bool]$s.RealTimeProtectionEnabled -and [bool]$s.AMServiceEnabled);Mode=[string]$s.AMRunningMode;Paths=@($p.ExclusionPath | Where-Object { $_ });Procs=@($p.ExclusionProcess | Where-Object { $_ })} | ConvertTo-Json -Compress

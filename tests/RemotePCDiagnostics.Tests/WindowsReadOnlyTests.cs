@@ -21,24 +21,18 @@ public sealed class WindowsFactAttribute : FactAttribute
 [Trait("Category", "WindowsReadOnly")]
 public class WindowsReadOnlyTests
 {
-    /// <summary>Read-only scripts, and whether they always print something.</summary>
+    /// <summary>Read-only scripts kept for legacy/replay tests, and whether they always print something.</summary>
     public static TheoryData<string, bool> ReadOnlyScripts => new()
     {
         { "ProblemDevices", false },      // empty when no device has a problem
         { "NetAdapterStatistics", false }, // empty without a connected adapter
         { "IpConfig", true },
-        { "DefenderExclusions", true },
-        { "DockDevices", true },
-        { "MemoryProbe", true },
     };
-
-    /// <summary>Needs the Windows Search service, which a PC may have turned off: run, but its exit code isn't asserted.</summary>
-    private const string SearchIndex = "SearchIndexProjects";
 
     [Fact]
     public void Every_embedded_script_is_listed_here_and_loads()
     {
-        var listed = ReadOnlyScripts.Select(r => (string)((ITheoryDataRow)r).GetData()[0]!).Append(SearchIndex).Order(StringComparer.Ordinal).ToList();
+        var listed = ReadOnlyScripts.Select(r => (string)((ITheoryDataRow)r).GetData()[0]!).Order(StringComparer.Ordinal).ToList();
         Assert.Equal(listed, PowerShellScripts.Names);
         Assert.All(PowerShellScripts.Names, n => Assert.False(string.IsNullOrWhiteSpace(PowerShellScripts.Get(n))));
         Assert.Throws<InvalidOperationException>(() => PowerShellScripts.Get("NoSuchScript"));
@@ -58,16 +52,6 @@ public class WindowsReadOnlyTests
     {
         var ip = WifiConfigModule.ParseIpSnapshot((await RunAsync(WifiConfigModule.IpConfigScript)).Output);
         Assert.NotNull(ip);
-        var (auto, _) = MemoryProbe.Parse((await RunAsync(MemoryProbe.Script)).Output);
-        Assert.NotNull(auto);
-        Assert.NotNull(DefenderProbe.Parse((await RunAsync(DefenderProbe.Script)).Output));
-    }
-
-    [WindowsFact]
-    public async Task Search_index_script_runs()
-    {
-        var (exit, _, error) = await RunAsync(PowerShellScripts.Get(SearchIndex));
-        Assert.True(exit is 0 or 1, $"exited {exit}: {error}"); // 1: the Windows Search provider isn't available on this PC
     }
 
     private static async Task<(int Exit, string Output, string Error)> RunAsync(string script)

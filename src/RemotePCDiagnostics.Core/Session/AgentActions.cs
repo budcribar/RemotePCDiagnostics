@@ -268,46 +268,14 @@ public sealed partial class WindowsAgentNativeOps : IAgentNativeOps
         _ => '\0',
     };
 
-    // Task Scheduler 2.0 (Schedule.Service). RegisterTask flags and logon types from taskschd.h.
-    private const int TaskCreateOrUpdate = 6, TaskLogonInteractiveToken = 3;
-    private const int ErrorFileNotFound = unchecked((int)0x80070002);
-
-    [SupportedOSPlatform("windows")]
-    private static dynamic TaskRoot()
-    {
-        var type = Type.GetTypeFromProgID("Schedule.Service") ?? throw new InvalidOperationException("Task Scheduler isn't available.");
-        dynamic service = Activator.CreateInstance(type) ?? throw new InvalidOperationException("Task Scheduler didn't start.");
-        service.Connect();
-        return service.GetFolder("\\");
-    }
-
     [SupportedOSPlatform("windows")]
     private static ProcessResult RegisterTask(RegisterTaskAction task)
     {
-        var root = TaskRoot();
-        try
-        {
-            root.RegisterTask(task.TaskName, task.TaskXml, TaskCreateOrUpdate, task.User, null, TaskLogonInteractiveToken, null);
-        }
-        finally { Marshal.FinalReleaseComObject(root); }
+        Platform.WindowsTaskScheduler.RegisterTask(task.TaskName, task.User, task.TaskXml);
         return Ok();
     }
 
     [SupportedOSPlatform("windows")]
-    private static ProcessResult RemoveTask(string name)
-    {
-        var root = TaskRoot();
-        try
-        {
-            try { root.DeleteTask(name, 0); }
-            catch (COMException ex) when (ex.HResult == ErrorFileNotFound) { }
-            try
-            {
-                root.GetTask(name);
-                return Failed($"The task '{name}' is still there.");
-            }
-            catch (COMException ex) when (ex.HResult == ErrorFileNotFound) { return Ok(); }
-        }
-        finally { Marshal.FinalReleaseComObject(root); }
-    }
+    private static ProcessResult RemoveTask(string name) =>
+        Platform.WindowsTaskScheduler.RemoveTask(name) ? Ok() : Failed($"The task '{name}' is still there.");
 }

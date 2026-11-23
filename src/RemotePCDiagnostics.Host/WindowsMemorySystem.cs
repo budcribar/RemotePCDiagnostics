@@ -120,8 +120,7 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
         }
 
         progress.ReportStep(3, 5, "Checking page file and memory slots…");
-        var probe = await RunPowerShellAsync(MemoryProbe.Script, ct).ConfigureAwait(false);
-        var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
+        var (autoPageFile, slots) = await Task.Run(MemoryProbe.Read, ct).ConfigureAwait(false);
         progress.ReportStep(4, 5, "Checking Windows Defender exclusions…");
         var defender = apps.Any(a => a.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase)) ? await ReadDefenderAsync(ct).ConfigureAwait(false) : null;
         progress.ReportStep(5, 5, "Checking startup apps, Windows settings and removable apps…");
@@ -587,10 +586,7 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
             // the lists come back unreadable, and nothing is suggested.
             var json = await _machine.ReadDefenderAsync(ct).ConfigureAwait(false);
             if (json is null)
-            {
-                var r = await RunPowerShellAsync(DefenderProbe.Script, ct).ConfigureAwait(false);
-                json = r.ExitCode == 0 ? r.Output : null;
-            }
+                json = await Task.Run(RemotePCDiagnostics.Core.Platform.WindowsDefenderWmi.ReadStatusJson, ct).ConfigureAwait(false);
             if (DefenderProbe.Parse(json) is not { } status) return null;
             if (!status.Active) return new(false, [], [], []);
             var p = ProjectLocatorPaths.Current();

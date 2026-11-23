@@ -191,8 +191,14 @@ public sealed partial class WindowsMemorySystem
     public async Task<string?> GetScheduledTaskStateAsync(string path, CancellationToken ct)
     {
         if (!ScheduledTaskAllowlist.IsAllowed(path)) return null;
-        var r = await RunPowerShellAsync(ScheduledTaskAllowlist.StateScript(path), ct).ConfigureAwait(false);
-        return TaskState(r.ExitCode, r.Output);
+        var (folder, name) = ScheduledTaskAllowlist.Split(path);
+        if (folder is null) return null;
+        try
+        {
+            return await Task.Run(() => RemotePCDiagnostics.Core.Platform.WindowsTaskScheduler.GetTaskState(folder, name), ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { LogWarn($"Task {path} state check failed: {ex.Message}"); return null; }
     }
 
     public async Task<string?> SetScheduledTaskEnabledAsync(string path, bool enabled, CancellationToken ct)
@@ -202,12 +208,5 @@ public sealed partial class WindowsMemorySystem
         if (r is null) return null;
         Log($"Task {path} {(enabled ? "enable" : "disable")} (Agent): ok={r.Ok} state={r.TaskState ?? "?"} {r.Error}");
         return r.Ok ? r.TaskState : null;
-    }
-
-    private static string? TaskState(int exitCode, string output)
-    {
-        if (exitCode != 0) return null;
-        var last = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault();
-        return string.IsNullOrEmpty(last) ? null : last;
     }
 }

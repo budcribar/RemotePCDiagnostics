@@ -122,11 +122,72 @@ public sealed record MemorySlots(int Total, int Used, long? MaxCapacityBytes, lo
     }
 }
 
-/// <summary>Parses the Host's one-shot CIM probe: page file mode and memory slots.</summary>
+/// <summary>Reads page file mode and memory slots directly from WMI (<c>Win32_ComputerSystem</c>, <c>Win32_PhysicalMemoryArray</c>, <c>Win32_PhysicalMemory</c>).</summary>
 public static class MemoryProbe
 {
-    public static string Script => Scripts.PowerShellScripts.Get("MemoryProbe");
+    /// <summary>Reads automatic page file management and physical memory slot counts in-process via WMI.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public static (bool? AutoPageFile, MemorySlots? Slots) Read()
+    {
+        bool? auto = null;
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher("SELECT AutomaticManagedPagefile FROM Win32_ComputerSystem");
+            using var results = searcher.Get();
+            foreach (System.Management.ManagementObject o in results)
+            {
+                using (o)
+                {
+                    if (o["AutomaticManagedPagefile"] is bool b) auto = b;
+                    break;
+                }
+            }
+        }
+        catch { }
 
+        var totalSlots = 0;
+        long maxKb = 0;
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher("SELECT MemoryDevices, MaxCapacityEx, MaxCapacity FROM Win32_PhysicalMemoryArray WHERE Use = 3");
+            using var results = searcher.Get();
+            foreach (System.Management.ManagementObject o in results)
+            {
+                using (o)
+                {
+                    if (o["MemoryDevices"] is { } md) totalSlots += Convert.ToInt32(md, System.Globalization.CultureInfo.InvariantCulture);
+                    var capKb = o["MaxCapacityEx"] is { } ex ? Convert.ToInt64(ex, System.Globalization.CultureInfo.InvariantCulture) : 0L;
+                    if (capKb <= 0 && o["MaxCapacity"] is { } mc) capKb = Convert.ToInt64(mc, System.Globalization.CultureInfo.InvariantCulture);
+                    if (capKb > 0) maxKb += capKb;
+                }
+            }
+        }
+        catch { }
+
+        var usedSlots = 0;
+        long installedBytes = 0;
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher("SELECT Capacity FROM Win32_PhysicalMemory");
+            using var results = searcher.Get();
+            foreach (System.Management.ManagementObject o in results)
+            {
+                using (o)
+                {
+                    usedSlots++;
+                    if (o["Capacity"] is { } cap) installedBytes += Convert.ToInt64(cap, System.Globalization.CultureInfo.InvariantCulture);
+                }
+            }
+        }
+        catch { }
+
+        MemorySlots? slots = totalSlots > 0
+            ? new(totalSlots, Math.Min(usedSlots, totalSlots), maxKb > 0 ? maxKb * 1024 : null, installedBytes > 0 ? installedBytes : null)
+            : null;
+        return (auto, slots);
+    }
+
+    /// <summary>Parses the JSON shape previously emitted by MemoryProbe.ps1; kept for unit tests.</summary>
     public static (bool? AutoPageFile, MemorySlots? Slots) Parse(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return (null, null);

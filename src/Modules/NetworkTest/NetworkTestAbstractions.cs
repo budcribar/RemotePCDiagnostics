@@ -165,12 +165,20 @@ public sealed class HttpSpeedTester(NetworkTestSettings settings, HttpClient? cl
     }
 }
 
-/// <summary>Adapter error/drop totals from Windows Get-NetAdapterStatistics (same script as the Network adapters area).</summary>
+/// <summary>Adapter error/drop totals via .NET NetworkInfoReader (with scripted PowerShell fallback for tests).</summary>
 public sealed class SystemAdapterCounters(SystemCommandRunner commands) : IAdapterCounters
 {
     public async Task<AdapterTotals?> ReadAsync(CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows()) return null;
+        if (!commands.IsScripted)
+        {
+            var stats = Platform.NetworkInfoReader.ReadAdapterStatistics();
+            return new AdapterTotals(
+                stats.Values.Sum(s => s.ErrorsIn + s.ErrorsOut),
+                stats.Values.Sum(s => s.DropsIn + s.DropsOut));
+        }
+
         var pr = await commands.RunPowerShellAsync(Scripts.PowerShellScripts.Get("NetAdapterStatistics"), cancellationToken).ConfigureAwait(false);
         if (pr is not { ExitCode: 0 }) return null;
 
