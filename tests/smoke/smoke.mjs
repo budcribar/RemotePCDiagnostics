@@ -46,11 +46,13 @@ try {
   console.log('Dashboard visible:', await title.textContent());
   await page.screenshot({ path: `${outDir}/dashboard.png`, fullPage: true });
 
-  // Stress suite buttons exist next to Run all tests (not clicked: they start long stress tests).
-  for (const id of ['dashboard-runall', 'dashboard-runall-stress-short', 'dashboard-runall-stress-extended']) {
-    await page.getByTestId(id).waitFor({ state: 'visible', timeout: 10_000 });
-    console.log(`Button ${id}:`, (await page.getByTestId(id).textContent())?.trim());
-  }
+  // The Dashboard has one Refresh button (dashboard-runall, which Admin's run_checks clicks). While checks run it becomes Stop
+  // (dashboard-checks-stop), and startup runs the enabled checks, so either one may be showing. Stress tests start from their own page.
+  await page.locator('[data-testid="dashboard-runall"], [data-testid="dashboard-checks-stop"]').first().waitFor({ state: 'visible', timeout: 10_000 });
+  for (const id of ['dashboard-runall', 'dashboard-checks-stop'])
+    if (await page.getByTestId(id).isVisible().catch(() => false)) console.log(`Button ${id}:`, (await page.getByTestId(id).textContent())?.trim());
+  for (const id of ['dashboard-runall-stress-short', 'dashboard-runall-stress-extended'])
+    if (await page.getByTestId(id).count()) throw new Error(`${id} should no longer be on the Dashboard`);
 
   // Top-bar shop connection pill opens the read-only shop info modal and closes cleanly when present.
   const connectTechBtn = page.getByTestId('shop-connection-pill');
@@ -109,8 +111,8 @@ try {
   await page.getByTestId('checks-detail-title').waitFor({ state: 'visible', timeout: 10_000 });
   console.log('Checks detail:', await page.getByTestId('checks-detail-title').innerText());
   if (await page.getByTestId('checks-group-stress').count()) throw new Error('Stress tests should not be listed on the Checks page');
-  // Any startup checks must finish first; then the Run button is enabled (nothing running, items selected).
-  await page.waitForFunction(() => !document.querySelector('[data-testid="checks-run-checks"]')?.disabled, null, { timeout: 180_000 });
+  // Any startup checks must finish first (startup now runs every enabled check); then the Run button is enabled (nothing running, items selected).
+  await page.waitForFunction(() => !document.querySelector('[data-testid="checks-run-checks"]')?.disabled, null, { timeout: 300_000 });
   await page.waitForFunction(() => !document.querySelector('[data-testid="checks-run-one"]')?.disabled, null, { timeout: 60_000 });
   await page.screenshot({ path: `${outDir}/checks.png`, fullPage: true });
 
