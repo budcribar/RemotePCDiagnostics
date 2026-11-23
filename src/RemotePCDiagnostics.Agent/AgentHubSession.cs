@@ -189,28 +189,7 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             AllowedClientSid = Win32Session.GetActiveUserSid(),
             ConnectTimeout = TimeSpan.FromSeconds(60),
         };
-        // The app reads temperatures and fans through this pipe, as it does through the elevated helper.
-        IDisposable? sensorProvider = null;
-        Func<CancellationToken, Task<RemotePCDiagnostics.Core.Sensors.SensorSnapshot?>>? sensorReader = null;
-        if (OperatingSystem.IsWindows())
-            sensorProvider = AgentAdminHost.CreateWindowsSensorProvider(pipeLog, out sensorReader);
-        var launcher = new RemotePCDiagnostics.Core.Osquery.SystemProcessLauncher();
-        var pipeServer = new RemotePCDiagnostics.Core.Session.AdminPipeServer(
-            serverOptions,
-            launcher,
-            log: pipeLog,
-            sensorReader: sensorReader,
-            selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, pipeLog, token, RelaunchAfterSetup),
-            // The app's own install folder (the one this service just started it from) holds the HardeningKitty it ships.
-            securityAuditor: RemotePCDiagnostics.Core.Security.SecurityAuditModule.ElevatedRunner(workDir, pipeLog),
-            moduleHost: new RemotePCDiagnostics.Core.Plugins.AgentModuleHost(workDir, pipeLog),
-            adminSettings: OperatingSystem.IsWindows() ? new RemotePCDiagnostics.Core.Session.WindowsAdminSettings(pipeLog) : null,
-            machineTweaks: OperatingSystem.IsWindows() ? new RemotePCDiagnostics.Core.Session.WindowsMachineTweaks(pipeLog) : null,
-            // The app isn't elevated: this service keeps its undo journal and its workflow and benchmark state.
-            changeJournal: () => new RemotePCDiagnostics.Core.Changes.FileChangeJournal(RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(), pipeLog),
-            stateFolder: RemotePCDiagnostics.Core.ProtectedState.Folder(),
-            machineSetup: AgentMachineSetup.ForService(pipeLog),
-            biosOperations: new RemotePCDiagnostics.Core.Session.AgentBiosOperations(launcher, log: pipeLog));
+        var pipeServer = CreatePipeServer(serverOptions, workDir, pipeLog, out var sensorProvider);
         updater?.Bind(serverOptions);
 
         var launched = new SystemLaunchedProcess(proc, pipeCts, pipeServer, hostExePath,
@@ -253,6 +232,90 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
         });
 
         return (launched, null);
+    }
+
+    /// <summary>
+    /// Listens on the well-known local service pipe so a user-mode Host launched from the Desktop/Start Menu connects
+    /// to the persistent Agent service with zero UAC prompt. Only the installed Host executable is allowed to connect.
+    /// </summary>
+    public async Task RunLocalHostPipeAsync(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var pipeLog = RemotePCDiagnostics.Core.Logging.AppLoggerFactory.From(Log).CreateLogger("AgentLocalPipe");
+        while (!ct.IsCancellationRequested)
+        {
+            var hostExe = AgentPaths.TryFindLocalInstalledHostExe();
+            if (string.IsNullOrWhiteSpace(hostExe))
+            {
+                try { await Task.Delay(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) { return; }
+                continue;
+            }
+
+            var workDir = Path.GetDirectoryName(hostExe) ?? AppContext.BaseDirectory;
+            var serverOptions = new RemotePCDiagnostics.Core.Session.AdminPipeServerOptions
+            {
+                PipeName = RemotePCDiagnostics.Core.Session.ElevationService.ServiceAdminPipeName,
+                ExpectedClientExePath = hostExe,
+                AllowInteractiveUsers = true,
+                // The client is a user-owned process: a standard user only gets reads, an administrator gets repairs.
+                RestrictStandardUsers = true,
+                ConnectTimeout = Timeout.InfiniteTimeSpan,
+            };
+            using var pipeServer = CreatePipeServer(serverOptions, workDir, pipeLog, out var sensorProvider);
+            using (sensorProvider)
+            {
+                updater?.Bind(serverOptions);
+                try
+                {
+                    await pipeServer.RunUntilCancelledAsync(ct).ConfigureAwait(false);
+                    return;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Log($"[local-pipe] Service admin pipe stopped ({ex.Message}); retrying in 5 s.");
+                }
+            }
+
+            try { await Task.Delay(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+        }
+    }
+
+    private RemotePCDiagnostics.Core.Session.AdminPipeServer CreatePipeServer(
+        RemotePCDiagnostics.Core.Session.AdminPipeServerOptions serverOptions,
+        string workDir,
+        Microsoft.Extensions.Logging.ILogger pipeLog,
+        out IDisposable? sensorProvider)
+    {
+        // The app reads temperatures and fans through this pipe, as it does through the elevated helper.
+        sensorProvider = null;
+        Func<CancellationToken, Task<RemotePCDiagnostics.Core.Sensors.SensorSnapshot?>>? sensorReader = null;
+        if (OperatingSystem.IsWindows())
+            sensorProvider = AgentAdminHost.CreateWindowsSensorProvider(pipeLog, out sensorReader);
+        var launcher = new RemotePCDiagnostics.Core.Osquery.SystemProcessLauncher();
+        return new RemotePCDiagnostics.Core.Session.AdminPipeServer(
+            serverOptions,
+            launcher,
+            log: pipeLog,
+            sensorReader: sensorReader,
+            selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, pipeLog, token, RelaunchAfterSetup),
+            // The app's own install folder holds the HardeningKitty it ships.
+            securityAuditor: RemotePCDiagnostics.Core.Security.SecurityAuditModule.ElevatedRunner(workDir, pipeLog),
+            moduleHost: new RemotePCDiagnostics.Core.Plugins.AgentModuleHost(workDir, pipeLog),
+            adminSettings: OperatingSystem.IsWindows() ? new RemotePCDiagnostics.Core.Session.WindowsAdminSettings(pipeLog) : null,
+            machineTweaks: OperatingSystem.IsWindows() ? new RemotePCDiagnostics.Core.Session.WindowsMachineTweaks(pipeLog) : null,
+            // The app isn't elevated: this service keeps its undo journal and its workflow and benchmark state.
+            changeJournal: () => new RemotePCDiagnostics.Core.Changes.FileChangeJournal(RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(), pipeLog),
+            stateFolder: RemotePCDiagnostics.Core.ProtectedState.Folder(),
+            machineSetup: AgentMachineSetup.ForService(pipeLog),
+            biosOperations: new RemotePCDiagnostics.Core.Session.AgentBiosOperations(launcher, log: pipeLog));
     }
 
     /// <summary>

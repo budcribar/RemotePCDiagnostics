@@ -91,18 +91,20 @@ public sealed class InstallerConfigTests
         Assert.Contains("CloseApplications=yes", iss);
         Assert.Contains("PrivilegesRequired=admin", iss);
 
-        // Start Menu and Desktop shortcuts auto-created directly (frictionless setup without tasks).
-        Assert.Contains(@"Name: ""{autoprograms}\{#AppName}""", iss);
-        Assert.Contains(@"Name: ""{autodesktop}\{#AppName}""", iss);
+        // Start Menu and Desktop shortcuts auto-created directly (frictionless setup without tasks) and launch Host.exe with no UAC prompt.
+        Assert.Contains(@"Name: ""{autoprograms}\{#AppName}""; Filename: ""{app}\{#AppExeName}""; Parameters: ""{#RemoteParameters}""", iss);
+        Assert.Contains(@"Name: ""{autodesktop}\{#AppName}""; Filename: ""{app}\{#AppExeName}""; Parameters: ""{#RemoteParameters}""", iss);
         Assert.DoesNotContain("Tasks: desktopicon", iss);
 
-        // Direct Progress -> Auto-Launch: skip wizard friction and auto-launch on completion with shellexec runasoriginaluser.
+        // Direct Progress -> Auto-Launch: skip wizard friction and launch through Agent.exe --launch so Host starts un-elevated with the Agent pipe.
         Assert.Contains("DisableWelcomePage=yes", iss);
         Assert.Contains("DisableDirPage=yes", iss);
         Assert.Contains("DisableReadyPage=yes", iss);
         Assert.Contains("DisableFinishedPage=yes", iss);
         Assert.Contains("ShouldSkipPage", iss);
-        Assert.Contains("skipifsilent shellexec runasoriginaluser", iss);
+        Assert.Contains(@"Filename: ""{app}\RemotePCDiagnostics.Agent.exe""; Parameters: ""--launch {param:RELAUNCHARGS}""; WorkingDir: ""{app}""; Check: ShouldRelaunchAfterUpdate; Flags: nowait runhidden", iss);
+        Assert.Contains(@"Filename: ""{app}\RemotePCDiagnostics.Agent.exe""; Parameters: ""--launch {#RemoteParameters}"";", iss);
+        Assert.Contains("nowait skipifsilent runhidden", iss);
         Assert.DoesNotContain("postinstall", iss);
 
         // WebView2 Evergreen Runtime check & bootstrapper.

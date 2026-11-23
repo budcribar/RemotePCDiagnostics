@@ -183,11 +183,12 @@ Filename: "{sys}\msiexec.exe"; Parameters: "/i ""{param:AGENTMSI}"" /qn /noresta
 ; A fresh install has no service, so this does not enrol an agent. The same msiexec line: no enrollment properties.
 Filename: "{sys}\msiexec.exe"; Parameters: "/i ""{tmp}\RemotePCDiagnostics.Agent.msi"" /qn /norestart"; StatusMsg: "Updating Remote PC Diagnostics Agent service..."; Check: ShouldUpgradeBundledAgent; Flags: runhidden waituntilterminated
 #endif
-; In-app updates also pass /RELAUNCHARGS=<the app's restart command line> (same relay, session id and group), so the app comes
-; back into the remote session it was in. The entry below it skips silent installs, so without this nothing restarts the app.
-Filename: "{app}\{#AppExeName}"; Parameters: "{param:RELAUNCHARGS}"; WorkingDir: "{app}"; Check: ShouldRelaunchAfterUpdate; Flags: nowait shellexec runasoriginaluser
-; shellexec + runasoriginaluser launches RemotePCDiagnostics.Host.exe (asInvoker) as the interactive desktop user at the end of setup.
-Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; WorkingDir: "{app}"; Flags: nowait skipifsilent shellexec runasoriginaluser
+; In-app updates pass /RELAUNCHARGS=<the app's restart command line>. Launch through Agent.exe --launch (Setup is already
+; elevated, so no UAC prompt) which starts RemotePCDiagnostics.Host.exe un-elevated with the user's shell token and connects
+; its admin pipe. Launching Host.exe directly with runasoriginaluser inherited the elevated updater's token.
+Filename: "{app}\RemotePCDiagnostics.Agent.exe"; Parameters: "--launch {param:RELAUNCHARGS}"; WorkingDir: "{app}"; Check: ShouldRelaunchAfterUpdate; Flags: nowait runhidden
+; Launch through Agent.exe --launch at the end of interactive setup so Host.exe starts un-elevated with the Agent pipe connected.
+Filename: "{app}\RemotePCDiagnostics.Agent.exe"; Parameters: "--launch {#RemoteParameters}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; WorkingDir: "{app}"; Flags: nowait skipifsilent runhidden
 
 [UninstallRun]
 ; Remove the post-reboot workflow continuation scheduled task if an interrupted workflow left one registered.

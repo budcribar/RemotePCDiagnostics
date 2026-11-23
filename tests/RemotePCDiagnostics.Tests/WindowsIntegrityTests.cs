@@ -250,7 +250,7 @@ public class WindowsIntegrityTests
 
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
         Assert.Equal([(0, 100), (20, 100), (60, 100), (100, 100)], steps.Select(s => (s.Step, s.Total)).ToList());
-        Assert.Contains(steps, s => s.Step == 20 && s.Message == "Scan 20% complete");
+        Assert.Contains(steps, s => s.Step == 20 && s.Message == "Scanning…");
     }
 
     [Fact]
@@ -268,7 +268,7 @@ public class WindowsIntegrityTests
 
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
         Assert.Equal([(0, 100), (42, 100), (100, 100)], steps.Select(s => (s.Step, s.Total)).ToList());
-        Assert.Contains(steps, s => s.Step == 42 && s.Message == "Scan 42% complete");
+        Assert.Contains(steps, s => s.Step == 42 && s.Message == "Scanning…");
     }
 
     private sealed class StreamingLauncher(IReadOnlyList<string> lines, ProcessResult result) : IProcessLauncher

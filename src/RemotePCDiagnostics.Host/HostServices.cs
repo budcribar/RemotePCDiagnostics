@@ -67,11 +67,12 @@ public static class HostServices
         services.AddSingleton<ISensorProvider>(sp => new LhmSensorProvider(
             sp.GetRequiredService<IEcFanSource>(),
             sp.GetService<IElevatedCommandBridge>(),
-            L<LhmSensorProvider>()));
+            L<LhmSensorProvider>(),
+            isLocalProcessElevated: () => false));
         services.AddSingleton(sp => new SystemCommandRunner(
             log: L<SystemCommandRunner>(),
             elevatedBridge: sp.GetRequiredService<IElevatedCommandBridge>(),
-            isProcessElevated: () => sp.GetRequiredService<IElevationContext>().IsProcessElevated));
+            isProcessElevated: () => false));
         // One Windows memory/startup adapter for the whole app (undo and memory suggestions share it).
         services.AddSingleton<IMemorySystem>(sp => new WindowsMemorySystem(L<WindowsMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(),
             sp.GetRequiredService<IMachineTweaks>(), sp.GetRequiredService<IElevatedCommandBridge>()));
