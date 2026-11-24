@@ -478,6 +478,7 @@ public sealed class ChecksScreenState
         lock (_gate) c = _cts;
         try { c?.Cancel(); } catch (ObjectDisposedException) { }
         try { _diag.CancelStressSuite(); } catch { }
+        foreach (var s in _diag.Modules.OfType<Areas.ICancellableScan>()) { try { s.Cancel(); } catch { } }
         foreach (var a in _diag.Modules.OfType<Audio.IAudioTestModule>()) { try { a.Cancel(); } catch { } }
         foreach (var w in _diag.Modules.OfType<Webcam.IWebcamTestModule>()) { try { w.Cancel(); } catch { } }
         foreach (var n in _diag.Modules.OfType<Npu.INpuTestModule>()) { try { n.Cancel(); } catch { } }
