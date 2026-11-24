@@ -779,7 +779,7 @@ internal static class TestCabBuilder
             WriteUInt32(cfFilesMs, size);
             WriteUInt32(cfFilesMs, offset);
             WriteUInt16(cfFilesMs, 0); // iFolder
-            WriteUInt16(cfFilesMs, 0); // date
+            WriteUInt16(cfFilesMs, 0x5C21); // date (2026-01-01; Windows expand.exe rejects 0/0/1980)
             WriteUInt16(cfFilesMs, 0); // time
             WriteUInt16(cfFilesMs, 0x0080); // ATTRIB_NAME_IS_UTF
             var nameBytes = Encoding.UTF8.GetBytes(name);
