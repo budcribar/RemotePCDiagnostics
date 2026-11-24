@@ -12,7 +12,7 @@ public static class FixCatalog
     /// </summary>
     public static readonly IReadOnlySet<RemediationKind> SkippedRemediation = new HashSet<RemediationKind>
         { RemediationKind.ScheduleCleanRestart, RemediationKind.CancelScheduledRestart, RemediationKind.EndProcessGroup, RemediationKind.DisableFastStartup,
-          RemediationKind.AnalyzeComponentStore, RemediationKind.DeleteDuplicateFiles };
+          RemediationKind.AnalyzeComponentStore, RemediationKind.DeleteDuplicateFiles, RemediationKind.OpenSettings };
 
     /// <summary>
     /// Offered on a check's own card but listed differently here: the repairs come from <see cref="RepairFixes"/> (with the scan's
