@@ -255,13 +255,15 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
             var woke = recent.Count(r => string.Equals(r, d, StringComparison.OrdinalIgnoreCase));
             var network = IsNetworkDevice(d);
             var lv = woke > 0 && network ? AreaLevel.Warning : AreaLevel.Neutral;
-            var role = network ? "Network adapter" : d.Contains("keyboard", StringComparison.OrdinalIgnoreCase) ? "Keyboard"
+            var role = network ? "Network adapter"
+                : DeviceWake.IsProtectedBusOrHub(d) ? "USB hub / controller"
+                : d.Contains("keyboard", StringComparison.OrdinalIgnoreCase) ? "Keyboard"
                 : d.Contains("mouse", StringComparison.OrdinalIgnoreCase) ? "Mouse" : "Device";
             var wokeText = woke > 0 ? $"Woke the PC {AreaModuleBase.Plural(woke, "time")}"
                 : viaUsb > 0 && !network ? $"Maybe: {AreaModuleBase.Plural(viaUsb, "wake")} came through USB"
                 : "No recent wakes";
             return new AreaRow(lv, [d, role, wokeText], Key: d,
-                Actions: DeviceWake.IsSafeName(d) ? [new AreaAction(RemediationKind.DisableDeviceWake, "Stop it waking the PC", d, d)] : null);
+                Actions: DeviceWake.CanDisableWake(d) ? [new AreaAction(RemediationKind.DisableDeviceWake, "Stop it waking the PC", d, d)] : null);
         }).ToList();
         var networkArmed = f.WakeArmed.Count(IsNetworkDevice);
         var level = rows.Any(r => r.Level == AreaLevel.Warning) ? AreaLevel.Warning : AreaLevel.Ok;

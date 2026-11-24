@@ -202,10 +202,12 @@ public sealed class RemediationService(
             RemediationKind.DisableDeviceWake => new(
                 action,
                 $"Stop {label} from waking the PC?",
-                $"'{label}' is allowed to wake this PC from sleep. A mouse nudged in a bag, a network adapter or a USB controller often wakes a PC by itself and drains the battery.",
+                $"'{label}' is allowed to wake this PC from sleep. A mouse nudged in a bag or a network adapter often wakes a PC by itself and drains the battery.",
                 $"Runs 'powercfg /devicedisablewake' for this one device. The PC then stays asleep when the device is used; the power button (and the lid, on a laptop) still wake it. Undo lets the device wake the PC again.",
-                DeviceWake.IsSafeName(action.Target) ? "Requires administrator privileges." : "This isn't a device name this app can change.",
-                DeviceWake.IsSafeName(action.Target)),
+                DeviceWake.IsProtectedBusOrHub(action.Target)
+                    ? "Stopping wake on a USB hub, controller, or composite device can disconnect keyboards, mice, or docks plugged into it (Code 43). Disable wake on an individual device instead."
+                    : DeviceWake.IsSafeName(action.Target) ? "Requires administrator privileges." : "This isn't a device name this app can change.",
+                DeviceWake.CanDisableWake(action.Target)),
 
             RemediationKind.DisableWakeTimer => new(
                 action,
@@ -588,6 +590,8 @@ public sealed class RemediationService(
     /// <summary>Only a device Windows lists as wake-armed right now, by the name Windows gives it.</summary>
     private async Task<RemediationResult> RunDisableDeviceWakeAsync(AreaAction action, CancellationToken ct)
     {
+        if (!DeviceWake.CanDisableWake(action.Target))
+            return new(false, "Stopping wake on a USB hub, controller, or composite device isn't allowed.");
         var armed = await DeviceWake.QueryArmedAsync(commands, ct).ConfigureAwait(false);
         if (armed is null) return new(false, "Couldn't read which devices can wake this PC.");
         if (DeviceWake.FindArmed(armed, action.Target) is not { } device)

@@ -222,7 +222,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
             case ChangeKind.DeviceWake:
                 if (!DeviceWake.IsSafeName(c.Target)) return Fail("The device wasn't recorded, so it was left as is.");
-                var wr = await commands.RunAsync(DeviceWake.PowerCfg, ["/deviceenablewake", c.Target], ct).ConfigureAwait(false);
+                var wr = await commands.RunAdminToolAsync(DeviceWake.PowerCfg, ["/deviceenablewake", c.Target], ct).ConfigureAwait(false);
                 return wr is { ExitCode: 0 } ? Ok($"{c.Target} can wake the PC again.")
                     : Fail("Windows didn't allow it (administrator rights needed, or the device is no longer connected).");
 
