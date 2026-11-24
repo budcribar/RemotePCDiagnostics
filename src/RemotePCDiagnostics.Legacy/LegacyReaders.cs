@@ -38,7 +38,10 @@ public static class LegacyReaders
                 sp.GetRequiredService<SystemCommandRunner>()),
             new PowerShellSecurityEssentialsSource(sp.GetRequiredService<SystemCommandRunner>())))
         .AddSingleton<IResourceHogsSource>(sp => new AgentOrFallbackResourceHogsSource(sp.GetRequiredService<IElevatedCommandBridge>(),
-            new WmiResourceHogsSource(sp.GetRequiredService<Core.DataSources.IWmiSource>(), sp.GetRequiredService<Core.DataSources.IRegistrySource>()),
+            new WmiResourceHogsSource(
+                sp.GetRequiredService<Core.DataSources.IWmiSource>(),
+                sp.GetRequiredService<Core.DataSources.IRegistrySource>(),
+                monotonicUptimeSeconds: OperatingSystem.IsWindows() ? () => Environment.TickCount64 / 1000 : null),
             new OsqueryResourceHogsSource(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>())))
         .AddSingleton<ICrashDumpSource>(sp => new AgentOrFallbackCrashDumpSource(sp.GetRequiredService<IElevatedCommandBridge>(),
             new WmiCrashDumpSource(sp.GetRequiredService<Core.DataSources.IWmiSource>()), new FileCrashDumpSource()));
