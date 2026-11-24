@@ -102,8 +102,11 @@ public class TestFindingsFixesTests
 
         // ---- hibernation (powercfg /h /type writes both values) ----
         public HibernateInfo? ReadHibernate() => HibAfter;
+        public bool FailHibernate { get; set; }
         public Task<ActionOutcome> SetHibernateTypeAsync(bool reduced, CancellationToken ct)
         {
+            Calls.Add("hib:" + (reduced ? "reduced" : "full"));
+            if (FailHibernate) return Task.FromResult(new ActionOutcome(false, "powercfg failed"));
             Power["HiberFileType"] = reduced ? 1 : 2;
             Power["HibernateEnabled"] = 1;
             return Task.FromResult(new ActionOutcome(true, "ok"));
@@ -484,9 +487,9 @@ public class TestFindingsFixesTests
         var rec = Assert.Single(j.All);
         Assert.Equal(["HiberFileType", "HibernateEnabled"], Hibernation.ValuesToDelete(rec.PreviousExtra));
 
-        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok("")); // powercfg /h /type full
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
         Assert.Equal(1, (await Undo(j, sys, launcher).UndoAllAsync("x")).Succeeded);
-        Assert.Equal(["/h", "/type", "full"], Assert.Single(launcher.Calls).Args);
+        Assert.Contains("hib:full", sys.Calls);
         Assert.Contains("hib-delete:HiberFileType", sys.Calls);
         Assert.Contains("hib-delete:HibernateEnabled", sys.Calls);
     }
@@ -509,7 +512,7 @@ public class TestFindingsFixesTests
     [Fact]
     public async Task Hibernate_PowercfgFails_NothingDeleted()
     {
-        var sys = new Sys();
+        var sys = new Sys { FailHibernate = true };
         var j = new MemoryChangeJournal();
         j.Add(ChangeRecord.New(ChangeKind.HiberFileType, "", "full", "Hibernation", "x", previousExtra: """{"HiberFileType":null,"HibernateEnabled":null}"""));
         var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Fail());

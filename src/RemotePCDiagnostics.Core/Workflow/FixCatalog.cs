@@ -78,6 +78,13 @@ public static class FixCatalog
         _ => SuggestionRisk.Low,
     };
 
+    private static bool RequiresAdmin(RemediationKind k) => k is
+        RemediationKind.ApplySecuritySetting or RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStore
+        or RemediationKind.RepairComponentStoreFromImage or RemediationKind.RepairSystemFiles or RemediationKind.AnalyzeComponentStore
+        or RemediationKind.DisableFastStartup or RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns
+        or RemediationKind.OptimizeSsd or RemediationKind.RestartDevice or RemediationKind.EnableDevice
+        or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer or RemediationKind.InstallBiosUpdate;
+
     /// <summary>Stable fix ids (remembered ticks use them): fixed type keys from <see cref="FixKeys"/>, never display text.</summary>
     public static string RemediationId(AreaAction a) => $"rem:{FixKeys.Of(a.Kind)}:{a.Target}".ToLowerInvariant();
     public static string MemoryId(string suggestionId, MemoryActionType t, string target) => $"mem:{suggestionId}:{FixKeys.Of(t)}:{target}".ToLowerInvariant();
@@ -111,7 +118,7 @@ public static class FixCatalog
                     if (a.Kind == RemediationKind.SetPublicDns)
                         why += $" {a.ButtonText}. {card.Note} Measured during the network scan at {r.Timestamp:O}.";
                     list.Add(new(id, title, why, area, RiskOf(a.Kind), FixSource.Remediation, OrderOf(a.Kind), Remediation: a,
-                        NeedsAdmin: a.Kind == RemediationKind.ApplySecuritySetting || plan?.Warning?.Contains("administrator", StringComparison.OrdinalIgnoreCase) == true,
+                        NeedsAdmin: RequiresAdmin(a.Kind) || plan?.Warning?.Contains("administrator", StringComparison.OrdinalIgnoreCase) == true,
                         Slow: a.Kind is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates || (OptIn(a.Kind) && a.Kind is not (RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer)),
                         Undo: Changes.Undoability.Of(a.Kind), AreaKey: area,
                         DefaultOn: !OptIn(a.Kind) && (a.Kind != RemediationKind.ApplySecuritySetting || Security.SecurityFixes.Find(a.Target)?.DefaultOn != false)));

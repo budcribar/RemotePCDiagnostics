@@ -39,6 +39,7 @@ public static class FixKeys
         [RemediationKind.InstallBiosUpdate] = "installbiosupdate",
         [RemediationKind.DeleteDuplicateFiles] = "deleteduplicatefiles",
         [RemediationKind.DisableWakeTimer] = "disablewaketimer",
+        [RemediationKind.OpenSettings] = "opensettings",
     };
 
     public static readonly IReadOnlyDictionary<MemoryActionType, string> Memory = new Dictionary<MemoryActionType, string>
