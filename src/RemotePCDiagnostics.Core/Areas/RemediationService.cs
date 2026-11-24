@@ -334,7 +334,9 @@ public sealed class RemediationService(
 
             RemediationKind.InstallBiosUpdate => new(
                 action,
-                string.IsNullOrWhiteSpace(label) ? "Update BIOS to latest version?" : $"Update BIOS to {label}?",
+                string.IsNullOrWhiteSpace(label)
+                    ? "Update BIOS to latest version?"
+                    : $"Update BIOS to {(label.StartsWith("BIOS ", StringComparison.OrdinalIgnoreCase) ? label[5..].Trim() : label)}?",
                 "Downloads, verifies, and stages the official vendor BIOS/UEFI firmware update for this PC.",
                 "Checks AC power, battery level, and BitLocker prerequisites, suspends BitLocker for one reboot if active, verifies the signed vendor package, stages the BIOS update, then restarts the PC in 60 seconds to apply it. The app (and a remote session) reconnects after Windows signs back in. Not undoable.",
                 bios is null
@@ -755,17 +757,26 @@ public sealed class RemediationService(
     private async Task<RemediationResult> RunScheduleCleanRestartAsync(AreaAction action, CancellationToken ct)
     {
         var state = await RebootResume.PrepareForRebootAsync(Actor, session, action.Target, ct).ConfigureAwait(false);
+        const string comment = "Remote PC Diagnostics: clean restart scheduled in 60 seconds. Session will automatically resume after sign-in.";
+        var shutdownExe = SystemCommandRunner.SystemTool("shutdown.exe");
         var pr = await commands.RunAsync(
-            SystemCommandRunner.SystemTool("shutdown.exe"),
+            shutdownExe,
             // /g = /r plus Automatic Restart Sign-On: where Windows allows it, the same user is signed back in and the screen locked,
-            // so the resume task runs without anyone at the PC. Where it is turned off, /g is a plain restart.
-            ["/g", "/t", "60", "/c", "Remote PC Diagnostics: clean restart scheduled in 60 seconds. Session will automatically resume after sign-in."],
+            // so the resume task runs without anyone at the PC. Where it is turned off (or when run from the Session-0 SYSTEM Agent),
+            // Windows can reject /g; fall back to a standard /r restart.
+            ["/g", "/t", "60", "/c", comment],
             ct).ConfigureAwait(false);
 
         if (pr is not { ExitCode: 0 })
         {
+            pr = await commands.RunAsync(shutdownExe, ["/r", "/t", "60", "/c", comment], ct).ConfigureAwait(false);
+        }
+
+        if (pr is not { ExitCode: 0 })
+        {
             await RebootResume.CancelPendingRebootAsync(ct).ConfigureAwait(false);
-            return new(false, Failure(pr, "Couldn't schedule a restart."));
+            var detail = Failure(pr, pr is null ? "shutdown.exe did not run." : $"shutdown.exe exited with code {pr.ExitCode}.");
+            return new(false, detail);
         }
 
         var baselineNote = state.PreUsedMemoryBytes > 0

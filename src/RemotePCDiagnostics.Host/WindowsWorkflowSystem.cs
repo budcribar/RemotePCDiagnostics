@@ -50,8 +50,12 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
     // ---- restart ----
     public async Task<bool> RestartAsync(TimeSpan delay, string message, CancellationToken ct)
     {
-        // /g = /r plus Automatic Restart Sign-On (same user signed back in, screen locked) where Windows allows it; otherwise a plain restart.
-        var r = await commands.RunAsync(SystemCommandRunner.SystemTool("shutdown.exe"), ["/g", "/t", ((int)delay.TotalSeconds).ToString(), "/c", message], ct).ConfigureAwait(false);
+        var secs = ((int)delay.TotalSeconds).ToString();
+        // /g = /r plus Automatic Restart Sign-On (same user signed back in, screen locked) where Windows allows it.
+        // When routed through the Session-0 SYSTEM Agent, Windows can reject /g; fall back to a standard /r restart.
+        var r = await commands.RunAsync(SystemCommandRunner.SystemTool("shutdown.exe"), ["/g", "/t", secs, "/c", message], ct).ConfigureAwait(false);
+        if (r is not { ExitCode: 0 })
+            r = await commands.RunAsync(SystemCommandRunner.SystemTool("shutdown.exe"), ["/r", "/t", secs, "/c", message], ct).ConfigureAwait(false);
         return r is { ExitCode: 0 };
     }
 

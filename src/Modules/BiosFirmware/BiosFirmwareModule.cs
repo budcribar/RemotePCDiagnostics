@@ -99,7 +99,7 @@ public sealed class BiosFirmwareModule(IBiosUpdateService? bios = null, SystemCo
                         RemediationKind.InstallBiosUpdate,
                         $"Update BIOS to {targetVer}",
                         targetVer,
-                        $"BIOS {targetVer}")
+                        targetVer)
                 ];
             }
             else
@@ -215,14 +215,20 @@ public sealed class BiosFirmwareModule(IBiosUpdateService? bios = null, SystemCo
         var level = urgent ? AreaLevel.Error : AreaLevel.Warning;
         var status = urgent ? DiagnosticStatus.Error : DiagnosticStatus.Warning;
         var severityTag = urgent ? $" ({latest.Severity})" : "";
-        var meta = string.IsNullOrWhiteSpace(latest.Message)
-            ? $"Current {curVer} → Latest {target}{severityTag}"
-            : latest.Message;
+
+        // Show concise, non-redundant details instead of repeating "BIOS update <version> is available."
+        // (the target version is already shown on the Update BIOS button).
+        var metaParts = new List<string>();
+        if (latest.ReleaseDate is { } rDate)
+            metaParts.Add($"Released {rDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}");
+        if (latest.SizeBytes is > 0)
+            metaParts.Add(HardwareInventory.FormatBytes(latest.SizeBytes.Value));
+        var meta = string.Join(" · ", metaParts);
 
         return (
             level,
             status,
-            $"Update available: {target}",
+            urgent ? "Critical update available" : "Update available",
             meta,
             $"BIOS update available: {curVer} → {target}{severityTag}");
     }

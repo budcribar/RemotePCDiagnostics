@@ -2,6 +2,7 @@ using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Bios;
 using RemotePCDiagnostics.Core.Changes;
+using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Workflow;
 using RemotePCDiagnostics.Modules.BiosFirmware;
@@ -268,6 +269,55 @@ public sealed class BiosFirmwareModuleTests
         var fix = Assert.Single(fixes, f => f.Remediation?.Kind == RemediationKind.InstallBiosUpdate);
         Assert.False(fix.DefaultOn);
         Assert.Equal("BIOS & firmware", fix.AreaKey);
+    }
+
+    [Fact]
+    public void Build_UpdateAvailable_DoesNotRepeatVersionInHeadlineOrMetaAndTitleDoesNotDoubleBios()
+    {
+        var latest = BiosLatestInfo.UpdateAvailable("hp", "01.19.00");
+        var report = BiosFirmwareModule.Build(MakeOutcome(latest, version: "01.17.00"));
+        var updateCard = report.Cards[0];
+
+        Assert.Equal("Update available", updateCard.Headline);
+        Assert.DoesNotContain("01.19.00", updateCard.Headline, StringComparison.Ordinal);
+        Assert.DoesNotContain("01.19.00", updateCard.Meta, StringComparison.Ordinal);
+
+        var action = Assert.Single(updateCard.Actions!);
+        Assert.Equal("01.19.00", action.TargetLabel);
+
+        var remediation = new RemediationService(new SystemCommandRunner(), bios: new StubBiosService(MakeOutcome(latest), new StubBiosProvider("hp", "HP", true)));
+        var plan = remediation.Plan(action);
+        Assert.Equal("Update BIOS to 01.19.00?", plan.Title);
+
+        // Even if a caller passes "BIOS 01.19.00", Plan() must not produce "Update BIOS to BIOS 01.19.00?"
+        var planLegacy = remediation.Plan(action with { TargetLabel = "BIOS 01.19.00" });
+        Assert.Equal("Update BIOS to 01.19.00?", planLegacy.Title);
+    }
+
+    [Fact]
+    public async Task ScheduleCleanRestart_FallsBackFromGToR_WhenGIsRejectedInSession0()
+    {
+        var calls = new List<IReadOnlyList<string>>();
+        var runner = new SystemCommandRunner(new ScriptedLauncher((file, args) =>
+        {
+            if (file.EndsWith("shutdown.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                calls.Add(args);
+                var isG = args.Count > 0 && args[0] == "/g";
+                return isG
+                    ? new ProcessResult(1191, "", "The /g option is not supported.")
+                    : new ProcessResult(0, "", "");
+            }
+            return new ProcessResult(0, "", "");
+        }));
+
+        var remediation = new RemediationService(runner);
+        var res = await remediation.ExecuteAsync(new AreaAction(RemediationKind.ScheduleCleanRestart, "Restart", "", "Restart"));
+
+        Assert.True(res.Success);
+        Assert.Equal(2, calls.Count);
+        Assert.Equal("/g", calls[0][0]);
+        Assert.Equal("/r", calls[1][0]);
     }
 
     private sealed class StubBiosProvider(string vendorId, string displayName, bool canInstall) : IBiosUpdateProvider
