@@ -152,12 +152,12 @@ public partial class MainWindow : Window
         provider.GetRequiredService<ServiceActionService>().ActionCompleted += rec =>
         {
             _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.TestResult, rec.Success ? RemotePCDiagnostics.Core.Logging.LogLevel.Information : RemotePCDiagnostics.Core.Logging.LogLevel.Warning, RemotePCDiagnostics.Core.History.HistorySummary.FormatServiceEvent(rec, _machine.Value, eventContext.AppVersion)));
-            if (rec.Actor == ServiceActor.Remote) App.Log.Info($"Remote user used the Services page: {rec.Message.TrimEnd('.')}.");
+            if (rec.Actor == ServiceActor.Remote) App.Log($"Remote user used the Services page: {rec.Message.TrimEnd('.')}.");
         };
         provider.GetRequiredService<RemediationService>().ActionCompleted += rec =>
         {
             _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.TestResult, rec.Success ? RemotePCDiagnostics.Core.Logging.LogLevel.Information : RemotePCDiagnostics.Core.Logging.LogLevel.Warning, RemotePCDiagnostics.Core.History.HistorySummary.FormatRemediationEvent(rec, _machine.Value, eventContext.AppVersion)));
-            if (rec.Actor == ServiceActor.Remote && !RebootResumeCoordinator.IsPostRebootComparison(rec)) App.Log.Info($"Remote user ran an automated fix: {rec.Message.TrimEnd('.')}.");
+            if (rec.Actor == ServiceActor.Remote && !RebootResumeCoordinator.IsPostRebootComparison(rec)) App.Log($"Remote user ran an automated fix: {rec.Message.TrimEnd('.')}.");
         };
 
         // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).
