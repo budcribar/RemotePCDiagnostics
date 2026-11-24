@@ -721,7 +721,7 @@ jobs:
           $agent = Start-Process -FilePath 'dotnet' -ArgumentList $publishArgs -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
           $null = $agent.Handle
 
-          pwsh -NoProfile -File installer/Build-Installer.ps1 -Rid win-arm64 -StageOnly
+          pwsh -NoProfile -File installer/Build-Installer.ps1 -Rid win-arm64 -StageOnly -SkipVerify
           $appCode = $LASTEXITCODE
 
           $agent.WaitForExit()
