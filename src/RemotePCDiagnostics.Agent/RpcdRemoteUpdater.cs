@@ -17,7 +17,7 @@ internal sealed class RpcdRemoteUpdater : IDisposable
     private readonly HttpClient _http;
     private readonly bool _ownsHttp;
     private readonly Func<string?> _installedVersion;
-    private readonly Func<bool> _hostRunning;
+    private readonly Func<IDisposable?> _holdUpdateLock;
     private readonly Func<IReadOnlyList<string>?> _relaunchArguments;
     private readonly Func<string?> _configuredServer;
     private readonly string _stagingDirectory;
@@ -34,15 +34,15 @@ internal sealed class RpcdRemoteUpdater : IDisposable
     /// </summary>
     public RpcdRemoteUpdater(
         Func<string?> installedVersion,
-        Func<bool> hostRunning,
         Func<IReadOnlyList<string>?> relaunchArguments,
         Action<string>? log,
         HttpClient? http = null,
         string? stagingDirectory = null,
-        Func<string?>? configuredServer = null)
+        Func<string?>? configuredServer = null,
+        Func<IDisposable?>? holdUpdateLock = null)
     {
         _installedVersion = installedVersion;
-        _hostRunning = hostRunning;
+        _holdUpdateLock = holdUpdateLock ?? (() => UpdateBusyLock.TryHold(TimeSpan.FromSeconds(2)));
         _relaunchArguments = relaunchArguments;
         _configuredServer = configuredServer ?? (() => null);
         _log = log;
@@ -103,7 +103,7 @@ internal sealed class RpcdRemoteUpdater : IDisposable
 
     public void Bind(AdminPipeServerOptions options)
     {
-        options.StartUpdate = (request, relaunch, _) => Task.FromResult(Start(request, relaunch, trustCallerBusyReason: true));
+        options.StartUpdate = (request, relaunch, _) => Task.FromResult(Start(request, relaunch));
         options.ReadUpdate = requestId => Current(requestId);
     }
 
@@ -115,10 +115,19 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         return _session.Current(requestId, _installedVersion(), DateTimeOffset.UtcNow, ReadInstalledAgentProductVersion());
     }
 
-    public RpcdUpdateStatus Start(RpcdUpdateRequest request, IReadOnlyList<string>? relaunch, bool trustCallerBusyReason)
+    /// <summary>
+    /// Starts an update unless something is running. The app's pipe request carries its own busy reason. For every request the
+    /// agent also takes <see cref="UpdateBusyLock"/> and keeps it until Setup returns, so a hub command (whose busy reason is
+    /// empty) is refused while the app holds it.
+    /// </summary>
+    public RpcdUpdateStatus Start(RpcdUpdateRequest request, IReadOnlyList<string>? relaunch)
     {
         if (!TryPrepareStaging())
             return StagingRefusal(null);
+
+        var busyLock = _holdUpdateLock();
+        if (busyLock is null && string.IsNullOrWhiteSpace(request.BusyReason))
+            request = request with { BusyReason = UpdateBusyLock.BusyMessage };
 
         bool started;
         RpcdUpdateStatus status;
@@ -127,6 +136,7 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         {
             if (crossProcess is null)
             {
+                busyLock?.Dispose();
                 return new RpcdUpdateStatus
                 {
                     RequestId = Guid.NewGuid().ToString("N"),
@@ -140,11 +150,13 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             }
             LoadShared();
             now = DateTimeOffset.UtcNow;
-            started = _session.TryBegin(request, !trustCallerBusyReason && _hostRunning(), trustCallerBusyReason,
-                now, activityProblem: null, out status, blockWhileHostRunning: true);
+            started = _session.TryBegin(request, now, out status);
         }
         if (!started)
+        {
+            busyLock?.Dispose();
             return status;
+        }
 
         var relaunchArgs = relaunch is { Count: > 0 } ? relaunch : _relaunchArguments();
         if (relaunchArgs is not null && !SessionLaunchOptions.IsRestartCommandLine(relaunchArgs))
@@ -166,9 +178,19 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             UtcNow = now,
             IsPersistentAgentInstalled = PersistentAgentInstalled,
             ReadInstalledAgentVersion = ReadInstalledAgentProductVersion,
-            RunInstaller = (install, ct) => RunInstallerAsync(install, relaunchArgs, fleetUpdate: !trustCallerBusyReason, ct),
+            RunInstaller = (install, ct) => RunInstallerAsync(install, relaunchArgs, ct),
         };
-        _ = Task.Run(() => _session.ExecuteAsync(request, run, CancellationToken.None));
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _session.ExecuteAsync(request, run, CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                busyLock?.Dispose();
+            }
+        });
         return status;
     }
 
@@ -183,7 +205,7 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             command.Approved,
             string.IsNullOrWhiteSpace(command.ApprovedBy) ? null : command.ApprovedBy,
             BusyReason: null);
-        var status = Start(request, relaunch: null, trustCallerBusyReason: false);
+        var status = Start(request, relaunch: null);
         await ReportAsync(report, status, reportCt).ConfigureAwait(false);
         while (!status.Terminal && !reportCt.IsCancellationRequested)
         {
@@ -226,15 +248,11 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             _http.Dispose();
     }
 
-    private async Task<int> RunInstallerAsync(RpcdPreparedInstall install, IReadOnlyList<string>? relaunch,
-        bool fleetUpdate, CancellationToken ct)
+    private async Task<int> RunInstallerAsync(RpcdPreparedInstall install, IReadOnlyList<string>? relaunch, CancellationToken ct)
     {
         await AppUpdateInstaller.VerifyPublisherAsync(install.InstallerPath, ct).ConfigureAwait(false);
         if (install.AgentMsiPath is { } agentMsiPath)
             await AppUpdateInstaller.VerifyPublisherAsync(agentMsiPath, ct).ConfigureAwait(false);
-        if (fleetUpdate && _hostRunning())
-            throw new InvalidOperationException("Remote PC Diagnostics opened during the download. Close it and retry the fleet update.");
-
         // Save only when Setup is about to start so a refused update does not restart the app.
         if (relaunch is not null)
             PendingAppRelaunch.Save(_stagingDirectory, relaunch);
@@ -243,8 +261,10 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         // Host's kill-on-close job, so it must not: Setup's script closes the Host after Setup has left that job.
         // Either way the Host has to be gone before Setup initializes. /SUPPRESSMSGBOXES answers the AppMutex
         // prompt with Cancel, and that Abort is exit code 1, before CloseApplications runs.
-        if (!fleetUpdate && RpcdSetupLog.CanCloseHostBeforeSetup(OperatingSystem.IsWindows() ? Process.GetCurrentProcess().SessionId : -1))
+        if (RpcdSetupLog.CanCloseHostBeforeSetup(OperatingSystem.IsWindows() ? Process.GetCurrentProcess().SessionId : -1))
             RpcdHostShutdown.CloseRunningHost(_log);
+        else
+            _log?.Invoke("[rpcd-update] Leaving Remote PC Diagnostics running until Setup has started. Setup closes it.");
 
         // Cleared before Setup stops this service, so a crash during the hand-off does not start a second copy
         // that exits 0 and stays stopped. StartAndWait puts the actions back when Setup returns. Setup also puts
@@ -553,30 +573,6 @@ internal sealed class RpcdRemoteUpdater : IDisposable
 
     internal static string? ReadInstalledAgentProductVersion() =>
         RpcdProductVersion.ReadFile(AgentLayout.DefaultAgentExe());
-
-    /// <summary>The mutex every Host instance holds while it runs. Setup's AppMutex checks the same name.</summary>
-    internal const string HostInstanceMutexName = @"Global\RemotePCDiagnostics.Host";
-
-    /// <summary>
-    /// True while any RPCD Host process runs, from any install location. This is the same test Setup's AppMutex makes, so the
-    /// agent refuses exactly when Setup would. A mutex the agent may not open still exists, so that counts as running.
-    /// </summary>
-    public static bool IsRpcdHostRunning() => IsMutexHeld(HostInstanceMutexName);
-
-    internal static bool IsMutexHeld(string name)
-    {
-        try
-        {
-            if (!Mutex.TryOpenExisting(name, out var mutex))
-                return false;
-            mutex.Dispose();
-            return true;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return true;
-        }
-    }
 
     /// <summary>The restart command line for the session the app published, so Setup brings that same session back.</summary>
     public static IReadOnlyList<string>? RelaunchForActiveSession(string? configuredServer)

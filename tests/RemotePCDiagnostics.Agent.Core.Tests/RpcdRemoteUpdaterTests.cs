@@ -12,23 +12,44 @@ public class RpcdRemoteUpdaterTests
 {
     private static readonly RpcdUpdateRequest Approved = new("stable", null, Approved: true, ApprovedBy: "shop owner");
 
-    [Theory]
-    [InlineData(true, null)]
-    [InlineData(true, "")]
-    [InlineData(false, "Reported busy")]
-    public void Hub_update_uses_agent_observed_host_state(bool hostRunning, string? reportedActivity)
+    [Fact]
+    public void A_hub_update_is_refused_while_the_app_holds_the_update_lock()
     {
         var dir = TempDir();
+        var name = "rpcd-test-" + Guid.NewGuid().ToString("N");
         using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
-        using var service = NewUpdater(dir, http, hostRunning: hostRunning);
-        var status = service.Start(Approved with { BusyReason = reportedActivity },
-            relaunch: null, trustCallerBusyReason: false);
+        using var service = NewUpdater(dir, http, lockName: name);
+        var app = new UpdateBusyHold(() => UpdateBusyLock.TryHold(TimeSpan.Zero, name));
 
-        Assert.Equal(hostRunning ? RpcdUpdateStages.Refused : RpcdUpdateStages.Checking, status.Stage);
-        if (hostRunning)
-            Assert.Contains("Close Remote PC Diagnostics", status.Error);
+        using (app.Enter())
+        {
+            Assert.True(app.IsHeld);
+            var refused = service.Start(Approved, relaunch: null);
+            Assert.Equal(RpcdUpdateStages.Refused, refused.Stage);
+            Assert.Equal(UpdateBusyLock.BusyMessage, refused.Error);
+        }
+
+        Assert.False(app.IsHeld);
+        var started = service.Start(Approved, relaunch: null);
+        Assert.Equal(RpcdUpdateStages.Checking, started.Stage);
     }
 
+    [Fact]
+    public void The_update_lock_is_shared_by_overlapping_work_and_given_back_by_the_last()
+    {
+        var name = "rpcd-test-" + Guid.NewGuid().ToString("N");
+        var hold = new UpdateBusyHold(() => UpdateBusyLock.TryHold(TimeSpan.Zero, name));
+        var check = hold.Enter();
+        var undo = hold.Enter();
+        check.Dispose();
+        Assert.True(hold.IsHeld);
+        Assert.Null(UpdateBusyLock.TryHold(TimeSpan.Zero, name));
+        undo.Dispose();
+        undo.Dispose();
+        Assert.False(hold.IsHeld);
+        using var agent = UpdateBusyLock.TryHold(TimeSpan.FromSeconds(1), name);
+        Assert.NotNull(agent);
+    }
 
     [Fact]
     public async Task An_update_running_in_one_agent_process_refuses_one_in_the_other()
@@ -39,10 +60,10 @@ public class RpcdRemoteUpdaterTests
         using var helper = NewUpdater(dir, http);
         using var service = NewUpdater(dir, http);
 
-        var first = helper.Start(Approved with { BusyReason = "" }, relaunch: null, trustCallerBusyReason: true);
+        var first = helper.Start(Approved with { BusyReason = "" }, relaunch: null);
         Assert.Equal(RpcdUpdateStages.Checking, first.Stage);
 
-        var second = service.Start(Approved with { BusyReason = "" }, relaunch: null, trustCallerBusyReason: true);
+        var second = service.Start(Approved with { BusyReason = "" }, relaunch: null);
         Assert.Equal(RpcdUpdateStages.Refused, second.Stage);
         Assert.Contains("already in progress", second.Error);
 
@@ -218,13 +239,14 @@ public class RpcdRemoteUpdaterTests
         Assert.Contains("'Missing'", query);
     }
 
-    private static RpcdRemoteUpdater NewUpdater(string dir, HttpClient http, string? installedVersion = null, bool hostRunning = false) => new(
+    /// <param name="lockName">The update lock to use. Null gives each updater a lock that is always free.</param>
+    private static RpcdRemoteUpdater NewUpdater(string dir, HttpClient http, string? installedVersion = null, string? lockName = null) => new(
         installedVersion: () => installedVersion ?? "1.2.0",
-        hostRunning: () => hostRunning,
         relaunchArguments: () => null,
         log: null,
         http: http,
-        stagingDirectory: dir);
+        stagingDirectory: dir,
+        holdUpdateLock: lockName is null ? () => new FreeLock() : () => UpdateBusyLock.TryHold(TimeSpan.Zero, lockName));
 
     [Fact]
     public void Old_update_packages_are_deleted_and_recent_ones_kept()
@@ -253,15 +275,6 @@ public class RpcdRemoteUpdaterTests
         Assert.True(File.Exists(status));
     }
 
-    [Fact]
-    public void A_held_mutex_counts_as_a_running_host()
-    {
-        var name = "rpcd-test-" + Guid.NewGuid().ToString("N");
-        Assert.False(RpcdRemoteUpdater.IsMutexHeld(name));
-        using (new Mutex(initiallyOwned: true, name))
-            Assert.True(RpcdRemoteUpdater.IsMutexHeld(name));
-    }
-
     [Theory]
     [InlineData(true, true, true)]
     [InlineData(true, false, false)]
@@ -275,6 +288,11 @@ public class RpcdRemoteUpdaterTests
         var args = RpcdRemoteUpdater.RelaunchForActiveSession("https://server.example.com:34544", path, pid => alive && pid == 4242);
 
         Assert.Equal(relaunched, args is not null);
+    }
+
+    private sealed class FreeLock : IDisposable
+    {
+        public void Dispose() { }
     }
 
     private static string TempDir()

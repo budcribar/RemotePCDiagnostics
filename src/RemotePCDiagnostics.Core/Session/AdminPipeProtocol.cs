@@ -46,9 +46,6 @@ public interface IElevatedCommandBridge
     Task<AppUpdateResult?> SelfUpdateAsync(AppUpdateChannel channel, IReadOnlyList<string>? relaunchArguments = null, CancellationToken ct = default) =>
         Task.FromResult<AppUpdateResult?>(null);
 
-    /// <summary>Tells the agent what diagnostics work is running so a later <c>update_rpcd</c> can refuse. Empty means idle.</summary>
-    Task ReportDiagnosticsActivityAsync(string? busyReason, CancellationToken ct = default) => Task.CompletedTask;
-
     /// <summary>The machine id and shop group the Agent is enrolled with. Null when the agent is not connected or is too old to say.</summary>
     Task<AgentEnrollmentFacts?> ReadAgentEnrollmentAsync(CancellationToken ct = default) =>
         Task.FromResult<AgentEnrollmentFacts?>(null);
@@ -621,8 +618,6 @@ public static class AdminPipeFraming
     public const string OpUpdateRpcd = "update_rpcd";
     /// <summary>The latest <c>update_rpcd</c> snapshot, or the one named by <c>requestId</c>.</summary>
     public const string OpUpdateRpcdStatus = "update_rpcd_status";
-    /// <summary>The app telling the agent what diagnostics work is running. An empty <c>busyReason</c> means idle.</summary>
-    public const string OpReportActivity = "report_activity";
     /// <summary>The machine id and shop group from agent.json, which the un-elevated app cannot read itself.</summary>
     public const string OpAgentEnrollment = "agent_enrollment";
     /// <summary>Runs the security audit elevated; the response carries the report CSV. The only request the client can cancel.</summary>
@@ -1138,11 +1133,6 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         return new AppUpdateResult(response.Ok, Error: response.Error);
     }
 
-    public async Task ReportDiagnosticsActivityAsync(string? busyReason, CancellationToken ct = default)
-    {
-        await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpReportActivity, BusyReason: busyReason), ct).ConfigureAwait(false);
-    }
-
     public async Task<AgentEnrollmentFacts?> ReadAgentEnrollmentAsync(CancellationToken ct = default)
     {
         var response = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpAgentEnrollment), ct).ConfigureAwait(false);
@@ -1572,9 +1562,6 @@ public sealed record AdminPipeServerOptions
     /// <summary>The latest update, or the one named by request id. Null when this agent has never run one.</summary>
     public Func<string?, RpcdUpdateStatus?>? ReadUpdate { get; set; }
 
-    /// <summary>The app's latest "what is running" line. Empty or null means idle.</summary>
-    public Action<string?>? ReportActivity { get; set; }
-
     /// <summary>The agent.json that <c>agent_enrollment</c> reads. Null is the installed one. Tests only.</summary>
     public string? EnrollmentConfigPath { get; set; }
 }
@@ -1919,12 +1906,6 @@ public sealed class AdminPipeServer(
                     ExitCode: -1,
                     Error: $"Failed to read drives: {ex.Message}");
             }
-        }
-
-        if (string.Equals(request.Op, AdminPipeFraming.OpReportActivity, StringComparison.OrdinalIgnoreCase))
-        {
-            options.ReportActivity?.Invoke(request.BusyReason);
-            return new AdminPipeResponse(Ok: true, Allowed: true, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: 0);
         }
 
         if (string.Equals(request.Op, AdminPipeFraming.OpAgentEnrollment, StringComparison.OrdinalIgnoreCase))

@@ -20,7 +20,7 @@ public class RpcdRemoteUpdateTests
     public void Approval_is_required_and_a_label_is_not_approval()
     {
         var session = new RpcdUpdateSession();
-        var started = session.TryBegin(new RpcdUpdateRequest("prerelease", null, Approved: false, ApprovedBy: "shop owner"), hostRunning: false, trustCallerBusyReason: false, DateTimeOffset.UtcNow, out var status);
+        var started = session.TryBegin(new RpcdUpdateRequest("prerelease", null, Approved: false, ApprovedBy: "shop owner"), DateTimeOffset.UtcNow, out var status);
 
         Assert.False(started);
         Assert.Equal(RpcdUpdateStages.Refused, status.Stage);
@@ -38,13 +38,13 @@ public class RpcdRemoteUpdateTests
         if (channel == "stable ")
         {
             var ok = new RpcdUpdateSession();
-            Assert.True(ok.TryBegin(new RpcdUpdateRequest(channel, null, true), false, true, DateTimeOffset.UtcNow, out var accepted));
+            Assert.True(ok.TryBegin(new RpcdUpdateRequest(channel, null, true), DateTimeOffset.UtcNow, out var accepted));
             Assert.Equal("stable", accepted.Channel);
             return;
         }
 
         var session = new RpcdUpdateSession();
-        var started = session.TryBegin(new RpcdUpdateRequest(channel, null, true), false, true, DateTimeOffset.UtcNow, out var status);
+        var started = session.TryBegin(new RpcdUpdateRequest(channel, null, true), DateTimeOffset.UtcNow, out var status);
         Assert.False(started);
         Assert.Equal("Channel must be stable or prerelease.", status.Error);
     }
@@ -59,8 +59,6 @@ public class RpcdRemoteUpdateTests
 
         var started = session.TryBegin(
             new RpcdUpdateRequest("prerelease", NewVersion, true, BusyReason: reason),
-            hostRunning: true,
-            trustCallerBusyReason: true,
             DateTimeOffset.UtcNow,
             out var status);
 
@@ -71,34 +69,11 @@ public class RpcdRemoteUpdateTests
     }
 
     [Fact]
-    public void Hub_command_cannot_claim_the_pc_is_idle_while_the_app_is_open()
-    {
-        var session = new RpcdUpdateSession();
-        var started = session.TryBegin(new RpcdUpdateRequest("prerelease", null, true), hostRunning: true, trustCallerBusyReason: false, DateTimeOffset.UtcNow, out var status);
-
-        Assert.False(started);
-        Assert.Equal(RpcdUpdateSession.ActivityUnconfirmed, status.Error);
-        Assert.Contains(RpcdUpdateSession.ProbeNoReport, status.Detail);
-    }
-
-    [Fact]
-    public void A_fresh_idle_report_lets_a_hub_command_continue()
-    {
-        var now = DateTimeOffset.UtcNow;
-        var session = new RpcdUpdateSession();
-        session.ReportActivity(null, now);
-
-        Assert.True(session.TryBegin(new RpcdUpdateRequest("stable", null, true), hostRunning: true, trustCallerBusyReason: false, now, out var status));
-        Assert.Equal(RpcdUpdateStages.Checking, status.Stage);
-        Assert.False(status.Terminal);
-    }
-
-    [Fact]
     public void A_second_update_is_refused_without_replacing_the_one_in_progress()
     {
         var session = new RpcdUpdateSession();
-        Assert.True(session.TryBegin(new RpcdUpdateRequest("prerelease", null, true), false, true, DateTimeOffset.UtcNow, out var first));
-        var started = session.TryBegin(new RpcdUpdateRequest("stable", null, true), false, true, DateTimeOffset.UtcNow, out var second);
+        Assert.True(session.TryBegin(new RpcdUpdateRequest("prerelease", null, true), DateTimeOffset.UtcNow, out var first));
+        var started = session.TryBegin(new RpcdUpdateRequest("stable", null, true), DateTimeOffset.UtcNow, out var second);
 
         Assert.False(started);
         Assert.Equal("An RPCD update is already in progress.", second.Error);
@@ -114,7 +89,7 @@ public class RpcdRemoteUpdateTests
         var started = 0;
         Parallel.For(0, 32, i =>
         {
-            if (session.TryBegin(new RpcdUpdateRequest("stable", null, true, BusyReason: ""), false, true, now, out _))
+            if (session.TryBegin(new RpcdUpdateRequest("stable", null, true, BusyReason: ""), now, out _))
                 Interlocked.Increment(ref started);
         });
         Assert.Equal(1, started);
@@ -134,7 +109,7 @@ public class RpcdRemoteUpdateTests
             OwnerPid = 2,
         });
 
-        Assert.False(session.TryBegin(new RpcdUpdateRequest("stable", null, true, BusyReason: ""), false, true, now, out var status));
+        Assert.False(session.TryBegin(new RpcdUpdateRequest("stable", null, true, BusyReason: ""), now, out var status));
         Assert.Equal(RpcdUpdateStages.Refused, status.Stage);
         Assert.Contains("already in progress", status.Error);
         Assert.Equal("other", session.Current(null, null, now)!.RequestId);
@@ -145,20 +120,10 @@ public class RpcdRemoteUpdateTests
     {
         var now = DateTimeOffset.UtcNow;
         var session = new RpcdUpdateSession();
-        Assert.True(session.TryBegin(new RpcdUpdateRequest("stable", null, true, BusyReason: ""), false, true, now, out var mine));
+        Assert.True(session.TryBegin(new RpcdUpdateRequest("stable", null, true, BusyReason: ""), now, out var mine));
         session.Adopt(new RpcdUpdateStatus { RequestId = "stale", Stage = RpcdUpdateStages.Failed, Terminal = true, UpdatedUtc = now.AddMinutes(-5) });
         Assert.Equal(mine.RequestId, session.Current(null, null, now)!.RequestId);
         Assert.Equal(Environment.ProcessId, mine.OwnerPid);
-    }
-
-    [Fact]
-    public void An_older_activity_report_does_not_hide_a_newer_busy_one()
-    {
-        var now = DateTimeOffset.UtcNow;
-        var session = new RpcdUpdateSession();
-        session.ReportActivity("A check is running (Sensors).", now);
-        session.ReportActivity(null, now.AddSeconds(-20));
-        Assert.Equal("A check is running (Sensors).", session.ActivityBlock(hostRunning: true, now));
     }
 
     [Fact]
@@ -731,30 +696,6 @@ public class RpcdRemoteUpdateTests
         Assert.Null(reason);
     }
 
-    [Fact]
-    public void A_missing_activity_report_names_the_probe_in_the_refusal_detail()
-    {
-        var now = DateTimeOffset.Parse("2026-11-20T17:06:00Z");
-        var session = new RpcdUpdateSession();
-        var started = session.TryBegin(new RpcdUpdateRequest("prerelease", null, true), hostRunning: true, trustCallerBusyReason: false, now, out var status);
-
-        Assert.False(started);
-        Assert.Equal(RpcdUpdateSession.ActivityUnconfirmed, status.Error);
-        Assert.Contains(RpcdUpdateSession.ProbeNoReport, status.Detail);
-    }
-
-    [Fact]
-    public void A_stale_activity_report_names_its_age()
-    {
-        var now = DateTimeOffset.Parse("2026-11-20T17:06:00Z");
-        var session = new RpcdUpdateSession();
-        session.ReportActivity(null, now.AddMinutes(-5));
-
-        Assert.Contains("300 seconds old", session.ActivityDiagnosis(now));
-        Assert.False(session.TryBegin(new RpcdUpdateRequest("prerelease", null, true), true, false, now, out var status));
-        Assert.Contains("300 seconds old", status.Detail);
-    }
-
     private static async Task<RpcdUpdateSession> RunAsync(
         string installed,
         string releaseVersion,
@@ -805,7 +746,7 @@ public class RpcdRemoteUpdateTests
         var now = DateTimeOffset.UtcNow;
         var staging = directory ?? TempDir();
         var agentUpdated = false;
-        Assert.True(session.TryBegin(new RpcdUpdateRequest("prerelease", explicitVersion, true), false, true, now, out _));
+        Assert.True(session.TryBegin(new RpcdUpdateRequest("prerelease", explicitVersion, true), now, out _));
         await session.ExecuteAsync(new RpcdUpdateRequest("prerelease", explicitVersion, true), new RpcdUpdateRun
         {
             Http = http,
