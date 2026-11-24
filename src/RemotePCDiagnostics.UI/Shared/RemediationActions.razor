@@ -33,12 +33,7 @@
 {
     @if (running is not null && mine)
     {
-        <div class="notice" data-testid="remediation-running" data-state="working"
-             data-action-kind="@running.Action.Kind" data-action-target="@running.Action.Target">
-            <strong>@running.Title</strong>
-            <span class="meta" data-testid="remediation-working">@(running.Progress ?? "Working… please wait.") You can leave this page; it keeps running.</span>
-            <button class="btn-small" data-testid="remediation-stop" @onclick="() => Actions?.CancelRunning()">Cancel</button>
-        </div>
+        <RemediationRunningBanner Run="running" OnCancel="() => Actions?.CancelRunning()" />
     }
     else if (running is not null && _blocked)
     {

@@ -338,7 +338,7 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
             progress?.Report(new BiosInstallProgress(
                 BiosInstallStage.Staging,
                 0,
-                $"Staging HP BIOS update {target ?? "package"}..."));
+                "Staging HP BIOS update…"));
 
             var result = await BiosInstallerRunner.RunInstallerAsync(
                 commands: _commands,

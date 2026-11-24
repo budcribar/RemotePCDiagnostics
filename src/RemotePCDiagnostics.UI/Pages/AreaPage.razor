@@ -119,12 +119,7 @@ else
                             var remLast = remActions.LastRun is { } rl && rl.Origin == m.Name ? rl : null;
                             @if (remRunning is not null && remMine)
                             {
-                                <div class="notice" data-testid="remediation-running" data-state="working"
-                                     data-action-kind="@remRunning.Action.Kind" data-action-target="@remRunning.Action.Target">
-                                    <strong>@remRunning.Title</strong>
-                                    <span class="meta" data-testid="remediation-working">@(remRunning.Progress ?? "Working… please wait.") You can leave this page; it keeps running.</span>
-                                    <button class="btn-small" data-testid="remediation-stop" @onclick="() => remActions.CancelRunning()">Cancel</button>
-                                </div>
+                                <RemediationRunningBanner Run="remRunning" OnCancel="() => remActions.CancelRunning()" />
                             }
                             else if (remRunning is not null && _remUi?.IsBlocked == true)
                             {

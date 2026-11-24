@@ -1,0 +1,42 @@
+@using RemotePCDiagnostics.Core.Areas
+@implements IDisposable
+@* Shared running-fix banner with animated spinner, live elapsed timer, and Cancel button.
+   Used by both RemediationActions.razor and inline card banners in AreaPage.razor. *@
+<div class="notice" data-testid="remediation-running" data-state="working"
+     data-action-kind="@Run.Action.Kind" data-action-target="@Run.Action.Target">
+    <span class="dash-spin" aria-hidden="true"><Icon Name="refresh" Size="14" /></span>
+    <strong>@Run.Title</strong>
+    <span class="meta" data-testid="remediation-working">@(Run.Progress ?? "Working… please wait.") (@FormatElapsed(Run.StartedUtc)) · You can leave this page; it keeps running.</span>
+    <button class="btn-small" data-testid="remediation-stop" @onclick="OnCancel">Cancel</button>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public FixRun Run { get; set; } = default!;
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private System.Threading.Timer? _timer;
+
+    protected override void OnInitialized()
+    {
+        _timer = new System.Threading.Timer(_ =>
+        {
+            try { _ = InvokeAsync(StateHasChanged); }
+            catch { /* component disposed */ }
+        }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    private static string FormatElapsed(DateTimeOffset startedUtc)
+    {
+        var elapsed = DateTimeOffset.UtcNow - startedUtc;
+        if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
+        return elapsed.TotalHours >= 1
+            ? $"{(int)elapsed.TotalHours}:{elapsed.Minutes:D2}:{elapsed.Seconds:D2}"
+            : $"{elapsed.Minutes}:{elapsed.Seconds:D2}";
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        _timer = null;
+    }
+}
