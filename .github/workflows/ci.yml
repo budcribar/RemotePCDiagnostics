@@ -657,6 +657,15 @@ jobs:
           }
           "TestShop demo bundle install (RPCD + RPCDA) + service verification + clean uninstall passed."
 
+          if ($env:TESTSHOP_RELEASE -eq 'true' -and $env:FULL_RELEASE -ne 'true') {
+            pwsh -NoProfile -File installer/Build-Installer.ps1 `
+              -Version $ver `
+              -SkipPublish `
+              -SkipVerify `
+              -Compression $env:INSTALLER_COMPRESSION
+            if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 for win-x64 Setup failed ($LASTEXITCODE)" }
+          }
+
       - name: Upload TestShop demo bundle installer
         if: env.PUBLISH_ARTIFACTS == 'true' || env.FULL_RELEASE != 'true'
         uses: actions/upload-artifact@v4
@@ -665,6 +674,8 @@ jobs:
           path: |
             artifacts/installer/RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe
             artifacts/installer/RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe.sha256
+            artifacts/installer/RemotePCDiagnostics-Setup-*-win-x64.exe
+            artifacts/installer/RemotePCDiagnostics-Setup-*-win-x64.exe.sha256
           if-no-files-found: error
           retention-days: 5
 
@@ -768,7 +779,16 @@ jobs:
           $testShopSetup = Join-Path $armOutDir "$testShopBaseName.exe"
           if (-not (Test-Path -LiteralPath $testShopSetup)) { throw "ARM64 TestShop bundle missing: $testShopSetup" }
           if (-not (Test-Path -LiteralPath "$testShopSetup.sha256")) { throw "ARM64 TestShop bundle sha256 missing: $testShopSetup.sha256" }
-          "Built ARM64 TestShop bundle: $testShopBaseName.exe"
+
+          pwsh -NoProfile -File installer/Build-Installer.ps1 `
+            -Rid win-arm64 `
+            -Version $ver `
+            -SkipPublish `
+            -SkipVerify `
+            -Compression $env:INSTALLER_COMPRESSION `
+            -OutputDir $armOutDir
+          if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 for ARM64 Setup failed ($LASTEXITCODE)" }
+          "Built ARM64 TestShop and Setup installers."
 
       - name: Upload ARM64 TestShop demo bundle installer
         uses: actions/upload-artifact@v4
@@ -777,6 +797,8 @@ jobs:
           path: |
             artifacts/testshop-arm64/RemotePCDiagnostics-TestShop-Setup-*-win-arm64.exe
             artifacts/testshop-arm64/RemotePCDiagnostics-TestShop-Setup-*-win-arm64.exe.sha256
+            artifacts/testshop-arm64/RemotePCDiagnostics-Setup-*-win-arm64.exe
+            artifacts/testshop-arm64/RemotePCDiagnostics-Setup-*-win-arm64.exe.sha256
           if-no-files-found: error
           retention-days: 5
 
@@ -1216,19 +1238,27 @@ jobs:
             sha256sum --check --strict "$f.sha256"
             count=$((count + 1))
           done
-          if [[ $count -lt 2 ]]; then
-            echo "::error::Expected 2 TestShop installers (win-x64 + win-arm64), found $count"
+          if [[ $count -lt 4 ]]; then
+            echo "::error::Expected 4 installers (x64 + arm64 Setup and TestShop), found $count"
             exit 1
           fi
 
-      - name: Upload TestShop x64 + ARM64 bundles to rolling pre-release
+      - name: Upload TestShop + Setup x64 & ARM64 installers to rolling pre-release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          x64_file=$(basename release-assets/RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe)
-          arm64_file=$(basename release-assets/RemotePCDiagnostics-TestShop-Setup-*-win-arm64.exe)
-          ver="${x64_file#RemotePCDiagnostics-TestShop-Setup-}"
+          setup_x64=$(basename release-assets/RemotePCDiagnostics-Setup-*-win-x64.exe)
+          setup_arm64=$(basename release-assets/RemotePCDiagnostics-Setup-*-win-arm64.exe)
+          testshop_x64=$(basename release-assets/RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe)
+          testshop_arm64=$(basename release-assets/RemotePCDiagnostics-TestShop-Setup-*-win-arm64.exe)
+          ver="${testshop_x64#RemotePCDiagnostics-TestShop-Setup-}"
           ver="${ver%-win-x64.exe}"
+
+          {
+            echo "Build version: \`${ver}-ci.${GITHUB_RUN_NUMBER}.1\`"
+            echo
+            echo "Rolling pre-release Windows x64 and ARM64 installers (\`${setup_x64}\`, \`${setup_arm64}\`) and Test-Shop demo bundles (\`${testshop_x64}\`, \`${testshop_arm64}\`) built from \`main\` commit \`${GITHUB_SHA}\`."
+          } > release-notes.md
 
           if gh release view prerelease --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
             gh release upload prerelease release-assets/* \
@@ -1236,9 +1266,9 @@ jobs:
               --repo "$GITHUB_REPOSITORY"
             gh release edit prerelease \
               --title "Remote PC Diagnostics ${ver} (${GITHUB_SHA:0:7})" \
+              --notes-file release-notes.md \
               --repo "$GITHUB_REPOSITORY"
           else
-            printf 'Test-Shop demo bundles (`%s`, `%s`) built from `main` commit `%s`.\n' "$x64_file" "$arm64_file" "$GITHUB_SHA" > release-notes.md
             gh release create prerelease release-assets/* \
               --title "Remote PC Diagnostics ${ver} (${GITHUB_SHA:0:7})" \
               --prerelease \
