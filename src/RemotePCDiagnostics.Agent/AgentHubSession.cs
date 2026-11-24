@@ -260,6 +260,8 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
                 PipeName = RemotePCDiagnostics.Core.Session.ElevationService.ServiceAdminPipeName,
                 ExpectedClientExePath = hostExe,
                 AllowInteractiveUsers = true,
+                // Only the active console user session may use the always-on service pipe (blocks disconnected/background sessions).
+                RequireActiveConsoleSession = true,
                 // The client is a user-owned process: a standard user only gets reads, an administrator gets repairs.
                 RestrictStandardUsers = true,
                 ConnectTimeout = Timeout.InfiniteTimeSpan,
