@@ -51,6 +51,28 @@ public class ChecksScreenTests
     }
 
     [Fact]
+    public void FilterPills_GroupRunningPassedWarningAndFailed_AndKeepActiveZeroPill()
+    {
+        var kinds = new[] { RowKind.Running, RowKind.Passed, RowKind.Passed, RowKind.Warning, RowKind.Critical, RowKind.CouldNotRun, RowKind.Blocked, RowKind.NotRun };
+        var pills = CheckRows.FilterPills(kinds);
+        Assert.Equal(
+        [
+            new CheckFilterPill(CheckStatusFilter.Running, "run", "1 running", 1),
+            new CheckFilterPill(CheckStatusFilter.Passed, "ok", "2 passed", 2),
+            new CheckFilterPill(CheckStatusFilter.Warning, "warn", "1 warning", 1),
+            new CheckFilterPill(CheckStatusFilter.Failed, "err", "3 failed", 3),
+        ], pills);
+
+        // An active filter with 0 remaining matches still renders so the user can see and clear it.
+        var afterFinish = CheckRows.FilterPills([RowKind.Passed], activeFilter: CheckStatusFilter.Running);
+        Assert.Equal(
+        [
+            new CheckFilterPill(CheckStatusFilter.Running, "run", "0 running", 0),
+            new CheckFilterPill(CheckStatusFilter.Passed, "ok", "1 passed", 1),
+        ], afterFinish);
+    }
+
+    [Fact]
     public void Pages_ChecksAndStressAreSeparate_AuditHasItsOwnPage()
     {
         var (_, _, s, _) = Build();
