@@ -295,6 +295,26 @@ public sealed class BiosAgentElevationTests
     }
 
     [Fact]
+    public void AllowedExtractedFlasherSignerOrganizations_AllowsWhqlMicrosoftForInnerFlasher_NotOuterSoftPaq()
+    {
+        var outerHp = BiosAgentInstallModes.AllowedSignerOrganizations(BiosAgentInstallModes.HpSoftPaq);
+        Assert.Contains("HP Inc.", outerHp);
+        Assert.DoesNotContain("Microsoft Corporation", outerHp);
+
+        var innerHp = BiosAgentInstallModes.AllowedExtractedFlasherSignerOrganizations(BiosAgentInstallModes.HpBiosUpdRec);
+        Assert.Contains("HP Inc.", innerHp);
+        Assert.Contains("Microsoft Corporation", innerHp);
+
+        var outerLenovo = BiosAgentInstallModes.AllowedSignerOrganizations(BiosAgentInstallModes.LenovoWinUptp);
+        Assert.Contains("Lenovo", outerLenovo);
+        Assert.DoesNotContain("Microsoft Corporation", outerLenovo);
+
+        var innerLenovo = BiosAgentInstallModes.AllowedExtractedFlasherSignerOrganizations(BiosAgentInstallModes.LenovoWinUptp);
+        Assert.Contains("Lenovo", innerLenovo);
+        Assert.Contains("Microsoft Corporation", innerLenovo);
+    }
+
+    [Fact]
     public async Task Pipe_RunBiosInstaller_LenovoSfx_ExtractsAndRunsInnerWinUptp()
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));

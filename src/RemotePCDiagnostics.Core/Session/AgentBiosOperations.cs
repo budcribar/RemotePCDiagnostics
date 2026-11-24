@@ -125,6 +125,22 @@ public static class BiosAgentInstallModes
     public static IReadOnlyCollection<string> AllowedCatalogSignerOrganizations { get; } = MicrosoftSigners;
 
     /// <summary>
+    /// Signers accepted for an inner BIOS flasher (e.g., <c>HpFirmwareUpdRec64.exe</c>, <c>WINUPTP64.EXE</c>)
+    /// after it has been extracted inside the Agent's admin-only staging directory from an outer package
+    /// that already passed <see cref="AllowedSignerOrganizations"/> for the vendor.
+    /// Modern HP/OEM firmware updaters are frequently attestation/WHQL-signed by
+    /// <c>Microsoft Windows Hardware Compatibility Publisher</c> (<c>O=Microsoft Corporation</c>).
+    /// </summary>
+    public static IReadOnlyCollection<string> AllowedExtractedFlasherSignerOrganizations(string normalizedMode)
+    {
+        var vendorSigners = AllowedSignerOrganizations(normalizedMode);
+        if (vendorSigners.Count == 0)
+            return [];
+
+        return [.. vendorSigners, .. MicrosoftSigners];
+    }
+
+    /// <summary>
     /// Builds the canonical <c>ArgumentList</c> for an allowlisted <paramref name="installMode"/> and reboot preference.
     /// </summary>
     public static IReadOnlyList<string> BuildArguments(
@@ -486,7 +502,7 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
                     {
                         var innerSigValid = await _signatureVerifier.VerifyAuthenticodeAsync(
                             innerFlasher,
-                            BiosAgentInstallModes.AllowedSignerOrganizations(BiosAgentInstallModes.HpBiosUpdRec),
+                            BiosAgentInstallModes.AllowedExtractedFlasherSignerOrganizations(BiosAgentInstallModes.HpBiosUpdRec),
                             ct).ConfigureAwait(false);
                         if (!innerSigValid)
                             return Reject("Extracted HP BIOS flasher failed Agent Authenticode signature verification.");
@@ -527,7 +543,7 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
                     {
                         var innerSigValid = await _signatureVerifier.VerifyAuthenticodeAsync(
                             innerFlasher,
-                            BiosAgentInstallModes.AllowedSignerOrganizations(BiosAgentInstallModes.LenovoWinUptp),
+                            BiosAgentInstallModes.AllowedExtractedFlasherSignerOrganizations(BiosAgentInstallModes.LenovoWinUptp),
                             ct).ConfigureAwait(false);
                         if (!innerSigValid)
                             return Reject("Extracted Lenovo BIOS flasher failed Agent Authenticode signature verification.");
