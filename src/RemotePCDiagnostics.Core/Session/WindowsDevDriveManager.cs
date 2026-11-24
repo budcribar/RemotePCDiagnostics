@@ -34,6 +34,7 @@ public static class DevDriveRules
     public const string VolumeLabel = "RPCD-DevDrive";
     public const string VhdxPrefix = "rpcd-devdrive-";
     public const string BuildTempPrefix = "rpcd-devbench-";
+    public const string DevDriveBuildRootName = "rpcd-devbench";
     public const int DefaultSizeGb = 50;
     public const int MinSizeGb = 50;
     public const int MaxSizeGb = 64;
@@ -42,8 +43,9 @@ public static class DevDriveRules
     public static string DefaultVhdxFolder() => Path.Combine(ProtectedState.AppDataFolder(), "devdrive-temp");
 
     /// <summary>
-    /// True only for an RPCD temporary build folder directly inside a user Temp directory, e.g.
-    /// <c>C:\Users\alice\AppData\Local\Temp\rpcd-devbench-0123456789abcdef</c>.
+    /// True only for an RPCD temporary build folder directly inside a user Temp directory
+    /// (<c>...\Temp\rpcd-devbench-&lt;id&gt;</c>) or directly inside the RPCD temporary Dev Drive root
+    /// (<c>X:\rpcd-devbench\rpcd-devbench-&lt;id&gt;</c>).
     /// </summary>
     public static bool IsRpcdTempBuildFolder(string? folder)
     {
@@ -52,30 +54,64 @@ public static class DevDriveRules
         if (parts.Length < 3) return false;
         var leaf = parts[^1];
         var parent = parts[^2];
-        if (!parent.Equals("Temp", StringComparison.OrdinalIgnoreCase)) return false;
+        var isUserTemp = parent.Equals("Temp", StringComparison.OrdinalIgnoreCase);
+        var isDevDriveTemp = parts.Length == 3
+            && parts[0].Length == 2 && char.IsAsciiLetter(parts[0][0]) && parts[0][1] == ':'
+            && parent.Equals(DevDriveBuildRootName, StringComparison.OrdinalIgnoreCase);
+        if (!isUserTemp && !isDevDriveTemp) return false;
         if (!leaf.StartsWith(BuildTempPrefix, StringComparison.OrdinalIgnoreCase)) return false;
         var suffix = leaf[BuildTempPrefix.Length..];
         if (suffix.Length is < 8 or > 40) return false;
         return suffix.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
     }
 
+    /// <summary>True when <paramref name="folder"/> is a temporary build folder on the RPCD Dev Drive (<c>X:\rpcd-devbench\rpcd-devbench-&lt;id&gt;</c>).</summary>
+    public static bool IsRpcdDevDriveBuildFolder(string? folder)
+    {
+        if (!IsRpcdTempBuildFolder(folder)) return false;
+        var parts = folder!.TrimEnd('\\').Split('\\');
+        return parts.Length == 3 && parts[1].Equals(DevDriveBuildRootName, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
     /// Why <paramref name="folder"/> is refused as a new temporary build exclusion, or null when allowed: it must be an RPCD build
-    /// folder directly inside one of <paramref name="userTempFolders"/> (the signed-in user's own Temp), exist, and not be a link.
+    /// folder directly inside one of <paramref name="userTempFolders"/> (the signed-in user's own Temp) or inside the mounted
+    /// <c>RPCD-DevDrive</c> temporary Dev Drive, exist, and not be a link.
     /// </summary>
-    public static string? TempBuildFolderRefusal(string? folder, IReadOnlyList<string> userTempFolders, Func<string, bool>? dirExists = null, Func<string, bool>? isReparsePoint = null)
+    public static string? TempBuildFolderRefusal(
+        string? folder,
+        IReadOnlyList<string> userTempFolders,
+        Func<string, bool>? dirExists = null,
+        Func<string, bool>? isReparsePoint = null,
+        Func<string, string?>? getVolumeLabel = null)
     {
         if (!IsRpcdTempBuildFolder(folder))
-            return "Temporary build exclusions are only allowed for RPCD build temp folders (Temp\\rpcd-devbench-*).";
-        var parent = folder!.TrimEnd('\\');
-        parent = parent[..parent.LastIndexOf('\\')];
-        if (!userTempFolders.Any(t => t.TrimEnd('\\').Equals(parent, StringComparison.OrdinalIgnoreCase)))
-            return "Temporary build exclusions are only allowed directly inside the signed-in user's own Temp folder.";
+            return "Temporary build exclusions are only allowed for RPCD build temp folders (Temp\\rpcd-devbench-* or <DevDrive>:\\rpcd-devbench\\rpcd-devbench-*).";
+        if (IsRpcdDevDriveBuildFolder(folder))
+        {
+            var root = folder![..2] + "\\";
+            var label = getVolumeLabel is not null ? getVolumeLabel(root) : TryReadVolumeLabel(root);
+            if (!string.Equals(label, VolumeLabel, StringComparison.OrdinalIgnoreCase))
+                return $"Temporary Dev Drive build exclusions are only allowed on a volume labeled {VolumeLabel}.";
+        }
+        else
+        {
+            var parent = folder!.TrimEnd('\\');
+            parent = parent[..parent.LastIndexOf('\\')];
+            if (!userTempFolders.Any(t => t.TrimEnd('\\').Equals(parent, StringComparison.OrdinalIgnoreCase)))
+                return "Temporary build exclusions are only allowed directly inside the signed-in user's own Temp folder.";
+        }
         if (!(dirExists ?? Directory.Exists)(folder))
             return $"{folder} doesn't exist.";
         if (isReparsePoint is not null && isReparsePoint(folder))
             return $"{folder} is a link; it's never excluded.";
         return null;
+    }
+
+    private static string? TryReadVolumeLabel(string root)
+    {
+        try { return new DriveInfo(root).VolumeLabel; }
+        catch { return null; }
     }
 
     /// <summary>

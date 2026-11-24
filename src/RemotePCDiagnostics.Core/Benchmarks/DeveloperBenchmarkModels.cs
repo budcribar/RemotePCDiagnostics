@@ -331,11 +331,13 @@ public sealed record DevDriveComparisonResult(
     bool? DefenderPerformanceModeActive = null,
     string? Note = null,
     DateTimeOffset? CompletedAtUtc = null,
-    double? NtfsExcludedWarmMedianSeconds = null)
+    double? NtfsExcludedWarmMedianSeconds = null,
+    double? DevDriveExcludedWarmMedianSeconds = null)
 {
     public double? ColdPercentFaster => DeveloperScoring.PercentFaster(NtfsColdMedianSeconds, DevDriveColdMedianSeconds);
     public double? WarmPercentFaster => DeveloperScoring.PercentFaster(NtfsWarmMedianSeconds, DevDriveWarmMedianSeconds);
     public double? ExcludedWarmPercentFaster => DeveloperScoring.PercentFaster(NtfsWarmMedianSeconds, NtfsExcludedWarmMedianSeconds);
+    public double? DevDriveExcludedWarmPercentFaster => DeveloperScoring.PercentFaster(NtfsWarmMedianSeconds, DevDriveExcludedWarmMedianSeconds);
 
     public string FormatSummary()
     {
@@ -352,14 +354,18 @@ public sealed record DevDriveComparisonResult(
             false => "Defender performance mode: inactive",
             null => "Defender performance mode: unknown",
         };
-        if (NtfsExcludedWarmMedianSeconds is { } exclWarm)
+        var warmParts = new List<string>
         {
-            var exclDelta = FormatDelta(ExcludedWarmPercentFaster);
-            return string.Create(CultureInfo.InvariantCulture,
-                $"Warm: NTFS {NtfsWarmMedianSeconds:0.0} s vs NTFS+AV exclusion {exclWarm:0.0} s ({exclDelta}) vs Dev Drive {DevDriveWarmMedianSeconds:0.0} s ({warmDelta}); Cold: NTFS {NtfsColdMedianSeconds:0.0} s vs Dev Drive {DevDriveColdMedianSeconds:0.0} s ({coldDelta}). {perf}.");
-        }
+            string.Create(CultureInfo.InvariantCulture, $"NTFS {NtfsWarmMedianSeconds:0.0} s")
+        };
+        if (NtfsExcludedWarmMedianSeconds is { } exclWarm)
+            warmParts.Add(string.Create(CultureInfo.InvariantCulture, $"NTFS+AV exclusion {exclWarm:0.0} s ({FormatDelta(ExcludedWarmPercentFaster)})"));
+        warmParts.Add(string.Create(CultureInfo.InvariantCulture, $"Dev Drive {DevDriveWarmMedianSeconds:0.0} s ({warmDelta})"));
+        if (DevDriveExcludedWarmMedianSeconds is { } ddExclWarm)
+            warmParts.Add(string.Create(CultureInfo.InvariantCulture, $"Dev Drive+AV exclusion {ddExclWarm:0.0} s ({FormatDelta(DevDriveExcludedWarmPercentFaster)})"));
+
         return string.Create(CultureInfo.InvariantCulture,
-            $"Warm: NTFS {NtfsWarmMedianSeconds:0.0} s vs Dev Drive {DevDriveWarmMedianSeconds:0.0} s ({warmDelta}); Cold: NTFS {NtfsColdMedianSeconds:0.0} s vs Dev Drive {DevDriveColdMedianSeconds:0.0} s ({coldDelta}). {perf}.");
+            $"Warm: {string.Join(" vs ", warmParts)}; Cold: NTFS {NtfsColdMedianSeconds:0.0} s vs Dev Drive {DevDriveColdMedianSeconds:0.0} s ({coldDelta}). {perf}.");
     }
 }
 

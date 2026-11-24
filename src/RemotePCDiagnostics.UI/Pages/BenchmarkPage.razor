@@ -149,8 +149,8 @@
                     Compare NTFS vs Dev Drive (C#)
                 </button>
                 <button type="button" class="btn-small btn-primary" data-testid="bench-dev-combined-run" disabled="@(running || !_confirmAvRun || !_confirmDevDriveRun)" @onclick="RunCombinedComparison"
-                        title="@((!_confirmAvRun || !_confirmDevDriveRun) ? "Approve both Defender exclusion and temporary Dev Drive above to compare all three" : "Compare NTFS, NTFS + Defender exclusion, and Dev Drive in one pass")">
-                    Compare all three (NTFS vs AV exclusion vs Dev Drive)
+                        title="@((!_confirmAvRun || !_confirmDevDriveRun) ? "Approve both Defender exclusion and temporary Dev Drive above to compare all four" : "Compare NTFS, NTFS + Defender exclusion, Dev Drive, and Dev Drive + Defender exclusion in one pass")">
+                    Compare all four (NTFS vs AV excl vs Dev Drive vs Dev Drive + AV excl)
                 </button>
             </div>
         }

@@ -416,13 +416,14 @@ public sealed class DeveloperBuildRunner(
         string? vhdxPath = null;
         string? devDriveBuildDir = null;
         var tempExclusionAdded = false;
+        var devDriveExclusionAdded = false;
         var includeAv = options.IncludeAntivirusComparison && env.IsAgentConnected;
-        var totalSteps = includeAv ? 8 : 7;
+        var totalSteps = includeAv ? 9 : 7;
         var step = 0;
 
         try
         {
-            // 1. NTFS pass first (order: NTFS, [optional NTFS+AV exclusion,] then Dev Drive)
+            // 1. NTFS pass first (order: NTFS, [optional NTFS+AV exclusion,] Dev Drive, [optional Dev Drive+AV exclusion])
             progress.ReportStep(++step, totalSteps, "Preparing pinned C# sources on NTFS…");
             var (ntfsProj, sha256) = DeveloperCSharpPin.Materialize(ntfsDir, dotnet.MajorVersion!.Value);
             var (rOk, _, rFail) = await TimedCommandAsync(dotnet.ExecutablePath, ["restore", ntfsProj, "--ignore-failed-sources", "-v", "q"], options.EffectiveTimeout, ct, ntfsDir).ConfigureAwait(false);
@@ -472,7 +473,7 @@ public sealed class DeveloperBuildRunner(
                 return new(false, DeveloperCSharpPin.PinId, sha256, Note: mount.Error ?? "Could not create temporary Dev Drive.");
 
             vhdxPath = mount.VhdxPath;
-            devDriveBuildDir = Path.Combine(mount.BuildFolder, $"run-{Guid.NewGuid():N}");
+            devDriveBuildDir = Path.Combine(mount.BuildFolder, $"{DevDriveRules.BuildTempPrefix}{Guid.NewGuid():N}");
 
             // Check Defender performance mode on the mounted Dev Drive
             var devDriveStatus = await env.QueryDevDriveAsync(mount.DriveLetter, ct).ConfigureAwait(false);
@@ -493,18 +494,45 @@ public sealed class DeveloperBuildRunner(
             if (ddColdFail is not null || ddWarmFail is not null || ddCold is null || ddWarm is null)
                 return new(false, DeveloperCSharpPin.PinId, sha256, Note: (ddColdFail ?? ddWarmFail ?? CommandFailure.Empty).Format("Dev Drive dotnet build"));
 
+            // 4. Optional Dev Drive + temporary Defender exclusion pass
+            double? devDriveExcludedWarm = null;
+            if (includeAv)
+            {
+                progress.ReportStep(++step, totalSteps, $"Timing warm C# builds on Dev Drive with Defender exclusion ({options.WarmRepeats} repeats)…");
+                var (ddAdded, _) = await machineTweaks.AddTempBuildDefenderExclusionAsync(devDriveBuildDir, ct).ConfigureAwait(false);
+                if (ddAdded)
+                {
+                    devDriveExclusionAdded = true;
+                    try
+                    {
+                        var (ddExclSamples, ddExclFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ddProj, devDriveBuildDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+                        if (ddExclFail is null && ddExclSamples.Count > 0)
+                            devDriveExcludedWarm = DeveloperScoring.Median(ddExclSamples);
+                        else
+                            Log((ddExclFail ?? CommandFailure.Empty).Format("Dev Drive warm dotnet build with temporary exclusion"));
+                    }
+                    finally
+                    {
+                        try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(devDriveBuildDir, CancellationToken.None).ConfigureAwait(false); }
+                        catch (Exception ex) { Log("Failed to remove temp Dev Drive Defender exclusion: " + ex.Message); }
+                        devDriveExclusionAdded = false;
+                    }
+                }
+            }
+
             return new(
                 Succeeded: true,
                 PinId: DeveloperCSharpPin.PinId,
                 PinSha256: sha256,
-                Order: includeAv ? "NTFS, NTFS + AV exclusion, then Dev Drive" : "NTFS, then Dev Drive",
+                Order: includeAv ? "NTFS, NTFS + AV exclusion, Dev Drive, then Dev Drive + AV exclusion" : "NTFS, then Dev Drive",
                 NtfsColdMedianSeconds: ntfsCold,
                 NtfsWarmMedianSeconds: ntfsWarm,
                 DevDriveColdMedianSeconds: ddCold,
                 DevDriveWarmMedianSeconds: ddWarm,
                 DefenderPerformanceModeActive: devDriveStatus.DefenderPerformanceModeActive,
                 CompletedAtUtc: DateTimeOffset.UtcNow,
-                NtfsExcludedWarmMedianSeconds: ntfsExcludedWarm);
+                NtfsExcludedWarmMedianSeconds: ntfsExcludedWarm,
+                DevDriveExcludedWarmMedianSeconds: devDriveExcludedWarm);
         }
         finally
         {
@@ -512,6 +540,11 @@ public sealed class DeveloperBuildRunner(
             {
                 try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(ntfsDir, CancellationToken.None).ConfigureAwait(false); }
                 catch (Exception ex) { Log("Failed to remove temp Defender exclusion: " + ex.Message); }
+            }
+            if (devDriveExclusionAdded && devDriveBuildDir is not null)
+            {
+                try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(devDriveBuildDir, CancellationToken.None).ConfigureAwait(false); }
+                catch (Exception ex) { Log("Failed to remove temp Dev Drive Defender exclusion: " + ex.Message); }
             }
             TryDeleteDirectory(ntfsDir);
             if (devDriveBuildDir is not null) TryDeleteDirectory(devDriveBuildDir);

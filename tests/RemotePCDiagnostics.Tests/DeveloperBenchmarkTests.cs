@@ -261,6 +261,65 @@ public sealed class DeveloperBenchmarkTests : IDisposable
     }
 
     [Fact]
+    public async Task DevDriveComparison_WithAntivirusComparison_MeasuresAllFourAndCleansUpBothExclusions()
+    {
+        var tempRoot = Path.Combine(_root, "temp4");
+        var fakeDevDriveFolder = Path.Combine(_root, "devdrive4");
+        Directory.CreateDirectory(tempRoot);
+        Directory.CreateDirectory(fakeDevDriveFolder);
+
+        var env = new FakeDevEnv
+        {
+            Toolchains = [new(DeveloperLanguage.CSharp, ".NET SDK", "dotnet", "10.0.100", 10)],
+            WindowsBuild = (26100, 0),
+            FreeGb = 120,
+            AgentConnected = true,
+            DevDriveStatus = new(true, true, true),
+        };
+        var tweaks = new FakeDevTweaks
+        {
+            MountResult = new(true, @"C:\ProgramData\RemotePCDiagnostics\devdrive-temp\rpcd-devdrive-87654321.vhdx", "Z", fakeDevDriveFolder),
+        };
+        var runner = new DeveloperBuildRunner(env, new FakeLauncher((_, _) => new(0, "", "")), tweaks, tempRootOverride: tempRoot);
+
+        var res = await runner.RunDevDriveComparisonAsync(
+            new DeveloperBuildOptions(ColdRepeats: 1, WarmWarmups: 0, WarmRepeats: 1, AllowHyperfine: false, IncludeAntivirusComparison: true));
+
+        Assert.True(res.Succeeded);
+        Assert.Equal("NTFS, NTFS + AV exclusion, Dev Drive, then Dev Drive + AV exclusion", res.Order);
+        Assert.NotNull(res.NtfsExcludedWarmMedianSeconds);
+        Assert.NotNull(res.DevDriveExcludedWarmMedianSeconds);
+        Assert.Equal(2, tweaks.TempAdded.Count);
+        Assert.Equal(2, tweaks.TempRemoved.Count);
+        Assert.Equal(tweaks.TempAdded, tweaks.TempRemoved);
+        Assert.Contains("NTFS+AV exclusion", res.FormatSummary());
+        Assert.Contains("Dev Drive+AV exclusion", res.FormatSummary());
+        Assert.Single(tweaks.DevDrivesRemoved);
+        Assert.Empty(Directory.EnumerateDirectories(tempRoot));
+        Assert.Empty(Directory.EnumerateDirectories(fakeDevDriveFolder));
+    }
+
+    [Fact]
+    public void DevDriveRules_TempBuildFolderRefusal_AllowsDevDriveBuildFolderOnlyOnRpcdVolume()
+    {
+        var ddFolder = @"Z:\rpcd-devbench\rpcd-devbench-0123456789abcdef";
+        Assert.True(DevDriveRules.IsRpcdTempBuildFolder(ddFolder));
+        Assert.True(DevDriveRules.IsRpcdDevDriveBuildFolder(ddFolder));
+        Assert.Null(DevDriveRules.TempBuildFolderRefusal(
+            ddFolder,
+            [@"C:\Users\alice\AppData\Local\Temp"],
+            dirExists: _ => true,
+            isReparsePoint: _ => false,
+            getVolumeLabel: _ => DevDriveRules.VolumeLabel));
+        Assert.NotNull(DevDriveRules.TempBuildFolderRefusal(
+            ddFolder,
+            [@"C:\Users\alice\AppData\Local\Temp"],
+            dirExists: _ => true,
+            isReparsePoint: _ => false,
+            getVolumeLabel: _ => "Windows"));
+    }
+
+    [Fact]
     public async Task DevDrivePrecheck_RejectsBatteryOrOlderWindows()
     {
         var env = new FakeDevEnv { WindowsBuild = (19045, 0), FreeGb = 100, AgentConnected = true };
