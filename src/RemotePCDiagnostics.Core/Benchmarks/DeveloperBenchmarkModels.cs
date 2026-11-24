@@ -330,26 +330,34 @@ public sealed record DevDriveComparisonResult(
     double? DevDriveWarmMedianSeconds = null,
     bool? DefenderPerformanceModeActive = null,
     string? Note = null,
-    DateTimeOffset? CompletedAtUtc = null)
+    DateTimeOffset? CompletedAtUtc = null,
+    double? NtfsExcludedWarmMedianSeconds = null)
 {
     public double? ColdPercentFaster => DeveloperScoring.PercentFaster(NtfsColdMedianSeconds, DevDriveColdMedianSeconds);
     public double? WarmPercentFaster => DeveloperScoring.PercentFaster(NtfsWarmMedianSeconds, DevDriveWarmMedianSeconds);
+    public double? ExcludedWarmPercentFaster => DeveloperScoring.PercentFaster(NtfsWarmMedianSeconds, NtfsExcludedWarmMedianSeconds);
 
     public string FormatSummary()
     {
         if (!Succeeded) return Note ?? "Dev Drive comparison did not complete.";
-        var warmDelta = WarmPercentFaster is { } wp
-            ? (wp >= 0 ? string.Create(CultureInfo.InvariantCulture, $"{wp:0.0}% faster") : string.Create(CultureInfo.InvariantCulture, $"{-wp:0.0}% slower"))
+        static string FormatDelta(double? pct) => pct is { } p
+            ? (p >= 0 ? string.Create(CultureInfo.InvariantCulture, $"{p:0.0}% faster") : string.Create(CultureInfo.InvariantCulture, $"{-p:0.0}% slower"))
             : "n/a";
-        var coldDelta = ColdPercentFaster is { } cp
-            ? (cp >= 0 ? string.Create(CultureInfo.InvariantCulture, $"{cp:0.0}% faster") : string.Create(CultureInfo.InvariantCulture, $"{-cp:0.0}% slower"))
-            : "n/a";
+
+        var warmDelta = FormatDelta(WarmPercentFaster);
+        var coldDelta = FormatDelta(ColdPercentFaster);
         var perf = DefenderPerformanceModeActive switch
         {
             true => "Defender performance mode: active",
             false => "Defender performance mode: inactive",
             null => "Defender performance mode: unknown",
         };
+        if (NtfsExcludedWarmMedianSeconds is { } exclWarm)
+        {
+            var exclDelta = FormatDelta(ExcludedWarmPercentFaster);
+            return string.Create(CultureInfo.InvariantCulture,
+                $"Warm: NTFS {NtfsWarmMedianSeconds:0.0} s vs NTFS+AV exclusion {exclWarm:0.0} s ({exclDelta}) vs Dev Drive {DevDriveWarmMedianSeconds:0.0} s ({warmDelta}); Cold: NTFS {NtfsColdMedianSeconds:0.0} s vs Dev Drive {DevDriveColdMedianSeconds:0.0} s ({coldDelta}). {perf}.");
+        }
         return string.Create(CultureInfo.InvariantCulture,
             $"Warm: NTFS {NtfsWarmMedianSeconds:0.0} s vs Dev Drive {DevDriveWarmMedianSeconds:0.0} s ({warmDelta}); Cold: NTFS {NtfsColdMedianSeconds:0.0} s vs Dev Drive {DevDriveColdMedianSeconds:0.0} s ({coldDelta}). {perf}.");
     }
