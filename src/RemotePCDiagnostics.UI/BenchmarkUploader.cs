@@ -1,3 +1,4 @@
+using Microsoft.JSInterop;
 using RemotePCDiagnostics.Core.Benchmarks;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Workflow;
@@ -103,6 +104,76 @@ public sealed class BenchmarkUploader
             Raise();
         }
     }
+
+    /// <summary>
+    /// Uploads the latest benchmark pass through the technician's signed-in Admin browser session
+    /// (<c>POST /api/shop/benchmarks</c> with same-origin cookie auth), so target PCs do not need a local API key.
+    /// </summary>
+    public async Task UploadViaBrowserAsync(Microsoft.JSInterop.IJSRuntime js)
+    {
+        if (Interlocked.CompareExchange(ref _uploading, 1, 0) != 0) return;
+        Failed = false;
+        Message = "Reading this PC's hardware…";
+        Raise();
+        try
+        {
+            var hardware = _app.Commands is { } commands ? await HardwareIdentityProbe.ReadAsync(commands, CancellationToken.None) : new BenchmarkHardware();
+            var request = BenchmarkUpload.Build(BenchmarkUpload.LatestRun(_bench.Before, _bench.After), MachineIdentity.Read(_session.MachineName), _session.MachineName, hardware);
+            if (request is null)
+            {
+                Fail("There are no measured results to upload yet.");
+                return;
+            }
+            Message = "Uploading…";
+            Raise();
+            var payloadJson = System.Text.Json.JsonSerializer.Serialize(request, BrowserUploadJson);
+            var res = await js.InvokeAsync<BrowserBenchmarkUploadResult>("rpdSession.uploadBenchmark", payloadJson);
+            if (res.Ok)
+            {
+                CompareUrl = res.CompareUrl;
+                Message = "Uploaded " + (res.Computers > 1
+                    ? $"{request.Results.Count} results. Your shop now has {res.Computers} computers to compare."
+                    : $"{request.Results.Count} results. Upload from another computer to compare them.");
+            }
+            else if (res.Status == 401)
+            {
+                Fail("Sign in to your Admin portal in this browser to upload benchmark results.");
+            }
+            else if (res.Status == 402)
+            {
+                Fail("The shop's subscription or trial is inactive. Renew it on the Admin site's Shop page.");
+            }
+            else
+            {
+                Fail($"Could not upload results: {res.Error ?? $"HTTP {res.Status}"}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Fail($"The upload failed: {ex.Message}");
+        }
+        finally
+        {
+            LastAt = DateTimeOffset.UtcNow;
+            LastAutomatic = false;
+            Seq++;
+            Volatile.Write(ref _uploading, 0);
+            Raise();
+        }
+    }
+
+    private static readonly System.Text.Json.JsonSerializerOptions BrowserUploadJson = new(System.Text.Json.JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    private sealed record BrowserBenchmarkUploadResult(
+        bool Ok,
+        int Status,
+        string? MachineId,
+        string? CompareUrl,
+        int Computers,
+        string? Error);
 
     private void Fail(string message)
     {

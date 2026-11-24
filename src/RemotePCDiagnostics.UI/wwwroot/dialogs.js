@@ -534,11 +534,46 @@
         }
     }
 
+    async function uploadBenchmark(payloadJson) {
+        try {
+            const res = await fetch('/api/shop/benchmarks', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'RemotePCDiagnostics'
+                },
+                body: payloadJson
+            });
+            const text = await res.text();
+            let data = null;
+            try { data = JSON.parse(text); } catch { }
+            return {
+                ok: res.ok,
+                status: res.status,
+                machineId: data?.machineId || null,
+                compareUrl: data?.compareUrl || null,
+                computers: typeof data?.computers === 'number' ? data.computers : 0,
+                error: data?.error || (res.ok ? null : `HTTP ${res.status}`)
+            };
+        } catch (e) {
+            return {
+                ok: false,
+                status: 0,
+                machineId: null,
+                compareUrl: null,
+                computers: 0,
+                error: String(e?.message || e || 'Network error')
+            };
+        }
+    }
+
     window.rpdSession = {
         isRemoteDisplay,
         saveAsFile,
         openHtml,
         publishQaCertificate,
+        uploadBenchmark,
         getControlInfo,
         releaseControlToLocal,
         subscribeControl: (dotNetRef) => {
