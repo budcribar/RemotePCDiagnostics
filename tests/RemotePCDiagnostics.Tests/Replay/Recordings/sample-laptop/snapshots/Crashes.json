@@ -184,7 +184,17 @@
               null,
               null
             ],
-            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345"
+            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nEvent ID: 1000 (Application Error)\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345",
+            "evidenceOccurrences": [
+              {
+                "time": "2026-11-21T15:10:00+00:00",
+                "app": "notes.exe",
+                "path": "",
+                "package": "",
+                "type": "Crash",
+                "reportId": ""
+              }
+            ]
           },
           {
             "level": "Warning",
@@ -202,7 +212,17 @@
               null,
               null
             ],
-            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345"
+            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nEvent ID: 1000 (Application Error)\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345",
+            "evidenceOccurrences": [
+              {
+                "time": "2026-11-19T09:00:00+00:00",
+                "app": "notes.exe",
+                "path": "",
+                "package": "",
+                "type": "Crash",
+                "reportId": ""
+              }
+            ]
           },
           {
             "level": "Neutral",
@@ -220,7 +240,17 @@
               null,
               null
             ],
-            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345"
+            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nEvent ID: 1000 (Application Error)\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345",
+            "evidenceOccurrences": [
+              {
+                "time": "2026-11-02T20:00:00+00:00",
+                "app": "game.exe",
+                "path": "",
+                "package": "",
+                "type": "Crash",
+                "reportId": ""
+              }
+            ]
           }
         ],
         "preserveRowOrder": false,
@@ -261,7 +291,7 @@
               null,
               null
             ],
-            "detail": "Nov 20, 6:30 PM\nStopped responding\nProgram version: 2.1.0.0\nProgram path: C:\\Program Files\\PhotoEditor\\photoeditor.exe",
+            "detail": "Nov 20, 6:30 PM\nStopped responding\nEvent ID: 1002 (Application Hang)\nProgram version: 2.1.0.0\nProgram path: C:\\Program Files\\PhotoEditor\\photoeditor.exe",
             "hangOccurrences": [
               {
                 "time": "2026-11-20T18:30:00+00:00",
@@ -307,7 +337,25 @@
               null,
               "2026-11-21T15:10:00"
             ],
-            "detail": "Most common cause: Access violation (2 of 2 crashes)\nApp versions: 4.2.0.0"
+            "detail": "Most common cause: Access violation (2 of 2 crashes)\nApp versions: 4.2.0.0",
+            "evidenceOccurrences": [
+              {
+                "time": "2026-11-21T15:10:00+00:00",
+                "app": "notes.exe",
+                "path": "",
+                "package": "",
+                "type": "Crash",
+                "reportId": ""
+              },
+              {
+                "time": "2026-11-19T09:00:00+00:00",
+                "app": "notes.exe",
+                "path": "",
+                "package": "",
+                "type": "Crash",
+                "reportId": ""
+              }
+            ]
           },
           {
             "level": "Neutral",
@@ -323,7 +371,17 @@
               null,
               "2026-11-20T18:30:00"
             ],
-            "detail": "No crashes recorded\nApp versions: 2.1.0.0"
+            "detail": "No crashes recorded\nApp versions: 2.1.0.0",
+            "evidenceOccurrences": [
+              {
+                "time": "2026-11-20T18:30:00+00:00",
+                "app": "photoeditor.exe",
+                "path": "C:\\Program Files\\PhotoEditor\\photoeditor.exe",
+                "package": "",
+                "type": "",
+                "reportId": ""
+              }
+            ]
           },
           {
             "level": "Neutral",
@@ -339,7 +397,17 @@
               null,
               "2026-11-02T20:00:00"
             ],
-            "detail": "Most common cause: Access violation (1 of 1 crashes)\nApp versions: 4.2.0.0"
+            "detail": "Most common cause: Access violation (1 of 1 crashes)\nApp versions: 4.2.0.0",
+            "evidenceOccurrences": [
+              {
+                "time": "2026-11-02T20:00:00+00:00",
+                "app": "game.exe",
+                "path": "",
+                "package": "",
+                "type": "Crash",
+                "reportId": ""
+              }
+            ]
           }
         ],
         "preserveRowOrder": true
