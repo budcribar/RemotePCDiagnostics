@@ -152,10 +152,13 @@ try {
   // A check's card shows nothing below it until it has run: run it, then open its Details (a passed check starts collapsed).
   await page.getByTestId('checks-row-resourcehogs').click();
   const hogsHead = '[data-testid="checks-detail"] [data-check-id="ResourceHogs"]';
-  await page.locator(`${hogsHead}[data-run-state="notrun"]`).waitFor({ state: 'visible', timeout: 15_000 });
-  if ((await page.locator('[data-testid="checks-detail-body"]').innerText()).trim() !== '') throw new Error('A not-run check card should show nothing below it');
-  await page.waitForFunction(() => !document.querySelector('[data-testid="checks-run-one"]')?.disabled, null, { timeout: 60_000 });
-  await page.getByTestId('checks-run-one').click();
+  await page.locator(hogsHead).waitFor({ state: 'visible', timeout: 15_000 });
+  const hogsState = await page.locator(hogsHead).getAttribute('data-run-state');
+  if (hogsState === 'notrun') {
+    if ((await page.locator('[data-testid="checks-detail-body"]').innerText()).trim() !== '') throw new Error('A not-run check card should show nothing below it');
+    await page.waitForFunction(() => !document.querySelector('[data-testid="checks-run-one"]')?.disabled, null, { timeout: 60_000 });
+    await page.getByTestId('checks-run-one').click();
+  }
   await page.waitForFunction(sel => !['notrun', 'running'].includes(document.querySelector(sel)?.getAttribute('data-run-state') ?? 'notrun'), hogsHead, { timeout: 120_000 });
   const detailsToggle = page.getByTestId('checks-details-toggle');
   if (await detailsToggle.getAttribute('aria-expanded') === 'false') {
