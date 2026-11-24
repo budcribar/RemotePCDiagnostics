@@ -631,7 +631,7 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
             progress?.Report(new BiosInstallProgress(
                 BiosInstallStage.Staging,
                 0,
-                $"Staging Dell BIOS update {target ?? "package"}..."));
+                "Staging Dell BIOS update…"));
 
             var args = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.DellBiosExe, request.AllowReboot);
             var expectedSha256 = !string.IsNullOrWhiteSpace(verified.ActualSha256)

@@ -730,7 +730,7 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
                 redactingProgress?.Report(new BiosInstallProgress(
                     BiosInstallStage.Staging,
                     0,
-                    $"Staging Framework UEFI firmware capsule {target ?? "package"}..."));
+                    "Staging Framework UEFI firmware capsule…"));
 
                 if (elevated)
                 {
@@ -811,7 +811,7 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
                 redactingProgress?.Report(new BiosInstallProgress(
                     BiosInstallStage.Staging,
                     0,
-                    $"Staging Framework BIOS update {target ?? "package"}..."));
+                    "Staging Framework BIOS update…"));
                 redactingProgress?.Report(new BiosInstallProgress(
                     BiosInstallStage.Installing,
                     50,
