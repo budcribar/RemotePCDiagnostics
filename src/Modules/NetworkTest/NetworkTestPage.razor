@@ -94,7 +94,7 @@ else if (report is not null)
             <div class="card" data-testid="nettest-card-speed">
                 <div class="card-head"><span class="@Dot(report.DownloadMbps is null ? null : true)"></span><strong>Speed</strong></div>
                 <div class="headline">↓ @NetworkTestReport.Speed(report.DownloadMbps) · ↑ @NetworkTestReport.Speed(report.UploadMbps)</div>
-                <div class="meta">@(report.DownloadMbps is null ? "Speed couldn't be measured" : "Download · upload")</div>
+                <div class="meta">@(report.DownloadMbps is null ? "Speed couldn't be measured" : "Download · Upload")</div>
             </div>
             <div class="card" data-testid="nettest-card-adapter">
                 <div class="card-head"><span class="@Dot(report.NewAdapterErrors is null ? null : report.NewAdapterErrors == 0 && report.NewAdapterDrops == 0)"></span><strong>Adapter errors</strong></div>

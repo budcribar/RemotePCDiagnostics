@@ -216,25 +216,22 @@ public class DashboardUiPolishTests : BunitContext
 
         var cut = Render<Dashboard>();
 
-        var details = cut.Find("details[data-testid='dashboard-triage']");
         var toggle = cut.Find("[data-testid='dashboard-triage-toggle']");
-        Assert.False(details.HasAttribute("open"));
         Assert.Equal("false", toggle.GetAttribute("aria-expanded"));
-        Assert.Contains("Needs attention · 2", toggle.TextContent);
+        Assert.Contains("2 things need attention", toggle.TextContent);
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-triage']"));
 
         toggle.Click();
-        details = cut.Find("details[data-testid='dashboard-triage']");
         toggle = cut.Find("[data-testid='dashboard-triage-toggle']");
-        Assert.True(details.HasAttribute("open"));
         Assert.Equal("true", toggle.GetAttribute("aria-expanded"));
+        Assert.NotNull(cut.Find("[data-testid='dashboard-triage']"));
         Assert.NotNull(cut.Find("[data-testid='dashboard-triage-crashes']"));
         Assert.NotNull(cut.Find("[data-testid='dashboard-triage-eventlog']"));
 
         toggle.Click();
-        details = cut.Find("details[data-testid='dashboard-triage']");
         toggle = cut.Find("[data-testid='dashboard-triage-toggle']");
-        Assert.False(details.HasAttribute("open"));
         Assert.Equal("false", toggle.GetAttribute("aria-expanded"));
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-triage']"));
     }
 
     [Fact]
@@ -454,6 +451,22 @@ public class DashboardUiPolishTests : BunitContext
             Task.FromResult(FakeModule.Ok(name));
         public Task<string> FindHangEvidenceAsync(IReadOnlyList<HangOccurrence> occurrences, CancellationToken ct) =>
             Task.FromResult(evidence);
+    }
+
+    [Fact]
+    public void CardList_CapitalizesBulletLines_PreservingIdentifiers()
+    {
+        var cut = Render<CardList>(p => p.Add(c => c.Text, "2 drives · all healthy · no errors · last update 2 days ago · most: olk.exe · on battery · chrome.exe"));
+        var items = cut.FindAll("li").Select(li => li.TextContent).ToList();
+        Assert.Equal([
+            "2 drives",
+            "All healthy",
+            "No errors",
+            "Last update 2 days ago",
+            "Most: olk.exe",
+            "On battery",
+            "chrome.exe",
+        ], items);
     }
 
     private static string RepoRoot()

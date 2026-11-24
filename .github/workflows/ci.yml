@@ -16,6 +16,11 @@ on:
         required: false
         type: boolean
         default: false
+      testshop_release:
+        description: 'Build and publish only the TestShop demo bundle installers (win-x64 and win-arm64) to the rolling prerelease. Also enabled by adding [testshop-release] to a commit message or PR title.'
+        required: false
+        type: boolean
+        default: false
       release_tag:
         description: 'Optional version tag to publish as a full GitHub Release (e.g. v1.2.0). Implies full_release. Leave empty for rolling pre-release.'
         required: false
@@ -41,6 +46,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 # By default, CI runs only the fast TestShop development build (testshop job, no ReadyToRun, fast compression).
+# TestShop-only release runs when triggered by workflow_dispatch with testshop_release, or [testshop-release] in a
+# commit message / PR title (builds & publishes only TestShop win-x64 and win-arm64 to the rolling prerelease).
 # Full CI + release runs when triggered by a v* tag, workflow_dispatch with full_release/release_tag, or [full-release]
 # in a commit message / PR title. In full-release mode, build-test, service-workflow, installer (Setup.exe), testshop,
 # agent (Agent EXE + MSI), and smoke (MSIX + Playwright) all run in parallel.
@@ -48,9 +55,10 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
   FULL_RELEASE: ${{ (inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]'))) && 'true' || 'false' }}
+  TESTSHOP_RELEASE: ${{ (inputs.testshop_release || (github.event_name == 'push' && contains(github.event.head_commit.message, '[testshop-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[testshop-release]'))) && 'true' || 'false' }}
   PUBLISH_ARTIFACTS: ${{ (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch') && (inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')))) && 'true' || 'false' }}
-  # Full compression only for full-release installers that get uploaded for a release; default TestShop-only and PR runs use fast.
-  INSTALLER_COMPRESSION: ${{ (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch') && (inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')))) && 'lzma2/ultra64' || 'lzma2/fast' }}
+  # Full compression only for release installers that get uploaded for a release; default TestShop-only and PR runs use fast.
+  INSTALLER_COMPRESSION: ${{ (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch') && (inputs.full_release || inputs.testshop_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[full-release]') || contains(github.event.head_commit.message, '[testshop-release]'))))) && 'lzma2/ultra64' || 'lzma2/fast' }}
 
 jobs:
   service-workflow:
@@ -550,15 +558,16 @@ jobs:
 
           $pubDir = Join-Path $env:RUNNER_TEMP 'agent-publish'
           $log = Join-Path $env:RUNNER_TEMP 'agent-publish.log'
-          # Default (TestShop-only) runs skip ReadyToRun (about a minute less CPU on the 4-core runner); full-release builds keep it.
-          $r2r = if ($env:FULL_RELEASE -eq 'true') { 'true' } else { 'false' }
+          # Default (dev) runs skip ReadyToRun (about a minute less CPU on the 4-core runner); release builds keep it.
+          $isRelease = ($env:FULL_RELEASE -eq 'true') -or ($env:TESTSHOP_RELEASE -eq 'true')
+          $r2r = if ($isRelease) { 'true' } else { 'false' }
           $publishArgs = @('publish', (Join-Path $src 'src/RemotePCDiagnostics.Agent/RemotePCDiagnostics.Agent.csproj'), '-c', 'Release', '-r', 'win-x64', '--self-contained',
             '-p:PublishSingleFile=true', "-p:PublishReadyToRun=$r2r", '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:DebugType=None', '-p:UseSharedCompilation=false', '-nodeReuse:false', '-o', $pubDir)
           $agent = Start-Process -FilePath 'dotnet' -ArgumentList $publishArgs -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
           $null = $agent.Handle  # keeps ExitCode readable after the process ends
 
           $stageArgs = @('-NoProfile', '-File', 'installer/Build-Installer.ps1', '-StageOnly')
-          if ($env:FULL_RELEASE -ne 'true') { $stageArgs += '-NoReadyToRun' }
+          if (-not $isRelease) { $stageArgs += '-NoReadyToRun' }
           pwsh @stageArgs
           $appCode = $LASTEXITCODE
 
@@ -1056,4 +1065,70 @@ jobs:
                 --notes-file release-notes.md \
                 --repo "$GITHUB_REPOSITORY"
             fi
+          fi
+
+  release-testshop:
+    name: Publish TestShop release (x64 + ARM64)
+    if: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && (inputs.testshop_release || (github.event_name == 'push' && contains(github.event.head_commit.message, '[testshop-release]'))) && !(inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]'))) }}
+    needs: [testshop, testshop-arm64]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: github-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - name: Download TestShop x64 demo bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: RemotePCDiagnostics-TestShop-Setup-win-x64
+          path: release-assets
+
+      - name: Download TestShop ARM64 demo bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: RemotePCDiagnostics-TestShop-Setup-win-arm64
+          path: release-assets
+
+      - name: Verify TestShop installers have matching SHA-256 files
+        working-directory: release-assets
+        run: |
+          shopt -s nullglob
+          count=0
+          for f in *.exe; do
+            if [[ ! -f "$f.sha256" ]]; then
+              echo "::error::Missing checksum file $f.sha256"
+              exit 1
+            fi
+            sha256sum --check --strict "$f.sha256"
+            count=$((count + 1))
+          done
+          if [[ $count -lt 2 ]]; then
+            echo "::error::Expected 2 TestShop installers (win-x64 + win-arm64), found $count"
+            exit 1
+          fi
+
+      - name: Upload TestShop x64 + ARM64 bundles to rolling pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          x64_file=$(basename release-assets/RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe)
+          arm64_file=$(basename release-assets/RemotePCDiagnostics-TestShop-Setup-*-win-arm64.exe)
+          ver="${x64_file#RemotePCDiagnostics-TestShop-Setup-}"
+          ver="${ver%-win-x64.exe}"
+
+          if gh release view prerelease --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
+            gh release upload prerelease release-assets/* \
+              --clobber \
+              --repo "$GITHUB_REPOSITORY"
+            gh release edit prerelease \
+              --title "Remote PC Diagnostics ${ver} (${GITHUB_SHA:0:7})" \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            printf 'Test-Shop demo bundles (`%s`, `%s`) built from `main` commit `%s`.\n' "$x64_file" "$arm64_file" "$GITHUB_SHA" > release-notes.md
+            gh release create prerelease release-assets/* \
+              --title "Remote PC Diagnostics ${ver} (${GITHUB_SHA:0:7})" \
+              --prerelease \
+              --notes-file release-notes.md \
+              --repo "$GITHUB_REPOSITORY"
           fi

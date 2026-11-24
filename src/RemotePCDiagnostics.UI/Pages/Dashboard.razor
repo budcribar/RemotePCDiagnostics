@@ -86,111 +86,128 @@
         </button>
     </section>
 
-    @* Zone 2: Health Verdict Bar + Single Refresh/Stop Action *@
+    @* Zone 2: Health Verdict Bar + Collapsible Needs Attention List + Single Refresh/Stop Action *@
     <section class="card dash-verdict-bar" data-testid="dashboard-controls">
-        <div class="dash-verdict-main">
+        <div class="dash-verdict-head">
             @{
                 var verdictKind = enabledModules.Count == 0 ? "na"
                     : checking ? "run"
                     : errorCount > 0 ? "bad"
                     : warningCount > 0 ? "warn"
                     : completedCount > 0 ? "ok" : "na";
+                var canExpandTriage = problems.Count > 0;
             }
-            <span class="dash-verdict-icon dash-verdict-@verdictKind" aria-hidden="true">
-                <Icon Name="@(checking ? "refresh" : errorCount > 0 || warningCount > 0 ? "crash" : "sec")" Size="20" />
-            </span>
-            <div class="dash-verdict-text">
-                <div class="dash-verdict-top">
-                    <strong class="dash-verdict-title" data-testid="dashboard-verdict-title">
-                        @if (enabledModules.Count == 0)
-                        {
-                            <span>No checks enabled</span>
-                        }
-                        else if (checking)
-                        {
-                            <span>Checking… (@completedCount / @enabledModules.Count)</span>
-                        }
-                        else if (problems.Count > 0)
-                        {
-                            <span>@problems.Count @(problems.Count == 1 ? "thing needs" : "things need") attention</span>
-                        }
-                        else if (completedCount > 0)
-                        {
-                            <span>System looks healthy</span>
-                        }
-                        else
-                        {
-                            <span>System overview</span>
-                        }
-                    </strong>
-                    @if (errorCount > 0 || warningCount > 0)
-                    {
-                        <span class="chip @(errorCount > 0 ? "chip-bad" : "chip-warn")" data-testid="dashboard-verdict-pill">
-                            @if (errorCount > 0 && warningCount > 0) { @($"{errorCount} {(errorCount == 1 ? "error" : "errors")} · {warningCount} {(warningCount == 1 ? "warning" : "warnings")}") }
-                            else if (errorCount > 0) { @($"{errorCount} {(errorCount == 1 ? "error" : "errors")}") }
-                            else { @($"{warningCount} {(warningCount == 1 ? "warning" : "warnings")}") }
-                        </span>
-                    }
-                    else if (!checking && completedCount > 0 && enabledModules.Count > 0)
-                    {
-                        <span class="chip chip-ok" data-testid="dashboard-verdict-pill">@completedCount / @enabledModules.Count passed</span>
-                    }
-                </div>
-                <div class="meta dash-verdict-sub" data-testid="dashboard-last-checked">
-                    @if (enabledModules.Count == 0)
-                    {
-                        <span>Open Customize to enable system checks.</span>
-                    }
-                    else if (checking)
-                    {
-                        <span>Cards update as each check finishes.</span>
-                    }
-                    else if (problems.Count > 0)
-                    {
-                        <span>@(enabledModules.Count - problems.Count) of @enabledModules.Count enabled checks passed.</span>
-                    }
-                    else if (completedCount > 0)
-                    {
-                        <span>No errors or warnings in enabled checks.</span>
-                    }
-                    else
-                    {
-                        <span>@enabledModules.Count checks ready.</span>
-                    }
-                </div>
-            </div>
-        </div>
-        <div class="dash-verdict-actions">
-            @if (checking && Screen.RunningGroup == CheckGroup.Checks)
+            @if (canExpandTriage)
             {
-                <button type="button" class="btn btn-stop" data-testid="dashboard-checks-stop" @onclick="Screen.Stop">
-                    Stop
+                <button type="button" class="dash-verdict-main dash-verdict-toggle" data-testid="dashboard-triage-toggle"
+                        aria-expanded="@(_triageOpen ? "true" : "false")" @onclick="() => _triageOpen = !_triageOpen">
+                    <span class="dash-verdict-icon dash-verdict-@verdictKind" aria-hidden="true">
+                        <Icon Name="@(checking ? "refresh" : "crash")" Size="20" />
+                    </span>
+                    <div class="dash-verdict-text">
+                        <div class="dash-verdict-top">
+                            <strong class="dash-verdict-title" data-testid="dashboard-verdict-title">
+                                @if (checking)
+                                {
+                                    <span>Checking… (@completedCount / @enabledModules.Count)</span>
+                                }
+                                else
+                                {
+                                    <span>@problems.Count @(problems.Count == 1 ? "thing needs" : "things need") attention</span>
+                                }
+                            </strong>
+                            <span class="chip @(errorCount > 0 ? "chip-bad" : "chip-warn")" data-testid="dashboard-verdict-pill">
+                                @if (errorCount > 0 && warningCount > 0) { @($"{errorCount} {(errorCount == 1 ? "error" : "errors")} · {warningCount} {(warningCount == 1 ? "warning" : "warnings")}") }
+                                else if (errorCount > 0) { @($"{errorCount} {(errorCount == 1 ? "error" : "errors")}") }
+                                else { @($"{warningCount} {(warningCount == 1 ? "warning" : "warnings")}") }
+                            </span>
+                            <span class="chevron-icon @(_triageOpen ? "is-open" : "")" aria-hidden="true">▾</span>
+                        </div>
+                        <div class="meta dash-verdict-sub" data-testid="dashboard-last-checked">
+                            @if (checking)
+                            {
+                                <span>Cards update as each check finishes.</span>
+                            }
+                            else
+                            {
+                                <span>@(enabledModules.Count - problems.Count) of @enabledModules.Count enabled checks passed.</span>
+                            }
+                        </div>
+                    </div>
                 </button>
             }
             else
             {
-                @* dashboard-runall and dashboard-checks-stop are the ids Admin's run_checks and stop_checks click. *@
-                <button type="button" class="btn btn-primary" data-testid="dashboard-runall" disabled="@(checking || enabledModules.Count == 0)" @onclick="RefreshAll" title="Refresh all enabled checks">
-                    <span class="@(checking ? "dash-spin" : "")"><Icon Name="refresh" Size="14" /></span>
-                    <span>Refresh</span>
-                </button>
+                <div class="dash-verdict-main">
+                    <span class="dash-verdict-icon dash-verdict-@verdictKind" aria-hidden="true">
+                        <Icon Name="@(checking ? "refresh" : "sec")" Size="20" />
+                    </span>
+                    <div class="dash-verdict-text">
+                        <div class="dash-verdict-top">
+                            <strong class="dash-verdict-title" data-testid="dashboard-verdict-title">
+                                @if (enabledModules.Count == 0)
+                                {
+                                    <span>No checks enabled</span>
+                                }
+                                else if (checking)
+                                {
+                                    <span>Checking… (@completedCount / @enabledModules.Count)</span>
+                                }
+                                else if (completedCount > 0)
+                                {
+                                    <span>System looks healthy</span>
+                                }
+                                else
+                                {
+                                    <span>System overview</span>
+                                }
+                            </strong>
+                            @if (!checking && completedCount > 0 && enabledModules.Count > 0)
+                            {
+                                <span class="chip chip-ok" data-testid="dashboard-verdict-pill">@completedCount / @enabledModules.Count passed</span>
+                            }
+                        </div>
+                        <div class="meta dash-verdict-sub" data-testid="dashboard-last-checked">
+                            @if (enabledModules.Count == 0)
+                            {
+                                <span>Open Customize to enable system checks.</span>
+                            }
+                            else if (checking)
+                            {
+                                <span>Cards update as each check finishes.</span>
+                            }
+                            else if (completedCount > 0)
+                            {
+                                <span>No errors or warnings in enabled checks.</span>
+                            }
+                            else
+                            {
+                                <span>@enabledModules.Count checks ready.</span>
+                            }
+                        </div>
+                    </div>
+                </div>
             }
+            <div class="dash-verdict-actions">
+                @if (checking && Screen.RunningGroup == CheckGroup.Checks)
+                {
+                    <button type="button" class="btn btn-stop" data-testid="dashboard-checks-stop" @onclick="Screen.Stop">
+                        Stop
+                    </button>
+                }
+                else
+                {
+                    @* dashboard-runall and dashboard-checks-stop are the ids Admin's run_checks and stop_checks click. *@
+                    <button type="button" class="btn btn-primary" data-testid="dashboard-runall" disabled="@(checking || enabledModules.Count == 0)" @onclick="RefreshAll" title="Refresh all enabled checks">
+                        <span class="@(checking ? "dash-spin" : "")"><Icon Name="refresh" Size="14" /></span>
+                        <span>Refresh</span>
+                    </button>
+                }
+            </div>
         </div>
-    </section>
-
-    @* Zone 3: Needs Attention (errors first, starts collapsed, expands card in place on Inspect) *@
-    @if (problems.Count > 0)
-    {
-        <details class="card dash-triage" data-testid="dashboard-triage" open="@_triageOpen">
-            <summary class="bench-customize-summary dash-triage-summary" data-testid="dashboard-triage-toggle" aria-expanded="@(_triageOpen ? "true" : "false")"
-                     @onclick="() => _triageOpen = !_triageOpen" @onclick:preventDefault="true">
-                <span class="bench-customize-title">
-                    <span class="dot @(errorCount > 0 ? "dot-error" : "dot-warning")"></span>
-                    <span>Needs attention · @problems.Count</span>
-                </span>
-                <span class="chevron-icon @(_triageOpen ? "is-open" : "")" aria-hidden="true">▾</span>
-            </summary>
-            <div class="dash-triage-list">
+        @if (canExpandTriage && _triageOpen)
+        {
+            <div class="dash-triage-list" data-testid="dashboard-triage">
                 @foreach (var item in problems)
                 {
                     var mod = item.Module;
@@ -208,8 +225,8 @@
                     </div>
                 }
             </div>
-        </details>
-    }
+        }
+    </section>
 
     @* Zone 4: Customizable, Drag-and-Drop System Checks Grid (In-Place Expand/Collapse) *@
     <section class="dash-checks-section">
