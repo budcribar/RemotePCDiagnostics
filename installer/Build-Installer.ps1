@@ -98,6 +98,8 @@ if (-not $SkipPublish) {
         '--self-contained', 'true'
         '-p:PublishProfile=Installer'
         '-p:GeneratePackageOnBuild=false'
+        '-p:UseSharedCompilation=false'
+        '-nodeReuse:false'
         "-p:Version=$Version"
     )
     # Faster publish for development builds (CI TestShop-only runs); the app starts a little slower without ReadyToRun.

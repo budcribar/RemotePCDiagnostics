@@ -1049,11 +1049,10 @@ public static class BiosArchiveAndXml
                 var cabSlice = new byte[cbCabinet];
                 Buffer.BlockCopy(data, i, cabSlice, 0, (int)cbCabinet);
 
-                if (OperatingSystem.IsWindows())
+                if (OperatingSystem.IsWindows()
+                    && TryExtractCabWithWindowsExpand(cabSlice, coffFiles, cFiles, destRoot, destRootWithSep, maxDecompressedBytes))
                 {
-                    if (TryExtractCabWithWindowsExpand(cabSlice, coffFiles, cFiles, destRoot, destRootWithSep, maxDecompressedBytes))
-                        return true;
-                    continue;
+                    return true;
                 }
 
                 if (!TryExtractCabEntries(cabSlice, out var entries, maxDecompressedBytes) || entries.Count == 0)
