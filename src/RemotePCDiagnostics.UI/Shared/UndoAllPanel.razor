@@ -31,7 +31,7 @@
     {
         @if (pending.Count > 0)
         {
-        <details data-testid="undo-details">
+        <details data-testid="undo-details" open>
             <summary class="meta" data-testid="undo-list-toggle">Show what will be put back</summary>
             <ul class="undo-list" data-testid="undo-list">
                 @foreach (var c in pending)

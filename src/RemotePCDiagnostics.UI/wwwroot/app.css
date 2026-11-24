@@ -377,6 +377,9 @@ td.svc-actions button + button { margin-left: 6px; }
 
 /* History page */
 .history-table td.summary { max-width: 520px; white-space: normal; }
+.history-table td.history-time, .history-table td.history-result { white-space: nowrap; }
+.history-status { display: inline-flex; align-items: center; white-space: nowrap; }
+.history-table td.history-fix-actions { white-space: nowrap; width: 1%; text-align: right; }
 .history-details td { background: var(--surface-2); }
 .history-details ul { margin: 4px 0; padding-left: 18px; columns: 2 260px; }
 .trend { display: flex; align-items: flex-end; gap: 3px; height: 40px; margin: 8px 0 4px; }

@@ -335,4 +335,31 @@ public sealed class HistoryTests
         Assert.Equal(new[] { 72.5, 79.0 }, HistoryQuery.Trend(list, "cpustress").Select(p => p.Value));
         Assert.Equal(new[] { 72.5, 79.0 }, HistoryQuery.Trend(list, "CpuStress").Select(p => p.Value));
     }
+
+    [Fact]
+    public void MatchUndoableChanges_PairsReversibleChangesAndSkipsPermanentOrFailed()
+    {
+        var t = new DateTimeOffset(2026, 11, 24, 18, 0, 0, TimeSpan.Zero);
+        var fastStartupFix = new FixHistoryItem(t.AddSeconds(2), "Fast Startup", "Remote user", true, "Done: Fast Startup turned off.", null);
+        var failedProxyFix = new FixHistoryItem(t.AddSeconds(3), "System proxy", "Remote user", false, "System proxy turned off", null);
+        var tempCleanFix = new FixHistoryItem(t.AddSeconds(4), "Disk cleanup", "Remote user", true, "Temporary files cleaned (12 MB)", "+12 MB disk");
+        var unrelatedFix = new FixHistoryItem(t.AddSeconds(5), "Device reset", "Remote user", true, "Restarted Unknown USB Device", null);
+        var dnsFix = new FixHistoryItem(t.AddSeconds(6), "DNS", "Remote user", true, "Public DNS set on Wi-Fi", null);
+
+        var fastStartupChange = new Core.Changes.ChangeRecord(Guid.NewGuid(), t, Core.Changes.ChangeKind.FastStartup, "", "1", "Fast Startup turned off", "Remote user", NeedsRestart: true);
+        var proxyChange = new Core.Changes.ChangeRecord(Guid.NewGuid(), t.AddSeconds(3), Core.Changes.ChangeKind.SystemProxy, "", "1", "System proxy turned off", "Remote user");
+        var tempChange = new Core.Changes.ChangeRecord(Guid.NewGuid(), t.AddSeconds(4), Core.Changes.ChangeKind.TempFiles, "abc", "5:12582912", "Temporary files cleaned (12 MB)", "Remote user");
+        var dnsChange = new Core.Changes.ChangeRecord(Guid.NewGuid(), t.AddSeconds(5), Core.Changes.ChangeKind.AdapterDns, "Wi-Fi", "", "Public DNS set on Wi-Fi", "Remote user");
+
+        var matched = HistorySummary.MatchUndoableChanges(
+            [fastStartupFix, failedProxyFix, tempCleanFix, unrelatedFix, dnsFix],
+            [fastStartupChange, proxyChange, tempChange, dnsChange]);
+
+        Assert.Equal(2, matched.Count);
+        Assert.Equal(fastStartupChange.Id, matched[fastStartupFix].Id);
+        Assert.Equal(dnsChange.Id, matched[dnsFix].Id);
+        Assert.False(matched.ContainsKey(failedProxyFix));
+        Assert.False(matched.ContainsKey(tempCleanFix));
+        Assert.False(matched.ContainsKey(unrelatedFix));
+    }
 }

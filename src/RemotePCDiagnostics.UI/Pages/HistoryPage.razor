@@ -1,10 +1,14 @@
 @page "/history"
 @using RemotePCDiagnostics.Core.Areas
+@using RemotePCDiagnostics.Core.Changes
 @using RemotePCDiagnostics.Core.History
 @using RemotePCDiagnostics.Core.Optimizations
 @implements IDisposable
 @inject IHistoryStore History
 @inject AppServices App
+@inject IChangeJournal Journal
+@inject UndoService Undo
+@inject ISessionContext Session
 @* Past test results and automated fix impact summary from the Windows Event Log and current session. *@
 @{
     var all = _result?.Entries ?? [];
@@ -21,6 +25,8 @@
     DateOnly? latestDay = dayGroups.Count > 0 ? dayGroups.MaxBy(g => g.Date)!.Date : null;
     var fixGroups = HistorySummary.GroupFixesByDay(impact.Fixes, localNow);
     DateOnly? latestFixDay = fixGroups.Count > 0 ? fixGroups.MaxBy(g => g.Date)!.Date : null;
+    var undoByFix = HistorySummary.MatchUndoableChanges(impact.Fixes, Journal.All);
+    var hasUndoableFixes = undoByFix.Count > 0;
     var totalExpandedRows = dayGroups.Where(g => IsDayExpanded(g.Date, latestDay)).Sum(g => g.Entries.Count);
     var renderedRows = 0;
     var tests = HistoryNames.FilterOptions(diagEntries, Diagnostics.Catalog);
@@ -63,6 +69,10 @@
     @if (fixGroups.Count > 0)
     {
         <h2 class="section-title">Automated fixes &amp; optimizations</h2>
+        @if (_undoResult is { } undoRes)
+        {
+            <p class="@(undoRes.Success || undoRes.Skipped ? "meta" : "notice")" data-testid="history-fix-undo-result">@undoRes.Change.Label: @undoRes.Message</p>
+        }
         <div class="table-scroll">
         <table class="detail grid sticky-head history-table" data-testid="history-fixes-table" style="margin-bottom: 18px;">
             <tr>
@@ -71,6 +81,10 @@
                 <th>Triggered by</th>
                 <th>Result</th>
                 <th>What changed</th>
+                @if (hasUndoableFixes)
+                {
+                    <th>Action</th>
+                }
             </tr>
             @foreach (var fg in fixGroups)
             {
@@ -78,7 +92,7 @@
                 var fixDayOpen = IsFixDayExpanded(fixGroup.Date, latestFixDay);
                 <tr @key="fixGroup.Date" class="history-day clickable" role="button" tabindex="0" aria-expanded="@(fixDayOpen ? "true" : "false")" data-testid="history-fix-day"
                     @onclick="() => ToggleFixDay(fixGroup.Date, latestFixDay)" @onkeydown='k => { if (k.Key is "Enter" or " ") ToggleFixDay(fixGroup.Date, latestFixDay); }'>
-                    <td colspan="5">
+                    <td colspan="@(hasUndoableFixes ? 6 : 5)">
                         <div class="history-day-bar">
                             <span class="history-day-title">
                                 <span class="history-day-chevron" aria-hidden="true">@(fixDayOpen ? "▾" : "▸")</span>
@@ -106,18 +120,31 @@
                 {
                     @foreach (var fx in fixGroup.Fixes)
                     {
+                        var undoChange = undoByFix.TryGetValue(fx, out var matchedChange) ? matchedChange : null;
                         <tr data-testid="history-fix-row">
-                            <td title="@fx.TimeUtc.ToLocalTime().ToString("g")">@fx.TimeUtc.ToLocalTime().ToString("t")</td>
+                            <td class="history-time" title="@fx.TimeUtc.ToLocalTime().ToString("g")">@fx.TimeUtc.ToLocalTime().ToString("t")</td>
                             <td>@fx.Category</td>
                             <td>@fx.Actor</td>
-                            <td>
-                                <span class="dot dot-@(fx.Success ? "ok" : "warning")"></span>@(fx.Success ? "Applied" : "Failed")
+                            <td class="history-result">
+                                <span class="history-status"><span class="dot dot-@(fx.Success ? "ok" : "warning")"></span>@(fx.Success ? "Applied" : "Failed")</span>
                                 @if (fx.ImpactBadge is { } badge)
                                 {
                                     <span class="chip chip-ok" style="margin-left: 6px;">@badge</span>
                                 }
                             </td>
                             <td class="summary">@fx.Summary</td>
+                            @if (hasUndoableFixes)
+                            {
+                                <td class="history-fix-actions">
+                                    @if (undoChange is not null)
+                                    {
+                                        var change = undoChange;
+                                        <button type="button" class="btn-small" data-testid="history-fix-undo-@change.Id"
+                                                disabled="@(_undoBusyId is not null)"
+                                                @onclick="() => UndoFix(change)">@(_undoBusyId == change.Id ? "Undoing…" : change.Kind == ChangeKind.StoreReinstall ? "Reinstall" : "Undo")</button>
+                                    }
+                                </td>
+                            }
                         </tr>
                     }
                 }
@@ -257,9 +284,9 @@ else
                     <tr class="clickable" role="button" tabindex="0" aria-expanded="@(open ? "true" : "false")" data-testid="history-row"
                         data-check-id="@entry.Module" data-completed-at="@entry.TimeUtc.ToString("O")"
                         @onclick="() => _open = open ? null : entry" @onkeydown='k => { if (k.Key is "Enter" or " ") _open = open ? null : entry; }'>
-                        <td title="@entry.LocalTime.ToString("g")">@entry.LocalTime.ToString("t")</td>
+                        <td class="history-time" title="@entry.LocalTime.ToString("g")">@entry.LocalTime.ToString("t")</td>
                         <td>@entry.Test@if (!string.IsNullOrEmpty(entry.Instance)) {<span class="meta" data-testid="history-instance"> · @entry.Instance</span>}</td>
-                        <td><span class="dot dot-@Dot(entry.Outcome)"></span>@entry.Outcome</td>
+                        <td class="history-result"><span class="history-status"><span class="dot dot-@Dot(entry.Outcome)"></span>@entry.Outcome</span></td>
                         <td class="summary">@entry.Summary</td>
                         <td>@HistoryQuery.FormatDuration(entry.DurationSeconds)</td>
                     </tr>
@@ -307,12 +334,15 @@ else
     private HistoryReadResult? _result;
     private bool _loading, _disposed;
     private int _reloadPending;
+    private Guid? _undoBusyId;
+    private UndoItemResult? _undoResult;
     /// <summary>A read is under way or due, with an earlier one still on show. The first read shows "Loading history…" instead.</summary>
     private bool Reloading => _result is not null && (_loading || System.Threading.Volatile.Read(ref _reloadPending) != 0);
 
     protected override async Task OnInitializedAsync()
     {
         Store.Changed += OnResult;
+        Journal.Changed += OnJournalChanged;
         await Load();
     }
 
@@ -417,7 +447,26 @@ else
         });
     }
 
-    public void Dispose() { _disposed = true; Store.Changed -= OnResult; }
+    private void OnJournalChanged()
+    {
+        if (_disposed) return;
+        try { _ = InvokeAsync(StateHasChanged); } catch { }
+    }
+
+    private async Task UndoFix(ChangeRecord change)
+    {
+        if (_undoBusyId is not null) return;
+        _undoBusyId = change.Id;
+        try
+        {
+            _undoResult = await Undo.UndoChangeAsync(change.Id, ServiceActor.From(Session))
+                ?? new UndoItemResult(change, false, "Already undone, or no longer listed.");
+        }
+        finally { _undoBusyId = null; }
+        await Load();
+    }
+
+    public void Dispose() { _disposed = true; Store.Changed -= OnResult; Journal.Changed -= OnJournalChanged; }
 
     private static string Dot(string outcome) => outcome switch
     {

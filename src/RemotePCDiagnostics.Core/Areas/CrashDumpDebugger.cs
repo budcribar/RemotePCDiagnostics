@@ -1,10 +1,17 @@
+using System.Runtime.InteropServices;
 using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
-/// <summary>Runs the installed Windows kernel debugger on a selected system dump.</summary>
+/// <summary>
+/// Analyzes a local Windows <c>.dmp</c> file: extracts header/minidump details in pure C# (<see cref="CrashDumpParser"/>),
+/// and runs Microsoft Store WinDbg or Windows SDK Debugging Tools (<c>kd.exe</c>/<c>cdb.exe</c>) when installed for full symbol-resolved analysis.
+/// </summary>
 public static class CrashDumpDebugger
 {
+    public const string InstallHint =
+        "Install WinDbg (winget install Microsoft.WinDbg) or Debugging Tools for Windows from the Windows SDK for full symbol-resolved stack analysis.";
+
     /// <summary>A .dmp file on a local drive. Paths are normalised first, so "//server/share" and "\\?\UNC\…" are refused like "\\server\share".</summary>
     public static bool IsLocalDump(string? path) =>
         TryNormalizeLocalDumpPath(path, out var full) && File.Exists(full);
@@ -65,6 +72,91 @@ public static class CrashDumpDebugger
         }
     }
 
+    /// <summary>
+    /// Finds an installed console debugger (<c>kd.exe</c> or <c>cdb.exe</c>), checking Microsoft Store WinDbg first,
+    /// then Windows SDK Debugging Tools.
+    /// </summary>
+    public static string? FindDebugger(
+        bool userMode = false,
+        Architecture? architecture = null,
+        string? localAppData = null,
+        string? programFiles = null,
+        string? programFilesX86 = null,
+        Func<string, bool>? fileExists = null,
+        Func<string, string, IEnumerable<string>>? enumerateDirectories = null)
+    {
+        var arch = architecture ?? RuntimeInformation.OSArchitecture;
+        var sdkArch = arch switch
+        {
+            Architecture.Arm64 => "arm64",
+            Architecture.X86 => "x86",
+            _ => "x64",
+        };
+        var storeArch = arch switch
+        {
+            Architecture.Arm64 => "arm64",
+            Architecture.X86 => "x86",
+            _ => "amd64",
+        };
+
+        var local = localAppData ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var pf = programFiles ?? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var pfx86 = programFilesX86 ?? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var exists = fileExists ?? File.Exists;
+        var enumDirs = enumerateDirectories ?? SafeEnumerateDirectories;
+
+        // Prefer cdb.exe for user-mode minidumps when available, falling back to kd.exe.
+        string[] exeNames = userMode ? ["cdb.exe", "kd.exe"] : ["kd.exe"];
+
+        foreach (var exe in exeNames)
+        {
+            // 1. Microsoft Store WinDbg (App Execution Alias + package folder)
+            if (!string.IsNullOrEmpty(local))
+            {
+                var winAppsLocal = Path.Combine(local, "Microsoft", "WindowsApps");
+                var alias = Path.Combine(winAppsLocal, exe);
+                if (exists(alias)) return alias;
+
+                foreach (var pkgDir in enumDirs(winAppsLocal, "Microsoft.WinDbg_*"))
+                {
+                    var direct = Path.Combine(pkgDir, exe);
+                    if (exists(direct)) return direct;
+                    var nested = Path.Combine(pkgDir, storeArch, exe);
+                    if (exists(nested)) return nested;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(pf))
+            {
+                var winAppsGlobal = Path.Combine(pf, "WindowsApps");
+                foreach (var pkgDir in enumDirs(winAppsGlobal, "Microsoft.WinDbg_*").OrderByDescending(d => d, StringComparer.OrdinalIgnoreCase))
+                {
+                    var nested = Path.Combine(pkgDir, storeArch, exe);
+                    if (exists(nested)) return nested;
+                    var direct = Path.Combine(pkgDir, exe);
+                    if (exists(direct)) return direct;
+                }
+            }
+
+            // 2. Windows SDK Debugging Tools
+            foreach (var root in new[] { pfx86, pf })
+            {
+                if (string.IsNullOrEmpty(root)) continue;
+                var candidate = Path.Combine(root, "Windows Kits", "10", "Debuggers", sdkArch, exe);
+                if (exists(candidate)) return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> SafeEnumerateDirectories(string path, string searchPattern)
+    {
+        if (!Directory.Exists(path)) return [];
+        try { return Directory.EnumerateDirectories(path, searchPattern); }
+        catch { return []; }
+    }
+
     public static async Task<string> AnalyzeAsync(string path, SystemCommandRunner? commands = null, CancellationToken ct = default)
     {
         if (!TryNormalizeLocalDumpPath(path, out var full))
@@ -92,37 +184,38 @@ public static class CrashDumpDebugger
         return "The dump file is missing or inaccessible.";
     }
 
-    /// <summary>Runs <c>kd.exe</c> directly in the current process (used when already readable or inside the elevated Admin Agent).</summary>
+    /// <summary>Parses the dump in pure C# and runs Store WinDbg / SDK <c>kd.exe</c> or <c>cdb.exe</c> in the current process (when readable or inside the elevated Admin Agent).</summary>
     public static async Task<string> AnalyzeLocalAsync(string path, CancellationToken ct = default)
     {
         if (!IsLocalDump(path)) return "The dump file is missing or inaccessible.";
 
-        var arch = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture switch
+        var parsed = CrashDumpParser.TryReadFile(path);
+        var headerSummary = parsed?.FormatText();
+
+        var debugger = FindDebugger(userMode: parsed?.Kind == CrashDumpKind.UserMinidump);
+        if (debugger is null)
         {
-            System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
-            System.Runtime.InteropServices.Architecture.X86 => "x86",
-            _ => "x64"
-        };
-        var kd = new[] { Environment.SpecialFolder.ProgramFilesX86, Environment.SpecialFolder.ProgramFiles }
-            .Select(Environment.GetFolderPath)
-            .Where(root => root.Length > 0)
-            .Select(root => Path.Combine(root, "Windows Kits", "10", "Debuggers", arch, "kd.exe"))
-            .FirstOrDefault(File.Exists);
-        if (kd is null)
-            return "Install Debugging Tools for Windows from the Windows SDK to analyze this dump.";
+            return headerSummary is not null
+                ? $"{headerSummary}\n\n{InstallHint}"
+                : InstallHint;
+        }
 
         var symbols = Path.Combine(Path.GetTempPath(), "RemotePCDiagnostics", "Symbols");
-        var result = await new SystemCommandRunner().RunAsync(kd,
+        var result = await new SystemCommandRunner().RunAsync(debugger,
             ["-z", path, "-y", $"srv*{symbols}*https://msdl.microsoft.com/download/symbols", "-c", "!analyze -v; q"],
             TimeSpan.FromMinutes(3), ct).ConfigureAwait(false);
         if (result is null)
-            return "The debugger could not start or did not finish within three minutes.";
+        {
+            const string failed = "The debugger could not start or did not finish within three minutes.";
+            return headerSummary is not null ? $"{headerSummary}\n\n{failed}" : failed;
+        }
         var output = (result.StdOut + "\n" + result.StdErr).Trim();
         if (result.ExitCode != 0)
             output = $"Debugger exited with code {result.ExitCode}.\n{output}";
         if (output.Length == 0)
-            return "The debugger returned no analysis.";
+            return headerSummary is not null ? $"{headerSummary}\n\nThe debugger returned no analysis." : "The debugger returned no analysis.";
         const int limit = 48_000;
-        return output.Length <= limit ? output : "Earlier debugger output omitted.\n" + output[^limit..];
+        var trimmed = output.Length <= limit ? output : "Earlier debugger output omitted.\n" + output[^limit..];
+        return headerSummary is not null ? $"{headerSummary}\n\n--- Debugger (!analyze -v) ---\n{trimmed}" : trimmed;
     }
 }

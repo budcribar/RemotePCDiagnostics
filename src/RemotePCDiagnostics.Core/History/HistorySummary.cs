@@ -476,4 +476,121 @@ public static class HistorySummary
         return null;
     }
 
+    private static readonly HashSet<string> MatchStopWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "the", "for", "and", "from", "with", "this", "that", "will", "into", "back", "was", "are", "not", "all", "can", "off", "out",
+    };
+
+    /// <summary>
+    /// Pairs each reversible <see cref="Changes.ChangeRecord"/> in <paramref name="journal"/> with at most one successful
+    /// <see cref="FixHistoryItem"/> in <paramref name="fixes"/> (matched by timestamp proximity and label/target/summary affinity).
+    /// </summary>
+    public static Dictionary<FixHistoryItem, Changes.ChangeRecord> MatchUndoableChanges(
+        IReadOnlyList<FixHistoryItem> fixes,
+        IReadOnlyList<Changes.ChangeRecord> journal)
+    {
+        var result = new Dictionary<FixHistoryItem, Changes.ChangeRecord>(ReferenceEqualityComparer.Instance);
+        if (fixes.Count == 0 || journal.Count == 0) return result;
+
+        var reversible = journal.Where(c => Changes.Undoability.Of(c) != Changes.UndoSupport.None).ToList();
+        if (reversible.Count == 0) return result;
+
+        var candidates = new List<(int FixIdx, int ChangeIdx, int Score, double DiffSeconds)>();
+        for (var fIdx = 0; fIdx < fixes.Count; fIdx++)
+        {
+            var fix = fixes[fIdx];
+            if (!fix.Success) continue;
+            var fixNorm = NormalizeForMatch(fix.Summary);
+            var fixText = $"{fixNorm} {fix.Category}";
+            var fixWords = SignificantWords(fixText);
+
+            for (var cIdx = 0; cIdx < reversible.Count; cIdx++)
+            {
+                var change = reversible[cIdx];
+                var diff = Math.Abs((fix.TimeUtc - change.TimeUtc).TotalSeconds);
+                if (diff > 120) continue;
+
+                var score = ScoreUndoMatch(change, fixNorm, fixText, fixWords);
+                if (score <= 0) continue;
+                candidates.Add((fIdx, cIdx, score, diff));
+            }
+        }
+
+        candidates.Sort((a, b) =>
+        {
+            var byScore = b.Score.CompareTo(a.Score);
+            return byScore != 0 ? byScore : a.DiffSeconds.CompareTo(b.DiffSeconds);
+        });
+
+        var usedFixes = new HashSet<int>();
+        var usedChanges = new HashSet<int>();
+        foreach (var (fIdx, cIdx, _, _) in candidates)
+        {
+            if (!usedFixes.Add(fIdx) || !usedChanges.Add(cIdx)) continue;
+            result[fixes[fIdx]] = reversible[cIdx];
+        }
+        return result;
+    }
+
+    private static int ScoreUndoMatch(Changes.ChangeRecord change, string fixNorm, string fixText, HashSet<string> fixWords)
+    {
+        var score = 0;
+        var labelNorm = NormalizeForMatch(change.Label);
+        if (labelNorm.Length > 0 && fixNorm.Length > 0)
+        {
+            if (string.Equals(labelNorm, fixNorm, StringComparison.OrdinalIgnoreCase))
+                score += 120;
+            else if (fixNorm.Contains(labelNorm, StringComparison.OrdinalIgnoreCase) || labelNorm.Contains(fixNorm, StringComparison.OrdinalIgnoreCase))
+                score += 90;
+        }
+
+        if (!string.IsNullOrWhiteSpace(change.Target) && !Guid.TryParse(change.Target, out _))
+        {
+            var target = change.Target.Trim();
+            var pipe = target.IndexOf('|');
+            if (pipe >= 0 && pipe + 1 < target.Length) target = target[(pipe + 1)..];
+            if (target.Length >= 3 && fixText.Contains(target, StringComparison.OrdinalIgnoreCase))
+                score += 40;
+        }
+
+        if (labelNorm.Length > 0)
+        {
+            foreach (var w in SignificantWords(labelNorm))
+            {
+                if (fixWords.Contains(w)) score += 15;
+            }
+        }
+
+        return score;
+    }
+
+    private static string NormalizeForMatch(string? s)
+    {
+        var t = (s ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
+        if (t.StartsWith("Done:", StringComparison.OrdinalIgnoreCase))
+            t = t[5..].TrimStart();
+        return t.TrimEnd('.');
+    }
+
+    private static HashSet<string> SignificantWords(string text)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var start = -1;
+        for (var i = 0; i <= text.Length; i++)
+        {
+            var isWord = i < text.Length && (char.IsLetterOrDigit(text[i]) || text[i] == '-');
+            if (isWord && start < 0) start = i;
+            else if (!isWord && start >= 0)
+            {
+                var len = i - start;
+                if (len >= 3)
+                {
+                    var w = text[start..i];
+                    if (!MatchStopWords.Contains(w)) set.Add(w);
+                }
+                start = -1;
+            }
+        }
+        return set;
+    }
 }

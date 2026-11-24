@@ -70,6 +70,8 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
             .ToList();
     }
 
+    internal static string FormatStopCode(uint code) => StopCode(code);
+
     private static string StopCode(uint code) => $"0x{code:x8}" + (code switch
     {
         0xA => " · Invalid memory access at elevated priority",
@@ -136,9 +138,12 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
     private static AreaRow DumpRow(MinidumpFile dump, IReadOnlyList<WinEvent> events)
     {
         var related = events.FirstOrDefault(e => MatchesEvent(dump, e));
+        var parsed = CrashDumpDebugger.IsLocalDump(dump.FullPath) ? CrashDumpParser.TryReadFile(dump.FullPath) : null;
         var detail = dump.FullPath ?? dump.FileName;
         if (related is not null)
             detail += $"\nBlue screen recorded: {WindowsEventLog.FormatTime(related.Time)} · {BugCheckCode(related) ?? related.ShortMessage}";
+        if (parsed is not null)
+            detail += "\n" + parsed.FormatText();
         return new(AreaLevel.Neutral,
             [WindowsEventLog.FormatTime(dump.Created), dump.FileName, Osquery.HardwareInventory.FormatBytes(dump.SizeBytes)],
             [AreaSort.TimeKey(dump.Created), null, dump.SizeBytes.ToString(CultureInfo.InvariantCulture)],

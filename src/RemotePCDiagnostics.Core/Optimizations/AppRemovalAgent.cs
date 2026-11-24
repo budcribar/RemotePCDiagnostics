@@ -67,7 +67,7 @@ public static class AppRemovalAgent
             if (folder is null) return new(false, $"{path} isn't a scheduled task this app may change.");
             try
             {
-                var nativeState = await Task.Run(() => Platform.WindowsTaskScheduler.SetTaskEnabled(folder, name, enabled), CancellationToken.None)
+                var nativeState = await Task.Run(() => OperatingSystem.IsWindows() ? Platform.WindowsTaskScheduler.SetTaskEnabled(folder, name, enabled) : null, CancellationToken.None)
                     .WaitAsync(TaskTimeout, ct).ConfigureAwait(false);
                 return new(true, ExitCode: 0, TaskState: nativeState);
             }
