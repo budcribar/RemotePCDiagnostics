@@ -151,7 +151,7 @@ try {
   // Resource hogs: "Ways to use less memory" renders (suggestions, or the empty/error state). Actions are never clicked here.
   // A check's card shows nothing below it until it has run: run it, then open its Details (a passed check starts collapsed).
   await page.getByTestId('checks-row-resourcehogs').click();
-  const hogsHead = '[data-testid="checks-detail"] [data-check-id="ResourceHogs"]';
+  const hogsHead = '[data-testid="checks-detail"] [data-check-id="ResourceHogs"][data-run-state]';
   await page.locator(hogsHead).waitFor({ state: 'visible', timeout: 15_000 });
   const hogsState = await page.locator(hogsHead).getAttribute('data-run-state');
   if (hogsState === 'notrun') {
