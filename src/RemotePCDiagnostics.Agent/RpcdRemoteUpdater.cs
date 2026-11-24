@@ -250,9 +250,6 @@ internal sealed class RpcdRemoteUpdater : IDisposable
 
     private async Task<int> RunInstallerAsync(RpcdPreparedInstall install, IReadOnlyList<string>? relaunch, CancellationToken ct)
     {
-        await AppUpdateInstaller.VerifyPublisherAsync(install.InstallerPath, ct).ConfigureAwait(false);
-        if (install.AgentMsiPath is { } agentMsiPath)
-            await AppUpdateInstaller.VerifyPublisherAsync(agentMsiPath, ct).ConfigureAwait(false);
         // Save only when Setup is about to start so a refused update does not restart the app.
         if (relaunch is not null)
             PendingAppRelaunch.Save(_stagingDirectory, relaunch);
