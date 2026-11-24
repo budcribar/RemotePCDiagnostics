@@ -500,11 +500,20 @@
         }
     }
 
+    function resolveShopApiTarget(path) {
+        const host = (window.location && window.location.hostname || '').toLowerCase();
+        if (host === 'remoteblazorwebview.com' || (host.endsWith('.remoteblazorwebview.com') && host !== 'admin.remoteblazorwebview.com')) {
+            return { url: 'https://admin.remoteblazorwebview.com' + path, credentials: 'include' };
+        }
+        return { url: path, credentials: 'same-origin' };
+    }
+
     async function publishQaCertificate(snapshotJson) {
         try {
-            const res = await fetch('/api/shop/qa-certificates', {
+            const target = resolveShopApiTarget('/api/shop/qa-certificates');
+            const res = await fetch(target.url, {
                 method: 'POST',
-                credentials: 'same-origin',
+                credentials: target.credentials,
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Requested-With': 'RemotePCDiagnostics'
@@ -536,9 +545,10 @@
 
     async function uploadBenchmark(payloadJson) {
         try {
-            const res = await fetch('/api/shop/benchmarks', {
+            const target = resolveShopApiTarget('/api/shop/benchmarks');
+            const res = await fetch(target.url, {
                 method: 'POST',
-                credentials: 'same-origin',
+                credentials: target.credentials,
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Requested-With': 'RemotePCDiagnostics'
