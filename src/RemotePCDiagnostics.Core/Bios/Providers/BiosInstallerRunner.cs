@@ -100,17 +100,27 @@ public static class BiosInstallerRunner
             {
                 sfxExtractDir = Path.Combine(Path.GetTempPath(), $"rpcd-bios-extract-{Guid.NewGuid():N}");
                 Directory.CreateDirectory(sfxExtractDir);
-                var extractRes = await ExecuteProcessAsync(
-                    commands,
-                    executablePath,
-                    AgentBiosOperations.BuildHpSoftPaqExtractArguments(sfxExtractDir),
-                    timeout,
-                    workingDirectory,
-                    serialNumber,
-                    log,
-                    ct).ConfigureAwait(false);
 
-                var inner = extractRes is { ExitCode: 0 } ? AgentBiosOperations.FindExtractedHpFlasher(sfxExtractDir) : null;
+                string? inner = null;
+                if (BiosArchiveAndXml.TryExtractEmbeddedCabToDirectory(executablePath, sfxExtractDir))
+                    inner = AgentBiosOperations.FindExtractedHpFlasher(sfxExtractDir);
+
+                if (inner is null)
+                {
+                    var extractRes = await ExecuteProcessAsync(
+                        commands,
+                        executablePath,
+                        AgentBiosOperations.BuildHpSoftPaqExtractArguments(sfxExtractDir),
+                        timeout,
+                        workingDirectory,
+                        serialNumber,
+                        log,
+                        ct).ConfigureAwait(false);
+
+                    if (extractRes is { ExitCode: 0 })
+                        inner = AgentBiosOperations.FindExtractedHpFlasher(sfxExtractDir);
+                }
+
                 if (inner is not null)
                 {
                     effectiveExe = inner;
