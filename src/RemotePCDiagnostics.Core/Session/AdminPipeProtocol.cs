@@ -771,7 +771,8 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         TimeSpan connectTimeout,
         CancellationToken ct,
         ILogger? log = null,
-        bool requireSystemOwnedPipe = false)
+        bool requireSystemOwnedPipe = false,
+        Func<NamedPipeClientStream, string?>? pipeServerVerifier = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         var pipe = new NamedPipeClientStream(
@@ -785,8 +786,18 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
             using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             connectCts.CancelAfter(connectTimeout);
             await pipe.ConnectAsync(connectCts.Token).ConfigureAwait(false);
-            if (requireSystemOwnedPipe && OperatingSystem.IsWindows() && PipeOwnerProblem(pipe) is { } ownerProblem)
-                throw new IOException(ownerProblem);
+            var mustVerifySystemServer = requireSystemOwnedPipe
+                || string.Equals(pipeName, ElevationService.ServiceAdminPipeName, StringComparison.OrdinalIgnoreCase);
+            if (mustVerifySystemServer)
+            {
+                var serverProblem = pipeServerVerifier is not null
+                    ? pipeServerVerifier(pipe)
+                    : OperatingSystem.IsWindows()
+                        ? VerifySystemPipeServer(pipe, pipeName)
+                        : null;
+                if (serverProblem is not null)
+                    throw new IOException(serverProblem);
+            }
 
             var client = new AdminPipeClient(pipeName, pipe, log);
             var ping = await client.PingAsync(connectCts.Token).ConfigureAwait(false);
@@ -807,25 +818,204 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         }
     }
 
+    internal const string LocalSystemSidValue = "S-1-5-18";
+    internal const string BuiltinAdministratorsSidValue = "S-1-5-32-544";
+
     /// <summary>
-    /// A well-known pipe name can be created first by any user. Only one made by SYSTEM or an elevated administrator (the
-    /// Agent service) is trusted; a standard user's process can't give its pipe either owner.
+    /// A well-known pipe name can be created first by any user. Verify both that the pipe object is owned by
+    /// SYSTEM or Administrators and that the server process hosting it (<c>GetNamedPipeServerProcessId</c>)
+    /// is the running Agent Windows service or a <c>LocalSystem</c> process.
     /// </summary>
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    internal static string? PipeOwnerProblem(NamedPipeClientStream pipe)
+    internal static string? VerifySystemPipeServer(NamedPipeClientStream pipe, string pipeName)
     {
+        string? ownerSid;
         try
         {
             var owner = pipe.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
-            if (owner is not null && (owner.IsWellKnown(WellKnownSidType.LocalSystemSid) || owner.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid)))
-                return null;
-            return $"The pipe '{pipe}' is owned by '{owner?.Value ?? "nobody"}', not the Agent service.";
+            ownerSid = owner?.Value;
         }
         catch (Exception ex)
         {
-            return $"Could not check who owns the Agent pipe: {ex.Message}";
+            return $"Could not check who owns the Agent pipe '{pipeName}': {ex.Message}";
+        }
+
+        uint? serverPid = null;
+        string? pidError = null;
+        if (GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid) && pid != 0)
+            serverPid = pid;
+        else
+            pidError = $"Win32 error {Marshal.GetLastWin32Error()}";
+
+        var agentServicePid = serverPid.HasValue ? TryQueryAgentServicePid() : null;
+        var serverUserSid = serverPid.HasValue && agentServicePid != serverPid
+            ? TryQueryProcessUserSid(serverPid.Value)
+            : null;
+
+        return VerifyPipeServerIdentity(pipeName, ownerSid, serverPid, agentServicePid, serverUserSid, pidError);
+    }
+
+    /// <summary>
+    /// Pure verification logic for <see cref="VerifySystemPipeServer"/> so pipe-squatting checks are unit-testable on any OS.
+    /// </summary>
+    internal static string? VerifyPipeServerIdentity(
+        string pipeName,
+        string? pipeOwnerSid,
+        uint? serverPid,
+        uint? agentServicePid,
+        string? serverProcessUserSid,
+        string? pidLookupError = null)
+    {
+        var ownerTrusted = string.Equals(pipeOwnerSid, LocalSystemSidValue, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(pipeOwnerSid, BuiltinAdministratorsSidValue, StringComparison.OrdinalIgnoreCase);
+        if (!ownerTrusted)
+            return $"The pipe '{pipeName}' is owned by '{pipeOwnerSid ?? "nobody"}', not the Agent service.";
+
+        if (serverPid is null or 0)
+            return $"Could not identify the server process for pipe '{pipeName}'{(string.IsNullOrEmpty(pidLookupError) ? "." : $": {pidLookupError}.")}";
+
+        if (agentServicePid is > 0 && agentServicePid == serverPid)
+            return null;
+
+        if (string.Equals(serverProcessUserSid, LocalSystemSidValue, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        if (!string.IsNullOrWhiteSpace(serverProcessUserSid))
+            return $"The pipe '{pipeName}' server process (PID {serverPid}) is running as '{serverProcessUserSid}', not LocalSystem or the Agent service.";
+
+        return $"The pipe '{pipeName}' server process (PID {serverPid}) could not be verified as LocalSystem or the Agent service{(agentServicePid is > 0 ? $" (Agent service PID is {agentServicePid})" : "")}.";
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static uint? TryQueryAgentServicePid()
+    {
+        var scm = OpenSCManagerW(null, null, SC_MANAGER_CONNECT);
+        if (scm == IntPtr.Zero) return null;
+        try
+        {
+            var svc = OpenServiceW(scm, AgentLayout.ServiceName, SERVICE_QUERY_STATUS);
+            if (svc == IntPtr.Zero) return null;
+            try
+            {
+                var size = Marshal.SizeOf<SERVICE_STATUS_PROCESS>();
+                var buf = Marshal.AllocHGlobal(size);
+                try
+                {
+                    if (!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, buf, size, out _))
+                        return null;
+                    var status = Marshal.PtrToStructure<SERVICE_STATUS_PROCESS>(buf);
+                    return status.dwCurrentState is SERVICE_RUNNING or SERVICE_START_PENDING && status.dwProcessId != 0
+                        ? status.dwProcessId
+                        : null;
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(buf);
+                }
+            }
+            finally
+            {
+                CloseServiceHandle(svc);
+            }
+        }
+        finally
+        {
+            CloseServiceHandle(scm);
         }
     }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static string? TryQueryProcessUserSid(uint processId)
+    {
+        var hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
+        if (hProcess == IntPtr.Zero)
+            return null;
+        try
+        {
+            if (!OpenProcessToken(hProcess, TOKEN_QUERY, out var hToken) || hToken == IntPtr.Zero)
+                return null;
+            try
+            {
+                GetTokenInformation(hToken, TokenUserClass, IntPtr.Zero, 0, out var needed);
+                if (needed <= 0)
+                    return null;
+                var buf = Marshal.AllocHGlobal(needed);
+                try
+                {
+                    if (!GetTokenInformation(hToken, TokenUserClass, buf, needed, out _))
+                        return null;
+                    var sidPtr = Marshal.ReadIntPtr(buf);
+                    return sidPtr == IntPtr.Zero ? null : new SecurityIdentifier(sidPtr).Value;
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(buf);
+                }
+            }
+            finally
+            {
+                CloseHandle(hToken);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            CloseHandle(hProcess);
+        }
+    }
+
+    private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    private const uint TOKEN_QUERY = 0x0008;
+    private const int TokenUserClass = 1;
+    private const uint SC_MANAGER_CONNECT = 0x0001;
+    private const uint SERVICE_QUERY_STATUS = 0x0004;
+    private const int SC_STATUS_PROCESS_INFO = 0;
+    private const uint SERVICE_START_PENDING = 0x00000002;
+    private const uint SERVICE_RUNNING = 0x00000004;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SERVICE_STATUS_PROCESS
+    {
+        public uint dwServiceType;
+        public uint dwCurrentState;
+        public uint dwControlsAccepted;
+        public uint dwWin32ExitCode;
+        public uint dwServiceSpecificExitCode;
+        public uint dwCheckPoint;
+        public uint dwWaitHint;
+        public uint dwProcessId;
+        public uint dwServiceFlags;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetNamedPipeServerProcessId(SafePipeHandle Pipe, out uint ServerProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(IntPtr TokenHandle, int TokenInformationClass, IntPtr TokenInformation, int TokenInformationLength, out int ReturnLength);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr OpenSCManagerW(string? lpMachineName, string? lpDatabaseName, uint dwDesiredAccess);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr OpenServiceW(IntPtr hSCManager, string lpServiceName, uint dwDesiredAccess);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool QueryServiceStatusEx(IntPtr hService, int InfoLevel, IntPtr lpBuffer, int cbBufSize, out int pcbBytesNeeded);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool CloseServiceHandle(IntPtr hSCObject);
 
     public async Task<AdminPipeResponse> PingAsync(CancellationToken ct = default) =>
         await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpPing), ct).ConfigureAwait(false);
@@ -1357,6 +1547,14 @@ public sealed record AdminPipeServerOptions
     /// <summary>When true, grants ReadWrite pipe access to locally logged-in interactive users (still verified by <see cref="ExpectedClientExePath"/>).</summary>
     public bool AllowInteractiveUsers { get; set; }
     /// <summary>
+    /// When true, only clients running in the active console session (<c>WTSGetActiveConsoleSessionId</c>) are accepted and served.
+    /// Prevents disconnected or background interactive sessions from using the always-on Agent service pipe while keeping zero-UAC
+    /// working across boot and user switches.
+    /// </summary>
+    public bool RequireActiveConsoleSession { get; set; }
+    /// <summary>Tests only: returns the connected client's session ID and the active console session ID.</summary>
+    public Func<NamedPipeServerStream, (uint? ClientSessionId, uint? ActiveConsoleSessionId)>? SessionIdProvider { get; set; }
+    /// <summary>
     /// When true, a client whose Windows account isn't a local administrator only gets <see cref="AdminPipeServer.ReadOnlyOps"/>.
     /// Set on the always-on Agent service pipe: the client is a user-owned process, so it gets no more than its user could do.
     /// </summary>
@@ -1504,8 +1702,6 @@ public sealed class AdminPipeServer(
         AdminPipeFraming.OpReportActivity,
         AdminPipeFraming.OpUpdateRpcdStatus,
         AdminPipeFraming.OpAgentEnrollment,
-        AdminPipeFraming.OpBiosJobStatus,
-        AdminPipeFraming.OpCommandJobStatus,
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     internal const string RestrictedOpMessage =
@@ -1537,6 +1733,18 @@ public sealed class AdminPipeServer(
 
             if (request is null)
                 break; // Client closed pipe cleanly
+
+            if (options.RequireActiveConsoleSession)
+            {
+                var (sessionAllowed, sessionReason) = VerifyClientActiveConsoleSession(server, options);
+                if (!sessionAllowed)
+                {
+                    log.Warn($"[admin-pipe-server] Closing session on '{options.PipeName}': {sessionReason}");
+                    try { server.Disconnect(); } catch { }
+                    break;
+                }
+            }
+
             if (string.Equals(request.Op, AdminPipeFraming.OpCancel, StringComparison.OrdinalIgnoreCase))
                 continue; // Nothing is running to stop (the request finished first); a cancel gets no response.
 
@@ -2614,13 +2822,7 @@ public sealed class AdminPipeServer(
             return false;
         try
         {
-            var isAdmin = false;
-            server.RunAsClient(() =>
-            {
-                using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
-                isAdmin = TokenIsAdministrator(identity);
-            });
-            return isAdmin;
+            return IsWindowsClientAdministrator(server);
         }
         catch (Exception ex)
         {
@@ -2629,22 +2831,190 @@ public sealed class AdminPipeServer(
         }
     }
 
-    private const int TokenElevationTypeClass = 18; // TOKEN_INFORMATION_CLASS.TokenElevationType
-    private const int TokenElevationTypeFull = 2;
-    private const int TokenElevationTypeLimited = 3;
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static bool IsWindowsClientAdministrator(NamedPipeServerStream server)
+    {
+        var isAdmin = false;
+        server.RunAsClient(() =>
+        {
+            using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
+            isAdmin = TokenIsAdministrator(identity);
+        });
+        return isAdmin;
+    }
 
+    private const int TokenGroupsClass = 2;         // TOKEN_INFORMATION_CLASS.TokenGroups
+    private const int TokenElevationTypeClass = 18; // TOKEN_INFORMATION_CLASS.TokenElevationType
+    private const int TokenLinkedTokenClass = 19;   // TOKEN_INFORMATION_CLASS.TokenLinkedToken
+    internal const int TokenElevationTypeDefault = 1;
+    internal const int TokenElevationTypeFull = 2;
+    internal const int TokenElevationTypeLimited = 3;
+    private const uint SE_GROUP_ENABLED = 0x00000004;
+    private const uint SE_GROUP_USE_FOR_DENY_ONLY = 0x00000010;
+
+    /// <summary>
+    /// Pure UAC split-token administrator evaluation:
+    /// - If the current token already has an enabled <c>BUILTIN\Administrators</c> group, the user is an administrator.
+    /// - If <paramref name="elevationType"/> is <see cref="TokenElevationTypeLimited"/> (filtered split token), ONLY trust it
+    ///   when the linked elevated token (<c>TokenLinkedToken</c>) actually has an enabled <c>BUILTIN\Administrators</c> group.
+    ///   Non-admin privileged groups (e.g. Backup Operators, Network Configuration Operators) also receive UAC split tokens!
+    /// - Otherwise (including <see cref="TokenElevationTypeFull"/> without Administrators, or failed linked-token lookup), return false.
+    /// </summary>
+    internal static bool EvaluateTokenIsAdministrator(
+        bool currentTokenHasEnabledAdmin,
+        int? elevationType,
+        bool? linkedTokenHasEnabledAdmin)
+    {
+        if (currentTokenHasEnabledAdmin)
+            return true;
+        if (elevationType == TokenElevationTypeLimited)
+            return linkedTokenHasEnabledAdmin == true;
+        return false;
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static bool TokenIsAdministrator(WindowsIdentity identity)
     {
-        if (GetTokenInformation(identity.AccessToken, TokenElevationTypeClass, out var elevationType, sizeof(int), out _)
-            && elevationType is TokenElevationTypeFull or TokenElevationTypeLimited)
-            return true; // A UAC split token only exists for members of Administrators.
-        // TokenElevationTypeDefault: a standard user, or an administrator with UAC turned off.
-        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+        var addedRef = false;
+        var safeToken = identity.AccessToken;
+        try
+        {
+            safeToken.DangerousAddRef(ref addedRef);
+            var tokenHandle = safeToken.DangerousGetHandle();
+            var currentHasAdmin = TokenHasEnabledAdministratorsGroup(tokenHandle);
+            if (currentHasAdmin)
+                return true;
+
+            int? elevationType = GetTokenInformation(safeToken, TokenElevationTypeClass, out var elev, sizeof(int), out _)
+                ? elev
+                : null;
+
+            bool? linkedHasAdmin = null;
+            if (elevationType == TokenElevationTypeLimited)
+                linkedHasAdmin = TryCheckLinkedTokenHasEnabledAdministratorsGroup(tokenHandle);
+
+            return EvaluateTokenIsAdministrator(currentHasAdmin, elevationType, linkedHasAdmin);
+        }
+        finally
+        {
+            if (addedRef)
+                safeToken.DangerousRelease();
+        }
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static bool? TryCheckLinkedTokenHasEnabledAdministratorsGroup(IntPtr tokenHandle)
+    {
+        var size = IntPtr.Size;
+        var buf = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (!GetTokenInformationPtr(tokenHandle, TokenLinkedTokenClass, buf, size, out _))
+                return null;
+            var linkedToken = Marshal.ReadIntPtr(buf);
+            if (linkedToken == IntPtr.Zero)
+                return null;
+            try
+            {
+                return TokenHasEnabledAdministratorsGroup(linkedToken);
+            }
+            finally
+            {
+                CloseHandle(linkedToken);
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buf);
+        }
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static bool TokenHasEnabledAdministratorsGroup(IntPtr tokenHandle)
+    {
+        GetTokenInformationPtr(tokenHandle, TokenGroupsClass, IntPtr.Zero, 0, out var needed);
+        if (needed <= 0)
+            return false;
+
+        var buf = Marshal.AllocHGlobal(needed);
+        try
+        {
+            if (!GetTokenInformationPtr(tokenHandle, TokenGroupsClass, buf, needed, out _))
+                return false;
+
+            var groupCount = Marshal.ReadInt32(buf);
+            if (groupCount <= 0)
+                return false;
+
+            // TOKEN_GROUPS: DWORD GroupCount; (aligned to IntPtr.Size before SID_AND_ATTRIBUTES[0].Sid)
+            var entryOffset = IntPtr.Size;
+            var entrySize = Marshal.SizeOf<SID_AND_ATTRIBUTES>();
+            for (var i = 0; i < groupCount; i++)
+            {
+                var entryPtr = IntPtr.Add(buf, entryOffset + i * entrySize);
+                var entry = Marshal.PtrToStructure<SID_AND_ATTRIBUTES>(entryPtr);
+                if (entry.Sid == IntPtr.Zero)
+                    continue;
+                if ((entry.Attributes & SE_GROUP_ENABLED) == 0 || (entry.Attributes & SE_GROUP_USE_FOR_DENY_ONLY) != 0)
+                    continue;
+                if (new SecurityIdentifier(entry.Sid).IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid))
+                    return true;
+            }
+            return false;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buf);
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SID_AND_ATTRIBUTES
+    {
+        public IntPtr Sid;
+        public uint Attributes;
     }
 
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool GetTokenInformation(SafeAccessTokenHandle tokenHandle, int tokenInformationClass,
         out int tokenInformation, int tokenInformationLength, out int returnLength);
+
+    [DllImport("advapi32.dll", EntryPoint = "GetTokenInformation", SetLastError = true)]
+    private static extern bool GetTokenInformationPtr(IntPtr tokenHandle, int tokenInformationClass,
+        IntPtr tokenInformation, int tokenInformationLength, out int returnLength);
+
+    internal const uint NoActiveConsoleSessionId = 0xFFFFFFFF;
+
+    internal static (bool Allowed, string? Reason) VerifyActiveConsoleSession(uint? clientSessionId, uint? activeConsoleSessionId)
+    {
+        if (clientSessionId is null)
+            return (false, "Could not determine the client's Windows session ID.");
+        if (activeConsoleSessionId is null || activeConsoleSessionId == NoActiveConsoleSessionId)
+            return (false, "No active console user session is currently logged on.");
+        if (activeConsoleSessionId == 0)
+            return (false, "Active console session is Session 0 (no interactive desktop user).");
+        if (clientSessionId != activeConsoleSessionId)
+            return (false, $"Client session {clientSessionId} is not the active console session ({activeConsoleSessionId}).");
+        return (true, null);
+    }
+
+    private static (bool Allowed, string? Reason) VerifyClientActiveConsoleSession(
+        NamedPipeServerStream server,
+        AdminPipeServerOptions options)
+    {
+        if (options.SessionIdProvider is { } provider)
+        {
+            var (clientSessionId, activeConsoleSessionId) = provider(server);
+            return VerifyActiveConsoleSession(clientSessionId, activeConsoleSessionId);
+        }
+
+        if (!OperatingSystem.IsWindows())
+            return (true, null);
+
+        uint? clientSid = GetNamedPipeClientSessionId(server.SafePipeHandle, out var cid) ? cid : null;
+        uint? consoleSid = WTSGetActiveConsoleSessionId();
+        return VerifyActiveConsoleSession(clientSid, consoleSid);
+    }
 
     private static (bool Allowed, string? Reason) VerifyConnectedClient(
         NamedPipeServerStream server,
@@ -2652,6 +3022,13 @@ public sealed class AdminPipeServer(
     {
         if (options.CustomClientVerifier is { } custom)
             return custom(server);
+
+        if (options.RequireActiveConsoleSession)
+        {
+            var (sessionAllowed, sessionReason) = VerifyClientActiveConsoleSession(server, options);
+            if (!sessionAllowed)
+                return (false, sessionReason);
+        }
 
         if (!OperatingSystem.IsWindows())
             return (true, null);
@@ -2764,6 +3141,12 @@ public sealed class AdminPipeServer(
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetNamedPipeClientProcessId(SafePipeHandle Pipe, out uint ClientProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetNamedPipeClientSessionId(SafePipeHandle Pipe, out uint ClientSessionId);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint WTSGetActiveConsoleSessionId();
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool GetNamedPipeClientComputerNameW(SafePipeHandle Pipe, StringBuilder ClientComputerName, uint ClientComputerNameLength);

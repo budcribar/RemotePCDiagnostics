@@ -224,10 +224,181 @@ public sealed class AdminHelperAndElevationTests
             AdminPipeFraming.OpModuleHost, AdminPipeFraming.OpPrepareMachine, AdminPipeFraming.OpSystemSetting, AdminPipeFraming.OpRemoveAppx,
             AdminPipeFraming.OpRunUninstaller, AdminPipeFraming.OpSetScheduledTask, AdminPipeFraming.OpJournalRemove, AdminPipeFraming.OpJournalAdd,
             AdminPipeFraming.OpMachineTweak, AdminPipeFraming.OpAgentScript, AdminPipeFraming.OpStateWrite, AdminPipeFraming.OpBiosSuspendBitLocker,
-            AdminPipeFraming.OpBiosRunInstaller, AdminPipeFraming.OpBiosInstallWua, AdminPipeFraming.OpCommandJobCancel,
+            AdminPipeFraming.OpBiosRunInstaller, AdminPipeFraming.OpBiosInstallWua, AdminPipeFraming.OpBiosJobStatus, AdminPipeFraming.OpCommandJobStatus,
+            AdminPipeFraming.OpCommandJobCancel,
         ];
         foreach (var op in changing)
             Assert.False(AdminPipeServer.ReadOnlyOps.Contains(op), op);
+
+        // Exhaustive allowlist check so no new op is accidentally added without review.
+        string[] expectedReadOnly =
+        [
+            AdminPipeFraming.OpPing, AdminPipeFraming.OpCancel, AdminPipeFraming.OpReadSensors, AdminPipeFraming.OpReadDrives,
+            AdminPipeFraming.OpWmiQuery, AdminPipeFraming.OpStateRead, AdminPipeFraming.OpJournalList, AdminPipeFraming.OpReportActivity,
+            AdminPipeFraming.OpUpdateRpcdStatus, AdminPipeFraming.OpAgentEnrollment,
+        ];
+        Assert.Equal(expectedReadOnly.OrderBy(x => x, StringComparer.OrdinalIgnoreCase),
+            AdminPipeServer.ReadOnlyOps.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData(AdminPipeClient.LocalSystemSidValue, 4200u, 4200u, null, true)]                                   // SYSTEM pipe + matching Agent service PID
+    [InlineData(AdminPipeClient.BuiltinAdministratorsSidValue, 4200u, 4200u, null, true)]                         // Admins pipe + matching Agent service PID
+    [InlineData(AdminPipeClient.LocalSystemSidValue, 4200u, null, AdminPipeClient.LocalSystemSidValue, true)]     // SYSTEM pipe + server process running as LocalSystem
+    [InlineData("S-1-5-21-1000-2000-3000-1001", 4200u, 4200u, AdminPipeClient.LocalSystemSidValue, false)]        // User-owned pipe (squatter)
+    [InlineData(null, 4200u, 4200u, AdminPipeClient.LocalSystemSidValue, false)]                                  // Missing pipe owner
+    [InlineData(AdminPipeClient.LocalSystemSidValue, null, 4200u, null, false)]                                   // Server PID lookup failed
+    [InlineData(AdminPipeClient.LocalSystemSidValue, 0u, 4200u, null, false)]                                     // Zero server PID
+    [InlineData(AdminPipeClient.BuiltinAdministratorsSidValue, 9999u, 4200u, "S-1-5-21-1000-2000-3000-1001", false)] // Non-SYSTEM user process squatting
+    [InlineData(AdminPipeClient.LocalSystemSidValue, 9999u, 4200u, null, false)]                                  // Server PID != service PID and token unreadable (fail closed)
+    public void AdminPipeClient_VerifyPipeServerIdentity_BlocksPipeSquatting(
+        string? ownerSid,
+        uint? serverPid,
+        uint? servicePid,
+        string? serverUserSid,
+        bool expectedAllowed)
+    {
+        var problem = AdminPipeClient.VerifyPipeServerIdentity(
+            ElevationService.ServiceAdminPipeName,
+            ownerSid,
+            serverPid,
+            servicePid,
+            serverUserSid);
+        if (expectedAllowed)
+            Assert.Null(problem);
+        else
+            Assert.NotNull(problem);
+    }
+
+    [Fact]
+    public async Task AdminPipeClient_ConnectAsync_RejectsSquattedSystemPipeBeforePing()
+    {
+        var pipeName = $"rpd-squat-{Guid.NewGuid():N}";
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var server = new AdminPipeServer(
+            new AdminPipeServerOptions { PipeName = pipeName },
+            new RecordingLauncher());
+
+        var serverTask = server.RunSingleSessionAsync(cts.Token);
+
+        var ex = await Assert.ThrowsAsync<IOException>(() =>
+            AdminPipeClient.ConnectAsync(
+                pipeName,
+                TimeSpan.FromSeconds(10),
+                cts.Token,
+                requireSystemOwnedPipe: true,
+                pipeServerVerifier: _ => "The pipe is hosted by an untrusted process."));
+        Assert.Contains("untrusted process", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        await serverTask;
+    }
+
+    [Fact]
+    public async Task AdminPipeClient_ConnectAsync_AcceptsVerifiedSystemPipe()
+    {
+        var pipeName = $"rpd-verified-{Guid.NewGuid():N}";
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var server = new AdminPipeServer(
+            new AdminPipeServerOptions { PipeName = pipeName },
+            new RecordingLauncher());
+
+        var serverTask = server.RunSingleSessionAsync(cts.Token);
+
+        await using (var client = await AdminPipeClient.ConnectAsync(
+            pipeName,
+            TimeSpan.FromSeconds(10),
+            cts.Token,
+            requireSystemOwnedPipe: true,
+            pipeServerVerifier: _ => null))
+        {
+            Assert.True(client.IsConnected);
+            Assert.True((await client.PingAsync(cts.Token)).Ok);
+        }
+
+        await serverTask;
+    }
+
+    [Theory]
+    [InlineData(1u, 1u, true)]                                                       // Active console user
+    [InlineData(2u, 2u, true)]                                                       // Switched console user
+    [InlineData(1u, 2u, false)]                                                      // Disconnected / background session
+    [InlineData(1u, AdminPipeServer.NoActiveConsoleSessionId, false)]                // No console user logged on (boot)
+    [InlineData(1u, null, false)]                                                    // Console session unknown
+    [InlineData(0u, 0u, false)]                                                      // Session 0 is never an interactive desktop user
+    [InlineData(null, 1u, false)]                                                    // Client session lookup failed
+    public void AdminPipeServer_VerifyActiveConsoleSession_ChecksSessionMatch(
+        uint? clientSessionId,
+        uint? activeConsoleSessionId,
+        bool expectedAllowed)
+    {
+        var (allowed, reason) = AdminPipeServer.VerifyActiveConsoleSession(clientSessionId, activeConsoleSessionId);
+        Assert.Equal(expectedAllowed, allowed);
+        if (!expectedAllowed)
+            Assert.False(string.IsNullOrWhiteSpace(reason));
+    }
+
+    [Fact]
+    public async Task AdminPipeServer_RequireActiveConsoleSession_BlocksBackgroundSessionsAndHandlesUserSwitch()
+    {
+        var pipeName = $"rpd-session-{Guid.NewGuid():N}";
+        uint clientSession = 1;
+        uint activeConsoleSession = 2; // Initially a background session (1 != 2)
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var server = new AdminPipeServer(
+            new AdminPipeServerOptions
+            {
+                PipeName = pipeName,
+                RequireActiveConsoleSession = true,
+                SessionIdProvider = _ => (Volatile.Read(ref clientSession), Volatile.Read(ref activeConsoleSession)),
+            },
+            new RecordingLauncher());
+
+        var serverTask = server.RunUntilCancelledAsync(cts.Token);
+
+        // 1. Background session (1 != 2) is rejected immediately on connect.
+        await Assert.ThrowsAnyAsync<IOException>(() =>
+            AdminPipeClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(10), cts.Token));
+
+        // 2. Active console user (session 2 == 2) connects and succeeds.
+        Volatile.Write(ref clientSession, 2u);
+        await using (var activeClient = await AdminPipeClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(10), cts.Token))
+        {
+            Assert.True((await activeClient.PingAsync(cts.Token)).Ok);
+
+            // 3. Console switches to session 3 while session 2 is still connected: next request is dropped.
+            Volatile.Write(ref activeConsoleSession, 3u);
+            await Assert.ThrowsAnyAsync<IOException>(() => activeClient.PingAsync(cts.Token));
+        }
+
+        // 4. New active console user (session 3 == 3) connects cleanly with zero restart.
+        Volatile.Write(ref clientSession, 3u);
+        await using (var switchedClient = await AdminPipeClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(10), cts.Token))
+        {
+            Assert.True((await switchedClient.PingAsync(cts.Token)).Ok);
+        }
+
+        cts.Cancel();
+        await serverTask;
+    }
+
+    [Theory]
+    [InlineData(true, AdminPipeServer.TokenElevationTypeFull, null, true)]      // Elevated admin
+    [InlineData(true, AdminPipeServer.TokenElevationTypeDefault, null, true)]   // Admin with UAC off
+    [InlineData(false, AdminPipeServer.TokenElevationTypeLimited, true, true)]  // Un-elevated UAC split-token admin
+    [InlineData(false, AdminPipeServer.TokenElevationTypeLimited, false, false)] // Split-token non-admin (e.g. Backup Operator)
+    [InlineData(false, AdminPipeServer.TokenElevationTypeFull, null, false)]    // Elevated split-token non-admin
+    [InlineData(false, AdminPipeServer.TokenElevationTypeLimited, null, false)] // Split-token linked lookup failed (fail closed)
+    [InlineData(false, AdminPipeServer.TokenElevationTypeDefault, null, false)] // Standard user
+    [InlineData(false, null, null, false)]                                      // Elevation type query failed (fail closed)
+    public void AdminPipeServer_EvaluateTokenIsAdministrator_HandlesUacSplitTokens(
+        bool currentTokenHasEnabledAdmin,
+        int? elevationType,
+        bool? linkedTokenHasEnabledAdmin,
+        bool expectedIsAdmin)
+    {
+        Assert.Equal(expectedIsAdmin,
+            AdminPipeServer.EvaluateTokenIsAdministrator(currentTokenHasEnabledAdmin, elevationType, linkedTokenHasEnabledAdmin));
     }
 
     [Fact]
