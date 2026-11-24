@@ -45,9 +45,9 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
-# By default, CI runs only the fast TestShop development build (testshop job, no ReadyToRun, fast compression).
-# TestShop-only release runs when triggered by workflow_dispatch with testshop_release, or [testshop-release] in a
-# commit message / PR title (builds & publishes only TestShop win-x64 and win-arm64 to the rolling prerelease).
+# By default on branches/PRs, CI runs only the fast TestShop x64 development build (no ReadyToRun, fast compression).
+# On pushes to main (or workflow_dispatch with testshop_release / [testshop-release] in a commit message or PR title),
+# CI defaults to TestShop-only release: builds & publishes TestShop win-x64 and win-arm64 to the rolling prerelease.
 # Full CI + release runs when triggered by a v* tag, workflow_dispatch with full_release/release_tag, or [full-release]
 # in a commit message / PR title. In full-release mode, build-test, service-workflow, installer (Setup.exe), testshop,
 # agent (Agent EXE + MSI), and smoke (MSIX + Playwright) all run in parallel.
@@ -55,10 +55,10 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
   FULL_RELEASE: ${{ (inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]'))) && 'true' || 'false' }}
-  TESTSHOP_RELEASE: ${{ (inputs.testshop_release || (github.event_name == 'push' && contains(github.event.head_commit.message, '[testshop-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[testshop-release]'))) && 'true' || 'false' }}
+  TESTSHOP_RELEASE: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.testshop_release || (github.event_name == 'push' && contains(github.event.head_commit.message, '[testshop-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[testshop-release]'))) && 'true' || 'false' }}
   PUBLISH_ARTIFACTS: ${{ (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch') && (inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')))) && 'true' || 'false' }}
-  # Full compression only for release installers that get uploaded for a release; default TestShop-only and PR runs use fast.
-  INSTALLER_COMPRESSION: ${{ (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch') && (inputs.full_release || inputs.testshop_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[full-release]') || contains(github.event.head_commit.message, '[testshop-release]'))))) && 'lzma2/ultra64' || 'lzma2/fast' }}
+  # Full compression for release installers (default push to main TestShop release, or full-release); PR/branch dev runs use fast.
+  INSTALLER_COMPRESSION: ${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'workflow_dispatch' && (inputs.full_release || inputs.testshop_release || inputs.release_tag != ''))) && 'lzma2/ultra64' || 'lzma2/fast' }}
 
 jobs:
   service-workflow:
@@ -680,6 +680,117 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+  testshop-arm64:
+    name: TestShop demo bundle ARM64 (RPCD + RPCDA)
+    if: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.testshop_release || (github.event_name == 'push' && contains(github.event.head_commit.message, '[testshop-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[testshop-release]'))) && !(inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]'))) }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rpcd
+
+      - name: Ensure Inno Setup 6
+        shell: pwsh
+        run: |
+          $iscc = @(
+            'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+            'C:\Program Files\Inno Setup 6\ISCC.exe'
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Build win-arm64 TestShop demo bundle installer (RPCD + RPCDA)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [xml]$props = Get-Content Directory.Build.props
+          $ver = ($props.Project.PropertyGroup | ForEach-Object { $_['Version'] } | Where-Object { $_ } | Select-Object -First 1).InnerText.Trim()
+
+          $src = Join-Path $env:RUNNER_TEMP 'agent-src-arm64'
+          git worktree add --detach $src HEAD
+          if ($LASTEXITCODE -ne 0) { throw "git worktree add failed ($LASTEXITCODE)" }
+          $srcPkgDir = Join-Path $src 'third_party/RemoteBlazorWebView/packages'
+          New-Item -ItemType Directory -Force $srcPkgDir | Out-Null
+          Copy-Item third_party/RemoteBlazorWebView/packages/* -Destination $srcPkgDir -ErrorAction SilentlyContinue
+
+          $agentPubDir = Join-Path $env:RUNNER_TEMP 'agent-publish-arm64'
+          $log = Join-Path $env:RUNNER_TEMP 'agent-publish-arm64.log'
+          $publishArgs = @('publish', (Join-Path $src 'src/RemotePCDiagnostics.Agent/RemotePCDiagnostics.Agent.csproj'), '-c', 'Release', '-r', 'win-arm64', '--self-contained',
+            '-p:PublishSingleFile=true', '-p:PublishReadyToRun=true', '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:DebugType=None', '-p:UseSharedCompilation=false', '-nodeReuse:false', '-o', $agentPubDir)
+          $agent = Start-Process -FilePath 'dotnet' -ArgumentList $publishArgs -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+          $null = $agent.Handle
+
+          pwsh -NoProfile -File installer/Build-Installer.ps1 -Rid win-arm64 -StageOnly
+          $appCode = $LASTEXITCODE
+
+          $agent.WaitForExit()
+          "--- ARM64 Agent publish output ---"
+          Get-Content $log, "$log.err" -ErrorAction SilentlyContinue
+          if ($appCode -ne 0) { throw "Build-Installer.ps1 -Rid win-arm64 -StageOnly failed ($appCode)" }
+          if ($agent.ExitCode -ne 0) { throw "win-arm64 Agent publish failed ($($agent.ExitCode))" }
+
+          $armOutDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts/testshop-arm64'
+          New-Item -ItemType Directory -Force $armOutDir | Out-Null
+          $agentDest = Join-Path $armOutDir "RemotePCDiagnostics.Agent-$ver-win-arm64.exe"
+          Copy-Item -LiteralPath (Join-Path $agentPubDir 'RemotePCDiagnostics.Agent.exe') -Destination $agentDest -Force
+
+          # Verify staged Host and Agent executables are genuine ARM64 PE binaries (0xAA64).
+          foreach ($bin in @($agentDest, (Join-Path $env:GITHUB_WORKSPACE 'artifacts/installer-stage-win-arm64/RemotePCDiagnostics.Host.exe'))) {
+            $fs = [System.IO.File]::OpenRead($bin)
+            try {
+              $br = [System.IO.BinaryReader]::new($fs)
+              $fs.Seek(0x3C, [System.IO.SeekOrigin]::Begin) | Out-Null
+              $peOff = $br.ReadInt32()
+              $fs.Seek($peOff + 4, [System.IO.SeekOrigin]::Begin) | Out-Null
+              $machine = $br.ReadUInt16()
+              if ($machine -ne 0xAA64) { throw "Expected ARM64 (0xAA64) PE header for $bin, got 0x$($machine.ToString('X4'))" }
+            } finally { $fs.Dispose() }
+          }
+
+          $testShopBaseName = "RemotePCDiagnostics-TestShop-Setup-$ver-win-arm64"
+          pwsh -NoProfile -File installer/Build-Installer.ps1 `
+            -Rid win-arm64 `
+            -Version $ver `
+            -SkipPublish `
+            -SkipVerify `
+            -Compression $env:INSTALLER_COMPRESSION `
+            -OutputDir $armOutDir `
+            -OutputBaseName $testShopBaseName `
+            -RemoteServerUrl 'https://server.remoteblazorwebview.com:34544' `
+            -ShopGroup 'test-shop' `
+            -AgentExePath $agentDest `
+            -AgentServerUrl 'https://server.remoteblazorwebview.com:34544' `
+            -AgentEnrollmentKey 'test-shop' `
+            -AgentConsent 'unattended'
+          if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 for ARM64 TestShop bundle failed ($LASTEXITCODE)" }
+
+          $testShopSetup = Join-Path $armOutDir "$testShopBaseName.exe"
+          if (-not (Test-Path -LiteralPath $testShopSetup)) { throw "ARM64 TestShop bundle missing: $testShopSetup" }
+          if (-not (Test-Path -LiteralPath "$testShopSetup.sha256")) { throw "ARM64 TestShop bundle sha256 missing: $testShopSetup.sha256" }
+          "Built ARM64 TestShop bundle: $testShopBaseName.exe"
+
+      - name: Upload ARM64 TestShop demo bundle installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemotePCDiagnostics-TestShop-Setup-win-arm64
+          path: |
+            artifacts/testshop-arm64/RemotePCDiagnostics-TestShop-Setup-*-win-arm64.exe
+            artifacts/testshop-arm64/RemotePCDiagnostics-TestShop-Setup-*-win-arm64.exe.sha256
+          if-no-files-found: error
+          retention-days: 5
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-testshop-arm64
+          path: |
+            artifacts/*.log
+            artifacts/installer/*.log
+          if-no-files-found: warn
+          retention-days: 1
+
   agent:
     name: MSP Fleet Agent (EXE + MSI)
     if: ${{ inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]')) }}
@@ -1069,7 +1180,7 @@ jobs:
 
   release-testshop:
     name: Publish TestShop release (x64 + ARM64)
-    if: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && (inputs.testshop_release || (github.event_name == 'push' && contains(github.event.head_commit.message, '[testshop-release]'))) && !(inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]'))) }}
+    if: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.testshop_release)) && !(inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]'))) }}
     needs: [testshop, testshop-arm64]
     runs-on: ubuntu-latest
     concurrency:
