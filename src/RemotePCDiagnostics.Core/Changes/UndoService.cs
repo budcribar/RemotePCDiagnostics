@@ -63,6 +63,8 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
     public async Task<UndoAllResult> UndoAllAsync(string actor, CancellationToken ct = default)
     {
+        // An RPCD update waits while this runs (see UpdateBusyLock).
+        using var busy = RemotePCDiagnostics.Agent.Core.UpdateBusyHold.App.Enter();
         var results = new List<UndoItemResult>();
         // Newest first; records from one click share a time, so the later-written goes first (the first write is the one that created any keys).
         foreach (var c in journal.All.Select((x, i) => (x, i)).OrderByDescending(p => p.x.TimeUtc).ThenByDescending(p => p.i).Select(p => p.x).ToList())
@@ -96,6 +98,8 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
     /// </summary>
     public async Task<UndoItemResult?> UndoChangeAsync(Guid id, string actor, CancellationToken ct = default)
     {
+        // An RPCD update waits while this runs (see UpdateBusyLock).
+        using var busy = RemotePCDiagnostics.Agent.Core.UpdateBusyHold.App.Enter();
         if (journal.All.FirstOrDefault(x => x.Id == id) is not { } c) return null;
         UndoItemResult r;
         try { r = await UndoOneAsync(c, ct).ConfigureAwait(false); }

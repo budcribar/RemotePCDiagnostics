@@ -230,11 +230,11 @@
                     }
                     else if (pendingUpdate.CanInstallSilently)
                     {
-                        <span>The elevated agent will download, verify (SHA-256), and install this update silently without a UAC prompt, then restart the app.</span>
+                        <span>The elevated agent will download the update, verify its checksum (SHA-256), install it without a UAC prompt, and restart the app.</span>
                     }
                     else
                     {
-                        <span>The installer will be downloaded, verified (SHA-256), and launched. Windows may ask for permission (UAC) before restarting the app.</span>
+                        <span>Windows will ask for administrator approval. The elevated agent will then download the update and verify its checksum (SHA-256) before installing it.</span>
                     }
                 </p>
                 @if (!string.IsNullOrWhiteSpace(pendingUpdate.ReleaseUrl))

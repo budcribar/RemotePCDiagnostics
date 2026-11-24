@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -514,7 +513,7 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
     private readonly Func<IElevatedCommandBridge?>? _getElevatedBridge;
     private readonly Action? _onExitForUpdate;
     private readonly Func<IReadOnlyList<string>?>? _getRelaunchArguments;
-    private readonly Func<bool> _agentServiceInstalled;
+    private readonly IElevationContext? _elevation;
     private readonly HttpClient _http;
     private readonly bool _ownsHttp;
     private readonly ILogger? _log;
@@ -538,7 +537,7 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
         HttpClient? httpClient = null,
         ILogger? log = null,
         Func<IReadOnlyList<string>?>? getRelaunchArguments = null,
-        Func<bool>? agentServiceInstalled = null)
+        IElevationContext? elevation = null)
     {
         _installedVersion = installedVersion;
         _channel = channel;
@@ -547,7 +546,7 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
         _getElevatedBridge = getElevatedBridge;
         _onExitForUpdate = onExitForUpdate;
         _getRelaunchArguments = getRelaunchArguments;
-        _agentServiceInstalled = agentServiceInstalled ?? (() => File.Exists(AgentLayout.DefaultAgentExe()));
+        _elevation = elevation;
         _ownsHttp = httpClient is null;
         _http = httpClient ?? new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(15) };
         _log = log;
@@ -589,7 +588,8 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
                     var feed = await AppUpdateInstaller.FetchFeedAsync(_http, _feedUrl, ct).ConfigureAwait(false);
                     var selected = _channel == AppUpdateChannel.Prerelease ? feed?.Prerelease : feed?.Stable;
                     var isNewer = AppVersionComparer.IsNewer(selected?.Version, _installedVersion) == true;
-                    var hasAgentBridge = _getElevatedBridge?.Invoke()?.IsConnected == true;
+                    var hasAgentBridge = _elevation is not { HasAdminCapabilities: false } &&
+                        _getElevatedBridge?.Invoke()?.IsConnected == true;
                     var downloads = selected?.ResolveDownloads(RuntimeInformation.OSArchitecture);
                     info = new AppUpdateInfo(
                         UpdateAvailable: isNewer,
@@ -644,67 +644,23 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
         try { relaunchArgs = _getRelaunchArguments?.Invoke(); }
         catch (Exception ex) { _log?.Warn($"[app-update] Could not build the relaunch command line: {ex.Message}"); }
 
-        // Prefer the elevated Agent pipe when connected (remote technicians get a zero-UAC silent upgrade).
+        // Only the elevated helper downloads and stages packages for execution.
+        if (_elevation is { HasAdminCapabilities: false })
+        {
+            var approval = await _elevation.EnableAdminModeAsync(ct).ConfigureAwait(false);
+            if (!approval.Success)
+                return new AppUpdateResult(false, Error: approval.Message);
+        }
+
         var bridge = _getElevatedBridge?.Invoke();
-        if (bridge is { IsConnected: true })
-        {
-            progress?.Invoke(new AppUpdateProgress("installing", null, "Downloading and installing update via elevated agent..."));
-            var agentResult = await bridge.SelfUpdateAsync(_channel, relaunchArgs, ct).ConfigureAwait(false);
-            if (agentResult is not null)
-            {
-                if (agentResult.Ok && agentResult.Restarting)
-                    _onExitForUpdate?.Invoke();
-                return agentResult;
-            }
-        }
+        if (bridge is not { IsConnected: true })
+            return new AppUpdateResult(false, Error: "The elevated update helper is unavailable.");
 
-        if (string.IsNullOrWhiteSpace(info.InstallerUrl))
-            return new AppUpdateResult(false, Error: "No installer download URL is available for this release.");
-
-        try
-        {
-            var stagingDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "RemotePCDiagnostics",
-                "Updates");
-            var installerPath = await AppUpdateInstaller.DownloadAndVerifyAsync(
-                _http, info.InstallerUrl, info.InstallerSha256Url, stagingDir, progress, ct).ConfigureAwait(false);
-
-            // The persistent agent service is upgraded by Setup too (it runs elevated), so it does not stay on the old build.
-            string? agentMsiPath = null;
-            if (_agentServiceInstalled())
-            {
-                agentMsiPath = await AppUpdateInstaller.DownloadAgentMsiAsync(
-                    _http,
-                    info.AgentMsiUrl,
-                    info.AgentMsiSha256Url,
-                    stagingDir,
-                    required: false,
-                    progress: null,
-                    onSkipped: message => _log?.Warn($"[app-update] Agent MSI download/verification skipped: {message}"),
-                    ct).ConfigureAwait(false);
-            }
-
-            progress?.Invoke(new AppUpdateProgress("installing", 100, "Launching installer..."));
-            var psi = new ProcessStartInfo
-            {
-                FileName = installerPath,
-                Arguments = AppUpdateInstaller.BuildSetupArguments(verySilent: false, agentMsiPath, relaunchArgs),
-                UseShellExecute = true,
-                WorkingDirectory = stagingDir,
-            };
-            var proc = Process.Start(psi);
-            if (proc is null)
-                return new AppUpdateResult(false, Error: "Failed to start the update installer.");
-
+        progress?.Invoke(new AppUpdateProgress("installing", null, "Downloading and installing update via elevated agent..."));
+        var result = await bridge.SelfUpdateAsync(_channel, relaunchArgs, ct).ConfigureAwait(false);
+        if (result is { Ok: true, Restarting: true })
             _onExitForUpdate?.Invoke();
-            return new AppUpdateResult(true, Restarting: true, Message: "Installer started. Remote PC Diagnostics will restart shortly.");
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log?.Warn($"[app-update] Install failed: {ex.Message}");
-            return new AppUpdateResult(false, Error: ex.Message);
-        }
+        return result ?? new AppUpdateResult(false, Error: "The elevated update helper disconnected.");
     }
 
     public void Dispose()

@@ -14,9 +14,10 @@ internal static class AgentRunLoop
 
     public static async Task RunAsync(AgentConfig config, Action<string>? log, CancellationToken ct)
     {
+        // Created before anything else, so the service sets the update lock's permissions before an app can make it.
+        using var updateLock = AgentUpdateLock.Create(log);
         using var updater = new RpcdRemoteUpdater(
             installedVersion: AgentPaths.GetUpdateInstalledVersion,
-            hostRunning: RpcdRemoteUpdater.IsTrackedHostRunning,
             relaunchArguments: () => RpcdRemoteUpdater.RelaunchForActiveSession(config.Server),
             log: log,
             configuredServer: () => config.Server);

@@ -236,7 +236,8 @@ public static class HostServices
             // remote user's page reconnects instead of waiting for a session that never comes back.
             getRelaunchArguments: () => session.Mode == SessionMode.Remote && session.ServerUri is not null && session.SessionId != Guid.Empty
                 ? SessionLaunchOptions.RestartArguments(session.ServerUri, session.SessionId, session.Unattended, session.Voice, session.Group, session.Admin)
-                : [SessionLaunchOptions.RestartedArg]));
+                : [SessionLaunchOptions.RestartedArg],
+            elevation: sp.GetRequiredService<IElevationContext>()));
         // Uploads each finished benchmark pass to the shop's comparison. MainLayout injects it, so it listens from the first page on.
         services.AddSingleton(sp => new RemotePCDiagnostics.UI.BenchmarkUploader(
             sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>(),

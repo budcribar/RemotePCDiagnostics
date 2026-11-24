@@ -25,13 +25,14 @@
     private bool _approved;
     private string? _json;
     private CancellationTokenSource? _poll;
-    private readonly CancellationTokenSource _heartbeat = new();
-    private string? _lastReported;
+    private readonly object _busyGate = new();
+    /// <summary>This page's share of the update lock while something runs. The agent refuses a hub update while any app holds it.</summary>
+    private IDisposable? _busy;
+    private bool _disposed;
+    private readonly CancellationTokenSource _recheck = new();
 
-    /// <summary>
-    /// The agent refuses a hub update when the app's last report is older than 90 seconds, so an idle app has to keep saying so.
-    /// </summary>
-    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(30);
+    /// <summary>A missed "finished" event must not keep the lock: the state is read again this often.</summary>
+    private static readonly TimeSpan RecheckInterval = TimeSpan.FromSeconds(10);
 
     protected override void OnInitialized()
     {
@@ -41,18 +42,18 @@
         Bench.Changed += OnChanged;
         if (App.Remediation is { } fixes) fixes.RunChanged += OnChanged;
         if (App.Workflow is { } workflow) workflow.Changed += OnChanged;
-        _ = ReportAsync(force: true);
+        UpdateBusy();
         _ = RefreshAsync();
-        _ = HeartbeatAsync(_heartbeat.Token);
+        _ = RecheckAsync(_recheck.Token);
     }
 
-    private async Task HeartbeatAsync(CancellationToken ct)
+    private async Task RecheckAsync(CancellationToken ct)
     {
-        using var timer = new PeriodicTimer(HeartbeatInterval);
+        using var timer = new PeriodicTimer(RecheckInterval);
         try
         {
             while (await timer.WaitForNextTickAsync(ct))
-                await ReportAsync(force: true);
+                UpdateBusy();
         }
         catch (OperationCanceledException) { }
     }
@@ -146,24 +147,24 @@
     }
 
     /// <summary>
-    /// Publishes what is running. The pipe copy is the one that lets a hub update see the app as idle; the heartbeat resends it
-    /// after a missed connect. The session-folder file is the same verdict, but any local process can write that folder,
-    /// so the agent uses it only to hold an update back while something is running.
+    /// Holds the update lock while a check, fix, workflow stage, stress test or benchmark runs, and lets it go when nothing does.
+    /// Windows releases it if the app ends, so a crash cannot leave updates blocked.
     /// </summary>
-    private async Task ReportAsync(bool force = false)
+    private void UpdateBusy()
     {
-        var reason = AgentExports.UpdateBlockReason(Snapshot());
-        if (!force && string.Equals(reason, _lastReported, StringComparison.Ordinal))
-            return;
-        RpcdActivityReport.TryWrite(AgentLayout.UpdateActivityPath(), reason, DateTimeOffset.UtcNow);
-        _lastReported = reason;
-        if (App.Elevation is not IElevatedCommandBridge bridge)
-            return;
-        try
+        var running = AgentExports.UpdateBlockReason(Snapshot()) is not null;
+        IDisposable? release = null;
+        lock (_busyGate)
         {
-            await bridge.ReportDiagnosticsActivityAsync(reason);
+            if (running && _busy is null && !_disposed)
+                _busy = UpdateBusyHold.App.Enter();
+            else if (!running && _busy is not null)
+            {
+                release = _busy;
+                _busy = null;
+            }
         }
-        catch { }
+        release?.Dispose();
     }
 
     private void Show(RpcdUpdateStatus? status)
@@ -172,19 +173,7 @@
         _ = InvokeAsync(StateHasChanged);
     }
 
-    private int _reportPending;
-
-    private void OnChanged()
-    {
-        if (Interlocked.Exchange(ref _reportPending, 1) != 0) return;
-        _ = RunReportAsync();
-    }
-
-    private async Task RunReportAsync()
-    {
-        try { await ReportAsync(); }
-        finally { Interlocked.Exchange(ref _reportPending, 0); }
-    }
+    private void OnChanged() => UpdateBusy();
 
     private void OnProgress(object? sender, (string ModuleName, CheckProgress? Progress) e) => OnChanged();
 
@@ -194,8 +183,14 @@
     {
         try { _poll?.Cancel(); } catch { }
         _poll?.Dispose();
-        try { _heartbeat.Cancel(); } catch { }
-        _heartbeat.Dispose();
+        try { _recheck.Cancel(); } catch { }
+        _recheck.Dispose();
+        lock (_busyGate)
+        {
+            _disposed = true;
+            _busy?.Dispose();
+            _busy = null;
+        }
         Diagnostics.ProgressChanged -= OnProgress;
         Diagnostics.StressSuiteProgressChanged -= OnStress;
         Screen.Changed -= OnChanged;

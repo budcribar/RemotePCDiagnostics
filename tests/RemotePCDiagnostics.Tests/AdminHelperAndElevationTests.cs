@@ -234,7 +234,7 @@ public sealed class AdminHelperAndElevationTests
         string[] expectedReadOnly =
         [
             AdminPipeFraming.OpPing, AdminPipeFraming.OpCancel, AdminPipeFraming.OpReadSensors, AdminPipeFraming.OpReadDrives,
-            AdminPipeFraming.OpWmiQuery, AdminPipeFraming.OpStateRead, AdminPipeFraming.OpJournalList, AdminPipeFraming.OpReportActivity,
+            AdminPipeFraming.OpWmiQuery, AdminPipeFraming.OpStateRead, AdminPipeFraming.OpJournalList,
             AdminPipeFraming.OpUpdateRpcdStatus, AdminPipeFraming.OpAgentEnrollment,
         ];
         Assert.Equal(expectedReadOnly.OrderBy(x => x, StringComparer.OrdinalIgnoreCase),
@@ -770,7 +770,7 @@ public sealed class AdminHelperAndElevationTests
 
         await firstServer.DisposeAsync();
         try { await firstTask; } catch { }
-        try { await elevation.ReportDiagnosticsActivityAsync(null, cts.Token); } catch { }
+        try { await elevation.ReadAgentEnrollmentAsync(cts.Token); } catch { }
         Assert.False(elevation.IsAdminHelperConnected);
 
         await using var secondServer = new AdminPipeServer(

@@ -326,16 +326,6 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         return await client.SelfUpdateAsync(channel, relaunchArguments, ct).ConfigureAwait(false);
     }
 
-    public async Task ReportDiagnosticsActivityAsync(string? busyReason, CancellationToken ct = default)
-    {
-        AdminPipeClient? client;
-        lock (_stateLock)
-            client = _client;
-        if (client is not { IsConnected: true })
-            return;
-        await client.ReportDiagnosticsActivityAsync(busyReason, ct).ConfigureAwait(false);
-    }
-
     public async Task<AgentEnrollmentFacts?> ReadAgentEnrollmentAsync(CancellationToken ct = default)
     {
         AdminPipeClient? client;

@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Security.AccessControl;
-using System.Security.Principal;
 using Microsoft.Extensions.Logging;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Session;
@@ -53,7 +51,7 @@ internal static class AgentSelfUpdater
 
         try
         {
-            PrepareSecuredStagingDirectory(stagingDir);
+            PrepareStaging(stagingDir);
         }
         catch (Exception ex)
         {
@@ -61,6 +59,7 @@ internal static class AgentSelfUpdater
             return new AppUpdateResult(false, Error: "Could not prepare a secure update staging directory.");
         }
 
+        var packageDir = Path.Combine(stagingDir, Guid.NewGuid().ToString("N"));
         string installerPath;
         try
         {
@@ -68,7 +67,7 @@ internal static class AgentSelfUpdater
                 http,
                 selected.InstallerUrl,
                 selected.InstallerSha256Url,
-                stagingDir,
+                packageDir,
                 progress: null,
                 ct).ConfigureAwait(false);
         }
@@ -86,7 +85,7 @@ internal static class AgentSelfUpdater
                 http,
                 selected.AgentMsiUrl,
                 selected.AgentMsiSha256Url,
-                stagingDir,
+                packageDir,
                 required: false,
                 progress: null,
                 onSkipped: message => log.Warn($"[agent-update] Agent MSI download/verification skipped: {message}"),
@@ -253,7 +252,61 @@ internal static class AgentSelfUpdater
         }
     }
 
-    internal static void PrepareStaging(string stagingDir) => PrepareSecuredStagingDirectory(stagingDir);
+    internal static void PrepareStaging(string stagingDir)
+    {
+        if (!OperatingSystem.IsWindows() ||
+            !ProtectedStateFolder.Ensure(Path.GetDirectoryName(stagingDir)!, stagingDir, null))
+            throw new InvalidOperationException("Could not secure update staging for Administrators and SYSTEM.");
+        DeleteOldPackages(stagingDir, DateTime.UtcNow);
+    }
+
+    /// <summary>How old a downloaded package folder must be before it is deleted. An update that is still running is younger.</summary>
+    internal static readonly TimeSpan PackageRetention = TimeSpan.FromHours(6);
+
+    /// <summary>
+    /// Deletes the per-update package folders (named by a GUID) older than <see cref="PackageRetention"/>, so each update's
+    /// Setup and Agent MSI do not stay in ProgramData. A folder that is still in use is left for the next update.
+    /// </summary>
+    internal static int DeleteOldPackages(string stagingDir, DateTime utcNow, Action<string>? log = null)
+    {
+        var deleted = 0;
+        if (!Directory.Exists(stagingDir))
+            return 0;
+        foreach (var dir in new DirectoryInfo(stagingDir).EnumerateDirectories())
+        {
+            if (!Guid.TryParseExact(dir.Name, "N", out _) || (dir.Attributes & FileAttributes.ReparsePoint) != 0)
+                continue;
+            if (utcNow - dir.CreationTimeUtc < PackageRetention)
+                continue;
+            try
+            {
+                dir.Delete(recursive: true);
+                deleted++;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                log?.Invoke($"[agent-update] Could not delete old update package {dir.Name}: {ex.Message}");
+            }
+        }
+        // Builds before per-update folders downloaded Setup and the MSI straight into the staging folder.
+        foreach (var file in new DirectoryInfo(stagingDir).EnumerateFiles())
+        {
+            var ext = file.Extension;
+            if (!(ext.Equals(".exe", StringComparison.OrdinalIgnoreCase) || ext.Equals(".msi", StringComparison.OrdinalIgnoreCase)
+                    || ext.Equals(".part", StringComparison.OrdinalIgnoreCase)) || utcNow - file.LastWriteTimeUtc < PackageRetention)
+                continue;
+            try
+            {
+                file.Delete();
+                deleted++;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                log?.Invoke($"[agent-update] Could not delete old update file {file.Name}: {ex.Message}");
+            }
+        }
+        return deleted;
+    }
 
     /// <summary>The exit code Setup's cmd script wrote, or null when it has not written one.</summary>
     internal static int? ReadSetupExit(string exitPath)
@@ -316,26 +369,5 @@ internal static class AgentSelfUpdater
         });
         started = proc is not null;
         return proc;
-    }
-
-    private static void PrepareSecuredStagingDirectory(string stagingDir)
-    {
-        var dirInfo = Directory.CreateDirectory(stagingDir);
-        if ((dirInfo.Attributes & FileAttributes.ReparsePoint) != 0)
-            throw new InvalidOperationException("Staging directory must not be a symlink or junction.");
-
-        if (!OperatingSystem.IsWindows())
-            return;
-
-        var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
-        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
-        const InheritanceFlags all = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
-
-        var security = new DirectorySecurity();
-        security.SetOwner(admins);
-        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-        security.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
-        security.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
-        dirInfo.SetAccessControl(security);
     }
 }

@@ -202,8 +202,10 @@ public class AppUpdateTests
         Assert.Equal(1, store.InstallCalls);
     }
 
-    [Fact]
-    public async Task Standalone_install_delegates_to_elevated_agent_bridge_when_connected()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Standalone_install_requires_an_elevated_agent_bridge(bool helperAvailable)
     {
         const string feedUrl = "https://admin.remoteblazorwebview.com/api/rpcd/latest";
         using var http = new HttpClient(new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
@@ -221,11 +223,13 @@ public class AppUpdateTests
         }));
 
         var bridge = new FakeBridge();
+        var elevation = new FakeElevation(helperAvailable);
         var exitRequested = false;
         using var service = new AppUpdateService(
             installedVersion: "1.2.0-ci.700.1",
             feedUrl: feedUrl,
-            getElevatedBridge: () => bridge,
+            getElevatedBridge: () => elevation.IsAdminHelperConnected ? bridge : null,
+            elevation: elevation,
             onExitForUpdate: () => exitRequested = true,
             httpClient: http,
             getRelaunchArguments: () => ["-u=https://server.example.com:34544", "-i=748279c7-4309-452c-8b30-e02ec52e498f", "--restarted"]);
@@ -233,13 +237,20 @@ public class AppUpdateTests
         var info = await service.CheckForUpdateAsync(force: true);
         Assert.True(info.UpdateAvailable);
         Assert.Equal(AppInstallKind.Standalone, info.InstallKind);
-        Assert.True(info.CanInstallSilently);
+        Assert.False(info.CanInstallSilently);
         Assert.Equal("1.3.0-ci.800.1", info.LatestVersion);
 
         var result = await service.InstallUpdateAsync();
-        Assert.True(result.Ok);
-        Assert.True(result.Restarting);
-        Assert.True(exitRequested);
+        Assert.Equal(1, elevation.ApprovalRequests);
+        Assert.Equal(helperAvailable, result.Ok);
+        Assert.Equal(helperAvailable, result.Restarting);
+        Assert.Equal(helperAvailable, exitRequested);
+        if (!helperAvailable)
+        {
+            Assert.Null(bridge.LastChannel);
+            Assert.Equal("Administrator approval was cancelled.", result.Error);
+            return;
+        }
         Assert.Equal(AppUpdateChannel.Stable, bridge.LastChannel);
         // The helper gets the app's restart command line, so Setup can bring the remote session back after the update.
         Assert.Equal(["-u=https://server.example.com:34544", "-i=748279c7-4309-452c-8b30-e02ec52e498f", "--restarted"], bridge.LastRelaunchArguments);
@@ -323,6 +334,24 @@ public class AppUpdateTests
             InstallCalls++;
             progress?.Invoke(new AppUpdateProgress("downloading", 100, "Done"));
             return Task.FromResult(new AppUpdateResult(true, Restarting: true, Message: "Microsoft Store update installed."));
+        }
+    }
+
+    private sealed class FakeElevation(bool helperAvailable) : IElevationContext
+    {
+        public bool IsProcessElevated => false;
+        public bool IsAdminHelperConnected { get; private set; }
+        public int ApprovalRequests { get; private set; }
+        public event Action? Changed;
+
+        public Task<ElevationResult> EnableAdminModeAsync(CancellationToken ct = default)
+        {
+            ApprovalRequests++;
+            IsAdminHelperConnected = helperAvailable;
+            Changed?.Invoke();
+            return Task.FromResult(helperAvailable
+                ? new ElevationResult(true, false, "Helper connected.")
+                : new ElevationResult(false, true, "Administrator approval was cancelled."));
         }
     }
 
