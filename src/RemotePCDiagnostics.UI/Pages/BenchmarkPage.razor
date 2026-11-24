@@ -146,11 +146,34 @@
                 <button type="button" class="btn-small" data-testid="bench-dev-devdrive-run" disabled="@(running || !_confirmDevDriveRun)" @onclick="RunDevDriveComparison">
                     Compare NTFS vs Dev Drive (C#)
                 </button>
+                <button type="button" class="btn-small btn-primary" data-testid="bench-dev-combined-run" disabled="@(running || !_confirmAvRun || !_confirmDevDriveRun)" @onclick="RunCombinedComparison"
+                        title="@((!_confirmAvRun || !_confirmDevDriveRun) ? "Approve both Defender exclusion and temporary Dev Drive above to compare all three" : "Compare NTFS, NTFS + Defender exclusion, and Dev Drive in one pass")">
+                    Compare all three (NTFS vs AV exclusion vs Dev Drive)
+                </button>
             </div>
         }
         else if (Bench.DevDrivePrecheck is { Reason: { Length: > 0 } ddReason })
         {
             <p class="meta" data-testid="bench-dev-devdrive-note">Dev Drive comparison unavailable: @ddReason</p>
+        }
+        @if (Bench.RunningDeveloperAction)
+        {
+            var devPct = Bench.DeveloperActionFraction is { } f ? Math.Clamp(f * 100.0, 0, 100) : (double?)null;
+            <div class="notice" data-testid="bench-dev-running" style="margin-top: 10px">
+                <span class="dash-spin" aria-hidden="true"><Icon Name="refresh" Size="14" /></span>
+                <span class="meta" data-testid="bench-dev-progress-text">@(Bench.Progress ?? "Running developer comparison…")@(devPct is { } p ? $" ({p:0}%)" : "")</span>
+                <button type="button" class="btn-small" data-testid="bench-dev-cancel" @onclick="Bench.Stop">Cancel</button>
+            </div>
+            @if (devPct is { } barPct)
+            {
+                <div class="progress wf-overall-progress" style="max-width:none;margin:6px 0 0" data-testid="bench-dev-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@((int)Math.Round(barPct))">
+                    <div style="width:@($"{barPct:0.#}%")"></div>
+                </div>
+            }
+            else
+            {
+                <div class="run-progress run-progress-indeterminate" data-testid="bench-dev-progress" aria-hidden="true"><div></div></div>
+            }
         }
         @if (Bench.LastDevDriveComparison is { } ddRes)
         {
@@ -296,6 +319,14 @@ else if (!running)
         if (!_confirmDevDriveRun) return;
         _confirmDevDriveRun = false; // one explicit yes per run; never remembered
         _ = Bench.RunDevDriveComparisonAsync(userConfirmed: true);
+    }
+
+    private void RunCombinedComparison()
+    {
+        if (!_confirmAvRun || !_confirmDevDriveRun) return;
+        _confirmAvRun = false;
+        _confirmDevDriveRun = false; // one explicit yes per run; never remembered
+        _ = Bench.RunDevDriveComparisonAsync(userConfirmed: true, includeAntivirusComparison: true);
     }
 
     private void ToggleCustomize() => _customizeOpen = !_customizeOpen;

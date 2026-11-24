@@ -276,8 +276,11 @@ public sealed class DeveloperBuildRunner(
             var defenderActive = defender?.Active;
             var folderExcluded = defender is { ExclusionsReadable: true } d && d.Paths.Any(p => DefenderProbe.Covers(p, workDir));
 
+            var totalSteps = options.IncludeAntivirusComparison && machineTweaks is not null && env.IsAgentConnected ? 4 : 3;
+            var step = 0;
+
             // 1. Restore (timed separately, excluded from build score)
-            progress?.Report("Timing C# restore (kept separate from build score)…");
+            progress.ReportStep(++step, totalSteps, "Timing C# restore (kept separate from build score)…");
             var (restoreOk, restoreSecs, restoreFail) = await TimedCommandAsync(dotnet.ExecutablePath, ["restore", projectPath, "--ignore-failed-sources", "-v", "q"], options.EffectiveTimeout, ct, workDir).ConfigureAwait(false);
             if (!restoreOk)
                 return FailCommand(DeveloperLanguage.CSharp, "dotnet restore", restoreFail, dotnet, sha256, restoreSecs);
@@ -286,14 +289,14 @@ public sealed class DeveloperBuildRunner(
             var usedHyperfine = false;
 
             // 2. Cold clean builds
-            progress?.Report($"Running cold C# clean builds ({options.ColdRepeats} repeats)…");
+            progress.ReportStep(++step, totalSteps, $"Running cold C# clean builds ({options.ColdRepeats} repeats)…");
             var (coldSamples, coldFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.ColdRepeats, warmups: 0, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
             if (coldFail is not null || coldSamples.Count == 0)
                 return FailCommand(DeveloperLanguage.CSharp, "cold dotnet build", coldFail, dotnet, sha256, restoreSecs);
             if (hyperfine is not null) usedHyperfine = true;
 
             // 3. Warm clean builds (1 warmup discarded, compiler outputs deleted before EVERY repeat so the compiler does full work)
-            progress?.Report($"Running warm C# clean builds ({options.WarmRepeats} repeats)…");
+            progress.ReportStep(++step, totalSteps, $"Running warm C# clean builds ({options.WarmRepeats} repeats)…");
             var (warmSamples, warmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
             if (warmFail is not null || warmSamples.Count == 0)
                 return FailCommand(DeveloperLanguage.CSharp, "warm dotnet build", warmFail, dotnet, sha256, restoreSecs);
@@ -303,12 +306,11 @@ public sealed class DeveloperBuildRunner(
             double? warmExcludedMedian = null;
             if (options.IncludeAntivirusComparison && machineTweaks is not null && env.IsAgentConnected)
             {
-                progress?.Report("Adding temporary Defender exclusion through Agent for antivirus comparison…");
+                progress.ReportStep(++step, totalSteps, $"Running warm C# clean builds with temporary Defender exclusion ({options.WarmRepeats} repeats)…");
                 var (added, _) = await machineTweaks.AddTempBuildDefenderExclusionAsync(workDir, ct).ConfigureAwait(false);
                 if (added)
                 {
                     tempExclusionAdded = true;
-                    progress?.Report($"Running warm C# clean builds with temporary exclusion ({options.WarmRepeats} repeats)…");
                     var (excluded, excludedFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
                     if (excludedFail is null && excluded.Count > 0)
                     {
@@ -413,27 +415,58 @@ public sealed class DeveloperBuildRunner(
         var ntfsDir = Path.Combine(tempRoot, $"{DevDriveRules.BuildTempPrefix}ntfs-{Guid.NewGuid():N}");
         string? vhdxPath = null;
         string? devDriveBuildDir = null;
+        var tempExclusionAdded = false;
+        var includeAv = options.IncludeAntivirusComparison && env.IsAgentConnected;
+        var totalSteps = includeAv ? 8 : 7;
+        var step = 0;
 
         try
         {
-            // 1. NTFS pass first (order: NTFS, then Dev Drive)
-            progress?.Report("Preparing pinned C# sources on NTFS…");
+            // 1. NTFS pass first (order: NTFS, [optional NTFS+AV exclusion,] then Dev Drive)
+            progress.ReportStep(++step, totalSteps, "Preparing pinned C# sources on NTFS…");
             var (ntfsProj, sha256) = DeveloperCSharpPin.Materialize(ntfsDir, dotnet.MajorVersion!.Value);
             var (rOk, _, rFail) = await TimedCommandAsync(dotnet.ExecutablePath, ["restore", ntfsProj, "--ignore-failed-sources", "-v", "q"], options.EffectiveTimeout, ct, ntfsDir).ConfigureAwait(false);
             if (!rOk)
                 return new(false, DeveloperCSharpPin.PinId, sha256, Note: (rFail ?? CommandFailure.Empty).Format("NTFS dotnet restore"));
 
             var hyperfine = options.AllowHyperfine ? env.FindHyperfine() : null;
-            progress?.Report("Timing C# clean builds on NTFS (cold & warm)…");
+            progress.ReportStep(++step, totalSteps, $"Timing cold C# clean builds on NTFS ({options.ColdRepeats} repeats)…");
             var (ntfsColdSamples, ntfsColdFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ntfsProj, ntfsDir, options.ColdRepeats, 0, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            progress.ReportStep(++step, totalSteps, $"Timing warm C# clean builds on NTFS ({options.WarmRepeats} repeats)…");
             var (ntfsWarmSamples, ntfsWarmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ntfsProj, ntfsDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
             var ntfsCold = DeveloperScoring.Median(ntfsColdSamples);
             var ntfsWarm = DeveloperScoring.Median(ntfsWarmSamples);
             if (ntfsColdFail is not null || ntfsWarmFail is not null || ntfsCold is null || ntfsWarm is null)
                 return new(false, DeveloperCSharpPin.PinId, sha256, Note: (ntfsColdFail ?? ntfsWarmFail ?? CommandFailure.Empty).Format("NTFS dotnet build"));
 
+            // Optional NTFS + temporary Defender exclusion pass (same NTFS folder before Dev Drive)
+            double? ntfsExcludedWarm = null;
+            if (includeAv)
+            {
+                progress.ReportStep(++step, totalSteps, $"Timing warm C# builds on NTFS with Defender exclusion ({options.WarmRepeats} repeats)…");
+                var (added, _) = await machineTweaks.AddTempBuildDefenderExclusionAsync(ntfsDir, ct).ConfigureAwait(false);
+                if (added)
+                {
+                    tempExclusionAdded = true;
+                    try
+                    {
+                        var (exclSamples, exclFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ntfsProj, ntfsDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+                        if (exclFail is null && exclSamples.Count > 0)
+                            ntfsExcludedWarm = DeveloperScoring.Median(exclSamples);
+                        else
+                            Log((exclFail ?? CommandFailure.Empty).Format("NTFS warm dotnet build with temporary exclusion"));
+                    }
+                    finally
+                    {
+                        try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(ntfsDir, CancellationToken.None).ConfigureAwait(false); }
+                        catch (Exception ex) { Log("Failed to remove temp Defender exclusion: " + ex.Message); }
+                        tempExclusionAdded = false;
+                    }
+                }
+            }
+
             // 2. Ask Agent to create & mount temporary ~50 GB Dev Drive VHDX
-            progress?.Report("Creating temporary 50 GB Dev Drive VHDX through Agent…");
+            progress.ReportStep(++step, totalSteps, "Creating temporary 50 GB Dev Drive VHDX through Agent…");
             var mount = await machineTweaks.CreateTempDevDriveAsync(DevDriveRules.DefaultSizeGb, env.ReadCurrentUserSid(), ct).ConfigureAwait(false);
             if (!mount.Ok || string.IsNullOrWhiteSpace(mount.VhdxPath) || string.IsNullOrWhiteSpace(mount.BuildFolder))
                 return new(false, DeveloperCSharpPin.PinId, sha256, Note: mount.Error ?? "Could not create temporary Dev Drive.");
@@ -445,14 +478,15 @@ public sealed class DeveloperBuildRunner(
             var devDriveStatus = await env.QueryDevDriveAsync(mount.DriveLetter, ct).ConfigureAwait(false);
 
             // 3. Dev Drive pass
-            progress?.Report("Preparing pinned C# sources on temporary Dev Drive…");
+            progress.ReportStep(++step, totalSteps, "Preparing pinned C# sources on temporary Dev Drive…");
             var (ddProj, _) = DeveloperCSharpPin.Materialize(devDriveBuildDir, dotnet.MajorVersion!.Value);
             var (ddRestoreOk, _, ddRestoreFail) = await TimedCommandAsync(dotnet.ExecutablePath, ["restore", ddProj, "--ignore-failed-sources", "-v", "q"], options.EffectiveTimeout, ct, devDriveBuildDir).ConfigureAwait(false);
             if (!ddRestoreOk)
                 return new(false, DeveloperCSharpPin.PinId, sha256, Note: (ddRestoreFail ?? CommandFailure.Empty).Format("Dev Drive dotnet restore"));
 
-            progress?.Report("Timing C# clean builds on temporary Dev Drive (cold & warm)…");
+            progress.ReportStep(++step, totalSteps, $"Timing cold C# clean builds on Dev Drive ({options.ColdRepeats} repeats)…");
             var (ddColdSamples, ddColdFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ddProj, devDriveBuildDir, options.ColdRepeats, 0, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            progress.ReportStep(++step, totalSteps, $"Timing warm C# clean builds on Dev Drive ({options.WarmRepeats} repeats)…");
             var (ddWarmSamples, ddWarmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ddProj, devDriveBuildDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
             var ddCold = DeveloperScoring.Median(ddColdSamples);
             var ddWarm = DeveloperScoring.Median(ddWarmSamples);
@@ -463,16 +497,22 @@ public sealed class DeveloperBuildRunner(
                 Succeeded: true,
                 PinId: DeveloperCSharpPin.PinId,
                 PinSha256: sha256,
-                Order: "NTFS, then Dev Drive",
+                Order: includeAv ? "NTFS, NTFS + AV exclusion, then Dev Drive" : "NTFS, then Dev Drive",
                 NtfsColdMedianSeconds: ntfsCold,
                 NtfsWarmMedianSeconds: ntfsWarm,
                 DevDriveColdMedianSeconds: ddCold,
                 DevDriveWarmMedianSeconds: ddWarm,
                 DefenderPerformanceModeActive: devDriveStatus.DefenderPerformanceModeActive,
-                CompletedAtUtc: DateTimeOffset.UtcNow);
+                CompletedAtUtc: DateTimeOffset.UtcNow,
+                NtfsExcludedWarmMedianSeconds: ntfsExcludedWarm);
         }
         finally
         {
+            if (tempExclusionAdded)
+            {
+                try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(ntfsDir, CancellationToken.None).ConfigureAwait(false); }
+                catch (Exception ex) { Log("Failed to remove temp Defender exclusion: " + ex.Message); }
+            }
             TryDeleteDirectory(ntfsDir);
             if (devDriveBuildDir is not null) TryDeleteDirectory(devDriveBuildDir);
             if (vhdxPath is not null)

@@ -152,6 +152,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public DeveloperBuildResult? LastAntivirusComparison { get; private set; }
     public DevDriveComparisonResult? LastDevDriveComparison { get; private set; }
     public bool RunningDeveloperAction { get; private set; }
+    public double? DeveloperActionFraction { get; private set; }
 
     /// <summary>
     /// True when a benchmark kind should be shown on this PC. Developer kinds are hidden when their toolchain is absent,
@@ -520,7 +521,12 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         Raise();
         try
         {
-            var prog = new SyncProgress(p => { Progress = p; Raise(); });
+            var prog = CheckProgressExtensions.Create(cp =>
+            {
+                Progress = cp.Message;
+                if (cp.Total > 0) DeveloperActionFraction = Math.Clamp((double)cp.Step / cp.Total, 0, 1);
+                Raise();
+            });
             var res = await devRunner.RunCSharpCleanBuildAsync(new DeveloperBuildOptions(IncludeAntivirusComparison: true), prog, cts.Token).ConfigureAwait(false);
             LastAntivirusComparison = res;
             Message = res.Succeeded ? res.FormatDetail() : res.Note ?? "Antivirus comparison did not complete.";
@@ -533,17 +539,21 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         }
         finally
         {
-            lock (_gate) { RunningDeveloperAction = false; Progress = null; if (ReferenceEquals(_cts, cts)) _cts = null; }
+            lock (_gate) { RunningDeveloperAction = false; DeveloperActionFraction = null; Progress = null; if (ReferenceEquals(_cts, cts)) _cts = null; }
             cts.Dispose();
             Raise();
         }
     }
 
     /// <summary>
-    /// Phase 2 opt-in Dev Drive comparison: builds the cached C# pin on NTFS, then on a temporary ~50 GB Dev Drive VHDX created
-    /// and cleaned up by the elevated Agent. Requires explicit <paramref name="userConfirmed"/> for this run; never started by <see cref="RunAsync"/>.
+    /// Phase 2 opt-in Dev Drive comparison: builds the cached C# pin on NTFS, optionally with a temporary Defender exclusion,
+    /// then on a temporary ~50 GB Dev Drive VHDX created and cleaned up by the elevated Agent.
+    /// Requires explicit <paramref name="userConfirmed"/> for this run; never started by <see cref="RunAsync"/>.
     /// </summary>
-    public async Task<DevDriveComparisonResult?> RunDevDriveComparisonAsync(bool userConfirmed, CancellationToken ct = default)
+    public async Task<DevDriveComparisonResult?> RunDevDriveComparisonAsync(
+        bool userConfirmed,
+        bool includeAntivirusComparison = false,
+        CancellationToken ct = default)
     {
         if (!userConfirmed)
         {
@@ -562,14 +572,21 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         {
             if (Running is not null || Settling is not null || RunningDeveloperAction) return null;
             RunningDeveloperAction = true;
+            DeveloperActionFraction = 0;
             _cts = cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         }
         Message = DeveloperScoring.BusyPcWarning;
         Raise();
         try
         {
-            var prog = new SyncProgress(p => { Progress = p; Raise(); });
-            var res = await devRunner.RunDevDriveComparisonAsync(progress: prog, ct: cts.Token).ConfigureAwait(false);
+            var prog = CheckProgressExtensions.Create(cp =>
+            {
+                Progress = cp.Message;
+                if (cp.Total > 0) DeveloperActionFraction = Math.Clamp((double)cp.Step / cp.Total, 0, 1);
+                Raise();
+            });
+            var options = new DeveloperBuildOptions(IncludeAntivirusComparison: includeAntivirusComparison);
+            var res = await devRunner.RunDevDriveComparisonAsync(options: options, progress: prog, ct: cts.Token).ConfigureAwait(false);
             LastDevDriveComparison = res;
             Message = res.FormatSummary();
             return res;
@@ -581,7 +598,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         }
         finally
         {
-            lock (_gate) { RunningDeveloperAction = false; Progress = null; if (ReferenceEquals(_cts, cts)) _cts = null; }
+            lock (_gate) { RunningDeveloperAction = false; DeveloperActionFraction = null; Progress = null; if (ReferenceEquals(_cts, cts)) _cts = null; }
             cts.Dispose();
             Raise();
         }
