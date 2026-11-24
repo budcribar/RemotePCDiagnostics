@@ -1,4 +1,5 @@
 @page "/benchmark"
+@using Microsoft.JSInterop
 @using RemotePCDiagnostics.Core.Benchmarks
 @using RemotePCDiagnostics.Core.Workflow
 @implements IDisposable
@@ -6,6 +7,7 @@
 @inject AppServices App
 @inject ISessionContext Session
 @inject BenchmarkUploader Uploader
+@inject IJSRuntime JS
 @* Before/after performance benchmarks for a service call: shows the client what the fixes actually changed. *@
 @{
     var s = Bench.Settings;
@@ -259,17 +261,13 @@ else if (Bench.Settling is { } settlePhase && Bench.SettleFraction is { } sf && 
         <p class="meta">Uploads the @(after is null ? "baseline" : "latest (after)") results with this PC's model, processor, memory and graphics card to your shop's Admin site,
             where your computers are ranked side by side for each test.</p>
         <div class="bench-hero-actions">
-            <button class="btn-small" data-testid="bench-upload" disabled="@(running || Uploader.Uploading || !Uploader.CanUpload)" @onclick="() => Uploader.UploadAsync()">
+            <button class="btn-small" data-testid="bench-upload" disabled="@(running || Uploader.Uploading || !(Uploader.CanUpload || _isRemoteDisplay))" @onclick="UploadResultsAsync">
                 <Icon Name="upload" Size="12" /> @(Uploader.Uploading ? "Uploading…" : "Upload results")</button>
             @if (Uploader.CompareUrl is { } compareUrl)
             {
                 <a class="linklike" data-testid="bench-upload-link" href="@compareUrl" target="_blank" rel="noopener noreferrer">Open the comparison →</a>
             }
         </div>
-        @if (!Uploader.CanUpload)
-        {
-            <p class="meta" data-testid="bench-upload-setup">Add your shop API key (rpd_live_…) and relay server on the <a href="/certificates">QA &amp; branding</a> page to upload results.</p>
-        }
         @if (Uploader.Message is { } um)
         {
             <p class="@(Uploader.Failed ? "notice notice-error" : "notice")" data-testid="bench-upload-status"
@@ -295,9 +293,27 @@ else if (!running)
     private bool _customizeOpen;
     private bool _confirmAvRun;
     private bool _confirmDevDriveRun;
+    private bool _isRemoteDisplay;
 
     protected override void OnInitialized() { Bench.Changed += OnChanged; Uploader.Changed += OnChanged; }
     protected override Task OnInitializedAsync() => Bench.RefreshDeveloperEnvironmentAsync();
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            var remote = await JS.InvokeAsync<bool>("rpdSession.isRemoteDisplay");
+            if (remote != _isRemoteDisplay)
+            {
+                _isRemoteDisplay = remote;
+                StateHasChanged();
+            }
+        }
+        catch { }
+    }
+
+    private Task UploadResultsAsync() =>
+        Uploader.CanUpload ? Uploader.UploadAsync() : Uploader.UploadViaBrowserAsync(JS);
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
     public void Dispose() { Bench.Changed -= OnChanged; Uploader.Changed -= OnChanged; }
 
