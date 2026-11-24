@@ -252,10 +252,10 @@ public sealed class BiosAgentElevationTests
         using var userDir = new TempStagingDir();
         using var adminRoot = new TempStagingDir();
 
-        // Build a fake SFX stub prefix + valid uncompressed MS-CAB containing HPBIOSUPDREC\HpFirmwareUpdRec64.exe
+        // Build a fake SFX stub prefix + valid uncompressed MS-CAB containing HpFirmwareUpdRec64.exe
         var cabBytes = TestCabBuilder.CreateUncompressed(new Dictionary<string, byte[]>
         {
-            ["HPBIOSUPDREC\\HpFirmwareUpdRec64.exe"] = "MZ-fake-flasher"u8.ToArray(),
+            ["HpFirmwareUpdRec64.exe"] = "MZ-fake-flasher"u8.ToArray(),
         });
         var sfxPrefix = new byte[128];
         sfxPrefix[0] = (byte)'M';
@@ -279,7 +279,7 @@ public sealed class BiosAgentElevationTests
             {
                 var req = new BiosAgentInstallRequest("hp", BiosAgentInstallModes.HpSoftPaq, userPkgPath, sha, AllowReboot: false, TimeoutMs: 120_000);
                 var result = await client.RunBiosInstallerAsync(req, cts.Token);
-                Assert.True(result.Executed);
+                Assert.True(result.Executed, $"Expected Executed=true; Allowed={result.Allowed}, ExitCode={result.ExitCode}, Error='{result.Error}', LogTail='{result.LogTail}'");
                 Assert.True(result.Allowed);
                 Assert.Equal(3010, result.ExitCode);
             }
