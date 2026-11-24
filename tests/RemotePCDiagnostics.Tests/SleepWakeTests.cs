@@ -421,4 +421,43 @@ public class SleepWakeTests
         Assert.Equal(UndoSupport.Full, Undoability.Of(RemediationKind.DisableWakeTimer));
         Assert.Equal("disablewaketimer", FixKeys.Of(RemediationKind.DisableWakeTimer));
     }
+
+    [Fact]
+    public async Task Usb_hubs_controllers_and_composite_devices_cannot_have_wake_disabled()
+    {
+        string[] blocked =
+        [
+            "USB Root Hub (USB 3.0)",
+            "Generic USB Hub",
+            "USB Composite Device",
+            "USB xHCI Compliant Host Controller",
+            "USB4 Host Router (Microsoft)",
+            "Intel(R) USB 3.10 eXtensible Host Controller - 1.10 (Microsoft)",
+        ];
+        foreach (var d in blocked)
+        {
+            Assert.True(DeviceWake.IsProtectedBusOrHub(d), d);
+            Assert.False(DeviceWake.CanDisableWake(d), d);
+        }
+
+        Assert.True(DeviceWake.CanDisableWake("HID-compliant mouse (001)"));
+        Assert.True(DeviceWake.CanDisableWake("HID Keyboard Device"));
+        Assert.True(DeviceWake.CanDisableWake("Intel(R) Ethernet Controller I225-V"));
+
+        var report = SleepWakeModule.Build(Facts(armed: "USB Root Hub (USB 3.0)\r\nUSB Composite Device\r\nHID-compliant mouse (001)\r\n"), DateTimeOffset.Now);
+        var devices = report.Cards.Single(c => c.Id == "devices");
+        var hubRow = devices.Rows.Single(r => r.Values[0] == "USB Root Hub (USB 3.0)");
+        Assert.Equal("USB hub / controller", hubRow.Values[1]);
+        Assert.Null(hubRow.Actions);
+        Assert.Null(devices.Rows.Single(r => r.Values[0] == "USB Composite Device").Actions);
+        Assert.NotNull(devices.Rows.Single(r => r.Values[0] == "HID-compliant mouse (001)").Actions);
+
+        var (launcher, _) = Powercfg("USB Root Hub (USB 3.0)");
+        var svc = new RemediationService(new SystemCommandRunner(launcher, isProcessElevated: () => true));
+        var act = new AreaAction(RemediationKind.DisableDeviceWake, "Stop it waking the PC", "USB Root Hub (USB 3.0)", "USB Root Hub (USB 3.0)");
+        Assert.False(svc.Plan(act).Allowed);
+        var res = await svc.ExecuteAsync(act, TestContext.Current.CancellationToken);
+        Assert.False(res.Success);
+        Assert.DoesNotContain(launcher.Calls, x => x.Args[0] == "/devicedisablewake");
+    }
 }

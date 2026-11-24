@@ -28,6 +28,34 @@ public static class DeviceWake
     public static bool IsSafeName(string? name) =>
         !string.IsNullOrWhiteSpace(name) && name.Length <= 256 && name == name.Trim() && !name.Any(c => char.IsControl(c) || c == '"');
 
+    /// <summary>
+    /// True for shared USB hubs, host controllers, routers, and composite devices where disabling wake
+    /// (<c>powercfg /devicedisablewake</c>) can break selective-suspend/D3 recovery for downstream keyboards,
+    /// mice, or docks (including Code 43 descriptor failures).
+    /// </summary>
+    public static bool IsProtectedBusOrHub(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        return name.Contains("USB Root Hub", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("USB Hub", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("USB Composite Device", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Host Controller", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Host Router", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Root Device Router", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("xHCI", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("eHCI", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("oHCI", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("uHCI", StringComparison.OrdinalIgnoreCase)
+            || (name.Contains("USB", StringComparison.OrdinalIgnoreCase)
+                && (name.Contains("Hub", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("Controller", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("Router", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("Composite", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>True when this app may offer and run <c>powercfg /devicedisablewake</c> for <paramref name="name"/>.</summary>
+    public static bool CanDisableWake(string? name) => IsSafeName(name) && !IsProtectedBusOrHub(name);
+
     /// <summary>Asks Windows for the wake-armed list now; null when powercfg couldn't run.</summary>
     public static async Task<IReadOnlyList<string>?> QueryArmedAsync(SystemCommandRunner commands, CancellationToken ct)
     {
