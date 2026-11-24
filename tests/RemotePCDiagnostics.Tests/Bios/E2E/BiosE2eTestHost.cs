@@ -948,6 +948,9 @@ internal sealed class RecordingProcessLauncher(string role = "Host") : IProcessL
 
         var call = new RecordedProcessCall(fileName ?? "", toolName, argsCopy, workingDirectory, timeout);
         _calls.Enqueue(call);
+        // Only the Agent unpacks SoftPaq/Lenovo packages and then runs the inner flasher; the Host's local path is unchanged.
+        if (string.Equals(role, "Agent", StringComparison.Ordinal))
+            FakeVendorUnpack.Apply(argsCopy);
 
         Func<RecordedProcessCall, CancellationToken, Task<ProcessResult>>? matched = null;
         lock (_gate)

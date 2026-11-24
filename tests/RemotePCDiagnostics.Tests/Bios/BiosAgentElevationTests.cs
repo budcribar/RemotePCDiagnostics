@@ -81,16 +81,12 @@ public sealed class BiosAgentElevationTests
     }
 
     [Theory]
-    [InlineData("hp", BiosAgentInstallModes.HpSoftPaq, "sp150000.exe", false, new[] { "-s" })]
-    [InlineData("hp", BiosAgentInstallModes.HpSoftPaq, "sp150000.exe", true, new[] { "-s" })]
     [InlineData("hp", BiosAgentInstallModes.HpBiosUpdRec, "HPBIOSUPDREC64.exe", false, new[] { "-s", "-r" })]
     [InlineData("hp", BiosAgentInstallModes.HpBiosUpdRec, "HPBIOSUPDREC64.exe", true, new[] { "-s" })]
     [InlineData("dell", BiosAgentInstallModes.DellBiosExe, "Latitude_7430_1.15.0.exe", false, new[] { "/s" })]
     [InlineData("dell", BiosAgentInstallModes.DellBiosExe, "Latitude_7430_1.15.0.exe", true, new[] { "/s", "/r" })]
     [InlineData("lenovo", BiosAgentInstallModes.LenovoWinUptp, "winuptp64.exe", false, new[] { "-s" })]
     [InlineData("lenovo", BiosAgentInstallModes.LenovoWinUptp, "winuptp64.exe", true, new[] { "-s", "-r" })]
-    [InlineData("lenovo", BiosAgentInstallModes.LenovoPackageSilent, "n32uj20w.exe", false, new[] { "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" })]
-    [InlineData("lenovo", BiosAgentInstallModes.LenovoPackageSilent, "n32uj20w.exe", true, new[] { "/VERYSILENT", "/SUPPRESSMSGBOXES" })]
     [InlineData("framework", BiosAgentInstallModes.FrameworkBiosExe, "Framework_BIOS_03.05.exe", false, new[] { "/silent", "/norestart" })]
     [InlineData("framework", BiosAgentInstallModes.FrameworkBiosExe, "Framework_BIOS_03.05.exe", true, new[] { "/silent" })]
     public async Task Pipe_RunBiosInstaller_AllExeModes_CopiesToAdminStagingVerifiesExecutesAndCleansUp(
@@ -155,6 +151,47 @@ public sealed class BiosAgentElevationTests
         Assert.Equal(Path.GetFullPath(call.FileName), Path.GetFullPath(verifiedPath));
 
         // Admin staging run subdirectory must be deleted in finally.
+        Assert.Empty(Directory.GetFileSystemEntries(adminRoot.Path));
+    }
+
+    [Theory]
+    [InlineData("hp", BiosAgentInstallModes.HpSoftPaq, "sp150000.exe", false, AgentBiosOperations.HpFlasherNotFound)]
+    [InlineData("hp", BiosAgentInstallModes.HpSoftPaq, "sp150000.exe", true, AgentBiosOperations.HpFlasherNotFound)]
+    [InlineData("lenovo", BiosAgentInstallModes.LenovoPackageSilent, "n32uj20w.exe", false, AgentBiosOperations.LenovoFlasherNotFound)]
+    [InlineData("lenovo", BiosAgentInstallModes.LenovoPackageSilent, "n32uj20w.exe", true, AgentBiosOperations.LenovoFlasherNotFound)]
+    public async Task Pipe_RunBiosInstaller_SfxWithoutInnerFlasher_FailsWithoutRunningThePackageAgain(
+        string vendorId, string mode, string fileName, bool allowReboot, string expectedError)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var userDir = new TempStagingDir();
+        using var adminRoot = new TempStagingDir();
+
+        var payload = TestPayload.FromString($"sfx-without-flasher-{vendorId}-{mode}");
+        var userPkgPath = userDir.FilePath(fileName);
+        await File.WriteAllBytesAsync(userPkgPath, payload.Bytes, cts.Token);
+
+        var sigVerifier = new FakeSignatureVerifier(result: true);
+        // The unpack run "succeeds" with a reboot code but leaves no flasher behind.
+        var agentLauncher = CreateGuardedLauncher((_, _) => Task.FromResult(new ProcessResult(3010, "Unpacked nothing", "")));
+        var ops = new AgentBiosOperations(launcher: agentLauncher, signatureVerifier: sigVerifier, stagingRoot: adminRoot.Path);
+
+        var (server, serverTask, client) = await StartPipeAsync(agentLauncher, ops, cts.Token);
+        using (server)
+        {
+            await using (client)
+            {
+                var req = new BiosAgentInstallRequest(vendorId, mode, userPkgPath, payload.Sha256, AllowReboot: allowReboot, TimeoutMs: 120_000);
+                var result = await client.RunBiosInstallerAsync(req, cts.Token);
+                Assert.False(result.Executed);
+                Assert.True(result.Allowed);
+                Assert.Equal(expectedError, result.Error);
+            }
+            await serverTask;
+        }
+
+        // Only the unpack run: the package is never run a second time (no double flash, no reboot the app didn't ask for).
+        var call = Assert.Single(agentLauncher.Calls);
+        Assert.Contains(call.Arguments, a => a.StartsWith("-f", StringComparison.OrdinalIgnoreCase) || a.StartsWith("/EXTRACT", StringComparison.OrdinalIgnoreCase));
         Assert.Empty(Directory.GetFileSystemEntries(adminRoot.Path));
     }
 

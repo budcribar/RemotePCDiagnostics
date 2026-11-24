@@ -2,6 +2,7 @@ using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Bios;
 using RemotePCDiagnostics.Core.Changes;
+using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Workflow;
 using RemotePCDiagnostics.Modules.BiosFirmware;
 
@@ -169,6 +170,78 @@ public sealed class BiosFirmwareModuleTests
         Assert.True(biosSvc.LastInstallRequest!.Approved);
         Assert.True(biosSvc.LastInstallRequest.SuspendBitLocker);
         Assert.False(biosSvc.LastInstallRequest.AllowReboot);
+    }
+
+    [Theory]
+    [InlineData("F.36", "F.36", false)]
+    [InlineData("f.36 ", "F.36", false)]
+    [InlineData("latest", "F.37", false)]
+    [InlineData("", "F.37", false)]
+    [InlineData(null, "F.37", false)]
+    [InlineData("F.36", "F.37", true)]
+    [InlineData("F.36", null, true)]
+    public void BiosVersionChanged_OnlyWhenTheApprovedVersionDiffers(string? approved, string? offered, bool changed) =>
+        Assert.Equal(changed, RemediationService.BiosVersionChanged(approved, offered));
+
+    [Fact]
+    public async Task RemediationService_InstallBiosUpdate_RefusesWhenTheCatalogOffersANewerVersionThanApproved()
+    {
+        var outcome = MakeOutcome(BiosLatestInfo.UpdateAvailable("hp", "F.37"));
+        var biosSvc = new StubBiosService(outcome, new StubBiosProvider("hp", "HP", canInstall: true));
+        var remediation = new RemediationService(new SystemCommandRunner(), bios: biosSvc);
+
+        var exec = await remediation.ExecuteAsync(new AreaAction(RemediationKind.InstallBiosUpdate, "Update BIOS to F.36", "F.36", "BIOS F.36"));
+
+        Assert.False(exec.Success);
+        Assert.Contains("F.36 to F.37", exec.Message, StringComparison.Ordinal);
+        Assert.Null(biosSvc.LastInstallRequest); // nothing was installed
+    }
+
+    [Fact]
+    public async Task RunTracked_InstallBiosUpdate_StagedUpdateRestartsThePcAndTheRemoteSessionResumes()
+    {
+        var staged = new BiosInstallResult(true, BiosInstallStatus.StagedForReboot, RequiresReboot: true, PreviousVersion: "F.34", TargetVersion: "F.36", Message: "BIOS F.36 staged.");
+        var biosSvc = new StubBiosService(MakeOutcome(BiosLatestInfo.UpdateAvailable("hp", "F.36")), new StubBiosProvider("hp", "HP", canInstall: true), staged);
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var runner = new SystemCommandRunner(launcher);
+        var statePath = Path.Combine(Path.GetTempPath(), "rpd-bios-reboot-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var session = new SessionContext(SessionMode.Remote);
+            var remediation = new RemediationService(runner, session, bios: biosSvc,
+                rebootResume: new RebootResumeCoordinator(runner, stateFilePath: statePath, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe"));
+
+            var r = await remediation.RunTrackedAsync(new AreaAction(RemediationKind.InstallBiosUpdate, "Update BIOS to F.36", "F.36", "BIOS F.36"), "BiosFirmware");
+
+            Assert.True(r.Success);
+            Assert.Contains("restarts in 60 seconds", r.Message, StringComparison.Ordinal);
+            Assert.Contains("reconnects", r.Message, StringComparison.Ordinal);
+            // The same restart as "Restart PC in 60s": shutdown /g (sign back in where Windows allows) with the resume state saved.
+            Assert.Contains(launcher.Calls, c => c.File.EndsWith("shutdown.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains("/g"));
+            Assert.True(File.Exists(statePath));
+            Assert.True(biosSvc.LastInstallRequest!.SuspendBitLocker);
+            Assert.False(biosSvc.LastInstallRequest.AllowReboot); // the vendor tool never reboots by itself
+        }
+        finally
+        {
+            if (File.Exists(statePath)) File.Delete(statePath);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_InstallBiosUpdate_FromTheWorkflowDoesNotScheduleItsOwnRestart()
+    {
+        var staged = new BiosInstallResult(true, BiosInstallStatus.StagedForReboot, RequiresReboot: true, PreviousVersion: "F.34", TargetVersion: "F.36", Message: "BIOS F.36 staged.");
+        var biosSvc = new StubBiosService(MakeOutcome(BiosLatestInfo.UpdateAvailable("hp", "F.36")), new StubBiosProvider("hp", "HP", canInstall: true), staged);
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var remediation = new RemediationService(new SystemCommandRunner(launcher), bios: biosSvc);
+
+        // The service workflow calls ExecuteAsync and restarts the PC itself once every fix has run.
+        var r = await remediation.ExecuteAsync(new AreaAction(RemediationKind.InstallBiosUpdate, "Update BIOS to F.36", "F.36", "BIOS F.36"));
+
+        Assert.True(r.Success);
+        Assert.True(r.RestartNeeded);
+        Assert.DoesNotContain(launcher.Calls, c => c.File.EndsWith("shutdown.exe", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

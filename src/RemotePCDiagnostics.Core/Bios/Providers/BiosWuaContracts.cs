@@ -31,4 +31,14 @@ public interface IBiosWindowsUpdateClient
 {
     Task<IReadOnlyList<BiosWuaFirmwareUpdate>> SearchPendingFirmwareUpdatesAsync(CancellationToken ct = default);
     Task<BiosWuaInstallOutcome> InstallUpdateAsync(Guid updateId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Searches Windows Update's local cache (<paramref name="online"/> false, quick) or the update service itself (true, can take minutes).
+    /// The default searches the way <see cref="SearchPendingFirmwareUpdatesAsync(CancellationToken)"/> does.
+    /// </summary>
+    Task<IReadOnlyList<BiosWuaFirmwareUpdate>> SearchPendingFirmwareUpdatesAsync(bool online, CancellationToken ct) =>
+        SearchPendingFirmwareUpdatesAsync(ct);
+
+    /// <summary>When Windows Update last finished a scan (UTC), or null when Windows doesn't say. The local cache is only as new as this.</summary>
+    Task<DateTimeOffset?> GetLastSuccessfulScanUtcAsync(CancellationToken ct = default) => Task.FromResult<DateTimeOffset?>(null);
 }

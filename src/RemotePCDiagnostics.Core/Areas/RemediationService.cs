@@ -336,10 +336,10 @@ public sealed class RemediationService(
                 action,
                 string.IsNullOrWhiteSpace(label) ? "Update BIOS to latest version?" : $"Update BIOS to {label}?",
                 "Downloads, verifies, and stages the official vendor BIOS/UEFI firmware update for this PC.",
-                "Checks AC power, battery level, and BitLocker prerequisites, suspends BitLocker for one reboot if active, verifies the signed vendor package, and stages the BIOS update. Not undoable.",
+                "Checks AC power, battery level, and BitLocker prerequisites, suspends BitLocker for one reboot if active, verifies the signed vendor package, stages the BIOS update, then restarts the PC in 60 seconds to apply it. The app (and a remote session) reconnects after Windows signs back in. Not undoable.",
                 bios is null
                     ? "BIOS update service is not available in this session."
-                    : AdminNote("Requires AC power and a restart to finish flashing. Do not turn off or unplug the PC while the BIOS update is applying."),
+                    : AdminNote("Requires AC power. Save open work first: the PC restarts by itself to flash the firmware. Do not turn off or unplug the PC while the BIOS update is applying."),
                 bios is not null),
 
             RemediationKind.OpenSettings => new(
@@ -529,7 +529,7 @@ public sealed class RemediationService(
                 ct).ConfigureAwait(false)
             : new(false, "This isn't a scheduled task path this app can change."),
 
-        RemediationKind.InstallBiosUpdate => await RunInstallBiosUpdateAsync(ct).ConfigureAwait(false),
+        RemediationKind.InstallBiosUpdate => await RunInstallBiosUpdateAsync(action, ct).ConfigureAwait(false),
 
         RemediationKind.OptimizeSsd => await RunAgentScriptAsync(
             AgentScripts.Of(AgentScripts.OptimizeVolume, DriveLetters(action.Target)),
@@ -552,7 +552,7 @@ public sealed class RemediationService(
         return new(true, $"Opened {Display(action)} on this PC. Make the change there, then re-run this check to verify.");
     }
 
-    private async Task<RemediationResult> RunInstallBiosUpdateAsync(CancellationToken ct)
+    private async Task<RemediationResult> RunInstallBiosUpdateAsync(AreaAction action, CancellationToken ct)
     {
         if (bios is null)
             return new(false, "BIOS update service is not available in this session.");
@@ -564,6 +564,11 @@ public sealed class RemediationService(
 
         if (outcome.Latest.Status != Bios.BiosCheckStatus.UpdateAvailable)
             return new(false, outcome.Latest.Message ?? "No installable BIOS update is available.");
+
+        // Install only the version the technician approved on the card. If the vendor catalog moved on since the check,
+        // stop and let them look at the new version first.
+        if (BiosVersionChanged(action.Target, outcome.Latest.LatestVersion))
+            return new(false, $"The BIOS update offered changed from {action.Target} to {outcome.Latest.LatestVersion ?? "an unknown version"} since the check ran. Nothing was installed. Run BIOS & firmware again and approve the new version.");
 
         var request = new Bios.BiosInstallRequest(
             System: outcome.System,
@@ -588,6 +593,40 @@ public sealed class RemediationService(
             : install.Message;
         var installedCount = install.Succeeded && install.Status != Bios.BiosInstallStatus.AlreadyUpToDate ? 1 : 0;
         return new(install.Succeeded, message, UpdatesInstalled: installedCount, RestartNeeded: install.RequiresReboot);
+    }
+
+    /// <summary>
+    /// True when the card's approved version (<paramref name="approved"/>, the fix's target) is a real version and differs from
+    /// <paramref name="offeredNow"/>. "latest" (the card had no version to show) and an empty target approve whatever is offered.
+    /// </summary>
+    internal static bool BiosVersionChanged(string? approved, string? offeredNow)
+    {
+        var a = approved?.Trim();
+        if (string.IsNullOrEmpty(a) || string.Equals(a, BiosFirmwareLatestTarget, StringComparison.OrdinalIgnoreCase))
+            return false;
+        return !string.Equals(a, offeredNow?.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The fix target the BIOS & firmware card uses when the catalog gave no version number.</summary>
+    public const string BiosFirmwareLatestTarget = "latest";
+
+    /// <summary>
+    /// After a BIOS update is staged, restart through the same path as "Restart PC in 60s": BitLocker stays suspended for that one
+    /// restart, the firmware flashes during it, and the app (and a remote session) comes back by itself after sign-in, so the
+    /// technician doesn't have to come back and press Restart.
+    /// </summary>
+    private async Task<RemediationResult> FinishBiosUpdateWithRestartAsync(RemediationResult staged, CancellationToken ct)
+    {
+        RepairProgress?.Report("BIOS update staged. Scheduling the restart that applies it…");
+        var restart = await ExecuteAsync(
+            new AreaAction(RemediationKind.ScheduleCleanRestart, "Restart to finish the BIOS update", "", "Restart to finish the BIOS update"),
+            ct).ConfigureAwait(false);
+        if (!restart.Success)
+            return staged with { Message = $"{staged.Message.TrimEnd()} Couldn't schedule the restart ({restart.Message.TrimEnd('.')}). Restart the PC to finish the BIOS update." };
+        var after = session?.Mode == SessionMode.Remote
+            ? "This remote session reconnects by itself once Windows signs back in."
+            : "Remote PC Diagnostics opens again after sign-in.";
+        return staged with { Message = $"{staged.Message.TrimEnd()} The PC restarts in 60 seconds to apply it. Don't turn it off or unplug it. {after}" };
     }
 
     /// <summary>Only a device Windows lists as wake-armed right now, by the name Windows gives it.</summary>
@@ -664,6 +703,10 @@ public sealed class RemediationService(
         try
         {
             result = await Task.Run(() => ExecuteAsync(action, cts.Token)).ConfigureAwait(false);
+            // A fix started from its card (the app or Admin's apply_fix) finishes a BIOS update with the restart that applies it.
+            // The service workflow runs fixes through ExecuteAsync and restarts the PC itself after all of them.
+            if (action.Kind == RemediationKind.InstallBiosUpdate && result is { Success: true, RestartNeeded: true, UpdatesInstalled: > 0 })
+                result = await FinishBiosUpdateWithRestartAsync(result, cts.Token).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

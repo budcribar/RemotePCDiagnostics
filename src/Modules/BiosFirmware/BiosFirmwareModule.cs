@@ -92,7 +92,7 @@ public sealed class BiosFirmwareModule(IBiosUpdateService? bios = null, SystemCo
             var canInstall = provider?.Capabilities.CanInstall ?? true;
             if (canInstall)
             {
-                var targetVer = string.IsNullOrWhiteSpace(latest.LatestVersion) ? "latest" : latest.LatestVersion;
+                var targetVer = string.IsNullOrWhiteSpace(latest.LatestVersion) ? RemediationService.BiosFirmwareLatestTarget : latest.LatestVersion;
                 actions =
                 [
                     new AreaAction(

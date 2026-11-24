@@ -1203,6 +1203,7 @@ public sealed class BiosProvidersIntegrationTests
 
         var hostLauncher = CreateGuardedLauncher();
         var agentLauncher = CreateGuardedLauncher();
+        agentLauncher.SimulateVendorUnpack = true;
         var agentSigVerifier = new FakeSignatureVerifier(result: true);
         var biosOps = new AgentBiosOperations(
             launcher: agentLauncher,
@@ -1264,7 +1265,7 @@ public sealed class BiosProvidersIntegrationTests
             Assert.True(res2.BitLockerSuspended);
             Assert.Equal(3, hostLauncher.Calls.Count); // Unchanged — zero new Host launches
             Assert.Equal(3, agentLauncher.Calls.Count); // manage-bde + admin-staged SoftPaq extract + run
-            Assert.Equal(1, agentSigVerifier.CallCount);
+            Assert.Equal(2, agentSigVerifier.CallCount); // the SoftPaq and its inner flasher
         }
         finally
         {
@@ -1293,6 +1294,7 @@ public sealed class BiosProvidersIntegrationTests
                 return Task.FromResult(new ProcessResult(0, "Protectors disabled.", ""));
             return Task.FromResult(new ProcessResult(0, $"Agent staged ok ({BiosIdentityFactory.SentinelSerialNumber})", ""));
         });
+        agentLauncher.SimulateVendorUnpack = true;
         var hostSigVerifier = new FakeSignatureVerifier(result: true);
         var agentSigVerifier = new FakeSignatureVerifier(result: true);
         var loggerFactory = new CapturingLoggerFactory();
@@ -1360,10 +1362,12 @@ public sealed class BiosProvidersIntegrationTests
             var normalizedExePath = Path.GetFullPath(installerCall.FileName);
             Assert.StartsWith(normalizedAdminRoot, normalizedExePath, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(normalizedUserStaging, normalizedExePath, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(["-s"], installerCall.Arguments);
+            // The SoftPaq's inner flasher runs with -r because the request doesn't allow a reboot.
+            Assert.Equal("HpFirmwareUpdRec64.exe", installerCall.BaseName, ignoreCase: true);
+            Assert.Equal(["-s", "-r"], installerCall.Arguments);
 
             // Agent verified Authenticode on admin-staged copy and cleaned up admin staging directory
-            Assert.Equal(1, agentSigVerifier.CallCount);
+            Assert.Equal(2, agentSigVerifier.CallCount); // the SoftPaq, then its inner flasher
             Assert.StartsWith(normalizedAdminRoot, Path.GetFullPath(agentSigVerifier.VerifiedPaths[0]), StringComparison.OrdinalIgnoreCase);
             Assert.Empty(Directory.GetFileSystemEntries(adminRoot.Path));
 
