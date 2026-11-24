@@ -448,9 +448,11 @@ public static class PendingUpdates
             Actions: [new AreaAction(RemediationKind.InstallUpdate, "Install", u.Id, u.Title)])).ToList();
 
         var actions = new List<AreaAction>();
-        if (mine.Count > 1)
-            actions.Add(new(drivers ? RemediationKind.CheckAndInstallDriverUpdates : RemediationKind.CheckAndInstallWindowsUpdates,
-                drivers ? "Check & install all driver updates" : "Check & install all updates"));
+        if (drivers && mine.Count > 0)
+            actions.Add(new(RemediationKind.CheckAndInstallDriverUpdates,
+                mine.Count > 1 ? "Check & install all driver updates" : "Check & install driver updates"));
+        else if (!drivers && mine.Count > 1)
+            actions.Add(new(RemediationKind.CheckAndInstallWindowsUpdates, "Check & install all updates"));
         if (list.RebootRequired) actions.Add(RestartAction);
         var headline = mine.Count == 0 ? (drivers ? "No driver updates waiting" : "No updates waiting") : AreaModuleBase.Plural(mine.Count, word) + " waiting";
         var meta = list.RebootRequired ? "Windows is waiting for a restart to finish installing updates"

@@ -72,12 +72,17 @@ public class NewChecksTests
 
         var probCard = rep.Cards.Single(c => c.Id == "problems");
         Assert.Equal(AreaLevel.Warning, probCard.Level);
+        Assert.Equal("1 device with a problem, 1 disabled", probCard.Headline);
+        Assert.Contains("NVIDIA GeForce RTX 4070", probCard.Meta);
+        Assert.Contains("Legacy Serial Port", probCard.Meta);
+        Assert.Contains("Click to inspect and fix", probCard.Meta);
         Assert.Contains("Code 43", probCard.Rows[0].Values[2]);
         Assert.Equal(AreaLevel.Neutral, probCard.Rows[1].Level); // Code 22 disabled is neutral
 
         var drvCard = rep.Cards.Single(c => c.Id == "drivers");
         Assert.Equal(AreaLevel.Warning, drvCard.Level); // 1 unsigned driver
         Assert.Contains("1 unsigned driver", drvCard.Meta);
+        Assert.Null(drvCard.Actions);
         Assert.Contains(drvCard.Rows, r => r.Level == AreaLevel.Warning && r.Values[0] == "Custom USB Filter");
     }
 

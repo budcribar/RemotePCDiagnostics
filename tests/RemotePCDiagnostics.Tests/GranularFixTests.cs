@@ -299,6 +299,9 @@ public class GranularFixTests
         var drivers = PendingUpdates.Card(list, drivers: true);
         Assert.Equal(Id2, Assert.Single(drivers.Rows).Key);
         Assert.Equal("Realtek PCIe GbE Family Controller", drivers.Rows[0].Values[1]);
+        var driverAction = Assert.Single(drivers.Actions!);
+        Assert.Equal(RemediationKind.CheckAndInstallDriverUpdates, driverAction.Kind);
+        Assert.Equal("Check & install driver updates", driverAction.ButtonText);
         Assert.NotEqual(software.Id, drivers.Id);
     }
 
@@ -310,7 +313,10 @@ public class GranularFixTests
         var unreadable = PendingUpdates.Card(null, drivers: false);
         Assert.Equal(AreaLevel.Neutral, unreadable.Level);
         Assert.Null(unreadable.ErrorText);
-        Assert.Equal(AreaLevel.Ok, PendingUpdates.Card(new([], false), drivers: true).Level);
+        var noDrivers = PendingUpdates.Card(new([], false), drivers: true);
+        Assert.Equal(AreaLevel.Ok, noDrivers.Level);
+        Assert.Null(noDrivers.Actions);
+        Assert.Null(PendingUpdates.Card(null, drivers: true).Actions);
     }
 
     [Fact]

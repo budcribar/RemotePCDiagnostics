@@ -83,14 +83,6 @@
           }
         ],
         "emptyText": "No drivers were reported.",
-        "actions": [
-          {
-            "kind": "CheckAndInstallDriverUpdates",
-            "buttonText": "Check & install driver updates",
-            "target": "",
-            "targetLabel": ""
-          }
-        ],
         "preserveRowOrder": false
       }
     ],

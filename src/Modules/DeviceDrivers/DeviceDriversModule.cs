@@ -54,16 +54,16 @@ public sealed class DeviceDriversModule(IDeviceDriverSource source, SystemComman
             cards.Add(AreaCard.Failed("problems", "Device Manager problems", "Couldn't read Device Manager status."));
         else
         {
-            var faulting = problems.Where(p => !p.IsDisabledOnly).ToList();
-            var disabled = problems.Where(p => p.IsDisabledOnly).ToList();
+            var ordered = problems.OrderBy(p => p.IsDisabledOnly).ThenBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+            var faulting = ordered.Where(p => !p.IsDisabledOnly).ToList();
+            var disabled = ordered.Where(p => p.IsDisabledOnly).ToList();
             var level = faulting.Count > 0 ? AreaLevel.Warning : AreaLevel.Ok;
-            var headline = problems.Count == 0 ? "All devices working"
+            var headline = ordered.Count == 0 ? "All devices working"
+                : faulting.Count > 0 && disabled.Count > 0 ? $"{Plural(faulting.Count, "device")} with a problem, {disabled.Count} disabled"
                 : faulting.Count > 0 ? $"{Plural(faulting.Count, "device")} with a problem"
                 : $"{Plural(disabled.Count, "disabled device")}";
-            var meta = problems.Count == 0 ? "No Device Manager errors or missing drivers"
-                : string.Join(", ", problems.Take(2).Select(p => $"{p.Name} ({p.FriendlyError})"));
 
-            var rows = problems.OrderBy(p => p.IsDisabledOnly).ThenBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase)
+            var rows = ordered
                 .Select(p => new AreaRow(
                     p.IsDisabledOnly ? AreaLevel.Neutral : AreaLevel.Warning,
                     [p.Name, p.Class.Length > 0 ? p.Class : "Other", p.FriendlyError],
@@ -71,6 +71,13 @@ public sealed class DeviceDriversModule(IDeviceDriverSource source, SystemComman
                         ? [new AreaAction(p.IsDisabledOnly ? RemediationKind.EnableDevice : RemediationKind.RestartDevice,
                             p.IsDisabledOnly ? "Enable device" : "Restart device", p.DeviceId, p.Name)]
                         : null)).ToList();
+
+            var metaItems = ordered.Take(3).Select(p => $"{p.Name} ({p.FriendlyError})").ToList();
+            if (ordered.Count > 3) metaItems.Add($"+{ordered.Count - 3} more");
+            if (rows.Any(r => r.Actions is { Count: > 0 })) metaItems.Add("Click to inspect and fix");
+            var meta = ordered.Count == 0 ? "No Device Manager errors or missing drivers"
+                : string.Join(" · ", metaItems);
+
             cards.Add(new("problems", "Device Manager problems", level, headline, meta,
                 ["Device", "Category", "Problem"], rows,
                 EmptyText: "No devices with problems were reported by Windows.",
@@ -80,7 +87,8 @@ public sealed class DeviceDriversModule(IDeviceDriverSource source, SystemComman
                     new(RemediationKind.ScanHardwareChanges, "Scan for hardware changes"),
                 ]));
 
-            parts.Add(problems.Count == 0 ? "All devices working"
+            parts.Add(ordered.Count == 0 ? "All devices working"
+                : faulting.Count > 0 && disabled.Count > 0 ? $"{Plural(faulting.Count, "device problem")}, {disabled.Count} disabled"
                 : faulting.Count > 0 ? $"{Plural(faulting.Count, "device problem")}"
                 : $"{Plural(disabled.Count, "disabled device")}");
         }
@@ -104,8 +112,7 @@ public sealed class DeviceDriversModule(IDeviceDriverSource source, SystemComman
                 distinct.Select(d => new AreaRow(d.Signed ? AreaLevel.Neutral : AreaLevel.Warning,
                     [d.DeviceName, d.Class, d.Provider, d.Version, OsqueryDates.Format(d.Date)],
                     [null, null, null, null, OsqueryDates.SortKey(d.Date)])).ToList(),
-                EmptyText: "No drivers were reported.",
-                Actions: [new(RemediationKind.CheckAndInstallDriverUpdates, "Check & install driver updates")]));
+                EmptyText: "No drivers were reported."));
 
             parts.Add(Plural(distinct.Count, "driver") + (unsigned.Count > 0 ? $" ({unsigned.Count} unsigned)" : ""));
         }
