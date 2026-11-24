@@ -1049,37 +1049,37 @@ public static class BiosArchiveAndXml
                 var cabSlice = new byte[cbCabinet];
                 Buffer.BlockCopy(data, i, cabSlice, 0, (int)cbCabinet);
 
+                if (TryExtractCabEntries(cabSlice, out var entries, maxDecompressedBytes) && entries.Count > 0)
+                {
+                    Directory.CreateDirectory(destRoot);
+                    var written = 0;
+                    foreach (var (relName, fileBytes) in entries)
+                    {
+                        var normalizedRel = relName.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar);
+                        if (string.IsNullOrWhiteSpace(normalizedRel))
+                            continue;
+
+                        var fullPath = Path.GetFullPath(Path.Combine(destRoot, normalizedRel));
+                        if (!fullPath.StartsWith(destRootWithSep, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        var parent = Path.GetDirectoryName(fullPath);
+                        if (!string.IsNullOrEmpty(parent))
+                            Directory.CreateDirectory(parent);
+
+                        File.WriteAllBytes(fullPath, fileBytes);
+                        written++;
+                    }
+
+                    if (written > 0)
+                        return true;
+                }
+
                 if (OperatingSystem.IsWindows()
                     && TryExtractCabWithWindowsExpand(cabSlice, coffFiles, cFiles, destRoot, destRootWithSep, maxDecompressedBytes))
                 {
                     return true;
                 }
-
-                if (!TryExtractCabEntries(cabSlice, out var entries, maxDecompressedBytes) || entries.Count == 0)
-                    continue;
-
-                Directory.CreateDirectory(destRoot);
-                var written = 0;
-                foreach (var (relName, fileBytes) in entries)
-                {
-                    var normalizedRel = relName.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar);
-                    if (string.IsNullOrWhiteSpace(normalizedRel))
-                        continue;
-
-                    var fullPath = Path.GetFullPath(Path.Combine(destRoot, normalizedRel));
-                    if (!fullPath.StartsWith(destRootWithSep, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    var parent = Path.GetDirectoryName(fullPath);
-                    if (!string.IsNullOrEmpty(parent))
-                        Directory.CreateDirectory(parent);
-
-                    File.WriteAllBytes(fullPath, fileBytes);
-                    written++;
-                }
-
-                if (written > 0)
-                    return true;
             }
         }
         catch
