@@ -144,8 +144,34 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
         return null;
     }
 
+    /// <summary>
+    /// Returns a concise diagnostic summary (filename, size, WinVerifyTrust status hex, signer O=) for logging when
+    /// Authenticode verification fails on Windows. Returns <c>null</c> on non-Windows.
+    /// </summary>
+    internal static string? DescribeAuthenticodeStatus(string filePath, IReadOnlyCollection<string> allowedSignerOrganizations)
+    {
+        if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            return null;
+
+        try
+        {
+            var size = new FileInfo(filePath).Length;
+            var status = VerifyAuthenticodeStatusWindows(filePath, checkRevocation: true, CancellationToken.None);
+            var org = ReadSignerOrganization(filePath) ?? "<none>";
+            return $"file={Path.GetFileName(filePath)}, size={size}, wvt=0x{status:X8}, signer='{org}', allowed=[{string.Join(", ", allowedSignerOrganizations)}]";
+        }
+        catch (Exception ex)
+        {
+            return $"file={Path.GetFileName(filePath)}, diagError={ex.GetType().Name}";
+        }
+    }
+
     [SupportedOSPlatform("windows")]
-    private static bool VerifyAuthenticodeWindows(string filePath, bool checkRevocation, CancellationToken ct)
+    private static bool VerifyAuthenticodeWindows(string filePath, bool checkRevocation, CancellationToken ct) =>
+        VerifyAuthenticodeStatusWindows(filePath, checkRevocation, ct) == 0;
+
+    [SupportedOSPlatform("windows")]
+    private static uint VerifyAuthenticodeStatusWindows(string filePath, bool checkRevocation, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -187,12 +213,11 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
             };
 
             stateOpened = true;
-            var status = WinVerifyTrust(InvalidHandleValue, ref actionGuid, ref trustData);
-            return status == 0;
+            return WinVerifyTrust(InvalidHandleValue, ref actionGuid, ref trustData);
         }
         catch
         {
-            return false;
+            return 0xFFFFFFFF;
         }
         finally
         {

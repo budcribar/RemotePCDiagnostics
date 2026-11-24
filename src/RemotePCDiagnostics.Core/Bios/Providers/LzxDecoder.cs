@@ -411,7 +411,7 @@ internal sealed class LzxDecoder
     private static void ApplyIntelE8Reverse(byte[] data, int length, int curPosBase, int fileSize)
     {
         var limit = length - 10;
-        for (var i = 0; i <= limit; i++)
+        for (var i = 0; i < limit; i++)
         {
             if (data[i] != 0xE8)
                 continue;
