@@ -38,7 +38,10 @@
         <ul>
             @foreach (var a in Actions.Recent)
             {
-                <li>@a.When.ToString("t") · @a.Actor · @a.Message</li>
+                <li class="@(a.Success ? "svc-recent-ok" : "svc-recent-fail")" data-outcome="@(a.Success ? "succeeded" : "failed")">
+                    <span class="dot @(a.Success ? "dot-ok" : "dot-error")" aria-hidden="true"></span>
+                    <span>@a.When.ToString("t") · @a.Actor · @a.Message</span>
+                </li>
             }
         </ul>
     </div>

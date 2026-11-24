@@ -57,7 +57,9 @@ public sealed class DeviceDriversModule(IDeviceDriverSource source, SystemComman
             var ordered = problems.OrderBy(p => p.IsDisabledOnly).ThenBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
             var faulting = ordered.Where(p => !p.IsDisabledOnly).ToList();
             var disabled = ordered.Where(p => p.IsDisabledOnly).ToList();
-            var level = faulting.Count > 0 ? AreaLevel.Warning : AreaLevel.Ok;
+            var level = faulting.Count > 0 ? AreaLevel.Warning
+                : disabled.Count > 0 ? AreaLevel.Neutral
+                : AreaLevel.Ok;
             var headline = ordered.Count == 0 ? "All devices working"
                 : faulting.Count > 0 && disabled.Count > 0 ? $"{Plural(faulting.Count, "device")} with a problem, {disabled.Count} disabled"
                 : faulting.Count > 0 ? $"{Plural(faulting.Count, "device")} with a problem"

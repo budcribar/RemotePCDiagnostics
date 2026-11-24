@@ -87,6 +87,15 @@ public class NewChecksTests
     }
 
     [Fact]
+    public void DeviceDrivers_DisabledOnlyUsesNeutralCardLevel()
+    {
+        var rep = DeviceDriversModule.Build([new("Poly Camera Pro", "Camera", "USB\\VID_0001", 22, "Error")], []);
+        var probCard = rep.Cards.Single(c => c.Id == "problems");
+        Assert.Equal(AreaLevel.Neutral, probCard.Level);
+        Assert.Equal("1 disabled device", probCard.Headline);
+    }
+
+    [Fact]
     public void BsodHistory_DetectsRecentBugChecksAndMinidumps()
     {
         var now = new DateTimeOffset(2026, 10, 30, 12, 0, 0, TimeSpan.Zero);
