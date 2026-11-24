@@ -71,8 +71,16 @@ public static class PendingUpdates
     [SupportedOSPlatform("windows")]
     private static async Task<PendingUpdateList?> ReadOnceWindowsAsync(CancellationToken ct)
     {
+        var acquired = false;
         try
         {
+            acquired = await Session.AgentWindowsUpdate.WuaSearchLock.WaitAsync(Timeout, ct).ConfigureAwait(false);
+            if (!acquired)
+            {
+                Invalidate();
+                return null;
+            }
+
             var list = await Task.Run(() => ReadWindows(DateTimeOffset.UtcNow), CancellationToken.None)
                 .WaitAsync(Timeout, ct)
                 .ConfigureAwait(false);
@@ -93,6 +101,11 @@ public static class PendingUpdates
         {
             Invalidate();
             return null;
+        }
+        finally
+        {
+            if (acquired)
+                Session.AgentWindowsUpdate.WuaSearchLock.Release();
         }
     }
 
