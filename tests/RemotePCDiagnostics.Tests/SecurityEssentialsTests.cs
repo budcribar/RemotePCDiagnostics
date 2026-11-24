@@ -199,4 +199,23 @@ public class SecurityEssentialsTests
         Assert.True(((IDiagnosticModule)m).IncludeInRunAll);
         Assert.Equal(ModuleSlugs.SecurityEssentials, m.Name);
     }
+
+    [Fact]
+    public void SecureBoot_card_surfaces_2023_cert_servicing_details()
+    {
+        var facts = Hardened with
+        {
+            SecureBootServicing = new SecureBootServicingFacts(
+                UefiCa2023Status: "InProgress",
+                WindowsUefiCa2023Capable: 2,
+                UefiCa2023Error: 0x800700C1,
+                UefiCa2023ErrorEvent: 1796,
+                AvailableUpdates: 0x4000),
+        };
+        var card = Card(SecurityEssentialsModule.Build(facts), "secureboot");
+        Assert.Equal(AreaLevel.Ok, card.Level);
+        Assert.Contains(card.Rows, r => r.Values[0] == "2023 Secure Boot certs" && r.Values[1] == "InProgress (2023 CA & boot manager)");
+        Assert.Contains(card.Rows, r => r.Values[0] == "2023 cert servicing error" && r.Values[1] == "0x800700C1 (Event 1796)");
+        Assert.Contains(card.Rows, r => r.Values[0] == "Pending Secure Boot updates" && r.Values[1] == "0x4000");
+    }
 }

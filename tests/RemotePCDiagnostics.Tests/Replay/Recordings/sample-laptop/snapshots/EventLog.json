@@ -138,7 +138,8 @@
               null,
               "2026-11-21T08:00:00"
             ],
-            "detail": "2× (last Nov 21, 8:00 AM): The Sample Updater service failed to start due to the following error:"
+            "detail": "2× (last Nov 21, 8:00 AM): The Sample Updater service failed to start due to the following error:",
+            "eventCopyText": "Source: Service Control Manager\nLog: System\n\n2× | Event ID: 7000 | Last: 2026-11-21T08:00:00.0000000+00:00\nThe Sample Updater service failed to start due to the following error: \nThe system cannot find the file specified."
           },
           {
             "level": "Warning",
@@ -154,7 +155,8 @@
               null,
               "2026-11-19T12:00:00"
             ],
-            "detail": "1× (last Nov 19, 12:00 PM): The application-specific permission settings do not grant Local Activation permission for the COM Server application."
+            "detail": "1× (last Nov 19, 12:00 PM): The application-specific permission settings do not grant Local Activation permission for the COM Server application.",
+            "eventCopyText": "Source: Microsoft-Windows-DistributedCOM\nLog: System\n\n1× | Event ID: 10016 | Last: 2026-11-19T12:00:00.0000000+00:00\nThe application-specific permission settings do not grant Local Activation permission for the COM Server application."
           },
           {
             "level": "Warning",
@@ -170,7 +172,8 @@
               null,
               "2026-11-18T10:00:00"
             ],
-            "detail": "1× (last Nov 18, 10:00 AM): License Activation (slui.exe) failed with the following error code: hr=0x8007267C"
+            "detail": "1× (last Nov 18, 10:00 AM): License Activation (slui.exe) failed with the following error code: hr=0x8007267C",
+            "eventCopyText": "Source: Microsoft-Windows-Security-SPP\nLog: Application\n\n1× | Event ID: 8198 | Last: 2026-11-18T10:00:00.0000000+00:00\nLicense Activation (slui.exe) failed with the following error code: hr=0x8007267C"
           }
         ],
         "note": "Click a source to see what it reported.",

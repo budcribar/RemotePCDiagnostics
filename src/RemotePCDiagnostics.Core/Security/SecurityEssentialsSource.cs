@@ -39,12 +39,32 @@ public sealed record SecurityFacts(bool? SecureBoot, string? Firmware, string? E
     public IReadOnlyDictionary<char, int> Drives { get; init; } = new Dictionary<char, int>();
     /// <summary>AllowInsecureGuestAuth (policy first, then the LanmanWorkstation parameter), null when neither is set.</summary>
     public long? InsecureGuest { get; init; }
+    /// <summary>Secure Boot 2023 certificate servicing state from <c>Control\SecureBoot\Servicing</c>, or null when unavailable.</summary>
+    public SecureBootServicingFacts? SecureBootServicing { get; init; }
 
     public bool IsUefi => string.Equals(Firmware, "UEFI", StringComparison.OrdinalIgnoreCase);
     public bool IsLegacy => string.Equals(Firmware, "Legacy", StringComparison.OrdinalIgnoreCase);
     public bool IsHome => Edition is { } e && e.StartsWith("Core", StringComparison.OrdinalIgnoreCase);
     /// <summary>Defender is the active antivirus, so its settings apply (another antivirus puts it in passive mode).</summary>
     public bool DefenderActive => string.Equals(DefenderMode, "Normal", StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// Read-only Secure Boot 2023 certificate servicing state under <c>HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot</c>.
+/// </summary>
+public sealed record SecureBootServicingFacts(
+    string? UefiCa2023Status,
+    int? WindowsUefiCa2023Capable,
+    long? UefiCa2023Error,
+    long? UefiCa2023ErrorEvent,
+    long? AvailableUpdates)
+{
+    public bool HasAnyData =>
+        !string.IsNullOrWhiteSpace(UefiCa2023Status)
+        || WindowsUefiCa2023Capable.HasValue
+        || UefiCa2023Error.HasValue
+        || UefiCa2023ErrorEvent.HasValue
+        || AvailableUpdates.HasValue;
 }
 
 /// <summary>The lines of <c>tpmtool getdeviceinformation</c> this check uses.</summary>
@@ -130,6 +150,8 @@ public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource 
     /// under Control would say it directly, but Windows sets it only in Windows PE: both test laptops have none.)
     /// </summary>
     public const string SecureBootKey = @"SYSTEM\CurrentControlSet\Control\SecureBoot\State";
+    public const string SecureBootRootKey = @"SYSTEM\CurrentControlSet\Control\SecureBoot";
+    public const string SecureBootServicingKey = @"SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing";
     public const string CurrentVersionKey = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
     public const string GuestParametersKey = @"SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters";
 
@@ -153,6 +175,14 @@ public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource 
             PsKey(psKey) is var (root, path) ? await One(root, path, values).ConfigureAwait(false) : null;
 
         var secureBoot = await One(RegistryRoot.LocalMachine, SecureBootKey, "UEFISecureBootEnabled").ConfigureAwait(false);
+        var secureBootRoot = await One(RegistryRoot.LocalMachine, SecureBootRootKey, "AvailableUpdates").ConfigureAwait(false);
+        var secureBootServicing = await One(
+            RegistryRoot.LocalMachine,
+            SecureBootServicingKey,
+            "UEFICA2023Status",
+            "WindowsUEFICA2023Capable",
+            "UEFICA2023Error",
+            "UEFICA2023ErrorEvent").ConfigureAwait(false);
         var edition = await One(RegistryRoot.LocalMachine, CurrentVersionKey, "EditionID").ConfigureAwait(false);
         var llmnr = await Policy(SecurityFixes.LlmnrKey, SecurityFixes.LlmnrValue).ConfigureAwait(false);
         var autoRun = await Policy(SecurityFixes.AutoRunKey, SecurityFixes.AutoRunValue, SecurityFixes.AutoRunLettersValue).ConfigureAwait(false);
@@ -175,6 +205,12 @@ public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource 
         var systemDrive = os?.Str("SystemDrive") is { Length: 2 } sd && char.IsAsciiLetter(sd[0]) && sd[1] == ':' ? char.ToUpperInvariant(sd[0]) + ":" : "C:";
         var volume = volumes?.FirstOrDefault(v => string.Equals(v.Str("DriveLetter"), systemDrive, StringComparison.OrdinalIgnoreCase));
         var secureBootValue = secureBoot?.Long("UEFISecureBootEnabled");
+        var servicingFacts = new SecureBootServicingFacts(
+            UefiCa2023Status: secureBootServicing?.Str("UEFICA2023Status") is { Length: > 0 } st ? st : null,
+            WindowsUefiCa2023Capable: Int(secureBootServicing, "WindowsUEFICA2023Capable"),
+            UefiCa2023Error: secureBootServicing?.Long("UEFICA2023Error"),
+            UefiCa2023ErrorEvent: secureBootServicing?.Long("UEFICA2023ErrorEvent"),
+            AvailableUpdates: secureBootRoot?.Long("AvailableUpdates"));
         return new SecurityFacts(
             secureBootValue is { } sb ? sb != 0 : null,
             secureBootValue is not null ? "UEFI" : null,
@@ -196,6 +232,7 @@ public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource 
             AutoRunLetterPolicy = autoRun?.Long(SecurityFixes.AutoRunLettersValue) ?? autoRunUser?.Long(SecurityFixes.AutoRunLettersValue),
             Drives = Drives(drives),
             InsecureGuest = guestPolicy?.Long(SecurityFixes.GuestValue) ?? guestParameter?.Long(SecurityFixes.GuestValue),
+            SecureBootServicing = servicingFacts.HasAnyData ? servicingFacts : null,
         };
     }
 

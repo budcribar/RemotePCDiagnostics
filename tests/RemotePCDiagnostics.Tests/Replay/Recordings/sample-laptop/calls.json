@@ -369,6 +369,18 @@
     {
       "kind": "registry",
       "namespace": "HKLM",
+      "query": "SYSTEM\\CurrentControlSet\\Control\\SecureBoot: AvailableUpdates",
+      "rows": []
+    },
+    {
+      "kind": "registry",
+      "namespace": "HKLM",
+      "query": "SYSTEM\\CurrentControlSet\\Control\\SecureBoot\\Servicing: UEFICA2023Status, WindowsUEFICA2023Capable, UEFICA2023Error, UEFICA2023ErrorEvent",
+      "rows": []
+    },
+    {
+      "kind": "registry",
+      "namespace": "HKLM",
       "query": "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion: EditionID",
       "rows": [
         {

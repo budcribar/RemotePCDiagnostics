@@ -84,12 +84,46 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
             null when f.IsLegacy => (AreaLevel.Warning, "Legacy BIOS mode", "This PC starts in legacy BIOS mode, so Secure Boot isn't available."),
             _ => (AreaLevel.Neutral, "Secure Boot not reported", "Windows didn't report a Secure Boot state on this PC."),
         };
-        return new("secureboot", "Secure Boot", level, headline, f.IsUefi ? "UEFI startup" : "", Cols,
-        [
+        var rows = new List<AreaRow>
+        {
             Row(level, "Secure Boot", f.SecureBoot switch { true => "On", false => "Off", _ => "Not available" }),
             Row(AreaLevel.Neutral, "Startup mode", f.IsUefi ? "UEFI" : f.IsLegacy ? "Legacy BIOS" : "Not reported"),
-            Means(impact),
-        ], Note: f.SecureBoot == false ? FirmwareHint + " Windows already starts in UEFI mode, so it keeps booting normally. Only unsigned boot software (for example some Linux installs) would stop loading." : null);
+        };
+        if (f.SecureBootServicing is { } sbs)
+        {
+            var (certLevel, certText) = FormatSecureBoot2023Status(sbs);
+            if (certText is not null)
+                rows.Add(Row(certLevel, "2023 Secure Boot certs", certText));
+
+            if (sbs.UefiCa2023Error is > 0)
+            {
+                var errHex = $"0x{unchecked((uint)sbs.UefiCa2023Error.Value):X8}";
+                var errText = sbs.UefiCa2023ErrorEvent is > 0
+                    ? $"{errHex} (Event {sbs.UefiCa2023ErrorEvent.Value})"
+                    : errHex;
+                rows.Add(Row(AreaLevel.Warning, "2023 cert servicing error", errText));
+            }
+
+            if (sbs.AvailableUpdates is > 0)
+                rows.Add(Row(AreaLevel.Neutral, "Pending Secure Boot updates", $"0x{unchecked((uint)sbs.AvailableUpdates.Value):X4}"));
+        }
+        rows.Add(Means(impact));
+        return new("secureboot", "Secure Boot", level, headline, f.IsUefi ? "UEFI startup" : "", Cols, rows,
+            Note: f.SecureBoot == false ? FirmwareHint + " Windows already starts in UEFI mode, so it keeps booting normally. Only unsigned boot software (for example some Linux installs) would stop loading." : null);
+    }
+
+    private static (AreaLevel Level, string? Text) FormatSecureBoot2023Status(SecureBootServicingFacts sbs)
+    {
+        var status = sbs.UefiCa2023Status?.Trim();
+        return sbs.WindowsUefiCa2023Capable switch
+        {
+            2 => (AreaLevel.Ok, string.IsNullOrEmpty(status) ? "Updated (2023 CA & boot manager)" : $"{status} (2023 CA & boot manager)"),
+            1 => (AreaLevel.Neutral, string.IsNullOrEmpty(status) ? "2023 CA in firmware (boot manager pending)" : $"{status} (2023 CA in firmware)"),
+            0 => (AreaLevel.Neutral, string.IsNullOrEmpty(status) ? "Not yet in firmware" : $"{status} (not yet in firmware)"),
+            _ => string.IsNullOrEmpty(status)
+                ? (AreaLevel.Neutral, null)
+                : (string.Equals(status, "Updated", StringComparison.OrdinalIgnoreCase) ? AreaLevel.Ok : AreaLevel.Neutral, status),
+        };
     }
 
     private static AreaCard TpmCard(SecurityFacts f)
