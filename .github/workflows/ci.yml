@@ -915,7 +915,7 @@ jobs:
 
   smoke:
     name: MSIX and Playwright smoke test
-    if: ${{ inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]')) }}
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.testshop_release || inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[full-release]') || contains(github.event.head_commit.message, '[testshop-release]'))) || (github.event_name == 'pull_request' && (contains(github.event.pull_request.title, '[full-release]') || contains(github.event.pull_request.title, '[testshop-release]'))) }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -934,6 +934,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 -StageOnly failed ($LASTEXITCODE)" }
 
       - name: Build Microsoft Store MSIX package
+        if: env.FULL_RELEASE == 'true'
         shell: pwsh
         env:
           INPUT_MSIX_IDENTITY_NAME: ${{ inputs.msix_identity_name || vars.MSIX_IDENTITY_NAME }}
@@ -990,7 +991,7 @@ jobs:
             try {
               node smoke.mjs 2>&1 | Tee-Object -FilePath (Join-Path $art 'smoke.txt')
               $code = $LASTEXITCODE
-              if ($code -eq 0) {
+              if ($code -eq 0 -and $env:FULL_RELEASE -eq 'true') {
                 node store-screenshots.mjs 2>&1 | Tee-Object -FilePath (Join-Path $art 'store-screenshots.txt')
                 $code = $LASTEXITCODE
               }
@@ -1181,7 +1182,7 @@ jobs:
   release-testshop:
     name: Publish TestShop release (x64 + ARM64)
     if: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.testshop_release)) && !(inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]'))) }}
-    needs: [build-test, testshop, testshop-arm64]
+    needs: [build-test, smoke, testshop, testshop-arm64]
     runs-on: ubuntu-latest
     concurrency:
       group: github-release
