@@ -117,6 +117,45 @@ public class AutoRunTests
         await svc.RunAsync("Osquery").WaitAsync(Wait);
         Assert.Equal(2, calls);
     }
+
+    [Fact]
+    public async Task BackgroundAutoRun_MarkedAsBackground_AndUpgradedWhenUserStartsRun()
+    {
+        var gate = new TaskCompletionSource();
+        var m = new FakeModule("Osquery", async _ => { await gate.Task; return FakeModule.Ok("Osquery"); });
+        var svc = new DiagnosticsService(new ResultStore(), [m]);
+        var auto = AutoRun.Start(svc, _ => null, null, "Osquery")[0];
+        Assert.True(svc.IsBackgroundAutoRun("Osquery"));
+
+        // Joining the same in-flight run from a manual user action upgrades it to a blocking user check.
+        var manual = svc.RunAsync("Osquery");
+        Assert.False(svc.IsBackgroundAutoRun("Osquery"));
+
+        gate.SetResult();
+        await Task.WhenAll(auto, manual).WaitAsync(Wait);
+        Assert.False(svc.IsBackgroundAutoRun("Osquery"));
+    }
+
+    [Fact]
+    public async Task StartEnabledChecksAsync_RunsPriorityFirst_AndDelaysSlowerChecks()
+    {
+        var slowStarted = new TaskCompletionSource();
+        var fastDone = new TaskCompletionSource();
+        var fast = new FakeModule(ModuleSlugs.Osquery, _ => { fastDone.TrySetResult(); return Task.FromResult(FakeModule.Ok(ModuleSlugs.Osquery)); });
+        var slow = new FakeModule("SlowCheck", _ => { slowStarted.TrySetResult(); return Task.FromResult(FakeModule.Ok("SlowCheck")); });
+        var svc = new DiagnosticsService(new ResultStore(), [fast, slow]);
+
+        using var cts = new CancellationTokenSource();
+        var run = AutoRun.StartEnabledChecksAsync(svc, null, _ => null, null, slowChecksDelay: TimeSpan.FromSeconds(5), ct: cts.Token);
+
+        await fastDone.Task.WaitAsync(Wait);
+        // Slow check must not have started yet during the delay window.
+        Assert.False(slowStarted.Task.IsCompleted);
+
+        cts.Cancel();
+        await run.WaitAsync(Wait);
+        Assert.False(slowStarted.Task.IsCompleted);
+    }
 }
 
 public class OsqueryDiagnosticsAndFallbackTests

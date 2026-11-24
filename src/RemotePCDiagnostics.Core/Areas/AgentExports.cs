@@ -61,7 +61,7 @@ public static class AgentExports
     // ---- Activity ---------------------------------------------------------------------------------------------------------
 
     /// <summary>A check or scan running now. <c>Progress</c> is its latest sub-step, when it reports one.</summary>
-    public sealed record RunningCheck(string Id, string Title, Guid? RunId, CheckProgress? Progress);
+    public sealed record RunningCheck(string Id, string Title, Guid? RunId, CheckProgress? Progress, bool BackgroundAutoRun = false);
 
     /// <summary>A group run on the Checks &amp; Tests screen: Run all, the ticked checks, or the ticked stress and separate tests.</summary>
     public sealed record SequenceRun(CheckGroup Group, bool RunAll, GroupRunProgress? Progress, IReadOnlyList<string> Remaining);
@@ -90,16 +90,18 @@ public static class AgentExports
 
     /// <summary>
     /// Why an RPCD update must not start, or null when nothing it would interrupt is running.
-    /// A check, a fix, an active service-workflow stage, a stress test, or a benchmark.
+    /// A user-started check, a fix, an active service-workflow stage, a stress test, or a benchmark.
+    /// Passive launch-time background AutoRun checks are read-only and never block an RPCD update.
     /// Review, Idle, Done, Cancelled and Failed are not running. A refusal names the stage.
     /// </summary>
     public static string? UpdateBlockReason(ActivitySnapshot s)
     {
         var reasons = new List<string>();
-        if (s.Checks.Count == 1)
-            reasons.Add($"A check is running ({s.Checks[0].Id}).");
-        else if (s.Checks.Count > 1)
-            reasons.Add($"{s.Checks.Count} checks are running.");
+        var blockingChecks = s.Checks.Where(c => !c.BackgroundAutoRun).ToList();
+        if (blockingChecks.Count == 1)
+            reasons.Add($"A check is running ({blockingChecks[0].Id}).");
+        else if (blockingChecks.Count > 1)
+            reasons.Add($"{blockingChecks.Count} checks are running.");
         if (s.Sequence is { } sequence)
             reasons.Add(sequence.Group == CheckGroup.Stress
                 ? "A stress test sequence is running."

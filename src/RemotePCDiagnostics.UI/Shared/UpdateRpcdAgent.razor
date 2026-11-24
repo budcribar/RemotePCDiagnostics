@@ -62,7 +62,7 @@
     {
         var checks = Diagnostics.RunningModules.Select(run => new AgentExports.RunningCheck(run.ModuleName,
             Diagnostics.Modules.FirstOrDefault(m => string.Equals(m.Name, run.ModuleName, StringComparison.OrdinalIgnoreCase))?.DisplayName ?? run.ModuleName,
-            run.RunId, Diagnostics.GetProgress(run.ModuleName))).ToList();
+            run.RunId, Diagnostics.GetProgress(run.ModuleName), Diagnostics.IsBackgroundAutoRun(run.ModuleName))).ToList();
         var sequence = Screen.RunningGroup is { } group
             ? new AgentExports.SequenceRun(group, Screen.IsRunAll, Screen.Progress, Screen.RemainingSteps())
             : null;

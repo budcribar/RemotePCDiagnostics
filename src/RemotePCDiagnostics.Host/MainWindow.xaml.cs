@@ -171,7 +171,8 @@ public partial class MainWindow : Window
                     provider.GetRequiredService<DiagnosticsService>(),
                     provider.GetService<RemotePCDiagnostics.Core.Checks.CheckSettingsService>(),
                     Environment.GetEnvironmentVariable,
-                    App.Loggers.CreateLogger(typeof(AutoRun).FullName!)).ConfigureAwait(false);
+                    App.Loggers.CreateLogger(typeof(AutoRun).FullName!),
+                    slowChecksDelay: TimeSpan.FromSeconds(15)).ConfigureAwait(false);
             });
         }
         else
@@ -180,7 +181,8 @@ public partial class MainWindow : Window
                 provider.GetRequiredService<DiagnosticsService>(),
                 provider.GetService<RemotePCDiagnostics.Core.Checks.CheckSettingsService>(),
                 Environment.GetEnvironmentVariable,
-                App.Loggers.CreateLogger(typeof(AutoRun).FullName!));
+                App.Loggers.CreateLogger(typeof(AutoRun).FullName!),
+                slowChecksDelay: TimeSpan.FromSeconds(15));
         }
         StartupProfiler.Mark("AutoRunDispatched");
 
