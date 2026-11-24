@@ -59,6 +59,7 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
         lock (_scanGate) _scan = scan;
         var gateTaken = false;
         double lastPercent = -1;
+        long lastEmitTickMs = 0;
         RemotePCDiagnostics.Core.Osquery.ProcessResult? result;
         try
         {
@@ -76,11 +77,7 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
             result = await commands.RunAsync(exe, args, TimeSpan.FromMinutes(30), scan.Token, line =>
             {
                 if (scan.IsCancellationRequested) return;
-                var match = System.Text.RegularExpressions.Regex.Match(line.Replace("\0", ""), @"(?<![\d.])(\d{1,3}(?:[.,]\d+)?)\s*%");
-                if (!match.Success || !double.TryParse(match.Groups[1].Value.Replace(',', '.'),
-                    System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var percent)
-                    || percent > 100 || percent <= lastPercent) return;
-                lastPercent = percent;
+                if (!TryAcceptProgressPercent(line, ref lastPercent, ref lastEmitTickMs, out var percent)) return;
                 progress.ReportStep((int)Math.Round(percent), 100, "Scanning…");
                 RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, $"Scan {percent:0.#}% complete", started, percent));
             }).ConfigureAwait(false);
@@ -123,6 +120,46 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
             }, summary, result is null ? "Scan did not return an exit code" : $"Exit code {result.ExitCode}",
             ["Detail", "Value"], rows, Actions: CardActions(status) is { Count: > 0 } actions ? actions : null)], summary, status)
         { CouldNotRunReason = couldNotRun };
+    }
+
+    internal const long ProgressThrottleMs = 500;
+
+    /// <summary>
+    /// Parses a monotonically increasing percentage (0..100) from a DISM/SFC output line and throttles
+    /// emissions to at most once every <paramref name="minIntervalMs"/> ms (always emitting the first reading
+    /// and 100%). Shared between integrity scans and <see cref="WindowsRepair"/>.
+    /// </summary>
+    internal static bool TryAcceptProgressPercent(
+        string line,
+        ref double lastPercent,
+        ref long lastEmitTickMs,
+        out double percent,
+        long minIntervalMs = ProgressThrottleMs,
+        long? nowTickMs = null)
+    {
+        percent = 0;
+        var match = System.Text.RegularExpressions.Regex.Match(line.Replace("\0", ""), @"(?<![\d.])(\d{1,3}(?:[.,]\d+)?)\s*%");
+        if (!match.Success
+            || !double.TryParse(match.Groups[1].Value.Replace(',', '.'),
+                System.Globalization.NumberStyles.AllowDecimalPoint,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var parsed)
+            || parsed > 100
+            || parsed <= lastPercent)
+        {
+            return false;
+        }
+
+        var now = nowTickMs ?? Environment.TickCount64;
+        var isFirst = lastPercent < 0;
+        var isComplete = parsed >= 100;
+        if (!isFirst && !isComplete && minIntervalMs > 0 && now - lastEmitTickMs < minIntervalMs)
+            return false;
+
+        lastPercent = parsed;
+        lastEmitTickMs = now;
+        percent = parsed;
+        return true;
     }
 
     /// <summary>Warning when corruption was reported, Ok when the clean message came with exit code 0, otherwise Error.</summary>

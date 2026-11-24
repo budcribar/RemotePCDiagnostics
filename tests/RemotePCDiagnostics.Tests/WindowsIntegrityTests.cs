@@ -249,8 +249,33 @@ public class WindowsIntegrityTests
         var r = await dism.RefreshAsync(progress);
 
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
-        Assert.Equal([(0, 100), (20, 100), (60, 100), (100, 100)], steps.Select(s => (s.Step, s.Total)).ToList());
+        // Synchronous burst in <500ms emits initial 0%, first reading (20%), throttles intermediate 60.5%, and always emits 100%.
+        Assert.Equal([(0, 100), (20, 100), (100, 100)], steps.Select(s => (s.Step, s.Total)).ToList());
         Assert.Contains(steps, s => s.Step == 20 && s.Message == "Scanning…");
+    }
+
+    [Fact]
+    public void TryAcceptProgressPercent_ThrottlesTo500MsAndAlwaysEmitsFirstAnd100()
+    {
+        double last = -1;
+        long lastTick = 0;
+
+        Assert.True(WindowsIntegrityModule.TryAcceptProgressPercent("[==== 20.0% ====]", ref last, ref lastTick, out var p1, nowTickMs: 1000));
+        Assert.Equal(20.0, p1);
+
+        // Within 500ms window -> throttled
+        Assert.False(WindowsIntegrityModule.TryAcceptProgressPercent("[==== 25.5% ====]", ref last, ref lastTick, out _, nowTickMs: 1200));
+
+        // After 500ms window -> emitted
+        Assert.True(WindowsIntegrityModule.TryAcceptProgressPercent("[=========== 60.5% ===========]", ref last, ref lastTick, out var p2, nowTickMs: 1500));
+        Assert.Equal(60.5, p2);
+
+        // Within 500ms window -> throttled
+        Assert.False(WindowsIntegrityModule.TryAcceptProgressPercent("[=========== 80.0% ===========]", ref last, ref lastTick, out _, nowTickMs: 1700));
+
+        // 100% is always emitted even within 500ms
+        Assert.True(WindowsIntegrityModule.TryAcceptProgressPercent("[==========================100.0%==========================]", ref last, ref lastTick, out var p3, nowTickMs: 1750));
+        Assert.Equal(100.0, p3);
     }
 
     [Fact]

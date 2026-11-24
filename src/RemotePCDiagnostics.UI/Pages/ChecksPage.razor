@@ -179,7 +179,20 @@
     private CheckGroup _group => ChecksScreenState.GroupForPath(Nav.ToBaseRelativePath(Nav.Uri));
     private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e) { try { _ = InvokeAsync(StateHasChanged); } catch { } }
 
-    private void OnScreenChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
+    private int _renderQueued;
+    private void OnScreenChanged()
+    {
+        if (Interlocked.Exchange(ref _renderQueued, 1) != 0) return;
+        try
+        {
+            _ = InvokeAsync(() =>
+            {
+                Interlocked.Exchange(ref _renderQueued, 0);
+                StateHasChanged();
+            });
+        }
+        catch { Interlocked.Exchange(ref _renderQueued, 0); }
+    }
 
     private string? _dragCheckId;
     private string? _dropCheckId;

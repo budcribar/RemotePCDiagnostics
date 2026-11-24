@@ -503,7 +503,20 @@
         try { await JS.InvokeVoidAsync("rpdCheckPrefs.save", App.CheckSettings.Settings.ToJson()); } catch { }
     }
 
-    private void OnScreenChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
+    private int _renderQueued;
+    private void OnScreenChanged()
+    {
+        if (Interlocked.Exchange(ref _renderQueued, 1) != 0) return;
+        try
+        {
+            _ = InvokeAsync(() =>
+            {
+                Interlocked.Exchange(ref _renderQueued, 0);
+                StateHasChanged();
+            });
+        }
+        catch { Interlocked.Exchange(ref _renderQueued, 0); }
+    }
 
     public ValueTask DisposeAsync()
     {
