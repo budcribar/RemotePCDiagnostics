@@ -653,7 +653,7 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
             redactingProgress?.Report(new BiosInstallProgress(
                 BiosInstallStage.Staging,
                 0,
-                $"Staging Microsoft Surface firmware update {target ?? "package"}..."));
+                "Staging Microsoft Surface firmware update…"));
             redactingProgress?.Report(new BiosInstallProgress(
                 BiosInstallStage.Installing,
                 50,

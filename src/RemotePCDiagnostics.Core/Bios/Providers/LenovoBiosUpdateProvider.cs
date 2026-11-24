@@ -478,7 +478,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             progress?.Report(new BiosInstallProgress(
                 BiosInstallStage.Staging,
                 0,
-                $"Staging Lenovo BIOS update {targetVersion ?? "package"}..."));
+                "Staging Lenovo BIOS update…"));
             progress?.Report(new BiosInstallProgress(
                 BiosInstallStage.Installing,
                 50,
