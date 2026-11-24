@@ -119,4 +119,26 @@ public class EventLogTests
         Assert.Equal(DiagnosticStatus.Warning, rep.Status);
         Assert.Equal(AreaLevel.Warning, rep.Cards.Single(c => c.Id == "system").Level);
     }
+
+    [Fact]
+    public void MostFrequent_EventCopyText_IncludesEventIdsAndFullMultilineMessages()
+    {
+        var longMultiline =
+            "The Secure Boot update Option ROM CA 2023 (DB) was blocked due to a known firmware issue on the device. " +
+            "Check with your device vendor for a firmware update that addresses the issue. This device signature information is included here.\n" +
+            "BucketId: abc123\n" +
+            "DeviceAttributes: BaseBoardProduct:8CBE;FirmwareVersion:F.34";
+
+        var xml = Ev("Microsoft-Windows-TPM-WMI", 1796, 2, "2026-11-23T16:28:00Z", longMultiline)
+            + Ev("Microsoft-Windows-TPM-WMI", 1796, 2, "2026-11-23T15:28:00Z", longMultiline);
+        var events = WindowsEventLog.Parse(xml, "System").ToList();
+        var rep = EventLogModule.Build(events, []);
+        var row = rep.Cards.Single(c => c.Id == "sources").Rows.Single();
+
+        Assert.NotNull(row.EventCopyText);
+        Assert.Contains("Event ID: 1796", row.EventCopyText);
+        Assert.Contains("2×", row.EventCopyText);
+        Assert.Contains("BucketId: abc123", row.EventCopyText);
+        Assert.Contains("BaseBoardProduct:8CBE;FirmwareVersion:F.34", row.EventCopyText);
+    }
 }

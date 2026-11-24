@@ -94,6 +94,30 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
             .Take(MaxSourceMessages)
             .Select(m => $"{m.Count()}× (last {WindowsEventLog.FormatTime(m.Max(e => e.Time))}): {m.Key}"));
 
+    /// <summary>
+    /// Full, untruncated copy text for a "Most frequent" source row, including Event IDs, counts,
+    /// ISO-8601 timestamps, and complete multi-line event messages (e.g., TPM-WMI DeviceAttributes).
+    /// </summary>
+    public static string SourceCopyText(IEnumerable<WinEvent> events)
+    {
+        var list = events.ToList();
+        if (list.Count == 0) return "";
+        var first = list[0];
+        var header = $"Source: {first.Provider}\nLog: {first.Channel}";
+        var blocks = list
+            .GroupBy(e => (e.EventId, e.ShortMessage))
+            .OrderByDescending(m => m.Count())
+            .ThenByDescending(m => m.Max(e => e.Time))
+            .Take(MaxSourceMessages)
+            .Select(m =>
+            {
+                var latest = m.OrderByDescending(e => e.Time).First();
+                var full = latest.Message.Trim();
+                return $"{m.Count()}× | Event ID: {latest.EventId} | Last: {latest.Time:O}\n{full}";
+            });
+        return header + "\n\n" + string.Join("\n\n", blocks);
+    }
+
     public static AreaReport Build(IReadOnlyList<WinEvent>? system, IReadOnlyList<WinEvent>? app)
     {
         if (system is null && app is null) return AreaReport.Failed("Couldn't read the Windows error log on this PC.");
@@ -127,7 +151,7 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
             groups.Select(g => new AreaRow(g.Any(e => e.Level == 1) ? AreaLevel.Error : AreaLevel.Warning,
                 [SourceOf(g.First()), string.Equals(g.First().Channel, "System", StringComparison.OrdinalIgnoreCase) ? "Windows" : "Apps", g.Count().ToString(), WindowsEventLog.FormatTime(g.Max(e => e.Time))],
                 [null, null, null, AreaSort.TimeKey(g.Max(e => e.Time))],
-                Detail: SourceDetail(g), ReviewKeys: g.Select(EventReviews.Key).ToList())).ToList(),
+                Detail: SourceDetail(g), EventCopyText: SourceCopyText(g), ReviewKeys: g.Select(EventReviews.Key).ToList())).ToList(),
             Note: "Click a source to see what it reported."));
 
         var summary = system is not null && app is not null && all.Count == 0
