@@ -1048,6 +1048,10 @@ public static class BiosArchiveAndXml
 
                 var cabSlice = new byte[cbCabinet];
                 Buffer.BlockCopy(data, i, cabSlice, 0, (int)cbCabinet);
+
+                if (OperatingSystem.IsWindows() && TryExtractCabWithWindowsExpand(cabSlice, destRoot))
+                    return true;
+
                 if (!TryExtractCabEntries(cabSlice, out var entries, maxDecompressedBytes) || entries.Count == 0)
                     continue;
 
@@ -1081,6 +1085,56 @@ public static class BiosArchiveAndXml
         }
 
         return false;
+    }
+
+    private static bool TryExtractCabWithWindowsExpand(byte[] cabSlice, string destRoot)
+    {
+        string? tempCabPath = null;
+        try
+        {
+            Directory.CreateDirectory(destRoot);
+            var parentDir = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(destRoot)) ?? Path.GetTempPath();
+            tempCabPath = Path.Combine(parentDir, $"embedded-{Guid.NewGuid():N}.cab");
+            File.WriteAllBytes(tempCabPath, cabSlice);
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = SystemCommandRunner.SystemTool("expand.exe"),
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            psi.ArgumentList.Add(tempCabPath);
+            psi.ArgumentList.Add("-F:*");
+            psi.ArgumentList.Add(destRoot);
+
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc is null)
+                return false;
+
+            // Drain stdout/stderr asynchronously to avoid pipe buffer deadlocks on large cabinets.
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+            if (!proc.WaitForExit(60_000))
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { }
+                return false;
+            }
+
+            _ = stdoutTask.Wait(2_000);
+            _ = stderrTask.Wait(2_000);
+            return proc.ExitCode == 0 && Directory.EnumerateFiles(destRoot, "*", SearchOption.AllDirectories).Any();
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (tempCabPath is not null)
+                TryDeleteFile(tempCabPath);
+        }
     }
 
     private readonly record struct CabFolder(uint CoffCabStart, ushort CCFData, int CompressionMethod, int WindowBits);

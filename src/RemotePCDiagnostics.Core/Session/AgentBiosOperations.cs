@@ -500,12 +500,22 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
 
                     if (innerFlasher is not null)
                     {
+                        var allowedInnerSigners = BiosAgentInstallModes.AllowedExtractedFlasherSignerOrganizations(BiosAgentInstallModes.HpBiosUpdRec);
                         var innerSigValid = await _signatureVerifier.VerifyAuthenticodeAsync(
                             innerFlasher,
-                            BiosAgentInstallModes.AllowedExtractedFlasherSignerOrganizations(BiosAgentInstallModes.HpBiosUpdRec),
+                            allowedInnerSigners,
                             ct).ConfigureAwait(false);
                         if (!innerSigValid)
-                            return Reject("Extracted HP BIOS flasher failed Agent Authenticode signature verification.");
+                        {
+                            var sigDiag = WinVerifyTrustSignatureVerifier.DescribeAuthenticodeStatus(innerFlasher, allowedInnerSigners);
+                            return new BiosAgentInstallResult(
+                                Executed: false,
+                                Allowed: false,
+                                ExitCode: -1,
+                                TimedOut: false,
+                                LogTail: sigDiag ?? "",
+                                Error: "Extracted HP BIOS flasher failed Agent Authenticode signature verification.");
+                        }
 
                         executablePath = innerFlasher;
                         arguments = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.HpBiosUpdRec, request.AllowReboot);
