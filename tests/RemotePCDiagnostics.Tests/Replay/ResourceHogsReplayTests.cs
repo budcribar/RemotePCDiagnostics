@@ -228,6 +228,23 @@ public sealed class WmiResourceHogsSourceTests
             StartTime: new DateTimeOffset(2026, 11, 19, 13, 30, 0, TimeSpan.Zero).ToUnixTimeSeconds(), PrivateBytes: 566_231_040), p);
     }
 
+    [Fact]
+    public async Task Prefers_monotonic_uptime_over_skewed_wmi_boot_time()
+    {
+        // Simulate an RTC/NTP jump after a BIOS update where WMI reports LastBootUpTime 544 days ago,
+        // while the monotonic kernel clock says the machine booted 15 minutes ago.
+        var wmi = new OneAnswerWmi(WmiRow.From(new Dictionary<string, object?>
+        {
+            ["LastBootUpTime"] = "20250529080000.000000-420",
+            ["LocalDateTime"] = "20261124080000.000000-420",
+        }));
+        var source = new WmiResourceHogsSource(wmi, new NoRegistry(), monotonicUptimeSeconds: () => 900);
+        var up = await source.ReadUptimeAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(up);
+        Assert.Equal((0, 0, 15), (up.Days, up.Hours, up.Minutes));
+        Assert.Equal(900, up.TotalSeconds);
+    }
+
     private sealed class OneAnswerWmi(WmiRow row) : IWmiSource
     {
         public Task<WmiQueryResult> QueryAsync(string wmiNamespace, string wql, CancellationToken ct = default) => Task.FromResult(new WmiQueryResult(wmiNamespace, wql, [row]));

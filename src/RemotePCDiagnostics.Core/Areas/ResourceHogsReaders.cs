@@ -82,7 +82,10 @@ public class SampleTimer
 /// <c>Win32_PageFileUsage</c>), which the app reads through the Agent; Fast Startup from the registry, which needs no administrator rights.
 /// As the Agent runs as administrator, it sees every process's memory and CPU time, which osquery as a standard user can't for some.
 /// </summary>
-public sealed class WmiResourceHogsSource(IWmiSource wmi, IRegistrySource registry) : IResourceHogsSource
+public sealed class WmiResourceHogsSource(
+    IWmiSource wmi,
+    IRegistrySource registry,
+    Func<long?>? monotonicUptimeSeconds = null) : IResourceHogsSource
 {
     public const string Cimv2 = @"root\cimv2";
     public const string UptimeSql = "SELECT LastBootUpTime, LocalDateTime FROM Win32_OperatingSystem";
@@ -99,6 +102,12 @@ public sealed class WmiResourceHogsSource(IWmiSource wmi, IRegistrySource regist
 
     public async Task<SystemUptimeInfo?> ReadUptimeAsync(CancellationToken ct)
     {
+        // On live Windows, Environment.TickCount64 is the monotonic kernel uptime (same as Task Manager and
+        // ScheduledMetricsPass) and is immune to RTC/NTP clock jumps (e.g. after a BIOS update) that leave
+        // Win32_OperatingSystem.LastBootUpTime hundreds of days in the past. Replays leave this null and use WMI.
+        if (monotonicUptimeSeconds?.Invoke() is >= 0 and long tickSeconds)
+            return FromSeconds(tickSeconds);
+
         var os = (await Q(UptimeSql, ct).ConfigureAwait(false)).Rows?.FirstOrDefault();
         if (os is null || CimDateTime.Parse(os.Str("LastBootUpTime")) is not { } boot || CimDateTime.Parse(os.Str("LocalDateTime")) is not { } now)
             return null;
