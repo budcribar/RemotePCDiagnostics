@@ -183,7 +183,8 @@ public sealed class BiosUpdateService : IBiosUpdateService
             try
             {
                 var fallbackLatest = await candidate.GetLatestVersionAsync(system, fallbackCurrent, ct).ConfigureAwait(false);
-                if (fallbackLatest.Status is BiosCheckStatus.UpdateAvailable or BiosCheckStatus.UpToDate)
+                if (fallbackLatest.Status is BiosCheckStatus.UpdateAvailable or BiosCheckStatus.UpToDate
+                    || fallbackLatest.Metadata?.ContainsKey(WindowsUpdateBiosProvider.StaleCacheMetadataKey) == true)
                 {
                     _log?.Info($"BIOS provider '{primaryProvider.VendorId}' had no vendor BIOS package; falling back to '{candidate.VendorId}' ({fallbackLatest.Status}).");
                     return new BiosUpdateCheckOutcome(system, fallbackCurrent, fallbackLatest, candidate.VendorId, candidate.DisplayName);

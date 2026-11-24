@@ -36,6 +36,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Real LZX-compressed HP catalog CABs, for the CAB/LZX decoder tests. -->
+    <None Include="Bios\Fixtures\*.cab" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Legacy\RemotePCDiagnostics.Legacy.csproj" />
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.UI\RemotePCDiagnostics.UI.csproj" />

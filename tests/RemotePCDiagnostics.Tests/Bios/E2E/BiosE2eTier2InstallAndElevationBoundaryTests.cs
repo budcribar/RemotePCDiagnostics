@@ -970,6 +970,9 @@ public sealed class BiosE2eTier2InstallAndElevationBoundaryTests
         host.HttpHandler.MapBytes(url, pkgBytes);
         host.LivePipe!.AgentProcessLauncher.OnTool("sp151234.exe",
             new ProcessResult(0, $"Agent stdout echoed {BiosE2eTestHost.CanarySerial}", $"Agent stderr {BiosE2eTestHost.CanarySerial}"));
+        // The Agent unpacks the SoftPaq and then runs its inner flasher, whose output comes back in the log tail.
+        host.LivePipe.AgentProcessLauncher.OnTool("HpFirmwareUpdRec64.exe",
+            new ProcessResult(0, $"Flasher stdout echoed {BiosE2eTestHost.CanarySerial}", $"Flasher stderr {BiosE2eTestHost.CanarySerial}"));
 
         var target = BiosLatestInfo.UpdateAvailable("hp", "01.14.00", downloadUrl: url, sha256: sha256);
         var res = await host.Service.InstallUpdateAsync(

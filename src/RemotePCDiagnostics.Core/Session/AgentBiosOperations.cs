@@ -487,9 +487,8 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
                     }
                     else
                     {
-                        executablePath = stagedPath;
-                        arguments = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.HpSoftPaq, request.AllowReboot);
-                        workingDirectory = runStagingDir;
+                        // Running the SoftPaq itself can't keep the PC from rebooting (sp*.exe rejects -r), so stop here.
+                        return ExtractionFailed(extractResult, HpFlasherNotFound);
                     }
                 }
                 else if ((mode == BiosAgentInstallModes.LenovoWinUptp || mode == BiosAgentInstallModes.LenovoPackageSilent)
@@ -520,9 +519,9 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
                     }
                     else
                     {
-                        executablePath = stagedPath;
-                        arguments = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.LenovoPackageSilent, request.AllowReboot);
-                        workingDirectory = runStagingDir;
+                        // The package already ran once. A package that ignores /EXTRACT=YES installs and flashes during that run,
+                        // so running it again could flash twice.
+                        return ExtractionFailed(extractResult, LenovoFlasherNotFound);
                     }
                 }
                 else
@@ -540,6 +539,18 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
             TryDeleteDirectoryRecursive(runStagingDir);
         }
     }
+
+    internal const string HpFlasherNotFound =
+        "Couldn't unpack the HP SoftPaq to find its BIOS flasher, so nothing was flashed. Install this BIOS update with HP Support Assistant or HP Image Assistant.";
+    internal const string LenovoFlasherNotFound =
+        "Couldn't unpack the Lenovo BIOS package to find its flasher, so it wasn't run again. Restart the PC and check the BIOS version: if the package applied the update itself, it shows there. Otherwise install it with Lenovo Vantage or Lenovo System Update.";
+
+    /// <summary>
+    /// A vendor package that ran only to unpack itself and gave no flasher: a failed install (never run a second time). Executed is
+    /// false so the caller shows <paramref name="reason"/> instead of reading the unpack run's exit code as the flasher's.
+    /// </summary>
+    internal static BiosAgentInstallResult ExtractionFailed(BiosAgentInstallResult extract, string reason) =>
+        new(Executed: false, Allowed: true, ExitCode: extract.ExitCode, TimedOut: false, LogTail: extract.LogTail, Error: reason);
 
     private static readonly string[] HpInnerFlasherNames =
     [

@@ -61,6 +61,33 @@ public static class AgentWindowsUpdate
     /// </summary>
     internal static readonly SemaphoreSlim WuaSearchLock = new(1, 1);
 
+    /// <summary>
+    /// Runs one <c>IUpdateSearcher.Search</c> under <see cref="WuaSearchLock"/>, waiting at most <paramref name="timeout"/> for the lock
+    /// and again for the search. A COM search can't be stopped, so when the wait times out (or <paramref name="ct"/> fires) the search
+    /// keeps running on its thread: the lock is released only once it really ends, so the next search never overlaps it.
+    /// Throws <see cref="TimeoutException"/> when the lock or the search takes longer than <paramref name="timeout"/>.
+    /// </summary>
+    internal static async Task<T> RunSerializedSearchAsync<T>(Func<T> search, TimeSpan timeout, CancellationToken ct, SemaphoreSlim? gate = null)
+    {
+        gate ??= WuaSearchLock;
+        if (!await gate.WaitAsync(timeout, ct).ConfigureAwait(false))
+            throw new TimeoutException("Windows Update Agent search timed out waiting for an in-progress update check.");
+
+        Task<T> running;
+        try
+        {
+            running = Task.Run(search, CancellationToken.None);
+        }
+        catch
+        {
+            gate.Release();
+            throw;
+        }
+        _ = running.ContinueWith(static (_, g) => ((SemaphoreSlim)g!).Release(), gate,
+            CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return await running.WaitAsync(timeout, ct).ConfigureAwait(false);
+    }
+
     public static string Criteria(bool driversOnly) => driversOnly ? "IsInstalled=0 and Type='Driver'" : "IsInstalled=0 and Type='Software'";
 
     private static bool Succeeded(int code) => code is SucceededCode or SucceededWithErrorsCode;

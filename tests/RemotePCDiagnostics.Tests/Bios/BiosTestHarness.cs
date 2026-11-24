@@ -413,7 +413,39 @@ internal sealed class RecordingProcessLauncher : IProcessLauncher
         lock (_lock)
             _calls.Add(call);
 
+        if (SimulateVendorUnpack)
+            FakeVendorUnpack.Apply(arguments);
         return _handler(call, ct);
+    }
+
+    /// <summary>When true, an HP SoftPaq or Lenovo package run with its unpack arguments leaves its inner flasher behind, as the real ones do.</summary>
+    public bool SimulateVendorUnpack { get; set; } = false;
+}
+
+/// <summary>
+/// What a real HP SoftPaq (<c>-e -f&lt;dir&gt;</c>) or Lenovo Inno package (<c>/EXTRACT=YES /DIR=&lt;dir&gt;</c>) leaves when asked to unpack:
+/// its inner BIOS flasher. The Agent runs that flasher, never the package a second time.
+/// </summary>
+internal static class FakeVendorUnpack
+{
+    public static void Apply(IReadOnlyList<string> arguments)
+    {
+        string? dir = null, flasher = null;
+        if (arguments.Contains("-e"))
+        {
+            dir = arguments.FirstOrDefault(a => a.StartsWith("-f", StringComparison.OrdinalIgnoreCase))?[2..];
+            flasher = "HpFirmwareUpdRec64.exe";
+        }
+        else if (arguments.Contains("/EXTRACT=YES", StringComparer.OrdinalIgnoreCase))
+        {
+            dir = arguments.FirstOrDefault(a => a.StartsWith("/DIR=", StringComparison.OrdinalIgnoreCase))?[5..];
+            flasher = "WINUPTP64.exe";
+        }
+        if (dir is null || flasher is null || !Directory.Exists(dir))
+            return;
+        var path = Path.Combine(dir, flasher);
+        if (!File.Exists(path))
+            File.WriteAllText(path, "fake-inner-flasher");
     }
 }
 
@@ -629,6 +661,23 @@ internal sealed class FakeWindowsUpdateClient : IBiosWindowsUpdateClient
 
     public Task<IReadOnlyList<BiosWuaFirmwareUpdate>> SearchPendingFirmwareUpdatesAsync(CancellationToken ct = default) =>
         SearchHandler(ct);
+
+    /// <summary>The online search; null searches the same way as the cache (<see cref="SearchHandler"/>).</summary>
+    public Func<CancellationToken, Task<IReadOnlyList<BiosWuaFirmwareUpdate>>>? OnlineSearchHandler { get; set; }
+
+    /// <summary>When Windows Update last finished a scan; null = Windows doesn't say.</summary>
+    public DateTimeOffset? LastScanUtc { get; set; }
+
+    public List<bool> SearchModes { get; } = [];
+
+    public Task<IReadOnlyList<BiosWuaFirmwareUpdate>> SearchPendingFirmwareUpdatesAsync(bool online, CancellationToken ct)
+    {
+        lock (_lock)
+            SearchModes.Add(online);
+        return online && OnlineSearchHandler is { } h ? h(ct) : SearchHandler(ct);
+    }
+
+    public Task<DateTimeOffset?> GetLastSuccessfulScanUtcAsync(CancellationToken ct = default) => Task.FromResult(LastScanUtc);
 
     public Task<BiosWuaInstallOutcome> InstallUpdateAsync(Guid updateId, CancellationToken ct = default)
     {

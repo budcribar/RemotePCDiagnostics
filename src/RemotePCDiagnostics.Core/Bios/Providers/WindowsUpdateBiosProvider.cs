@@ -148,6 +148,46 @@ public sealed partial class WindowsUpdateBiosProvider : IBiosUpdateProvider
     private static partial Regex DigitRunsRegex();
 
     private readonly IBiosWindowsUpdateClient _wuaClient;
+    private readonly Func<DateTimeOffset> _now;
+
+    /// <summary>Windows Update's local cache is trusted when its last finished scan is at most this old; older, the check searches online.</summary>
+    public static readonly TimeSpan MaxCacheAge = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// Searches the local cache when Windows Update scanned recently, otherwise the update service. When the online search fails or
+    /// times out, falls back to the cache and returns when that cache was last refreshed (null when the result is current).
+    /// </summary>
+    private async Task<(IReadOnlyList<BiosWuaFirmwareUpdate>? Updates, DateTimeOffset? CacheOnlyAsOf)> SearchFreshEnoughAsync(string? serial, CancellationToken ct)
+    {
+        DateTimeOffset? lastScan = null;
+        try { lastScan = await _wuaClient.GetLastSuccessfulScanUtcAsync(ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"Couldn't read when Windows Update last scanned: {ex.Message}", serial); }
+
+        if (lastScan is { } t && _now() - t <= MaxCacheAge)
+            return (await _wuaClient.SearchPendingFirmwareUpdatesAsync(online: false, ct).ConfigureAwait(false), null);
+
+        try
+        {
+            return (await _wuaClient.SearchPendingFirmwareUpdatesAsync(online: true, ct).ConfigureAwait(false), null);
+        }
+        // No Windows Update on this host at all: an offline search would fail the same way.
+        catch (Exception ex) when (ex is not PlatformNotSupportedException && (ex is not OperationCanceledException || !ct.IsCancellationRequested))
+        {
+            LogWarn($"Online Windows Update search failed ({ex.Message}); using the local cache from {lastScan?.ToString("u", CultureInfo.InvariantCulture) ?? "an unknown time"}.", serial);
+            return (await _wuaClient.SearchPendingFirmwareUpdatesAsync(online: false, ct).ConfigureAwait(false), lastScan ?? DateTimeOffset.MinValue);
+        }
+    }
+
+    /// <summary>Set on the result when only an old local cache could be searched, so a vendor provider falling back here still shows why.</summary>
+    internal const string StaleCacheMetadataKey = "windowsUpdateCacheStale";
+
+    internal static string StaleCacheMessage(DateTimeOffset lastScan, DateTimeOffset now)
+    {
+        var when = lastScan == DateTimeOffset.MinValue
+            ? "Windows Update hasn't reported a finished scan"
+            : $"Windows Update last checked for updates {Math.Max(0, (int)(now - lastScan).TotalDays)} days ago";
+        return $"{when}, and an online check couldn't finish, so this PC may be missing a firmware update. Run Windows Update, then check again.";
+    }
     private readonly SystemCommandRunner? _commands;
     private readonly IElevatedCommandBridge? _elevatedBridge;
     private readonly Func<bool>? _isProcessElevated;
@@ -162,9 +202,11 @@ public sealed partial class WindowsUpdateBiosProvider : IBiosUpdateProvider
         SystemCommandRunner? commands = null,
         IElevatedCommandBridge? elevatedBridge = null,
         Func<bool>? isProcessElevated = null,
-        ILogger? log = null)
+        ILogger? log = null,
+        Func<DateTimeOffset>? now = null)
     {
         _wuaClient = wuaClient ?? new WindowsUpdateAgentBiosClient(log);
+        _now = now ?? (() => DateTimeOffset.UtcNow);
         _commands = commands;
         _elevatedBridge = elevatedBridge;
         _isProcessElevated = isProcessElevated;
@@ -242,7 +284,7 @@ public sealed partial class WindowsUpdateBiosProvider : IBiosUpdateProvider
 
         try
         {
-            var updates = await _wuaClient.SearchPendingFirmwareUpdatesAsync(ct).ConfigureAwait(false);
+            var (updates, cacheOnlyAsOf) = await SearchFreshEnoughAsync(serial, ct).ConfigureAwait(false);
             var parsedCurrent = ParseWuaVersion(current.Version);
 
             var candidates = new List<WuaCandidate>();
@@ -269,6 +311,17 @@ public sealed partial class WindowsUpdateBiosProvider : IBiosUpdateProvider
                         ParsedVersion: parsedVersion,
                         IsNewer: isNewer));
                 }
+            }
+
+            // An old cache with nothing newer in it says nothing about today: don't call the PC up to date.
+            if (cacheOnlyAsOf is { } asOf && !candidates.Any(c => c.IsNewer))
+            {
+                return RedactLatestInfo(
+                    BiosLatestInfo.Unavailable(VendorId, StaleCacheMessage(asOf, _now())) with
+                    {
+                        Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [StaleCacheMetadataKey] = "true" },
+                    },
+                    serial);
             }
 
             if (candidates.Count == 0)
@@ -1130,6 +1183,7 @@ public sealed partial class WindowsUpdateBiosProvider : IBiosUpdateProvider
 internal sealed class WindowsUpdateAgentBiosClient : IBiosWindowsUpdateClient
 {
     private static readonly TimeSpan DefaultSearchTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan OnlineSearchTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan DefaultInstallTimeout = TimeSpan.FromMinutes(10);
 
     private readonly ILogger? _log;
@@ -1139,26 +1193,56 @@ internal sealed class WindowsUpdateAgentBiosClient : IBiosWindowsUpdateClient
         _log = log;
     }
 
-    public async Task<IReadOnlyList<BiosWuaFirmwareUpdate>> SearchPendingFirmwareUpdatesAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<BiosWuaFirmwareUpdate>> SearchPendingFirmwareUpdatesAsync(CancellationToken ct = default) =>
+        SearchPendingFirmwareUpdatesAsync(online: false, ct);
+
+    public async Task<IReadOnlyList<BiosWuaFirmwareUpdate>> SearchPendingFirmwareUpdatesAsync(bool online, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("Windows Update Agent is only available on Windows.");
 
-        var acquired = await AgentWindowsUpdate.WuaSearchLock.WaitAsync(DefaultSearchTimeout, ct).ConfigureAwait(false);
-        if (!acquired)
-            throw new TimeoutException("Windows Update Agent search timed out waiting for an in-progress update check.");
+        return await AgentWindowsUpdate.RunSerializedSearchAsync(() => SearchPendingFirmwareUpdatesWindows(online), online ? OnlineSearchTimeout : DefaultSearchTimeout, ct)
+            .ConfigureAwait(false);
+    }
 
+    public Task<DateTimeOffset?> GetLastSuccessfulScanUtcAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!OperatingSystem.IsWindows())
+            return Task.FromResult<DateTimeOffset?>(null);
+        return Task.Run(ReadLastSuccessfulScanUtcWindows, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15), ct);
+    }
+
+    /// <summary><c>Microsoft.Update.AutoUpdate.Results.LastSearchSuccessDate</c> (UTC); readable by a standard user. Null when unknown.</summary>
+    [SupportedOSPlatform("windows")]
+    private DateTimeOffset? ReadLastSuccessfulScanUtcWindows()
+    {
+        object? auObj = null;
+        object? resultsObj = null;
         try
         {
-            return await Task.Run(SearchPendingFirmwareUpdatesWindows, CancellationToken.None)
-                .WaitAsync(DefaultSearchTimeout, ct)
-                .ConfigureAwait(false);
+            var auType = Type.GetTypeFromProgID("Microsoft.Update.AutoUpdate", throwOnError: false);
+            if (auType is null) return null;
+            auObj = Activator.CreateInstance(auType);
+            if (auObj is null) return null;
+            dynamic au = auObj;
+            resultsObj = au.Results;
+            dynamic results = resultsObj!;
+            object? value = results.LastSearchSuccessDate;
+            if (value is not DateTime dt || dt.Year < 2000) return null;
+            return new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc));
+        }
+        catch (Exception ex) when (ex is COMException or InvalidCastException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+        {
+            _log?.Warn($"[bios:windowsupdate] Couldn't read the last Windows Update scan time: {ex.Message}");
+            return null;
         }
         finally
         {
-            AgentWindowsUpdate.WuaSearchLock.Release();
+            SafeReleaseCom(resultsObj);
+            SafeReleaseCom(auObj);
         }
     }
 
@@ -1187,7 +1271,7 @@ internal sealed class WindowsUpdateAgentBiosClient : IBiosWindowsUpdateClient
             .WaitAsync(DefaultInstallTimeout, ct);
 
     [SupportedOSPlatform("windows")]
-    private IReadOnlyList<BiosWuaFirmwareUpdate> SearchPendingFirmwareUpdatesWindows()
+    private IReadOnlyList<BiosWuaFirmwareUpdate> SearchPendingFirmwareUpdatesWindows(bool online)
     {
         object? sessionObj = null;
         object? searcherObj = null;
@@ -1212,13 +1296,13 @@ internal sealed class WindowsUpdateAgentBiosClient : IBiosWindowsUpdateClient
             dynamic searcher = searcherObj;
             try
             {
-                // Query Windows Update's local catalog cache (same as PendingUpdates) so non-elevated
-                // checks return immediately and don't fail or stall on live online WUA server/policy errors.
-                searcher.Online = false;
+                // Offline: Windows Update's local catalog cache (same as PendingUpdates), quick and never stalls on the update service.
+                // Online: only when that cache is old (see WindowsUpdateBiosProvider.MaxCacheAge).
+                searcher.Online = online;
             }
             catch (COMException)
             {
-                // Best-effort offline cache mode.
+                // Best effort: the searcher's own default is used.
             }
             searchResultObj = searcher.Search(AgentWindowsUpdate.Criteria(driversOnly: true));
             dynamic searchResult = searchResultObj;
