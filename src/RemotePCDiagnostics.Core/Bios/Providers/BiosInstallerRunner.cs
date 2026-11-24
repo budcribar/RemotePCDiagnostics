@@ -86,8 +86,82 @@ public static class BiosInstallerRunner
 
         log?.Info($"Launching BIOS installer '{toolName}' (target={targetVersion ?? "unknown"}, timeout={timeout.TotalSeconds:F0}s).");
 
-        var result = await ExecuteProcessAsync(commands, executablePath, arguments, timeout, workingDirectory, serialNumber, log, ct)
-            .ConfigureAwait(false);
+        var effectiveExe = executablePath;
+        var effectiveArgs = arguments;
+        var effectiveWorkingDir = workingDirectory;
+        string? sfxExtractDir = null;
+
+        ProcessResult? result;
+        try
+        {
+            var mode = agentRequest?.InstallMode?.Trim().ToLowerInvariant();
+            if ((mode == BiosAgentInstallModes.HpSoftPaq || mode == BiosAgentInstallModes.HpBiosUpdRec)
+                && AgentBiosOperations.IsHpSoftPaqExecutable(executablePath))
+            {
+                sfxExtractDir = Path.Combine(Path.GetTempPath(), $"rpcd-bios-extract-{Guid.NewGuid():N}");
+                Directory.CreateDirectory(sfxExtractDir);
+                var extractRes = await ExecuteProcessAsync(
+                    commands,
+                    executablePath,
+                    AgentBiosOperations.BuildHpSoftPaqExtractArguments(sfxExtractDir),
+                    timeout,
+                    workingDirectory,
+                    serialNumber,
+                    log,
+                    ct).ConfigureAwait(false);
+
+                var inner = extractRes is { ExitCode: 0 } ? AgentBiosOperations.FindExtractedHpFlasher(sfxExtractDir) : null;
+                if (inner is not null)
+                {
+                    effectiveExe = inner;
+                    effectiveArgs = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.HpBiosUpdRec, request.AllowReboot);
+                    effectiveWorkingDir = Path.GetDirectoryName(inner) ?? sfxExtractDir;
+                    toolName = Path.GetFileName(inner);
+                }
+                else
+                {
+                    effectiveArgs = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.HpSoftPaq, request.AllowReboot);
+                }
+            }
+            else if ((mode == BiosAgentInstallModes.LenovoWinUptp || mode == BiosAgentInstallModes.LenovoPackageSilent)
+                && AgentBiosOperations.IsLenovoSfxExecutable(executablePath))
+            {
+                sfxExtractDir = Path.Combine(Path.GetTempPath(), $"rpcd-bios-extract-{Guid.NewGuid():N}");
+                Directory.CreateDirectory(sfxExtractDir);
+                var extractRes = await ExecuteProcessAsync(
+                    commands,
+                    executablePath,
+                    AgentBiosOperations.BuildLenovoSfxExtractArguments(sfxExtractDir),
+                    timeout,
+                    workingDirectory,
+                    serialNumber,
+                    log,
+                    ct).ConfigureAwait(false);
+
+                var inner = extractRes is { ExitCode: 0 } ? AgentBiosOperations.FindExtractedLenovoFlasher(sfxExtractDir) : null;
+                if (inner is not null)
+                {
+                    effectiveExe = inner;
+                    effectiveArgs = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.LenovoWinUptp, request.AllowReboot);
+                    effectiveWorkingDir = Path.GetDirectoryName(inner) ?? sfxExtractDir;
+                    toolName = Path.GetFileName(inner);
+                }
+                else
+                {
+                    effectiveArgs = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.LenovoPackageSilent, request.AllowReboot);
+                }
+            }
+
+            result = await ExecuteProcessAsync(commands, effectiveExe, effectiveArgs, timeout, effectiveWorkingDir, serialNumber, log, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            if (sfxExtractDir is not null)
+            {
+                try { Directory.Delete(sfxExtractDir, recursive: true); } catch { }
+            }
+        }
 
         if (result is null)
         {

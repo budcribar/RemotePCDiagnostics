@@ -229,6 +229,8 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
     {
         MemoryActionType.DisableStartup => ChangeKind.StartupApp, MemoryActionType.EnableBrowserMemorySaver => ChangeKind.BrowserSettings,
         MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled => ChangeKind.ServiceStartType,
+        MemoryActionType.StopService => ChangeKind.ServiceRunning,
+        MemoryActionType.DisableFastStartup => ChangeKind.FastStartup,
         MemoryActionType.DisableTransparency => ChangeKind.Transparency, MemoryActionType.ReduceHibernateFile => ChangeKind.HiberFileType, _ => null,
     };
     public static readonly string[] StartTypes = ["Automatic", "AutomaticDelayed", "Manual", "Disabled"];
@@ -424,6 +426,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 MemoryActionType.DisableStartup => StartupApps.UndoStartup(u),
                 MemoryActionType.EnableBrowserMemorySaver => Browser.UndoMemorySaver(u),
                 MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled => ServiceFamily.UndoStartType(u),
+                MemoryActionType.StopService => await ServiceFamily.UndoStopServiceAsync(u, ct).ConfigureAwait(false),
                 MemoryActionType.AddDefenderExclusions => await Defender.UndoExclusionsAsync(u, ct).ConfigureAwait(false),
                 MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights => Ctx.UndoRegistry(u),
                 MemoryActionType.SkipOfficeStartScreen => Ctx.UndoRegistry(u, $"The start screen is back in {u.Target}. Takes effect the next time each app opens."),
@@ -432,7 +435,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 MemoryActionType.BlockBrowserExtension => Browser.UndoExtensionBlock(u),
                 MemoryActionType.StopBrowserBackground => await Browser.UndoBrowserBackgroundAsync(u, ct).ConfigureAwait(false),
                 MemoryActionType.ReduceHibernateFile => await Power.UndoHibernateAsync(u, ct).ConfigureAwait(false),
+                MemoryActionType.AutoManagePageFile => await Power.UndoAutoManagePageFileAsync(u, ct).ConfigureAwait(false),
                 MemoryActionType.IncreasePageFile => await Power.UndoIncreasePageFileAsync(ct).ConfigureAwait(false),
+                MemoryActionType.DisableFastStartup => Power.UndoDisableFastStartup(),
                 MemoryActionType.StopSilentAppInstalls => Ctx.UndoRegistry(u, "Windows may install promoted apps and show suggestions again."),
                 MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.RemoveNarratorAddons => await Apps.UndoAppRemovalAsync(u, ct).ConfigureAwait(false),
                 MemoryActionType.DisableTransparency => Shell.UndoTransparency(u),
@@ -499,9 +504,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             MemoryActionType.BlockBrowserExtension => Browser.BlockBrowserExtension(a),
             MemoryActionType.StopBrowserBackground => await Browser.StopBrowserBackgroundAsync(s, a, ct).ConfigureAwait(false),
             MemoryActionType.OpenSettings => OpenSettings(a),
-            MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup => await Power.RestartOrFastStartupAsync(a, ct).ConfigureAwait(false),
+            MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup => await Power.RestartOrFastStartupAsync(s, a, ct).ConfigureAwait(false),
             MemoryActionType.ReduceHibernateFile => await Power.ReduceHibernateFileAsync(s, ct).ConfigureAwait(false),
-            MemoryActionType.AutoManagePageFile => await Power.AutoManagePageFileAsync(ct).ConfigureAwait(false),
+            MemoryActionType.AutoManagePageFile => await Power.AutoManagePageFileAsync(s, ct).ConfigureAwait(false),
             MemoryActionType.IncreasePageFile => await Power.IncreasePageFileAsync(s, a, ct).ConfigureAwait(false),
             MemoryActionType.DisableTransparency => Shell.DisableTransparency(s, a),
             MemoryActionType.DisableWidgets => await Shell.DisableWidgetsAsync(s, ct).ConfigureAwait(false),

@@ -54,7 +54,11 @@ internal sealed class ServiceSuggestions(SuggestionContext c)
                 return new(false, "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector.");
             if (c.ServiceActions is null) return new(false, "Service control isn't available.");
             var r = await c.ServiceActions.ExecuteAsync(info, ServiceAction.Stop, ct).ConfigureAwait(false);
-            if (r.Success) c.Journal(ChangeKind.ServiceRunning, info.Name, "Running", $"{info.Label} stopped");
+            if (r.Success)
+            {
+                c.AddUndo(new(s.Id, info.Label, MemoryActionType.StopService, info.Name, "Running"));
+                c.Journal(ChangeKind.ServiceRunning, info.Name, "Running", $"{info.Label} stopped");
+            }
             return new(r.Success, r.Success ? $"{info.Label} stopped until the next restart." : r.Message);
         }
         var target = a.Type == MemoryActionType.SetServiceManual ? "Manual" : "Disabled";
@@ -73,5 +77,13 @@ internal sealed class ServiceSuggestions(SuggestionContext c)
         c.Sys.SetServiceStartType(u.Target, u.Previous!);
         ServiceDelayedStart.Restore(c.Sys, u.Target, u.PreviousExtra, c.Logger);
         return new(true, $"{u.Label} start-up setting restored to {u.Previous}.");
+    }
+
+    internal async Task<ActionOutcome> UndoStopServiceAsync(UndoEntry u, CancellationToken ct)
+    {
+        if (c.ServiceActions is null) return new(false, "Service control isn't available.");
+        var info = new ServiceInfo(u.Target, u.Label, "Stopped", "Manual", "", "");
+        var r = await c.ServiceActions.ExecuteAsync(info, ServiceAction.Start, ct).ConfigureAwait(false);
+        return new(r.Success, r.Success ? $"{u.Label} started again." : r.Message);
     }
 }

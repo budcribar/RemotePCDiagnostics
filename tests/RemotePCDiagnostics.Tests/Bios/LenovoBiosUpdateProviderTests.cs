@@ -544,9 +544,13 @@ public sealed class LenovoBiosUpdateProviderTests
         Assert.True(result.BitLockerSuspended);
         Assert.Equal(exitCode, result.ExitCode);
 
-        Assert.Equal(2, launcher.Calls.Count);
+        Assert.Equal(3, launcher.Calls.Count);
         Assert.Equal("manage-bde.exe", launcher.Calls[0].BaseName, ignoreCase: true);
-        Assert.Equal(expectedArgs, launcher.Calls[1].Arguments);
+        Assert.Contains("/EXTRACT=YES", launcher.Calls[1].Arguments);
+        var expectedFallbackArgs = installMode == BiosAgentInstallModes.LenovoPackageSilent
+            ? expectedArgs
+            : BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.LenovoPackageSilent, allowReboot);
+        Assert.Equal(expectedFallbackArgs, launcher.Calls[2].Arguments);
 
         Assert.NotNull(observedAutoDir);
         Assert.False(Directory.Exists(observedAutoDir!));
@@ -626,7 +630,7 @@ public sealed class LenovoBiosUpdateProviderTests
 
         Assert.False(failRes.Succeeded);
         Assert.Equal(2, failRes.ExitCode);
-        Assert.Single(failLauncher.Calls);
+        Assert.Equal(2, failLauncher.Calls.Count);
         Assert.Contains("[REDACTED]", failRes.LogTail ?? "");
         Assert.DoesNotContain(BiosIdentityFactory.SentinelSerialNumber, failRes.LogTail ?? "", StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(BiosIdentityFactory.SentinelSerialNumber, failRes.Message, StringComparison.OrdinalIgnoreCase);

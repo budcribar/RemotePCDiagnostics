@@ -33,12 +33,24 @@ internal sealed class PowerSuggestions(SuggestionContext c)
     }
 
     /// <summary>Lets Windows manage the page file size; journals the custom sizes it had (undo puts them back).</summary>
-    internal async Task<ActionOutcome> AutoManagePageFileAsync(CancellationToken ct)
+    internal async Task<ActionOutcome> AutoManagePageFileAsync(MemorySuggestion s, CancellationToken ct)
     {
         var pageFileBefore = await c.Sys.ReadPageFileSettingsAsync(ct).ConfigureAwait(false);
         var pf = await c.Sys.EnableAutoPageFileAsync(ct).ConfigureAwait(false);
-        if (pf.Success && pageFileBefore is not null) c.Journal(ChangeKind.PageFile, "", pageFileBefore, "Page file managed by Windows", restart: true);
+        if (pf.Success && pageFileBefore is not null)
+        {
+            c.AddUndo(new(s.Id, "Page file size", MemoryActionType.AutoManagePageFile, "", pageFileBefore));
+            c.Journal(ChangeKind.PageFile, "", pageFileBefore, "Page file managed by Windows", restart: true);
+        }
         return pf;
+    }
+
+    internal async Task<ActionOutcome> UndoAutoManagePageFileAsync(UndoEntry u, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(u.Previous)) return new(false, "The original page file size wasn't recorded.");
+        var r = await c.Sys.RestorePageFileAsync(u.Previous, ct).ConfigureAwait(false);
+        if (r.Success) try { c.JournalStore?.RemoveLatest(ChangeKind.PageFile, ""); } catch { }
+        return r;
     }
 
     /// <summary>Sets a larger custom page file on the system drive and journals "auto" so Undo returns it to Windows-managed.</summary>
@@ -83,11 +95,20 @@ internal sealed class PowerSuggestions(SuggestionContext c)
     }
 
     /// <summary>Restart (with auto-resume after sign-in) or Fast Startup off: the same audited path as the Remediation buttons.</summary>
-    internal async Task<ActionOutcome> RestartOrFastStartupAsync(MemoryAction a, CancellationToken ct)
+    internal async Task<ActionOutcome> RestartOrFastStartupAsync(MemorySuggestion s, MemoryAction a, CancellationToken ct)
     {
         if (c.Remediation is null) return new(false, "Restarting isn't available from here.");
         var kindR = a.Type == MemoryActionType.RestartPc ? RemediationKind.ScheduleCleanRestart : RemediationKind.DisableFastStartup;
         var rr = await c.Remediation.ExecuteAsync(new AreaAction(kindR, a.Label), ct).ConfigureAwait(false);
+        if (rr.Success && a.Type == MemoryActionType.DisableFastStartup)
+            c.AddUndo(new(s.Id, "Fast Startup", MemoryActionType.DisableFastStartup, "", "1"));
         return new(rr.Success, rr.Message);
+    }
+
+    internal ActionOutcome UndoDisableFastStartup()
+    {
+        if (c.Remediation is null) return new(false, "Fast Startup control isn't available from here.");
+        var r = c.Remediation.RestoreFastStartup(1);
+        return new(r.Success, r.Message);
     }
 }

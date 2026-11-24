@@ -313,7 +313,7 @@ public sealed class BiosE2eTier1SecurityAndElevationTests
         Assert.True(result.Succeeded);
         Assert.Equal(BiosInstallStatus.StagedForReboot, result.Status);
         Assert.Single(host.SignatureVerifier.VerifiedFilePaths);
-        Assert.Single(host.HostProcessLauncher.Calls);
+        Assert.Equal(2, host.HostProcessLauncher.Calls.Count);
     }
 
     [Fact]
@@ -684,17 +684,26 @@ public sealed class BiosE2eTier1SecurityAndElevationTests
 
         // Agent re-verified signature and executed expected tool with allowlisted no-reboot flags
         Assert.NotEmpty(host.LivePipe!.AgentSignatureVerifier.VerifiedFilePaths);
-        var installerCall = Assert.Single(
-            host.LivePipe.AgentProcessLauncher.Calls,
-            c => c.ToolName.Equals(expectedAgentTool, StringComparison.OrdinalIgnoreCase));
+        var matchingCalls = host.LivePipe.AgentProcessLauncher.Calls
+            .Where(c => c.ToolName.Equals(expectedAgentTool, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        Assert.NotEmpty(matchingCalls);
+        var installerCall = matchingCalls[^1];
+        var isHpSoftPaq = vendorId == "hp" && AgentBiosOperations.IsHpSoftPaqExecutable(expectedAgentTool);
         foreach (var token in expectedArgTokens)
+        {
+            if (isHpSoftPaq && token == "-r") continue;
             Assert.Contains(token, installerCall.Arguments, StringComparer.OrdinalIgnoreCase);
+        }
 
         // Explicitly enforce provider-specific reboot suppression polarity for AllowReboot == false
         switch (vendorId)
         {
             case "hp":
-                Assert.Contains("-r", installerCall.Arguments, StringComparer.OrdinalIgnoreCase);
+                if (isHpSoftPaq)
+                    Assert.DoesNotContain("-r", installerCall.Arguments, StringComparer.OrdinalIgnoreCase);
+                else
+                    Assert.Contains("-r", installerCall.Arguments, StringComparer.OrdinalIgnoreCase);
                 break;
             case "dell":
                 Assert.DoesNotContain("/r", installerCall.Arguments, StringComparer.OrdinalIgnoreCase);

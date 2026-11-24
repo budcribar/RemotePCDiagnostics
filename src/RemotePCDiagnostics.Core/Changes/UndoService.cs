@@ -150,9 +150,15 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 return await AgentScript(AgentScripts.Of(AgentScripts.SecurityRestore, sf.Key, c.Previous ?? ""), c, sf.UndoDone, ct).ConfigureAwait(false);
 
             case ChangeKind.HiberFileType:
-                var hr = await commands.RunAsync(SystemCommandRunner.SystemTool("powercfg.exe"), ["/h", "/type", "full"], ct).ConfigureAwait(false);
-                if (hr is not { ExitCode: 0 }) return Fail("Windows didn't allow changing the hibernation file back.");
-                if (memory is not null) Hibernation.RemoveAddedValues(memory, c.PreviousExtra, log);
+                if (memory is not null)
+                {
+                    var hm = await memory.SetHibernateTypeAsync(false, ct).ConfigureAwait(false);
+                    if (!hm.Success) return Fail(hm.Message);
+                    Hibernation.RemoveAddedValues(memory, c.PreviousExtra, log);
+                    return Ok("Hibernation file back to full size; Hibernate is available again.");
+                }
+                var hr = await commands.RunAdminToolAsync(SystemCommandRunner.SystemTool("powercfg.exe"), ["/h", "/type", "full"], ct).ConfigureAwait(false);
+                if (hr is not { ExitCode: 0 }) return Fail(SystemCommandRunner.AgentFailure(hr) ?? "Windows didn't allow changing the hibernation file back.");
                 return Ok("Hibernation file back to full size; Hibernate is available again.");
 
             case ChangeKind.RegistryValue:

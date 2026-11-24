@@ -81,7 +81,7 @@ public sealed class BiosAgentElevationTests
     }
 
     [Theory]
-    [InlineData("hp", BiosAgentInstallModes.HpSoftPaq, "sp150000.exe", false, new[] { "-s", "-r" })]
+    [InlineData("hp", BiosAgentInstallModes.HpSoftPaq, "sp150000.exe", false, new[] { "-s" })]
     [InlineData("hp", BiosAgentInstallModes.HpSoftPaq, "sp150000.exe", true, new[] { "-s" })]
     [InlineData("hp", BiosAgentInstallModes.HpBiosUpdRec, "HPBIOSUPDREC64.exe", false, new[] { "-s", "-r" })]
     [InlineData("hp", BiosAgentInstallModes.HpBiosUpdRec, "HPBIOSUPDREC64.exe", true, new[] { "-s" })]
@@ -140,7 +140,10 @@ public sealed class BiosAgentElevationTests
             await serverTask;
         }
 
-        var call = Assert.Single(agentLauncher.Calls);
+        var isSfx = ((mode == BiosAgentInstallModes.HpSoftPaq || mode == BiosAgentInstallModes.HpBiosUpdRec) && AgentBiosOperations.IsHpSoftPaqExecutable(fileName))
+            || ((mode == BiosAgentInstallModes.LenovoWinUptp || mode == BiosAgentInstallModes.LenovoPackageSilent) && AgentBiosOperations.IsLenovoSfxExecutable(fileName));
+        Assert.Equal(isSfx ? 2 : 1, agentLauncher.Calls.Count);
+        var call = agentLauncher.Calls[^1];
         Assert.Equal(expectedArgs, call.Arguments);
         AssertPathStrictlyInside(call.FileName, adminRoot.Path);
         // The Agent pins the signer to this vendor; it never accepts just any valid signature.
@@ -152,6 +155,103 @@ public sealed class BiosAgentElevationTests
         Assert.Equal(Path.GetFullPath(call.FileName), Path.GetFullPath(verifiedPath));
 
         // Admin staging run subdirectory must be deleted in finally.
+        Assert.Empty(Directory.GetFileSystemEntries(adminRoot.Path));
+    }
+
+    [Fact]
+    public async Task Pipe_RunBiosInstaller_HpSoftPaq_ExtractsAndRunsInnerFlasherWithSuppressReboot()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var userDir = new TempStagingDir();
+        using var adminRoot = new TempStagingDir();
+
+        var payload = TestPayload.FromString("hp-softpaq-sfx-sp173990");
+        var userPkgPath = userDir.FilePath("sp173990.exe");
+        await File.WriteAllBytesAsync(userPkgPath, payload.Bytes, cts.Token);
+
+        var sigVerifier = new FakeSignatureVerifier(result: true);
+        var agentLauncher = CreateGuardedLauncher((call, _) =>
+        {
+            var fArg = call.Arguments.FirstOrDefault(a => a.StartsWith("-f", StringComparison.OrdinalIgnoreCase));
+            if (fArg is not null)
+            {
+                var extractDir = fArg[2..];
+                File.WriteAllText(Path.Combine(extractDir, "HpFirmwareUpdRec64.exe"), "inner-flasher");
+                return Task.FromResult(new ProcessResult(0, "Extracted", ""));
+            }
+            return Task.FromResult(new ProcessResult(3010, "Flashed", ""));
+        });
+        var ops = new AgentBiosOperations(launcher: agentLauncher, signatureVerifier: sigVerifier, stagingRoot: adminRoot.Path);
+
+        var (server, serverTask, client) = await StartPipeAsync(agentLauncher, ops, cts.Token);
+        using (server)
+        {
+            await using (client)
+            {
+                var req = new BiosAgentInstallRequest("hp", BiosAgentInstallModes.HpSoftPaq, userPkgPath, payload.Sha256, AllowReboot: false, TimeoutMs: 120_000);
+                var result = await client.RunBiosInstallerAsync(req, cts.Token);
+                Assert.True(result.Executed);
+                Assert.True(result.Allowed);
+                Assert.Equal(3010, result.ExitCode);
+            }
+            await serverTask;
+        }
+
+        Assert.Equal(2, agentLauncher.Calls.Count);
+        Assert.Equal("sp173990.exe", agentLauncher.Calls[0].BaseName, ignoreCase: true);
+        Assert.Contains("-e", agentLauncher.Calls[0].Arguments);
+        Assert.DoesNotContain("-r", agentLauncher.Calls[0].Arguments);
+        Assert.Equal("HpFirmwareUpdRec64.exe", agentLauncher.Calls[1].BaseName, ignoreCase: true);
+        Assert.Equal(["-s", "-r"], agentLauncher.Calls[1].Arguments);
+        Assert.Equal(2, sigVerifier.VerifiedPaths.Count);
+        Assert.Empty(Directory.GetFileSystemEntries(adminRoot.Path));
+    }
+
+    [Fact]
+    public async Task Pipe_RunBiosInstaller_LenovoSfx_ExtractsAndRunsInnerWinUptp()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var userDir = new TempStagingDir();
+        using var adminRoot = new TempStagingDir();
+
+        var payload = TestPayload.FromString("lenovo-sfx-n32uj20w");
+        var userPkgPath = userDir.FilePath("n32uj20w.exe");
+        await File.WriteAllBytesAsync(userPkgPath, payload.Bytes, cts.Token);
+
+        var sigVerifier = new FakeSignatureVerifier(result: true);
+        var agentLauncher = CreateGuardedLauncher((call, _) =>
+        {
+            var dirArg = call.Arguments.FirstOrDefault(a => a.StartsWith("/DIR=", StringComparison.OrdinalIgnoreCase));
+            if (dirArg is not null)
+            {
+                var extractDir = dirArg[5..];
+                File.WriteAllText(Path.Combine(extractDir, "WINUPTP64.exe"), "inner-winuptp");
+                return Task.FromResult(new ProcessResult(0, "Extracted", ""));
+            }
+            return Task.FromResult(new ProcessResult(0, "Staged", ""));
+        });
+        var ops = new AgentBiosOperations(launcher: agentLauncher, signatureVerifier: sigVerifier, stagingRoot: adminRoot.Path);
+
+        var (server, serverTask, client) = await StartPipeAsync(agentLauncher, ops, cts.Token);
+        using (server)
+        {
+            await using (client)
+            {
+                var req = new BiosAgentInstallRequest("lenovo", BiosAgentInstallModes.LenovoWinUptp, userPkgPath, payload.Sha256, AllowReboot: false, TimeoutMs: 120_000);
+                var result = await client.RunBiosInstallerAsync(req, cts.Token);
+                Assert.True(result.Executed);
+                Assert.True(result.Allowed);
+                Assert.Equal(0, result.ExitCode);
+            }
+            await serverTask;
+        }
+
+        Assert.Equal(2, agentLauncher.Calls.Count);
+        Assert.Equal("n32uj20w.exe", agentLauncher.Calls[0].BaseName, ignoreCase: true);
+        Assert.Contains("/EXTRACT=YES", agentLauncher.Calls[0].Arguments);
+        Assert.Equal("WINUPTP64.exe", agentLauncher.Calls[1].BaseName, ignoreCase: true);
+        Assert.Equal(["-s"], agentLauncher.Calls[1].Arguments);
+        Assert.Equal(2, sigVerifier.VerifiedPaths.Count);
         Assert.Empty(Directory.GetFileSystemEntries(adminRoot.Path));
     }
 
