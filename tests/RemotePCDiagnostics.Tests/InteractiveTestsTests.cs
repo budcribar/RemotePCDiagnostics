@@ -164,10 +164,11 @@ public class InteractiveTestsTests
         var content = File.ReadAllText(pagePath);
 
         Assert.Contains("data-testid=\"bench-qa-select-all\"", content);
-        Assert.Contains("data-testid=\"bench-qa-include-keyboard\"", content);
-        Assert.Contains("data-testid=\"bench-qa-include-display\"", content);
-        Assert.Contains("Physical keyboard matrix &amp; rollover check", content);
-        Assert.Contains("Physical display dead-pixel &amp; touch check", content);
+        Assert.Contains("data-testid=\"bench-qa-tree\"", content);
+        Assert.Contains("data-testid=\"bench-qa-group-@g.Id\"", content);
+        Assert.Contains("data-testid=\"bench-qa-include-@it.Id\"", content);
+        Assert.Contains(HardwareQaCertificate.Groups.SelectMany(g => g.Items), i => i.Id == "keyboard" && i.Label.Contains("keyboard", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(HardwareQaCertificate.Groups.SelectMany(g => g.Items), i => i.Id == "display" && i.Label.Contains("display", StringComparison.OrdinalIgnoreCase));
 
         // PhysicalBenchQaCard should only render when benchRunning and activeInteractiveSection is present
         Assert.Contains("@if (benchRunning && _activeInteractiveSection is { Length: > 0 })", content);

@@ -420,6 +420,53 @@ public class BenchQaAndWheaTests
     }
 
     [Fact]
+    public async Task BenchQaRunner_RunsOnlySelectedItems_AndCertificateRendersGroups()
+    {
+        var store = new ResultStore();
+        var ran = new ConcurrentQueue<string>();
+
+        IDiagnosticModule Quick(string slug) => new FakeModule(slug, _ =>
+        {
+            ran.Enqueue(slug);
+            return Task.FromResult(FakeModule.Ok(slug));
+        });
+
+        IDiagnosticModule OnDemand(string slug) => new OnDemandFakeModule(slug, _ =>
+        {
+            ran.Enqueue(slug);
+            return Task.FromResult(FakeModule.Ok(slug));
+        });
+
+        var diag = new DiagnosticsService(store, [
+            Quick(ModuleSlugs.Osquery),
+            Quick(ModuleSlugs.BatteryPower),
+            OnDemand(ModuleSlugs.CpuStress),
+            OnDemand(ModuleSlugs.GpuStress),
+            OnDemand(ModuleSlugs.SpeakerToMic),
+            OnDemand(ModuleSlugs.Webcam),
+            OnDemand(ModuleSlugs.DismScanHealth),
+        ]);
+
+        var runner = new BenchQaRunner(diag, store);
+        await runner.RunIntakeAsync(["cpu-stress", "webcam"]);
+
+        var executed = ran.ToArray();
+        Assert.Contains(ModuleSlugs.CpuStress, executed);
+        Assert.Contains(ModuleSlugs.Webcam, executed);
+        Assert.DoesNotContain(ModuleSlugs.GpuStress, executed);
+        Assert.DoesNotContain(ModuleSlugs.SpeakerToMic, executed);
+        Assert.DoesNotContain(ModuleSlugs.DismScanHealth, executed);
+        Assert.DoesNotContain(ModuleSlugs.Osquery, executed);
+
+        var snap = HardwareQaCertificate.Capture(store, "BENCH-GROUP-01");
+        var html = HardwareQaCertificate.BuildHtml(snap);
+        Assert.Contains("data-qa-group=\"Hardware &amp; health\"", html);
+        Assert.Contains("data-qa-group=\"Stress tests\"", html);
+        Assert.Contains("data-qa-group=\"Audio, camera &amp; interactive I/O\"", html);
+        Assert.Contains("data-qa-group=\"Windows &amp; security\"", html);
+    }
+
+    [Fact]
     public async Task BenchQaRunner_ExecutesKeyboardAndDisplayInteractiveChecks_WhenRequested()
     {
         var store = new ResultStore();

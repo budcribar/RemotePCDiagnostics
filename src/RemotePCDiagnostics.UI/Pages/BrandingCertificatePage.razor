@@ -38,36 +38,68 @@
         <span class="meta"> · SMBIOS, SMART, battery, WHEA, DISM/SFC, optional stress &amp; I/O checks</span>
     </div>
     <div class="bench-qa-options">
-        <label class="bench-kind bench-qa-select-all">
-            <input type="checkbox" data-testid="bench-qa-select-all" checked="@AllQaOptionsSelected" @onchange="ToggleAllQaOptions" disabled="@benchRunning" />
-            <span>Select all / none</span>
-        </label>
-        <label class="bench-kind meta">
-            <input type="checkbox" data-testid="bench-qa-include-stress" checked="@_includeStress" @onchange="e => _includeStress = e.Value is true" disabled="@benchRunning" />
-            <span>Thermal-guarded stress test (CPU, RAM, Disk, GPU)</span>
-        </label>
-        <label class="bench-kind meta">
-            <input type="checkbox" data-testid="bench-qa-include-audio" checked="@_includeAudioCamera" @onchange="e => _includeAudioCamera = e.Value is true" disabled="@benchRunning" />
-            <span>Audio loopback &amp; webcam check</span>
-        </label>
-        <label class="bench-kind meta">
-            <input type="checkbox" data-testid="bench-qa-include-security" checked="@_includeSecurityAudit" @onchange="e => _includeSecurityAudit = e.Value is true" disabled="@benchRunning" />
-            <span>Windows security &amp; baseline audit (HardeningKitty)</span>
-        </label>
-        <label class="bench-kind meta">
-            <input type="checkbox" data-testid="bench-qa-include-keyboard" checked="@_includeKeyboard" @onchange="e => _includeKeyboard = e.Value is true" disabled="@benchRunning" />
-            <span>Physical keyboard matrix &amp; rollover check</span>
-        </label>
-        <label class="bench-kind meta">
-            <input type="checkbox" data-testid="bench-qa-include-display" checked="@_includeDisplay" @onchange="e => _includeDisplay = e.Value is true" disabled="@benchRunning" />
-            <span>Physical display dead-pixel &amp; touch check</span>
-        </label>
+        <div class="bench-qa-select-all">
+            <label class="bench-kind">
+                <input type="checkbox" data-testid="bench-qa-select-all" checked="@AllQaOptionsSelected" @onchange="ToggleAllQaOptions" disabled="@benchRunning" />
+                <span>Select all / none</span>
+            </label>
+            <span class="meta">@_selectedItems.Count of @HardwareQaCertificate.AllSelectableItemIds.Count selected</span>
+        </div>
+        <div class="bench-qa-tree" data-testid="bench-qa-tree">
+            @foreach (var group in HardwareQaCertificate.Groups)
+            {
+                var g = group;
+                var isExpanded = _expandedGroups.Contains(g.Id);
+                var selectedCount = g.Items.Count(i => _selectedItems.Contains(i.Id));
+                var allInGroup = selectedCount == g.Items.Count;
+                var partialInGroup = selectedCount > 0 && !allInGroup;
+                <div @key="g.Id" class="bench-qa-group @(isExpanded ? "is-open" : "")" data-testid="bench-qa-node-@g.Id">
+                    <div class="bench-qa-group-head">
+                        <button type="button"
+                                class="bench-qa-toggle"
+                                aria-expanded="@(isExpanded ? "true" : "false")"
+                                aria-label="@(isExpanded ? $"Collapse {g.Label}" : $"Expand {g.Label}")"
+                                data-testid="bench-qa-toggle-@g.Id"
+                                @onclick="() => ToggleGroupExpanded(g.Id)">
+                            @(isExpanded ? "▾" : "▸")
+                        </button>
+                        <label class="bench-kind bench-qa-group-label">
+                            <input type="checkbox"
+                                   data-testid="bench-qa-group-@g.Id"
+                                   data-partial="@(partialInGroup ? "true" : "false")"
+                                   checked="@allInGroup"
+                                   @onchange="e => ToggleGroupSelection(g, e.Value is true)"
+                                   disabled="@benchRunning" />
+                            <span>@g.Label</span>
+                        </label>
+                        <span class="bench-qa-count @(partialInGroup ? "is-partial" : selectedCount > 0 ? "is-full" : "")">@selectedCount/@g.Items.Count</span>
+                    </div>
+                    @if (isExpanded)
+                    {
+                        <div class="bench-qa-children">
+                            @foreach (var item in g.Items)
+                            {
+                                var it = item;
+                                <label @key="it.Id" class="bench-kind meta bench-qa-child">
+                                    <input type="checkbox"
+                                           data-testid="bench-qa-include-@it.Id"
+                                           checked="@_selectedItems.Contains(it.Id)"
+                                           @onchange="e => ToggleItemSelection(it.Id, e.Value is true)"
+                                           disabled="@benchRunning" />
+                                    <span>@it.Label</span>
+                                </label>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
     </div>
     <div class="banner-actions">
         <button type="button"
                 class="btn btn-primary"
                 data-testid="bench-qa-start"
-                disabled="@(benchRunning || benchBusyElsewhere)"
+                disabled="@(benchRunning || benchBusyElsewhere || _selectedItems.Count == 0)"
                 @onclick="StartBenchQa">
             <Icon Name="@(benchRunning ? "refresh" : "play")" Size="14" />
             @(benchRunning ? $"Running QA ({ActiveBenchQa.CompletedSteps}/{Math.Max(1, ActiveBenchQa.TotalSteps)})…" : "Start QA check")
@@ -161,23 +193,42 @@
     private ShopRelayClient ActiveRelay => App.ShopRelay ?? _fallbackRelay;
     private BenchQaRunner ActiveBenchQa => App.BenchQa ?? (_fallbackBenchQa ??= new BenchQaRunner(Diagnostics, Store, App.Workflow, App.Preferences, ActivePhysicalQa));
 
-    private bool _includeStress = true;
-    private bool _includeAudioCamera = true;
-    private bool _includeSecurityAudit;
-    private bool _includeKeyboard;
-    private bool _includeDisplay;
+    private readonly HashSet<string> _selectedItems = new(HardwareQaCertificate.DefaultSelectedItemIds, StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _expandedGroups = new(StringComparer.OrdinalIgnoreCase);
 
     private bool AllQaOptionsSelected =>
-        _includeStress && _includeAudioCamera && _includeSecurityAudit && _includeKeyboard && _includeDisplay;
+        HardwareQaCertificate.AllSelectableItemIds.All(_selectedItems.Contains);
 
     private void ToggleAllQaOptions(ChangeEventArgs e)
     {
-        var selected = e.Value is true;
-        _includeStress = selected;
-        _includeAudioCamera = selected;
-        _includeSecurityAudit = selected;
-        _includeKeyboard = selected;
-        _includeDisplay = selected;
+        if (e.Value is true)
+        {
+            foreach (var id in HardwareQaCertificate.AllSelectableItemIds) _selectedItems.Add(id);
+        }
+        else
+        {
+            _selectedItems.Clear();
+        }
+    }
+
+    private void ToggleGroupExpanded(string groupId)
+    {
+        if (!_expandedGroups.Remove(groupId)) _expandedGroups.Add(groupId);
+    }
+
+    private void ToggleGroupSelection(HardwareQaGroup group, bool selected)
+    {
+        foreach (var item in group.Items)
+        {
+            if (selected) _selectedItems.Add(item.Id);
+            else _selectedItems.Remove(item.Id);
+        }
+    }
+
+    private void ToggleItemSelection(string itemId, bool selected)
+    {
+        if (selected) _selectedItems.Add(itemId);
+        else _selectedItems.Remove(itemId);
     }
 
     private string? _activeInteractiveSection;
@@ -287,11 +338,8 @@
     {
         if (ActiveBenchQa.IsRunning)
         {
-            _includeStress = ActiveBenchQa.IncludeStress;
-            _includeAudioCamera = ActiveBenchQa.IncludeAudioCamera;
-            _includeSecurityAudit = ActiveBenchQa.IncludeSecurityAudit;
-            _includeKeyboard = ActiveBenchQa.IncludeKeyboard;
-            _includeDisplay = ActiveBenchQa.IncludeDisplay;
+            _selectedItems.Clear();
+            foreach (var id in ActiveBenchQa.SelectedItemIds) _selectedItems.Add(id);
         }
     }
 
@@ -336,11 +384,7 @@
         _activeInteractiveSection = null;
         EnsureCertificateSnapshot(force: true);
         _ = ActiveBenchQa.StartBenchQaAsync(
-            _includeStress,
-            _includeAudioCamera,
-            _includeSecurityAudit,
-            _includeKeyboard,
-            _includeDisplay,
+            _selectedItems.ToList(),
             WaitForInteractiveBenchQaAsync);
         return Task.CompletedTask;
     }

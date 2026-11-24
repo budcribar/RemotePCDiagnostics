@@ -19,12 +19,17 @@ public enum HardwareQaVerdict
     IntakeSnapshot,
 }
 
+public sealed record HardwareQaCatalogItem(string Id, string Label, bool DefaultSelected);
+
+public sealed record HardwareQaGroup(string Id, string Label, IReadOnlyList<HardwareQaCatalogItem> Items);
+
 public sealed record HardwareQaItem(
     string Id,
     string Label,
     DiagnosticStatus Status,
     string Summary,
-    bool Cancelled = false);
+    bool Cancelled = false,
+    string Group = "");
 
 public sealed record HardwareQaSnapshot(
     string CertificateId,
@@ -57,6 +62,54 @@ public sealed record HardwareQaSnapshot(
 /// </summary>
 public static class HardwareQaCertificate
 {
+    /// <summary>Canonical QA subsystem tree shared by the QA selection UI, runner, and grouped certificate report.</summary>
+    public static readonly IReadOnlyList<HardwareQaGroup> Groups =
+    [
+        new("hardware-health", "Hardware & health",
+        [
+            new("hardware", "System & SMBIOS inventory", DefaultSelected: true),
+            new("battery", "Battery & power health", DefaultSelected: true),
+            new("smart", "Storage S.M.A.R.T. health", DefaultSelected: true),
+            new("sensors", "Thermal & cooling sensors", DefaultSelected: true),
+            new("stability", "Crash & WHEA hardware log (30d)", DefaultSelected: true),
+        ]),
+        new("stress", "Stress tests",
+        [
+            new("cpu-stress", "CPU stress verification", DefaultSelected: true),
+            new("ram-test", "Memory (RAM) verification", DefaultSelected: true),
+            new("disk-speed", "Storage read/write verification", DefaultSelected: true),
+            new("gpu-stress", "Graphics (GPU) stress verification", DefaultSelected: true),
+        ]),
+        new("peripherals", "Audio, camera & interactive I/O",
+        [
+            new("audio", "Audio loopback (speaker & mic)", DefaultSelected: true),
+            new("webcam", "Camera frame & exposure check", DefaultSelected: true),
+            new("keyboard", "Physical keyboard matrix & rollover check", DefaultSelected: false),
+            new("display", "Physical display dead-pixel & touch check", DefaultSelected: false),
+        ]),
+        new("windows-security", "Windows & security",
+        [
+            new("drivers", "Device drivers", DefaultSelected: true),
+            new("integrity", "Windows image & SFC integrity", DefaultSelected: true),
+            new("security", "Windows security & baseline audit", DefaultSelected: false),
+        ]),
+    ];
+
+    public static IReadOnlyList<string> AllSelectableItemIds { get; } =
+        Groups.SelectMany(g => g.Items).Select(i => i.Id).ToList();
+
+    public static IReadOnlyList<string> DefaultSelectedItemIds { get; } =
+        Groups.SelectMany(g => g.Items).Where(i => i.DefaultSelected).Select(i => i.Id).ToList();
+
+    public static string GroupLabelFor(string itemId) => itemId switch
+    {
+        "hardware" or "battery" or "smart" or "sensors" or "stability" => "Hardware & health",
+        "cpu-stress" or "ram-test" or "disk-speed" or "gpu-stress" => "Stress tests",
+        "audio" or "webcam" or "keyboard" or "display" or "npu" => "Audio, camera & interactive I/O",
+        "drivers" or "integrity" or "security" => "Windows & security",
+        _ => "",
+    };
+
     private static string E(string? s) => WebUtility.HtmlEncode(s ?? "");
 
     public static HardwareQaSnapshot Capture(
@@ -133,6 +186,9 @@ public static class HardwareQaCertificate
         items.Add(BuildAreaItem("drivers", "Device drivers", store.Get(ModuleSlugs.DeviceDrivers)));
         items.Add(BuildIntegrityItem(store.Get(ModuleSlugs.DismScanHealth), store.Get(ModuleSlugs.SfcVerifyOnly)));
         items.Add(BuildSimpleItem("security", "Windows security & baseline audit", store.Get(ModuleSlugs.SecurityAudit)));
+
+        for (var i = 0; i < items.Count; i++)
+            items[i] = items[i] with { Group = GroupLabelFor(items[i].Id) };
 
         var verdict = ComputeVerdict(items);
         var digestHex = ComputeVerificationHash(when, resolvedMachine, vendorModel, serial, verdict, items);
@@ -248,6 +304,7 @@ public static class HardwareQaCertificate
           .Append("td{text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb;vertical-align:middle;overflow-wrap:anywhere;word-break:break-word;overflow:hidden}")
           .Append(".pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap}")
           .Append(".pill-ok{background:#d1fae5;color:#065f46}.pill-warn{background:#fef3c7;color:#92400e}.pill-err{background:#fee2e2;color:#991b1b}.pill-na{background:#f1f5f9;color:#475569}")
+          .Append(".qa-group-row td{background:#f1f5f9;color:#475569;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:4px 8px;border-top:1px solid #cbd5e1;border-bottom:1px solid #e2e8f0}")
           .Append(".notes{background:#f8fafc;border-left:3px solid #3b82f6;padding:8px 12px;margin-top:12px;font-size:12.5px;border-radius:0 8px 8px 0}")
           .Append(".footer{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:14px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:11.5px;color:#4b5563}")
           .Append(".hash{font-family:Consolas,monospace;font-size:10.5px;color:#6b7280}")
@@ -289,8 +346,15 @@ public static class HardwareQaCertificate
 
         // Subsystem Verification Table
         sb.Append("<table data-testid=\"qa-items-table\"><thead><tr><th>Subsystem</th><th>Status</th><th>Measured result</th></tr></thead><tbody>");
+        string? currentGroup = null;
         foreach (var item in s.Items)
         {
+            var group = !string.IsNullOrWhiteSpace(item.Group) ? item.Group : GroupLabelFor(item.Id);
+            if (!string.IsNullOrWhiteSpace(group) && !string.Equals(group, currentGroup, StringComparison.Ordinal))
+            {
+                currentGroup = group;
+                sb.Append("<tr class=\"qa-group-row\" data-qa-group=\"").Append(E(group)).Append("\"><td colspan=\"3\">").Append(E(group)).Append("</td></tr>");
+            }
             var (pillCls, pillText) = item.Cancelled
                 ? ("pill-na", "STOPPED")
                 : item.Status switch

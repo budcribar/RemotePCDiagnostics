@@ -26,6 +26,24 @@ public sealed class BenchQaRunner(
         ModuleSlugs.GpuStress,
     ];
 
+    public static readonly IReadOnlyDictionary<string, string> StressItemToSlug = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["cpu-stress"] = ModuleSlugs.CpuStress,
+        ["ram-test"] = ModuleSlugs.MemoryTest,
+        ["disk-speed"] = ModuleSlugs.DiskSpeed,
+        ["gpu-stress"] = ModuleSlugs.GpuStress,
+    };
+
+    private static readonly (string ItemId, string Slug)[] BaseCheckItems =
+    [
+        ("hardware", ModuleSlugs.Osquery),
+        ("battery", ModuleSlugs.BatteryPower),
+        ("smart", ModuleSlugs.DriveHealth),
+        ("sensors", ModuleSlugs.Sensors),
+        ("stability", ModuleSlugs.Crashes),
+        ("drivers", ModuleSlugs.DeviceDrivers),
+    ];
+
     private static readonly string[] IntegritySlugs =
     [
         ModuleSlugs.DismScanHealth,
@@ -47,6 +65,8 @@ public sealed class BenchQaRunner(
     public bool IncludeSecurityAudit { get; private set; }
     public bool IncludeKeyboard { get; private set; }
     public bool IncludeDisplay { get; private set; }
+    public IReadOnlySet<string> SelectedItemIds { get; private set; } =
+        new HashSet<string>(HardwareQaCertificate.DefaultSelectedItemIds, StringComparer.OrdinalIgnoreCase);
 
     public double ProgressFraction =>
         TotalSteps <= 0 ? 0.0 : Math.Clamp((double)CompletedSteps / TotalSteps, 0.0, 1.0);
@@ -61,22 +81,75 @@ public sealed class BenchQaRunner(
         bool includeDisplay = false,
         Func<string, CancellationToken, Task>? waitInteractive = null,
         CancellationToken ct = default) =>
-        Task.Run(() => RunIntakeAsync(includeStress, includeAudioCamera, includeSecurityAudit, includeKeyboard, includeDisplay, waitInteractive, ct), ct);
+        StartBenchQaAsync(BuildSelection(includeStress, includeAudioCamera, includeSecurityAudit, includeKeyboard, includeDisplay), waitInteractive, ct);
 
-    public async Task RunIntakeAsync(
+    public Task StartBenchQaAsync(
+        IReadOnlyCollection<string> selectedItemIds,
+        Func<string, CancellationToken, Task>? waitInteractive = null,
+        CancellationToken ct = default) =>
+        Task.Run(() => RunIntakeAsync(selectedItemIds, waitInteractive, ct), ct);
+
+    public Task RunIntakeAsync(
         bool includeStress = true,
         bool includeAudioCamera = true,
         bool includeSecurityAudit = false,
         bool includeKeyboard = false,
         bool includeDisplay = false,
         Func<string, CancellationToken, Task>? waitInteractive = null,
+        CancellationToken ct = default) =>
+        RunIntakeAsync(BuildSelection(includeStress, includeAudioCamera, includeSecurityAudit, includeKeyboard, includeDisplay), waitInteractive, ct);
+
+    private static HashSet<string> BuildSelection(bool includeStress, bool includeAudioCamera, bool includeSecurityAudit, bool includeKeyboard, bool includeDisplay)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "hardware", "battery", "smart", "sensors", "stability", "drivers", "integrity",
+        };
+        if (includeStress)
+        {
+            set.Add("cpu-stress");
+            set.Add("ram-test");
+            set.Add("disk-speed");
+            set.Add("gpu-stress");
+        }
+        if (includeAudioCamera)
+        {
+            set.Add("audio");
+            set.Add("webcam");
+        }
+        if (includeSecurityAudit) set.Add("security");
+        if (includeKeyboard) set.Add("keyboard");
+        if (includeDisplay) set.Add("display");
+        return set;
+    }
+
+    public async Task RunIntakeAsync(
+        IReadOnlyCollection<string> selectedItemIds,
+        Func<string, CancellationToken, Task>? waitInteractive = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(diag);
         ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(selectedItemIds);
 
         if (Interlocked.CompareExchange(ref _running, 1, 0) != 0)
             return;
+
+        var selected = new HashSet<string>(selectedItemIds, StringComparer.OrdinalIgnoreCase);
+        SelectedItemIds = selected;
+
+        var selectedStressSlugs = StressItemToSlug
+            .Where(kv => selected.Contains(kv.Key))
+            .Select(kv => kv.Value)
+            .ToList();
+        var includeStress = selectedStressSlugs.Count > 0;
+        var includeAudio = selected.Contains("audio");
+        var includeWebcam = selected.Contains("webcam");
+        var includeAudioCamera = includeAudio || includeWebcam;
+        var includeSecurityAudit = selected.Contains("security");
+        var includeKeyboard = selected.Contains("keyboard");
+        var includeDisplay = selected.Contains("display");
+        var includeIntegrity = selected.Contains("integrity");
 
         IncludeStress = includeStress;
         IncludeAudioCamera = includeAudioCamera;
@@ -88,46 +161,73 @@ public sealed class BenchQaRunner(
         lock (_gate) _cts = cts;
         var token = cts.Token;
 
-        var integrityToConsider = IntegritySlugs.Where(diag.CanRun).ToList();
+        var runAllBaseChecks = BaseCheckItems.All(b => selected.Contains(b.ItemId));
+        var selectiveBaseSlugs = runAllBaseChecks
+            ? []
+            : BaseCheckItems
+                .Where(b => selected.Contains(b.ItemId))
+                .Select(b => b.ItemId == "stability" && !diag.CanRun(ModuleSlugs.Crashes) && diag.CanRun(ModuleSlugs.BsodHistory)
+                    ? ModuleSlugs.BsodHistory
+                    : b.Slug)
+                .Where(diag.CanRun)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+        var integrityToConsider = includeIntegrity ? IntegritySlugs.Where(diag.CanRun).ToList() : [];
         var suiteStressSlugs = includeStress
-            ? diag.StressOrder.Where(s => LocalHardwareStressSlugs.Contains(s, StringComparer.OrdinalIgnoreCase)).ToList()
+            ? diag.StressOrder.Where(s => selectedStressSlugs.Contains(s, StringComparer.OrdinalIgnoreCase)).ToList()
             : [];
         var plainStressSlugs = includeStress
-            ? LocalHardwareStressSlugs.Where(s => !suiteStressSlugs.Contains(s, StringComparer.OrdinalIgnoreCase) && diag.CanRun(s)).ToList()
+            ? selectedStressSlugs.Where(s => !suiteStressSlugs.Contains(s, StringComparer.OrdinalIgnoreCase) && diag.CanRun(s)).ToList()
             : [];
         var peripheralSlugs = new List<string>();
-        if (includeAudioCamera)
-        {
-            if (diag.CanRun(ModuleSlugs.SpeakerToMic)) peripheralSlugs.Add(ModuleSlugs.SpeakerToMic);
-            if (diag.CanRun(ModuleSlugs.Webcam)) peripheralSlugs.Add(ModuleSlugs.Webcam);
-        }
-        if (diag.CanRun(ModuleSlugs.NpuTest))
+        if (includeAudio && diag.CanRun(ModuleSlugs.SpeakerToMic)) peripheralSlugs.Add(ModuleSlugs.SpeakerToMic);
+        if (includeWebcam && diag.CanRun(ModuleSlugs.Webcam)) peripheralSlugs.Add(ModuleSlugs.Webcam);
+        if ((includeAudioCamera || selected.Contains("npu")) && diag.CanRun(ModuleSlugs.NpuTest))
             peripheralSlugs.Add(ModuleSlugs.NpuTest);
 
         var securitySlugs = new List<string>();
         if (includeSecurityAudit && diag.CanRun(ModuleSlugs.SecurityAudit))
             securitySlugs.Add(ModuleSlugs.SecurityAudit);
 
+        var baseStepCount = runAllBaseChecks ? 1 : selectiveBaseSlugs.Count;
         var keyboardStep = includeKeyboard ? 1 : 0;
         var displayStep = includeDisplay ? 1 : 0;
         var saveStep = workflow is not null ? 1 : 0;
-        TotalSteps = 1 + integrityToConsider.Count + suiteStressSlugs.Count + plainStressSlugs.Count + peripheralSlugs.Count + securitySlugs.Count + keyboardStep + displayStep + saveStep;
+        TotalSteps = baseStepCount + integrityToConsider.Count + suiteStressSlugs.Count + plainStressSlugs.Count + peripheralSlugs.Count + securitySlugs.Count + keyboardStep + displayStep + saveStep;
         CompletedSteps = 0;
         LastSavedCertificatePath = null;
-        Status = "Running hardware inventory, SMART, battery, driver & WHEA checks…";
+        Status = runAllBaseChecks
+            ? "Running hardware inventory, SMART, battery, driver & WHEA checks…"
+            : "Starting selected hardware QA checks…";
         Raise();
 
         try
         {
-            log.Info($"[bench-qa] Starting 10-minute hardware intake (stress={includeStress}, audioCamera={includeAudioCamera}, securityAudit={includeSecurityAudit}, keyboard={includeKeyboard}, display={includeDisplay})");
+            log.Info($"[bench-qa] Starting hardware QA ({selected.Count} selected: {string.Join(", ", selected)})");
 
-            // Step 1: Standard read-only checks (Osquery, Sensors, DriveHealth, BatteryPower, DeviceDrivers, Crashes/WHEA, etc.)
-            await diag.RunAllAsync(token).ConfigureAwait(false);
-            token.ThrowIfCancellationRequested();
-            CompletedSteps = 1;
-            Raise();
+            // Step 1: Standard read-only checks (all at once when every base item is selected, or only the selected ones)
+            if (runAllBaseChecks)
+            {
+                await diag.RunAllAsync(token).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+                CompletedSteps = 1;
+                Raise();
+            }
+            else
+            {
+                foreach (var slug in selectiveBaseSlugs)
+                {
+                    token.ThrowIfCancellationRequested();
+                    Status = $"Checking {diag.Catalog.DisplayName(slug)}…";
+                    Raise();
+                    await RunModuleSafeAsync(slug, token).ConfigureAwait(false);
+                    CompletedSteps++;
+                    Raise();
+                }
+            }
 
-            // Step 2: Read-only Windows integrity checks (DismScanHealth, SfcVerifyOnly) if registered and not already completed
+            // Step 2: Read-only Windows integrity checks (DismScanHealth, SfcVerifyOnly) if selected and not already completed
             foreach (var slug in integrityToConsider)
             {
                 token.ThrowIfCancellationRequested();
@@ -143,14 +243,14 @@ public sealed class BenchQaRunner(
                 Raise();
             }
 
-            // Step 3: Short thermal-guarded hardware stress on local hardware only (skipping NetworkTest for offline benches)
+            // Step 3: Short thermal-guarded hardware stress on selected local hardware only
             if (includeStress)
             {
                 if (suiteStressSlugs.Count > 0)
                 {
                     token.ThrowIfCancellationRequested();
                     var baseSteps = CompletedSteps;
-                    Status = "Running short thermal-guarded hardware stress (CPU, RAM, Disk, GPU)…";
+                    Status = "Running short thermal-guarded hardware stress…";
                     Raise();
 
                     var stressProgress = new StressProgressAdapter(p =>
@@ -166,7 +266,7 @@ public sealed class BenchQaRunner(
                         StressSuiteMode.Short,
                         stressProgress,
                         token,
-                        only: LocalHardwareStressSlugs,
+                        only: selectedStressSlugs,
                         runQuickChecks: false).ConfigureAwait(false);
 
                     token.ThrowIfCancellationRequested();
@@ -188,7 +288,7 @@ public sealed class BenchQaRunner(
                 }
             }
 
-            // Step 4: Dongle-free WASAPI speaker->mic loopback, webcam check, and NPU accelerator check
+            // Step 4: Selected audio loopback, webcam, and NPU checks
             foreach (var slug in peripheralSlugs)
             {
                 token.ThrowIfCancellationRequested();
@@ -199,7 +299,7 @@ public sealed class BenchQaRunner(
                 Raise();
             }
 
-            // Step 5: Windows security & baseline audit (HardeningKitty) when requested
+            // Step 5: Windows security & baseline audit (HardeningKitty) when selected
             foreach (var slug in securitySlugs)
             {
                 token.ThrowIfCancellationRequested();
