@@ -696,6 +696,24 @@ public class RpcdRemoteUpdateTests
         Assert.Null(reason);
     }
 
+    [Fact]
+    public void Background_autorun_checks_do_not_block_rpcd_updates()
+    {
+        var onlyAutoRun = AgentExports.UpdateBlockReason(new AgentExports.ActivitySnapshot(
+        [
+            new AgentExports.RunningCheck("Osquery", "Hardware", null, null, BackgroundAutoRun: true),
+            new AgentExports.RunningCheck("BiosFirmware", "BIOS", null, null, BackgroundAutoRun: true),
+        ]));
+        Assert.Null(onlyAutoRun);
+
+        var mixed = AgentExports.UpdateBlockReason(new AgentExports.ActivitySnapshot(
+        [
+            new AgentExports.RunningCheck("Osquery", "Hardware", null, null, BackgroundAutoRun: true),
+            new AgentExports.RunningCheck("DriveHealth", "Drives", null, null, BackgroundAutoRun: false),
+        ]));
+        Assert.Contains("check is running (DriveHealth)", mixed);
+    }
+
     private static async Task<RpcdUpdateSession> RunAsync(
         string installed,
         string releaseVersion,

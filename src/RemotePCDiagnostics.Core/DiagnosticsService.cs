@@ -327,10 +327,10 @@ public sealed class DiagnosticsService
         return module is { IncludeInRunAll: true } && !_checks.IsEnabled(module.Name);
     }
 
-    public async Task<DiagnosticResult> RunAsync(string moduleName, IProgress<string>? progress = null, CancellationToken ct = default)
+    public async Task<DiagnosticResult> RunAsync(string moduleName, IProgress<string>? progress = null, CancellationToken ct = default, bool isBackgroundAutoRun = false)
     {
         var module = FindRunnable(moduleName) ?? throw new ArgumentException($"Unknown module '{moduleName}'.", nameof(moduleName));
-        return await RunAsync(module, progress, ct).ConfigureAwait(false);
+        return await RunAsync(module, progress, ct, isBackgroundAutoRun: isBackgroundAutoRun).ConfigureAwait(false);
     }
 
     /// <summary>Re-runs a module without switching its stored result to <see cref="DiagnosticStatus.Running"/>,
@@ -513,15 +513,23 @@ public sealed class DiagnosticsService
     /// <summary>True while any module or the stress suite is running.</summary>
     public bool IsAnyRunning => !_inFlight.IsEmpty || IsStressSuiteRunning;
 
+    private readonly HashSet<string> _backgroundAutoRun = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>True when <paramref name="moduleName"/> is running solely because of launch-time background <see cref="AutoRun"/>.</summary>
+    public bool IsBackgroundAutoRun(string moduleName)
+    {
+        lock (_gate) return _backgroundAutoRun.Contains(moduleName);
+    }
+
     /// <summary>Every module run in flight now, with its run ID (null for a run that has none, such as a per-instance run).</summary>
     public IReadOnlyList<(string ModuleName, Guid? RunId)> RunningModules =>
         _inFlight.Keys.Select(name => (name, _runIds.TryGetValue(name, out var id) ? id : (Guid?)null)).ToList();
 
     /// <summary>Starts a run unless one is already in progress, in which case the in-flight task is returned (no double-runs).</summary>
-    private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance = null, bool gateInstances = false) =>
-        StartRun(module, progress, ct, out _, onlyInstance, gateInstances);
+    private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance = null, bool gateInstances = false, bool isBackgroundAutoRun = false) =>
+        StartRun(module, progress, ct, out _, onlyInstance, gateInstances, isBackgroundAutoRun: isBackgroundAutoRun);
 
-    private Task<DiagnosticResult> StartRun(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, out Func<Task>? cleanupOnce, string? onlyInstance = null, bool gateInstances = false, bool silent = false)
+    private Task<DiagnosticResult> StartRun(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, out Func<Task>? cleanupOnce, string? onlyInstance = null, bool gateInstances = false, bool silent = false, bool isBackgroundAutoRun = false)
     {
         if (TurnedOffResult(module) is { } skipped)
         {
@@ -535,6 +543,8 @@ public sealed class DiagnosticsService
             {
                 var runId = Guid.NewGuid();
                 _runIds[module.Name] = runId;
+                if (isBackgroundAutoRun) _backgroundAutoRun.Add(module.Name);
+                else _backgroundAutoRun.Remove(module.Name);
                 if (!silent) MarkRunning(module, runId);
                 var tcs = new TaskCompletionSource<DiagnosticResult>(TaskCreationOptions.RunContinuationsAsynchronously);
                 _inFlight[module.Name] = existing = tcs.Task;
@@ -563,6 +573,7 @@ public sealed class DiagnosticsService
                         {
                             _inFlight.TryRemove(module.Name, out _);
                             _runIds.TryRemove(module.Name, out _);
+                            _backgroundAutoRun.Remove(module.Name);
                             _inFlightCleanups.Remove(module.Name);
                         }
                     }
@@ -571,6 +582,8 @@ public sealed class DiagnosticsService
                 }, CancellationToken.None);
                 return existing;
             }
+            if (!isBackgroundAutoRun)
+                _backgroundAutoRun.Remove(module.Name);
             task = existing;
             cleanupOnce = _inFlightCleanups.GetValueOrDefault(module.Name);
         }
