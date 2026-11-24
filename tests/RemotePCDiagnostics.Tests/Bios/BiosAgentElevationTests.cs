@@ -236,10 +236,60 @@ public sealed class BiosAgentElevationTests
 
         Assert.Equal(2, agentLauncher.Calls.Count);
         Assert.Equal("sp173990.exe", agentLauncher.Calls[0].BaseName, ignoreCase: true);
+        Assert.Contains("-pdf", agentLauncher.Calls[0].Arguments);
         Assert.Contains("-e", agentLauncher.Calls[0].Arguments);
         Assert.DoesNotContain("-r", agentLauncher.Calls[0].Arguments);
         Assert.Equal("HpFirmwareUpdRec64.exe", agentLauncher.Calls[1].BaseName, ignoreCase: true);
         Assert.Equal(["-s", "-r"], agentLauncher.Calls[1].Arguments);
+        Assert.Equal(2, sigVerifier.VerifiedPaths.Count);
+        Assert.Empty(Directory.GetFileSystemEntries(adminRoot.Path));
+    }
+
+    [Fact]
+    public async Task Pipe_RunBiosInstaller_HpSoftPaq_EmbeddedCab_ExtractsWithoutRunningSfx()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var userDir = new TempStagingDir();
+        using var adminRoot = new TempStagingDir();
+
+        // Build a fake SFX stub prefix + valid uncompressed MS-CAB containing HPBIOSUPDREC\HpFirmwareUpdRec64.exe
+        var cabBytes = TestCabBuilder.CreateUncompressed(new Dictionary<string, byte[]>
+        {
+            ["HPBIOSUPDREC\\HpFirmwareUpdRec64.exe"] = "MZ-fake-flasher"u8.ToArray(),
+        });
+        var sfxPrefix = new byte[128];
+        sfxPrefix[0] = (byte)'M';
+        sfxPrefix[1] = (byte)'Z';
+        var combined = new byte[sfxPrefix.Length + cabBytes.Length];
+        Buffer.BlockCopy(sfxPrefix, 0, combined, 0, sfxPrefix.Length);
+        Buffer.BlockCopy(cabBytes, 0, combined, sfxPrefix.Length, cabBytes.Length);
+        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(combined)).ToLowerInvariant();
+
+        var userPkgPath = userDir.FilePath("sp173990.exe");
+        await File.WriteAllBytesAsync(userPkgPath, combined, cts.Token);
+
+        var sigVerifier = new FakeSignatureVerifier(result: true);
+        var agentLauncher = CreateGuardedLauncher((_, _) => Task.FromResult(new ProcessResult(3010, "Flashed", "")));
+        var ops = new AgentBiosOperations(launcher: agentLauncher, signatureVerifier: sigVerifier, stagingRoot: adminRoot.Path);
+
+        var (server, serverTask, client) = await StartPipeAsync(agentLauncher, ops, cts.Token);
+        using (server)
+        {
+            await using (client)
+            {
+                var req = new BiosAgentInstallRequest("hp", BiosAgentInstallModes.HpSoftPaq, userPkgPath, sha, AllowReboot: false, TimeoutMs: 120_000);
+                var result = await client.RunBiosInstallerAsync(req, cts.Token);
+                Assert.True(result.Executed);
+                Assert.True(result.Allowed);
+                Assert.Equal(3010, result.ExitCode);
+            }
+            await serverTask;
+        }
+
+        // Only 1 process call: the extracted inner flasher! The SFX wrapper was never launched.
+        var call = Assert.Single(agentLauncher.Calls);
+        Assert.Equal("HpFirmwareUpdRec64.exe", call.BaseName, ignoreCase: true);
+        Assert.Equal(["-s", "-r"], call.Arguments);
         Assert.Equal(2, sigVerifier.VerifiedPaths.Count);
         Assert.Empty(Directory.GetFileSystemEntries(adminRoot.Path));
     }

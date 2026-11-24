@@ -996,6 +996,93 @@ public static class BiosArchiveAndXml
         }
     }
 
+    /// <summary>
+    /// Scans an executable (such as an HP SoftPaq self-extracting cabinet) for an embedded Microsoft Cabinet (<c>MSCF</c>)
+    /// archive and extracts its entries into <paramref name="destinationDirectory"/> using the pure-C# MS-CAB decoder
+    /// (supporting NONE, MSZIP, and LZX), without launching the SFX executable.
+    /// </summary>
+    public static bool TryExtractEmbeddedCabToDirectory(
+        string exePath,
+        string destinationDirectory,
+        long maxExeBytes = 128L * 1024 * 1024,
+        long maxDecompressedBytes = 256L * 1024 * 1024)
+    {
+        if (string.IsNullOrWhiteSpace(exePath) || string.IsNullOrWhiteSpace(destinationDirectory) || !File.Exists(exePath))
+            return false;
+
+        try
+        {
+            var info = new FileInfo(exePath);
+            if (info.Length < 36 || info.Length > maxExeBytes)
+                return false;
+
+            var data = File.ReadAllBytes(exePath);
+            var destRoot = Path.GetFullPath(destinationDirectory);
+            var destRootWithSep = destRoot.EndsWith(Path.DirectorySeparatorChar)
+                ? destRoot
+                : destRoot + Path.DirectorySeparatorChar;
+
+            for (var i = 0; i <= data.Length - 36; i++)
+            {
+                if (data[i] != (byte)'M' || data[i + 1] != (byte)'S' || data[i + 2] != (byte)'C' || data[i + 3] != (byte)'F')
+                    continue;
+
+                var span = data.AsSpan(i);
+                var reserved1 = BinaryPrimitives.ReadUInt32LittleEndian(span[4..]);
+                var cbCabinet = BinaryPrimitives.ReadUInt32LittleEndian(span[8..]);
+                var reserved2 = BinaryPrimitives.ReadUInt32LittleEndian(span[12..]);
+                var coffFiles = BinaryPrimitives.ReadUInt32LittleEndian(span[16..]);
+                var versionMinor = span[24];
+                var versionMajor = span[25];
+                var cFolders = BinaryPrimitives.ReadUInt16LittleEndian(span[26..]);
+                var cFiles = BinaryPrimitives.ReadUInt16LittleEndian(span[28..]);
+
+                if (reserved1 != 0 || reserved2 != 0 || versionMajor != 1 || versionMinor != 3)
+                    continue;
+                if (cbCabinet < 36 || cbCabinet > (uint)(data.Length - i))
+                    continue;
+                if (coffFiles < 36 || coffFiles > cbCabinet)
+                    continue;
+                if (cFolders == 0 || cFolders > MaxCabFolders || cFiles == 0)
+                    continue;
+
+                var cabSlice = new byte[cbCabinet];
+                Buffer.BlockCopy(data, i, cabSlice, 0, (int)cbCabinet);
+                if (!TryExtractCabEntries(cabSlice, out var entries, maxDecompressedBytes) || entries.Count == 0)
+                    continue;
+
+                Directory.CreateDirectory(destRoot);
+                var written = 0;
+                foreach (var (relName, fileBytes) in entries)
+                {
+                    var normalizedRel = relName.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar);
+                    if (string.IsNullOrWhiteSpace(normalizedRel))
+                        continue;
+
+                    var fullPath = Path.GetFullPath(Path.Combine(destRoot, normalizedRel));
+                    if (!fullPath.StartsWith(destRootWithSep, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var parent = Path.GetDirectoryName(fullPath);
+                    if (!string.IsNullOrEmpty(parent))
+                        Directory.CreateDirectory(parent);
+
+                    File.WriteAllBytes(fullPath, fileBytes);
+                    written++;
+                }
+
+                if (written > 0)
+                    return true;
+            }
+        }
+        catch
+        {
+            // Fall back to SFX CLI extraction.
+        }
+
+        return false;
+    }
+
     private readonly record struct CabFolder(uint CoffCabStart, ushort CCFData, int CompressionMethod, int WindowBits);
     private readonly record struct CabFileEntry(string SanitizedName, uint CbFile, uint UoffFolderStart);
 }

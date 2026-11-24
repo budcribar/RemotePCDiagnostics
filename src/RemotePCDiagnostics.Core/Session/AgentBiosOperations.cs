@@ -464,14 +464,24 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
                 {
                     var extractDir = Path.Combine(runStagingDir, "extracted");
                     Directory.CreateDirectory(extractDir);
-                    var extractResult = await ExecuteInstallerAsync(
-                        stagedPath,
-                        BuildHpSoftPaqExtractArguments(extractDir),
-                        timeout,
-                        runStagingDir,
-                        ct).ConfigureAwait(false);
 
-                    var innerFlasher = extractResult.ExitCode == 0 ? FindExtractedHpFlasher(extractDir) : null;
+                    BiosAgentInstallResult? extractResult = null;
+                    string? innerFlasher = null;
+                    if (Bios.BiosArchiveAndXml.TryExtractEmbeddedCabToDirectory(stagedPath, extractDir))
+                        innerFlasher = FindExtractedHpFlasher(extractDir);
+
+                    if (innerFlasher is null)
+                    {
+                        extractResult = await ExecuteInstallerAsync(
+                            stagedPath,
+                            BuildHpSoftPaqExtractArguments(extractDir),
+                            timeout,
+                            runStagingDir,
+                            ct).ConfigureAwait(false);
+                        if (extractResult.ExitCode == 0)
+                            innerFlasher = FindExtractedHpFlasher(extractDir);
+                    }
+
                     if (innerFlasher is not null)
                     {
                         var innerSigValid = await _signatureVerifier.VerifyAuthenticodeAsync(
@@ -488,7 +498,16 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
                     else
                     {
                         // Running the SoftPaq itself can't keep the PC from rebooting (sp*.exe rejects -r), so stop here.
-                        return ExtractionFailed(extractResult, HpFlasherNotFound);
+                        var foundExes = ListExtractedExeNames(extractDir);
+                        var diag = $"extractExit={(extractResult is null ? "cab-only" : extractResult.ExitCode.ToString())}, foundExes=[{string.Join(", ", foundExes)}]";
+                        var logTail = string.IsNullOrWhiteSpace(extractResult?.LogTail) ? diag : $"{extractResult!.LogTail}\n{diag}";
+                        return new BiosAgentInstallResult(
+                            Executed: false,
+                            Allowed: true,
+                            ExitCode: extractResult?.ExitCode ?? -1,
+                            TimedOut: false,
+                            LogTail: logTail,
+                            Error: HpFlasherNotFound);
                     }
                 }
                 else if ((mode == BiosAgentInstallModes.LenovoWinUptp || mode == BiosAgentInstallModes.LenovoPackageSilent)
@@ -567,7 +586,14 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
     ];
 
     internal static IReadOnlyList<string> BuildHpSoftPaqExtractArguments(string extractDir) =>
-        ["-s", "-e", $"-f{extractDir}"];
+        ["-pdf", $"-f{extractDir}", "-s", "-e"];
+
+    private static IReadOnlyList<string> ListExtractedExeNames(string extractDir)
+    {
+        if (!Directory.Exists(extractDir)) return [];
+        try { return Directory.GetFiles(extractDir, "*.exe", SearchOption.AllDirectories).Select(Path.GetFileName).Where(n => n is not null).Cast<string>().Take(12).ToList(); }
+        catch { return []; }
+    }
 
     internal static IReadOnlyList<string> BuildLenovoSfxExtractArguments(string extractDir) =>
         ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", $"/DIR={extractDir}", "/EXTRACT=YES"];
