@@ -110,6 +110,11 @@ public sealed class RemediationService(
     private void LogWarn(string m) => (log ?? commands.Log).Warn("[remediation] " + m);
     private void LogError(string m) => (log ?? commands.Log).Error("[remediation] " + m);
 
+    private string? AdminNote(string? extra = null) =>
+        commands.HasAdminRights
+            ? extra
+            : string.IsNullOrEmpty(extra) ? "Requires administrator privileges." : "Requires administrator privileges. " + extra;
+
     public RemediationPlan Plan(AreaAction action)
     {
         var label = string.IsNullOrWhiteSpace(action.TargetLabel) ? action.Target : action.TargetLabel;
@@ -137,9 +142,7 @@ public sealed class RemediationService(
                 $"Restart {label}?",
                 $"Resets hardware device '{label}' in Device Manager via pnputil.",
                 "Windows will stop and restart the device driver without rebooting the PC.",
-                commands.HasAdminRights
-                    ? "If this is a network or display device, it may briefly disconnect or flicker."
-                    : "Requires administrator privileges. If this is a network or display device, it may briefly disconnect or flicker.",
+                AdminNote("If this is a network or display device, it may briefly disconnect or flicker."),
                 !string.IsNullOrWhiteSpace(action.Target)),
 
             RemediationKind.EnableDevice => new(
@@ -147,7 +150,7 @@ public sealed class RemediationService(
                 $"Enable {label}?",
                 $"Re-enables disabled device '{label}' in Device Manager via pnputil.",
                 "Windows will enable the device and load its driver.",
-                commands.HasAdminRights ? null : "Requires administrator privileges.",
+                AdminNote(),
                 !string.IsNullOrWhiteSpace(action.Target)),
 
             RemediationKind.ScanHardwareChanges => new(
@@ -172,7 +175,7 @@ public sealed class RemediationService(
                 "Turn off Windows Fast Startup?",
                 "Fast Startup (Hiberboot) saves kernel state to disk on Shut Down instead of performing a full reset, which can cause multi-week uptimes and driver quirks.",
                 "Sets HiberbootEnabled = 0 in the Windows registry so every Shut Down performs a clean boot.",
-                "Requires administrator privileges.",
+                AdminNote(),
                 true),
 
             RemediationKind.ScheduleCleanRestart => new(
@@ -206,7 +209,7 @@ public sealed class RemediationService(
                 $"Runs 'powercfg /devicedisablewake' for this one device. The PC then stays asleep when the device is used; the power button (and the lid, on a laptop) still wake it. Undo lets the device wake the PC again.",
                 DeviceWake.IsProtectedBusOrHub(action.Target)
                     ? "Stopping wake on a USB hub, controller, or composite device can disconnect keyboards, mice, or docks plugged into it (Code 43). Disable wake on an individual device instead."
-                    : DeviceWake.IsSafeName(action.Target) ? "Requires administrator privileges." : "This isn't a device name this app can change.",
+                    : DeviceWake.IsSafeName(action.Target) ? AdminNote() : "This isn't a device name this app can change.",
                 DeviceWake.CanDisableWake(action.Target)),
 
             RemediationKind.DisableWakeTimer => new(
@@ -214,7 +217,7 @@ public sealed class RemediationService(
                 $"Stop {label} from waking the PC?",
                 $"Scheduled task '{action.Target}' has a wake timer set so it can wake this PC from sleep.",
                 $"Turns off 'Wake the computer to run this task' (WakeToRun) on '{action.Target}'. The task still runs normally when the PC is awake. Undo turns WakeToRun back on.",
-                DeviceWake.IsSafeTaskPath(action.Target) ? "Requires administrator privileges." : "This isn't a scheduled task path this app can change.",
+                DeviceWake.IsSafeTaskPath(action.Target) ? AdminNote() : "This isn't a scheduled task path this app can change.",
                 DeviceWake.IsSafeTaskPath(action.Target)),
 
             // 3. Network & Connectivity Fixes
@@ -241,7 +244,7 @@ public sealed class RemediationService(
                 $"Use Cloudflare & Google DNS on {label}?",
                 $"Configures adapter '{label}' to use fast, reliable public DNS servers (1.1.1.1 and 8.8.8.8).",
                 "Updates the IPv4 DNS server addresses on this adapter.",
-                "Requires administrator privileges.",
+                AdminNote(),
                 !string.IsNullOrWhiteSpace(action.Target)),
 
             RemediationKind.ResetDhcpDns => new(
@@ -250,7 +253,7 @@ public sealed class RemediationService(
                 (action.CurrentSetting is { Length: > 0 } dns ? $"Current DNS servers on {label} at last check: {DnsSpeedTest.FormatServers(dns)}. " : "") +
                 $"Restores automatic DNS settings on adapter '{label}'.",
                 "Clears custom static DNS server addresses so Windows uses the DNS provided by the router/DHCP.",
-                "Requires administrator privileges.",
+                AdminNote(),
                 !string.IsNullOrWhiteSpace(action.Target)),
 
             // 4. Storage & Disk Space Cleanup
@@ -269,7 +272,7 @@ public sealed class RemediationService(
                 $"Optimize / Retrim {label}?",
                 "Sends TRIM / ReTrim optimization commands to the solid-state drive so it can maintain peak write speeds.",
                 DriveLetters(action.Target) is { Length: > 0 } dl ? $"Runs 'Optimize-Volume -DriveLetter {string.Join(",", dl.ToCharArray())} -ReTrim'." : "Nothing will run.",
-                DriveLetters(action.Target).Length > 0 ? "Requires administrator privileges." : "This drive has no drive letter to optimize.",
+                DriveLetters(action.Target).Length > 0 ? AdminNote() : "This drive has no drive letter to optimize.",
                 DriveLetters(action.Target).Length > 0),
 
             // 5. Windows repair
@@ -279,7 +282,7 @@ public sealed class RemediationService(
                 "Repairs corruption DISM found in the Windows component store (the copies Windows uses to fix its own files)."
                     + (action.Target == "needs-source" ? " DISM reported the store cannot be repaired from local files: this needs Windows Update (internet) or a matching installation source." : ""),
                 "Runs 'dism.exe /English /Online /Cleanup-Image /RestoreHealth' (10–30 minutes; may download files from Windows Update). Not undoable.",
-                "Requires administrator privileges.",
+                AdminNote(),
                 true),
 
             RemediationKind.RepairSystemFiles => new(
@@ -287,7 +290,7 @@ public sealed class RemediationService(
                 "Repair protected system files (SFC /scannow)?",
                 "Replaces corrupt or changed protected Windows files with good copies from the component store.",
                 "Runs 'sfc.exe /scannow' (10–20 minutes), after DISM RestoreHealth when both run. Not undoable.",
-                "Requires administrator privileges.",
+                AdminNote(),
                 true),
 
             RemediationKind.AnalyzeComponentStore => new(
@@ -295,7 +298,7 @@ public sealed class RemediationService(
                 "Analyze the Windows component store?",
                 "Measures the component store (WinSxS) and reports whether a cleanup is recommended.",
                 "Runs 'dism.exe /English /Online /Cleanup-Image /AnalyzeComponentStore' (a few minutes). Changes nothing on the PC.",
-                "Requires administrator privileges.",
+                AdminNote(),
                 true),
 
             RemediationKind.CleanUpComponentStore => new(
@@ -303,7 +306,7 @@ public sealed class RemediationService(
                 "Clean up the Windows component store?",
                 "Removes older versions of Windows components that newer updates have replaced.",
                 "Runs 'dism.exe /English /Online /Cleanup-Image /StartComponentCleanup' (10–30 minutes). Installed updates can still be uninstalled afterwards. Not undoable.",
-                "Requires administrator privileges. Restart the PC afterwards, before repairing the store again.",
+                AdminNote("Restart the PC afterwards, before repairing the store again."),
                 true),
 
             RemediationKind.RepairComponentStoreFromImage => new(
@@ -312,7 +315,7 @@ public sealed class RemediationService(
                 $"Repairs the component store from '{label}' instead of Windows Update, for when Windows Update doesn't have the files.",
                 "Finds the image of this PC's Windows edition, then runs 'dism.exe /English /Online /Cleanup-Image /RestoreHealth /Source:… /LimitAccess' (10–30 minutes). Not undoable.",
                 WindowsRepair.IsImagePath(action.Target)
-                    ? "Requires administrator privileges. The image must be the same Windows version and edition as this PC; another version usually fails."
+                    ? AdminNote("The image must be the same Windows version and edition as this PC; another version usually fails.")
                     : "This isn't a Windows image file (.wim or .esd) this app can use.",
                 WindowsRepair.IsImagePath(action.Target)),
 
@@ -333,10 +336,10 @@ public sealed class RemediationService(
                 action,
                 string.IsNullOrWhiteSpace(label) ? "Update BIOS to latest version?" : $"Update BIOS to {label}?",
                 "Downloads, verifies, and stages the official vendor BIOS/UEFI firmware update for this PC.",
-                "Checks AC power, battery level, BitLocker, and administrator prerequisites, suspends BitLocker for one reboot if active, verifies the signed vendor package, and stages the BIOS update. Not undoable.",
+                "Checks AC power, battery level, and BitLocker prerequisites, suspends BitLocker for one reboot if active, verifies the signed vendor package, and stages the BIOS update. Not undoable.",
                 bios is null
                     ? "BIOS update service is not available in this session."
-                    : "Requires administrator privileges, AC power, and a restart to finish flashing. Do not turn off or unplug the PC while the BIOS update is applying.",
+                    : AdminNote("Requires AC power and a restart to finish flashing. Do not turn off or unplug the PC while the BIOS update is applying."),
                 bios is not null),
 
             RemediationKind.OpenSettings => new(
@@ -748,6 +751,11 @@ public sealed class RemediationService(
         SystemSettingsRules.IsAdapterName(target) ? target! : throw new ArgumentException("Invalid network adapter name.");
 
     /// <summary>Runs an in-process settings change; any refusal from Windows is the fix's failure message.</summary>
+    internal RemediationResult RestoreFastStartup(int value) => Apply(
+        s => s.SetFastStartup(value),
+        "Fast Startup setting restored (full effect after the next restart).",
+        "Couldn't restore Fast Startup (administrator rights required).");
+
     private RemediationResult Apply(Action<ISystemSettings> change, string okMsg, string failMsg)
     {
         if (settings is null) return new(false, failMsg);

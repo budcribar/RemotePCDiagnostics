@@ -770,12 +770,12 @@ public sealed class BiosE2eTier2InstallAndElevationBoundaryTests
 
         Assert.Empty(pipe.AgentProcessLauncher.Calls);
 
-        // (e) Valid AllowReboot=false enforces canonical reboot-suppressed flags on Agent
+        // (e) Valid AllowReboot=false enforces canonical flags on Agent
         var hpOk = await pipe.Client.RunBiosInstallerAsync(new BiosAgentInstallRequest("hp", BiosAgentInstallModes.HpSoftPaq, exePath, exeSha, AllowReboot: false));
         Assert.True(hpOk.Allowed);
         Assert.True(hpOk.Executed);
-        var hpCall = Assert.Single(pipe.AgentProcessLauncher.Calls);
-        Assert.Equal(["-s", "-r"], hpCall.Arguments);
+        var hpCall = pipe.AgentProcessLauncher.Calls[^1];
+        Assert.Equal(["-s"], hpCall.Arguments);
     }
 
     [Fact]

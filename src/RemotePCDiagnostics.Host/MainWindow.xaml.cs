@@ -148,19 +148,16 @@ public partial class MainWindow : Window
             n => RemotePCDiagnostics.Core.History.HistoryIds.For(n, diag.Catalog));
         _ = new RemotePCDiagnostics.Core.Logging.ResultEventLogger(provider.GetRequiredService<ResultStore>(), App.Events, _ => diag.CurrentSuiteLabel, context: eventContext);
         _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.AppStart, RemotePCDiagnostics.Core.Logging.LogLevel.Information, AppStartText(mode.ToString())));
-        // Tell the person at this PC when a remote user starts/stops/restarts a service (non-blocking).
+        // Log when a remote user starts/stops/restarts a service or runs an automated fix (no modal MessageBox that could stack on an unattended PC).
         provider.GetRequiredService<ServiceActionService>().ActionCompleted += rec =>
         {
-
             _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.TestResult, rec.Success ? RemotePCDiagnostics.Core.Logging.LogLevel.Information : RemotePCDiagnostics.Core.Logging.LogLevel.Warning, RemotePCDiagnostics.Core.History.HistorySummary.FormatServiceEvent(rec, _machine.Value, eventContext.AppVersion)));
-            if (rec.Actor == ServiceActor.Remote) Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"A remote user used the Services page: {rec.Message.TrimEnd('.')}.", "Remote PC Diagnostics", MessageBoxButton.OK, MessageBoxImage.Information));
+            if (rec.Actor == ServiceActor.Remote) App.Log.Info($"Remote user used the Services page: {rec.Message.TrimEnd('.')}.");
         };
         provider.GetRequiredService<RemediationService>().ActionCompleted += rec =>
         {
-
             _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.TestResult, rec.Success ? RemotePCDiagnostics.Core.Logging.LogLevel.Information : RemotePCDiagnostics.Core.Logging.LogLevel.Warning, RemotePCDiagnostics.Core.History.HistorySummary.FormatRemediationEvent(rec, _machine.Value, eventContext.AppVersion)));
-            // Not for the record the app writes by itself after a restart: the remote user did nothing just then, and the box would sit on an unattended PC.
-            if (rec.Actor == ServiceActor.Remote && !RebootResumeCoordinator.IsPostRebootComparison(rec)) Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"A remote user ran an automated fix: {rec.Message.TrimEnd('.')}.", "Remote PC Diagnostics", MessageBoxButton.OK, MessageBoxImage.Information));
+            if (rec.Actor == ServiceActor.Remote && !RebootResumeCoordinator.IsPostRebootComparison(rec)) App.Log.Info($"Remote user ran an automated fix: {rec.Message.TrimEnd('.')}.");
         };
 
         // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).

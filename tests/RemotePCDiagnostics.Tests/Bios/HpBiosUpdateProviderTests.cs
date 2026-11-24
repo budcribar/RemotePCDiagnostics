@@ -633,14 +633,15 @@ public sealed class HpBiosUpdateProviderTests
         Assert.True(result.BitLockerSuspended);
         Assert.Equal(installerExitCode, result.ExitCode);
 
-        Assert.Equal(2, launcher.Calls.Count);
+        var isSoftPaq = AgentBiosOperations.IsHpSoftPaqExecutable(url);
+        Assert.Equal(isSoftPaq ? 3 : 2, launcher.Calls.Count);
         Assert.Equal("manage-bde.exe", launcher.Calls[0].BaseName, ignoreCase: true);
         Assert.Equal("-protectors", launcher.Calls[0].Arguments[0]);
         Assert.Equal("-disable", launcher.Calls[0].Arguments[1]);
         Assert.Equal("-RebootCount", launcher.Calls[0].Arguments[3]);
         Assert.Equal("1", launcher.Calls[0].Arguments[4]);
 
-        Assert.Equal(expectedArgs, launcher.Calls[1].Arguments);
+        Assert.Equal(isSoftPaq ? ["-s"] : expectedArgs, launcher.Calls[^1].Arguments);
 
         Assert.NotNull(observedAutoDir);
         Assert.False(Directory.Exists(observedAutoDir!));
@@ -683,8 +684,9 @@ public sealed class HpBiosUpdateProviderTests
         Assert.True(result.Succeeded);
         Assert.Equal(BiosInstallStatus.StagedForReboot, result.Status);
         Assert.False(result.BitLockerSuspended);
-        var call = Assert.Single(launcher.Calls);
-        Assert.Equal(["-s", "-r"], call.Arguments);
+        Assert.Equal(2, launcher.Calls.Count);
+        Assert.Contains("-e", launcher.Calls[0].Arguments);
+        Assert.Equal(["-s"], launcher.Calls[1].Arguments);
         Assert.True(Directory.Exists(staging.Path));
     }
 
@@ -716,7 +718,7 @@ public sealed class HpBiosUpdateProviderTests
         Assert.True(result.Succeeded);
         Assert.Equal(BiosInstallStatus.StagedForReboot, result.Status);
         Assert.False(result.BitLockerSuspended);
-        Assert.Equal(2, launcher.Calls.Count);
+        Assert.Equal(3, launcher.Calls.Count);
 
         // The same manage-bde failure, when BitLocker isn't known to be off, stops the flash.
         var before = launcher.Calls.Count;
@@ -799,7 +801,7 @@ public sealed class HpBiosUpdateProviderTests
         if (signatureValid)
         {
             Assert.True(result.Succeeded);
-            Assert.Single(launcher.Calls);
+            Assert.Equal(2, launcher.Calls.Count);
         }
         else
         {

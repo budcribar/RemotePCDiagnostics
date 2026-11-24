@@ -434,7 +434,7 @@ public sealed class BiosProvidersIntegrationTests
         Assert.True(install.Succeeded, install.Message);
         Assert.Equal(BiosInstallStatus.StagedForReboot, install.Status);
         Assert.Equal(2, trackingHandler.RequestCount);
-        Assert.Single(launcher.Calls);
+        Assert.Equal(2, launcher.Calls.Count);
         Assert.Equal("sp151234.exe", launcher.Calls[0].BaseName, ignoreCase: true);
     }
 
@@ -1069,15 +1069,15 @@ public sealed class BiosProvidersIntegrationTests
         Assert.True(result.BitLockerSuspended);
 
         Assert.Equal(1, sigVerifier.CallCount);
-        Assert.Equal(2, launcher.Calls.Count);
+        Assert.Equal(3, launcher.Calls.Count);
         Assert.Equal("manage-bde.exe", launcher.Calls[0].BaseName, ignoreCase: true);
         Assert.Contains("-protectors", launcher.Calls[0].Arguments);
         Assert.Contains("-disable", launcher.Calls[0].Arguments);
         Assert.Contains("-RebootCount", launcher.Calls[0].Arguments);
         Assert.Contains("1", launcher.Calls[0].Arguments);
 
-        Assert.Equal("sp151234.exe", launcher.Calls[1].BaseName, ignoreCase: true);
-        Assert.Equal(["-s", "-r"], launcher.Calls[1].Arguments);
+        Assert.Equal("sp151234.exe", launcher.Calls[^1].BaseName, ignoreCase: true);
+        Assert.Equal(["-s"], launcher.Calls[^1].Arguments);
 
         // Verify logger factory wiring and secret redaction
         Assert.Contains(typeof(BiosUpdateService).FullName!, loggerFactory.RequestedCategories);
@@ -1146,7 +1146,7 @@ public sealed class BiosProvidersIntegrationTests
             var result = await service.InstallUpdateAsync(request);
             Assert.True(result.Succeeded, result.Message);
             Assert.Equal(BiosInstallStatus.StagedForReboot, result.Status);
-            Assert.Single(launcher.Calls);
+            Assert.Equal(2, launcher.Calls.Count);
             Assert.Equal("sp151234.exe", launcher.Calls[0].BaseName, ignoreCase: true);
         }
 
@@ -1243,7 +1243,7 @@ public sealed class BiosProvidersIntegrationTests
 
             var res1 = await service.InstallUpdateAsync(req1, ct: cts.Token);
             Assert.True(res1.Succeeded, res1.Message);
-            Assert.Equal(2, hostLauncher.Calls.Count);
+            Assert.Equal(3, hostLauncher.Calls.Count);
             Assert.Empty(agentLauncher.Calls);
 
             // Mutate IElevationContext mid-container lifetime: IsProcessElevated -> false
@@ -1262,8 +1262,8 @@ public sealed class BiosProvidersIntegrationTests
             Assert.True(res2.Succeeded, res2.Message);
             Assert.Equal(BiosInstallStatus.StagedForReboot, res2.Status);
             Assert.True(res2.BitLockerSuspended);
-            Assert.Equal(2, hostLauncher.Calls.Count); // Unchanged — zero new Host launches
-            Assert.Equal(2, agentLauncher.Calls.Count); // manage-bde + admin-staged SoftPaq
+            Assert.Equal(3, hostLauncher.Calls.Count); // Unchanged — zero new Host launches
+            Assert.Equal(3, agentLauncher.Calls.Count); // manage-bde + admin-staged SoftPaq extract + run
             Assert.Equal(1, agentSigVerifier.CallCount);
         }
         finally
@@ -1351,16 +1351,16 @@ public sealed class BiosProvidersIntegrationTests
             Assert.Empty(hostLauncher.Calls);
 
             // Agent executed manage-bde.exe and then admin-staged SoftPaq strictly inside adminRoot
-            Assert.Equal(2, agentLauncher.Calls.Count);
+            Assert.Equal(3, agentLauncher.Calls.Count);
             Assert.Equal("manage-bde.exe", agentLauncher.Calls[0].BaseName, ignoreCase: true);
 
-            var installerCall = agentLauncher.Calls[1];
+            var installerCall = agentLauncher.Calls[^1];
             var normalizedAdminRoot = Path.GetFullPath(adminRoot.Path);
             var normalizedUserStaging = Path.GetFullPath(userStaging.Path);
             var normalizedExePath = Path.GetFullPath(installerCall.FileName);
             Assert.StartsWith(normalizedAdminRoot, normalizedExePath, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(normalizedUserStaging, normalizedExePath, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(["-s", "-r"], installerCall.Arguments);
+            Assert.Equal(["-s"], installerCall.Arguments);
 
             // Agent verified Authenticode on admin-staged copy and cleaned up admin staging directory
             Assert.Equal(1, agentSigVerifier.CallCount);

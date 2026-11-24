@@ -120,8 +120,9 @@ public static class BiosAgentInstallModes
         var normalized = installMode?.Trim().ToLowerInvariant() ?? "";
         return normalized switch
         {
-            // HP firmware updaters invert -r polarity: -r suppresses reboot.
-            HpSoftPaq => !allowReboot ? ["-s", "-r"] : ["-s"],
+            // HP SoftPaq SFX wrappers (sp*.exe) reject -r with exit code 87 (ERROR_INVALID_PARAMETER).
+            // The inner flasher (HpFirmwareUpdRec64.exe / HPBIOSUPDREC64.exe) uses -r to suppress reboot.
+            HpSoftPaq => ["-s"],
             HpBiosUpdRec => !allowReboot ? ["-s", "-r"] : ["-s"],
             DellBiosExe => allowReboot ? ["/s", "/r"] : ["/s"],
             DellDcuCli => ["/applyUpdates", "-updateType=bios", "-silent", allowReboot ? "-reboot=enable" : "-reboot=disable"],
@@ -441,14 +442,80 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
                 {
                     executablePath = SystemCommandRunner.SystemTool("msiexec.exe");
                     arguments = BiosAgentInstallModes.BuildArguments(mode, request.AllowReboot, stagedPath);
+                    workingDirectory = runStagingDir;
+                }
+                else if ((mode == BiosAgentInstallModes.HpSoftPaq || mode == BiosAgentInstallModes.HpBiosUpdRec)
+                    && IsHpSoftPaqExecutable(stagedPath))
+                {
+                    var extractDir = Path.Combine(runStagingDir, "extracted");
+                    Directory.CreateDirectory(extractDir);
+                    var extractResult = await ExecuteInstallerAsync(
+                        stagedPath,
+                        BuildHpSoftPaqExtractArguments(extractDir),
+                        timeout,
+                        runStagingDir,
+                        ct).ConfigureAwait(false);
+
+                    var innerFlasher = extractResult.ExitCode == 0 ? FindExtractedHpFlasher(extractDir) : null;
+                    if (innerFlasher is not null)
+                    {
+                        var innerSigValid = await _signatureVerifier.VerifyAuthenticodeAsync(
+                            innerFlasher,
+                            BiosAgentInstallModes.AllowedSignerOrganizations(BiosAgentInstallModes.HpBiosUpdRec),
+                            ct).ConfigureAwait(false);
+                        if (!innerSigValid)
+                            return Reject("Extracted HP BIOS flasher failed Agent Authenticode signature verification.");
+
+                        executablePath = innerFlasher;
+                        arguments = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.HpBiosUpdRec, request.AllowReboot);
+                        workingDirectory = Path.GetDirectoryName(innerFlasher) ?? extractDir;
+                    }
+                    else
+                    {
+                        executablePath = stagedPath;
+                        arguments = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.HpSoftPaq, request.AllowReboot);
+                        workingDirectory = runStagingDir;
+                    }
+                }
+                else if ((mode == BiosAgentInstallModes.LenovoWinUptp || mode == BiosAgentInstallModes.LenovoPackageSilent)
+                    && IsLenovoSfxExecutable(stagedPath))
+                {
+                    var extractDir = Path.Combine(runStagingDir, "extracted");
+                    Directory.CreateDirectory(extractDir);
+                    var extractResult = await ExecuteInstallerAsync(
+                        stagedPath,
+                        BuildLenovoSfxExtractArguments(extractDir),
+                        timeout,
+                        runStagingDir,
+                        ct).ConfigureAwait(false);
+
+                    var innerFlasher = extractResult.ExitCode == 0 ? FindExtractedLenovoFlasher(extractDir) : null;
+                    if (innerFlasher is not null)
+                    {
+                        var innerSigValid = await _signatureVerifier.VerifyAuthenticodeAsync(
+                            innerFlasher,
+                            BiosAgentInstallModes.AllowedSignerOrganizations(BiosAgentInstallModes.LenovoWinUptp),
+                            ct).ConfigureAwait(false);
+                        if (!innerSigValid)
+                            return Reject("Extracted Lenovo BIOS flasher failed Agent Authenticode signature verification.");
+
+                        executablePath = innerFlasher;
+                        arguments = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.LenovoWinUptp, request.AllowReboot);
+                        workingDirectory = Path.GetDirectoryName(innerFlasher) ?? extractDir;
+                    }
+                    else
+                    {
+                        executablePath = stagedPath;
+                        arguments = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.LenovoPackageSilent, request.AllowReboot);
+                        workingDirectory = runStagingDir;
+                    }
                 }
                 else
                 {
                     executablePath = stagedPath;
                     arguments = BiosAgentInstallModes.BuildArguments(mode, request.AllowReboot);
+                    workingDirectory = runStagingDir;
                 }
-
-                workingDirectory = runStagingDir;
             }
 
             return await ExecuteInstallerAsync(executablePath, arguments, timeout, workingDirectory, ct).ConfigureAwait(false);
@@ -457,6 +524,66 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
         {
             TryDeleteDirectoryRecursive(runStagingDir);
         }
+    }
+
+    private static readonly string[] HpInnerFlasherNames =
+    [
+        "HpFirmwareUpdRec64.exe",
+        "HPBIOSUPDREC64.exe",
+        "HpFirmwareUpdRec.exe",
+        "HPBIOSUPDREC.exe",
+    ];
+
+    private static readonly string[] LenovoInnerFlasherNames =
+    [
+        "WINUPTP64.exe",
+        "WINUPTP.exe",
+    ];
+
+    internal static IReadOnlyList<string> BuildHpSoftPaqExtractArguments(string extractDir) =>
+        ["-s", "-e", $"-f{extractDir}"];
+
+    internal static IReadOnlyList<string> BuildLenovoSfxExtractArguments(string extractDir) =>
+        ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", $"/DIR={extractDir}", "/EXTRACT=YES"];
+
+    internal static bool IsHpSoftPaqExecutable(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (name.Length < 7 || !name.StartsWith("sp", StringComparison.OrdinalIgnoreCase)
+            || !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            return false;
+        for (var i = 2; i < name.Length - 4; i++)
+            if (!char.IsAsciiDigit(name[i])) return false;
+        return true;
+    }
+
+    internal static bool IsLenovoSfxExecutable(string path)
+    {
+        var name = Path.GetFileName(path);
+        return name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            && !name.Contains("winuptp", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static string? FindExtractedHpFlasher(string extractDir) =>
+        FindExtractedFlasher(extractDir, HpInnerFlasherNames);
+
+    internal static string? FindExtractedLenovoFlasher(string extractDir) =>
+        FindExtractedFlasher(extractDir, LenovoInnerFlasherNames);
+
+    private static string? FindExtractedFlasher(string extractDir, IReadOnlyList<string> preferredNames)
+    {
+        if (!Directory.Exists(extractDir)) return null;
+        string[] exes;
+        try { exes = Directory.GetFiles(extractDir, "*.exe", SearchOption.AllDirectories); }
+        catch { return null; }
+
+        foreach (var preferred in preferredNames)
+        {
+            var match = exes.FirstOrDefault(p =>
+                string.Equals(Path.GetFileName(p), preferred, StringComparison.OrdinalIgnoreCase));
+            if (match is not null) return match;
+        }
+        return null;
     }
 
     public async Task<BiosWuaInstallOutcome> InstallWindowsUpdateAsync(Guid updateId, TimeSpan timeout, CancellationToken ct = default)

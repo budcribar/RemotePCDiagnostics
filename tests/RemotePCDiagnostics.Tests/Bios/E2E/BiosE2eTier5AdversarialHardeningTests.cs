@@ -403,7 +403,7 @@ public sealed class BiosE2eTier5AdversarialHardeningTests
                 Assert.Equal(BiosInstallStatus.StagedForReboot, r.Status);
             });
             Assert.Empty(Directory.GetFiles(sharedStage, "*.part", SearchOption.AllDirectories));
-            Assert.Equal(2, host.HostProcessLauncher.Calls.Count(c => c.ToolName.Equals("sp151234.exe", StringComparison.OrdinalIgnoreCase)));
+            Assert.Equal(4, host.HostProcessLauncher.Calls.Count(c => c.ToolName.Equals("sp151234.exe", StringComparison.OrdinalIgnoreCase)));
 
             // 5b. Microsoft Surface concurrent identical-URL installs into a shared staging directory
             var surfaceStage = Path.Combine(attackRoot, "concurrent-surface");
