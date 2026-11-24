@@ -537,14 +537,22 @@ internal sealed class FakeSignatureVerifier : IBiosSignatureVerifier
 {
     private readonly Lock _lock = new();
     private readonly List<string> _verifiedPaths = [];
+    private readonly List<(string CatalogPath, string MemberFilePath, IReadOnlyCollection<string> AllowedSigners)> _catalogMemberChecks = [];
     private readonly Func<string, CancellationToken, Task<bool>> _impl;
+    private readonly Func<string, string, IReadOnlyCollection<string>, CancellationToken, Task<bool>>? _catalogMemberImpl;
 
     public FakeSignatureVerifier(bool result = true)
         : this((_, _) => Task.FromResult(result))
     {
     }
 
-    public FakeSignatureVerifier(Func<string, CancellationToken, Task<bool>> impl) => _impl = impl;
+    public FakeSignatureVerifier(
+        Func<string, CancellationToken, Task<bool>> impl,
+        Func<string, string, IReadOnlyCollection<string>, CancellationToken, Task<bool>>? catalogMemberImpl = null)
+    {
+        _impl = impl;
+        _catalogMemberImpl = catalogMemberImpl;
+    }
 
     public IReadOnlyList<string> VerifiedPaths
     {
@@ -552,6 +560,15 @@ internal sealed class FakeSignatureVerifier : IBiosSignatureVerifier
         {
             lock (_lock)
                 return [.. _verifiedPaths];
+        }
+    }
+
+    public IReadOnlyList<(string CatalogPath, string MemberFilePath, IReadOnlyCollection<string> AllowedSigners)> CatalogMemberChecks
+    {
+        get
+        {
+            lock (_lock)
+                return [.. _catalogMemberChecks];
         }
     }
 
@@ -572,6 +589,21 @@ internal sealed class FakeSignatureVerifier : IBiosSignatureVerifier
         lock (_lock)
             AllowedSignerSets.Add(allowedSignerOrganizations);
         return VerifyAuthenticodeAsync(filePath, ct);
+    }
+
+    public Task<bool> VerifyCatalogMemberAsync(
+        string catalogPath,
+        string memberFilePath,
+        IReadOnlyCollection<string> allowedSignerOrganizations,
+        CancellationToken ct = default)
+    {
+        lock (_lock)
+            _catalogMemberChecks.Add((catalogPath, memberFilePath, allowedSignerOrganizations));
+
+        if (_catalogMemberImpl is not null)
+            return _catalogMemberImpl(catalogPath, memberFilePath, allowedSignerOrganizations, ct);
+
+        return VerifyAuthenticodeAsync(catalogPath, allowedSignerOrganizations, ct);
     }
 }
 

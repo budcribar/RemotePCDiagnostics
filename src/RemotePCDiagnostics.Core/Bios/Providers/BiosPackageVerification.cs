@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Cryptography.X509Certificates;
+using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Bios;
 
@@ -14,15 +15,28 @@ public interface IBiosSignatureVerifier
     /// is exactly one of <paramref name="allowedSignerOrganizations"/>. The elevated Agent uses only this overload.
     /// </summary>
     Task<bool> VerifyAuthenticodeAsync(string filePath, IReadOnlyCollection<string> allowedSignerOrganizations, CancellationToken ct = default);
+
+    /// <summary>
+    /// True only when <paramref name="catalogPath"/> has a valid Authenticode signature (revocation checked)
+    /// from one of <paramref name="allowedSignerOrganizations"/> AND cryptographically covers
+    /// <paramref name="memberFilePath"/> (the member file's catalog hash is verified against the signed catalog).
+    /// </summary>
+    Task<bool> VerifyCatalogMemberAsync(
+        string catalogPath,
+        string memberFilePath,
+        IReadOnlyCollection<string> allowedSignerOrganizations,
+        CancellationToken ct = default);
 }
 
 /// <summary>
 /// Pure-C# Authenticode signature verifier invoking Windows <c>wintrust.dll!WinVerifyTrust</c>
-/// (<c>WINTRUST_ACTION_GENERIC_VERIFY_V2</c>). Fails closed (<c>false</c>) on non-Windows or on any verification error.
+/// (<c>WINTRUST_ACTION_GENERIC_VERIFY_V2</c>) and Windows catalog APIs (<c>CryptCATAdmin*</c> / <c>CryptCAT*</c>).
+/// Fails closed (<c>false</c>) on non-Windows or on any verification error.
 /// </summary>
 public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
 {
     private static readonly Guid WinTrustActionGenericVerifyV2 = new("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+    private static readonly Guid DriverActionVerify = new("F750E6C3-38EE-11D1-85E5-00C04FC295EE");
     private static readonly IntPtr InvalidHandleValue = new(-1);
 
     private const uint WTD_UI_NONE = 2;
@@ -30,8 +44,10 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
     private const uint WTD_REVOKE_WHOLECHAIN = 1;
     private const uint WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT = 0x80;
     private const uint WTD_CHOICE_FILE = 1;
+    private const uint WTD_CHOICE_CATALOG = 2;
     private const uint WTD_STATEACTION_VERIFY = 1;
     private const uint WTD_STATEACTION_CLOSE = 2;
+    private const int MaxCatalogMembersToInspect = 4096;
 
     public static WinVerifyTrustSignatureVerifier Instance { get; } = new();
 
@@ -62,6 +78,28 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
             OperatingSystem.IsWindows()
             && VerifyAuthenticodeWindows(filePath, checkRevocation: true, ct)
             && IsAllowedSignerOrganization(ReadSignerOrganization(filePath), allowedSignerOrganizations), ct);
+    }
+
+    public Task<bool> VerifyCatalogMemberAsync(
+        string catalogPath,
+        string memberFilePath,
+        IReadOnlyCollection<string> allowedSignerOrganizations,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        if (!OperatingSystem.IsWindows() || allowedSignerOrganizations is not { Count: > 0 })
+            return Task.FromResult(false);
+
+        if (string.IsNullOrWhiteSpace(catalogPath) || !File.Exists(catalogPath))
+            return Task.FromResult(false);
+
+        if (string.IsNullOrWhiteSpace(memberFilePath) || !File.Exists(memberFilePath))
+            return Task.FromResult(false);
+
+        return Task.Run(() =>
+            OperatingSystem.IsWindows()
+            && VerifyCatalogMemberWindows(catalogPath, memberFilePath, allowedSignerOrganizations, ct), ct);
     }
 
     /// <summary>Exact (case-insensitive) match of the signer's O= value against the allowlist. Null or empty never matches.</summary>
@@ -179,6 +217,240 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
         }
     }
 
+    [SupportedOSPlatform("windows")]
+    private static bool VerifyCatalogMemberWindows(
+        string catalogPath,
+        string memberFilePath,
+        IReadOnlyCollection<string> allowedSignerOrganizations,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        // 1. Verify the catalog file itself has a valid, non-revoked Authenticode signature from an allowlisted signer.
+        if (!VerifyAuthenticodeWindows(catalogPath, checkRevocation: true, ct))
+            return false;
+
+        if (!IsAllowedSignerOrganization(ReadSignerOrganization(catalogPath), allowedSignerOrganizations))
+            return false;
+
+        // 2. Calculate the target member file's SHA-256 catalog hash and verify that this exact signed catalog covers it.
+        var hCatAdmin = IntPtr.Zero;
+        var hCatalog = IntPtr.Zero;
+        var driverActionGuid = DriverActionVerify;
+
+        try
+        {
+            if (!CryptCATAdminAcquireContext2(out hCatAdmin, ref driverActionGuid, "SHA256", IntPtr.Zero, 0)
+                || hCatAdmin == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            using var memberFileHandle = File.OpenHandle(memberFilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var addedRef = false;
+            try
+            {
+                memberFileHandle.DangerousAddRef(ref addedRef);
+                var rawFileHandle = memberFileHandle.DangerousGetHandle();
+
+                uint hashLength = 0;
+                _ = CryptCATAdminCalcHashFromFileHandle2(hCatAdmin, rawFileHandle, ref hashLength, null, 0);
+                if (hashLength == 0 || hashLength > 128)
+                    return false;
+
+                var hashBytes = new byte[hashLength];
+                if (!CryptCATAdminCalcHashFromFileHandle2(hCatAdmin, rawFileHandle, ref hashLength, hashBytes, 0)
+                    || hashLength == 0
+                    || hashLength > hashBytes.Length)
+                {
+                    return false;
+                }
+
+                // Standard Inf2Cat / WHQL catalogs use the uppercase hex hash as the member reference tag.
+                var hexTag = Convert.ToHexString(hashBytes.AsSpan(0, (int)hashLength));
+                if (VerifyCatalogMemberWithWinVerifyTrust(
+                        catalogPath,
+                        memberFilePath,
+                        rawFileHandle,
+                        hexTag,
+                        hashBytes,
+                        hashLength,
+                        hCatAdmin,
+                        ct))
+                {
+                    return true;
+                }
+
+                // Fallback for signed catalogs whose member reference tags are filenames or custom identifiers:
+                // enumerate member tags in the catalog and let WinVerifyTrust verify the calculated hash against each.
+                hCatalog = CryptCATOpen(catalogPath, fdwOpenFlags: 0, hProv: IntPtr.Zero, dwPublicVersion: 0, dwEncodingType: 0);
+                if (hCatalog == IntPtr.Zero || hCatalog == InvalidHandleValue)
+                    return false;
+
+                var prevMember = IntPtr.Zero;
+                for (var inspected = 0; inspected < MaxCatalogMembersToInspect; inspected++)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    prevMember = CryptCATEnumerateMember(hCatalog, prevMember);
+                    if (prevMember == IntPtr.Zero)
+                        break;
+
+                    var header = Marshal.PtrToStructure<CRYPTCATMEMBER_HEADER>(prevMember);
+                    if (header.pwszReferenceTag == IntPtr.Zero)
+                        continue;
+
+                    var tag = Marshal.PtrToStringUni(header.pwszReferenceTag);
+                    if (string.IsNullOrEmpty(tag) || string.Equals(tag, hexTag, StringComparison.Ordinal))
+                        continue;
+
+                    if (VerifyCatalogMemberWithWinVerifyTrust(
+                            catalogPath,
+                            memberFilePath,
+                            rawFileHandle,
+                            tag,
+                            hashBytes,
+                            hashLength,
+                            hCatAdmin,
+                            ct))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+            finally
+            {
+                if (addedRef)
+                    memberFileHandle.DangerousRelease();
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (hCatalog != IntPtr.Zero && hCatalog != InvalidHandleValue)
+            {
+                try { _ = CryptCATClose(hCatalog); } catch { }
+            }
+
+            if (hCatAdmin != IntPtr.Zero)
+            {
+                try { _ = CryptCATAdminReleaseContext(hCatAdmin, 0); } catch { }
+            }
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool VerifyCatalogMemberWithWinVerifyTrust(
+        string catalogPath,
+        string memberFilePath,
+        IntPtr memberFileHandle,
+        string memberTag,
+        byte[] hashBytes,
+        uint hashLength,
+        IntPtr hCatAdmin,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var catalogPathPtr = IntPtr.Zero;
+        var memberTagPtr = IntPtr.Zero;
+        var memberPathPtr = IntPtr.Zero;
+        var catalogInfoPtr = IntPtr.Zero;
+        var hashPin = default(GCHandle);
+        var actionGuid = WinTrustActionGenericVerifyV2;
+        var trustData = default(WINTRUST_DATA);
+        var stateOpened = false;
+
+        try
+        {
+            catalogPathPtr = Marshal.StringToHGlobalUni(catalogPath);
+            memberTagPtr = Marshal.StringToHGlobalUni(memberTag);
+            memberPathPtr = Marshal.StringToHGlobalUni(memberFilePath);
+            hashPin = GCHandle.Alloc(hashBytes, GCHandleType.Pinned);
+
+            var catalogInfo = new WINTRUST_CATALOG_INFO
+            {
+                cbStruct = (uint)Marshal.SizeOf<WINTRUST_CATALOG_INFO>(),
+                dwCatalogVersion = 0,
+                pcwszCatalogFilePath = catalogPathPtr,
+                pcwszMemberTag = memberTagPtr,
+                pcwszMemberFilePath = memberPathPtr,
+                hMemberFile = memberFileHandle,
+                pbCalculatedFileHash = hashPin.AddrOfPinnedObject(),
+                cbCalculatedFileHash = hashLength,
+                pcCatalogContext = IntPtr.Zero,
+                hCatAdmin = hCatAdmin,
+            };
+
+            catalogInfoPtr = Marshal.AllocHGlobal(Marshal.SizeOf<WINTRUST_CATALOG_INFO>());
+            Marshal.StructureToPtr(catalogInfo, catalogInfoPtr, fDeleteOld: false);
+
+            trustData = new WINTRUST_DATA
+            {
+                cbStruct = (uint)Marshal.SizeOf<WINTRUST_DATA>(),
+                pPolicyCallbackData = IntPtr.Zero,
+                pSIPClientData = IntPtr.Zero,
+                dwUIChoice = WTD_UI_NONE,
+                fdwRevocationChecks = WTD_REVOKE_WHOLECHAIN,
+                dwUnionChoice = WTD_CHOICE_CATALOG,
+                pFile = catalogInfoPtr,
+                dwStateAction = WTD_STATEACTION_VERIFY,
+                hWVTStateData = IntPtr.Zero,
+                pwszURLReference = IntPtr.Zero,
+                dwProvFlags = WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT,
+                dwUIContext = 0,
+                pSignatureSettings = IntPtr.Zero,
+            };
+
+            stateOpened = true;
+            var status = WinVerifyTrust(InvalidHandleValue, ref actionGuid, ref trustData);
+            return status == 0;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (stateOpened)
+            {
+                try
+                {
+                    trustData.dwStateAction = WTD_STATEACTION_CLOSE;
+                    _ = WinVerifyTrust(InvalidHandleValue, ref actionGuid, ref trustData);
+                }
+                catch
+                {
+                    // Best-effort state cleanup.
+                }
+            }
+
+            if (catalogInfoPtr != IntPtr.Zero)
+                Marshal.FreeHGlobal(catalogInfoPtr);
+
+            if (hashPin.IsAllocated)
+                hashPin.Free();
+
+            if (memberPathPtr != IntPtr.Zero)
+                Marshal.FreeHGlobal(memberPathPtr);
+
+            if (memberTagPtr != IntPtr.Zero)
+                Marshal.FreeHGlobal(memberTagPtr);
+
+            if (catalogPathPtr != IntPtr.Zero)
+                Marshal.FreeHGlobal(catalogPathPtr);
+        }
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct WINTRUST_FILE_INFO
     {
@@ -186,6 +458,28 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
         public IntPtr pcwszFilePath;
         public IntPtr hFile;
         public IntPtr pgKnownSubject;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WINTRUST_CATALOG_INFO
+    {
+        public uint cbStruct;
+        public uint dwCatalogVersion;
+        public IntPtr pcwszCatalogFilePath;
+        public IntPtr pcwszMemberTag;
+        public IntPtr pcwszMemberFilePath;
+        public IntPtr hMemberFile;
+        public IntPtr pbCalculatedFileHash;
+        public uint cbCalculatedFileHash;
+        public IntPtr pcCatalogContext;
+        public IntPtr hCatAdmin;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CRYPTCATMEMBER_HEADER
+    {
+        public uint cbStruct;
+        public IntPtr pwszReferenceTag;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -208,6 +502,43 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
 
     [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = false, CharSet = CharSet.Unicode)]
     private static extern uint WinVerifyTrust(IntPtr hwnd, ref Guid pgActionID, ref WINTRUST_DATA pWVTData);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CryptCATAdminAcquireContext2(
+        out IntPtr phCatAdmin,
+        ref Guid pgSubsystem,
+        string? pwszHashAlgorithm,
+        IntPtr pStrongHashPolicy,
+        uint dwFlags);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CryptCATAdminReleaseContext(IntPtr hCatAdmin, uint dwFlags);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CryptCATAdminCalcHashFromFileHandle2(
+        IntPtr hCatAdmin,
+        IntPtr hFile,
+        ref uint pcbHash,
+        byte[]? pbHash,
+        uint dwFlags);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr CryptCATOpen(
+        string pwszFileName,
+        uint fdwOpenFlags,
+        IntPtr hProv,
+        uint dwPublicVersion,
+        uint dwEncodingType);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CryptCATClose(IntPtr hCatalog);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true)]
+    private static extern IntPtr CryptCATEnumerateMember(IntPtr hCatalog, IntPtr pPrevMember);
 }
 
 /// <summary>Outcome of downloading and verifying a BIOS update package.</summary>
@@ -317,28 +648,26 @@ public static class BiosPackageVerification
                     verifiedBySha256: true);
             }
 
-            if (request.VerifyHash)
+            // Even when VerifyHash is false or the catalog omitted a SHA-256 digest,
+            // never allow an unverified package through — always require a pinned Authenticode signature.
+            progress?.Report(new BiosInstallProgress(BiosInstallStage.Verifying, 0, "Verifying package Authenticode signature..."));
+
+            var verifier = signatureVerifier ?? WinVerifyTrustSignatureVerifier.Instance;
+            var allowedSigners = BiosAgentInstallModes.AllowedSignerOrganizationsForVendor(vendorId);
+            var signed = allowedSigners.Count > 0
+                && await verifier.VerifyAuthenticodeAsync(filePath, allowedSigners, ct).ConfigureAwait(false);
+            if (!signed)
             {
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Verifying, 0, "Verifying package Authenticode signature..."));
-
-                var verifier = signatureVerifier ?? WinVerifyTrustSignatureVerifier.Instance;
-                var signed = await verifier.VerifyAuthenticodeAsync(filePath, ct).ConfigureAwait(false);
-                if (!signed)
-                {
-                    log?.Warn($"[{vendorId}] BIOS package failed Authenticode signature verification. Deleting unverified file.");
-                    return BiosVerifiedPackageResult.Fail("Downloaded BIOS package failed Authenticode signature verification.");
-                }
-
-                keepFile = true;
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Verifying, 100, "Package Authenticode signature verified."));
-                return BiosVerifiedPackageResult.Ok(
-                    filePath,
-                    download.BytesDownloaded,
-                    verifiedByAuthenticode: true);
+                log?.Warn($"[{vendorId}] BIOS package failed Authenticode signature verification. Deleting unverified file.");
+                return BiosVerifiedPackageResult.Fail("Downloaded BIOS package failed Authenticode signature verification.");
             }
 
             keepFile = true;
-            return BiosVerifiedPackageResult.Ok(filePath, download.BytesDownloaded);
+            progress?.Report(new BiosInstallProgress(BiosInstallStage.Verifying, 100, "Package Authenticode signature verified."));
+            return BiosVerifiedPackageResult.Ok(
+                filePath,
+                download.BytesDownloaded,
+                verifiedByAuthenticode: true);
         }
         finally
         {
