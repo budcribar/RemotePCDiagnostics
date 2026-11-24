@@ -1018,6 +1018,7 @@ jobs:
           exit $code
 
       - name: Upload Partner Center Store screenshots (1920x1080)
+        if: env.FULL_RELEASE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: partner-center-screenshots
