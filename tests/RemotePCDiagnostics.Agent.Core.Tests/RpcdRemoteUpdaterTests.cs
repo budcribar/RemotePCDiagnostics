@@ -226,6 +226,57 @@ public class RpcdRemoteUpdaterTests
         http: http,
         stagingDirectory: dir);
 
+    [Fact]
+    public void Old_update_packages_are_deleted_and_recent_ones_kept()
+    {
+        var dir = TempDir();
+        var now = DateTime.UtcNow;
+        var old = Directory.CreateDirectory(Path.Combine(dir, Guid.NewGuid().ToString("N")));
+        File.WriteAllText(Path.Combine(old.FullName, "RemotePCDiagnostics-Setup.exe"), "old");
+        old.CreationTimeUtc = now - AgentSelfUpdater.PackageRetention - TimeSpan.FromMinutes(1);
+        var running = Directory.CreateDirectory(Path.Combine(dir, Guid.NewGuid().ToString("N")));
+        var other = Directory.CreateDirectory(Path.Combine(dir, "not-a-package"));
+        other.CreationTimeUtc = old.CreationTimeUtc;
+        var legacySetup = Path.Combine(dir, "RemotePCDiagnostics-Setup.exe");
+        File.WriteAllText(legacySetup, "legacy");
+        File.SetLastWriteTimeUtc(legacySetup, old.CreationTimeUtc);
+        var status = Path.Combine(dir, "rpcd-update-status.json");
+        File.WriteAllText(status, "{}");
+        File.SetLastWriteTimeUtc(status, old.CreationTimeUtc);
+
+        Assert.Equal(2, AgentSelfUpdater.DeleteOldPackages(dir, now));
+
+        Assert.False(old.Exists && Directory.Exists(old.FullName));
+        Assert.False(File.Exists(legacySetup));
+        Assert.True(Directory.Exists(running.FullName));
+        Assert.True(Directory.Exists(other.FullName));
+        Assert.True(File.Exists(status));
+    }
+
+    [Fact]
+    public void A_held_mutex_counts_as_a_running_host()
+    {
+        var name = "rpcd-test-" + Guid.NewGuid().ToString("N");
+        Assert.False(RpcdRemoteUpdater.IsMutexHeld(name));
+        using (new Mutex(initiallyOwned: true, name))
+            Assert.True(RpcdRemoteUpdater.IsMutexHeld(name));
+    }
+
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    public void Relaunch_only_brings_back_a_session_whose_host_still_runs(bool running, bool alive, bool relaunched)
+    {
+        var dir = TempDir();
+        var path = Path.Combine(dir, "active-session.json");
+        File.WriteAllText(path, new ActiveSessionInfo(4242, running, Guid.NewGuid().ToString(), null, "Remote", DateTimeOffset.UtcNow).ToJson());
+
+        var args = RpcdRemoteUpdater.RelaunchForActiveSession("https://server.example.com:34544", path, pid => alive && pid == 4242);
+
+        Assert.Equal(relaunched, args is not null);
+    }
+
     private static string TempDir()
     {
         var dir = Path.Combine(Path.GetTempPath(), "rpcd-updater-" + Guid.NewGuid().ToString("N"));

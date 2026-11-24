@@ -24,7 +24,10 @@ internal sealed class RpcdRemoteUpdater : IDisposable
     private readonly string _statusPath;
     private readonly string _lockPath;
     private readonly Action<string>? _log;
-    private readonly string? _stagingError;
+    private readonly bool _secureStaging;
+    private readonly object _stagingGate = new();
+    private string? _stagingError;
+    private bool _restored;
 
     /// <summary>
     /// The service and elevated helper share the update status and a lock file in the admin-only staging folder.
@@ -52,20 +55,51 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         _statusPath = Path.Combine(_stagingDirectory, "rpcd-update-status.json");
         _lockPath = Path.Combine(_stagingDirectory, "rpcd-update.lock");
         _session = new RpcdUpdateSession(Persist);
-        try
+        _secureStaging = stagingDirectory is null;
+        _ = TryPrepareStaging();
+    }
+
+    /// <summary>
+    /// Secures the staging folder (and loads the saved status the first time it works). Run again on every start and, after a
+    /// failure, on every read, so one failure at service start does not turn updates off until the service restarts.
+    /// </summary>
+    private bool TryPrepareStaging()
+    {
+        lock (_stagingGate)
         {
-            if (stagingDirectory is null)
-                AgentSelfUpdater.PrepareStaging(_stagingDirectory);
-            Restore();
-        }
-        catch (Exception ex)
-        {
-            _stagingError = ex.Message;
-            _log?.Invoke($"[rpcd-update] Could not secure update staging: {ex.Message}");
+            try
+            {
+                if (_secureStaging)
+                    AgentSelfUpdater.PrepareStaging(_stagingDirectory);
+                if (!_restored)
+                {
+                    Restore();
+                    _restored = true;
+                }
+                if (_stagingError is not null)
+                    _log?.Invoke("[rpcd-update] Update staging is secured again.");
+                _stagingError = null;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                if (_stagingError != ex.Message)
+                    _log?.Invoke($"[rpcd-update] Could not secure update staging: {ex.Message}");
+                _stagingError = ex.Message;
+                return false;
+            }
         }
     }
 
-
+    private RpcdUpdateStatus StagingRefusal(string? requestId) => new()
+    {
+        RequestId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId,
+        Stage = RpcdUpdateStages.Refused,
+        Terminal = true,
+        Error = _stagingError,
+        Detail = _stagingError,
+        UpdatedUtc = DateTimeOffset.UtcNow,
+    };
 
     public void Bind(AdminPipeServerOptions options)
     {
@@ -75,26 +109,16 @@ internal sealed class RpcdRemoteUpdater : IDisposable
 
     public RpcdUpdateStatus? Current(string? requestId)
     {
-        if (_stagingError is not null)
-            return null;
+        if (_stagingError is not null && !TryPrepareStaging())
+            return StagingRefusal(requestId);
         LoadShared();
         return _session.Current(requestId, _installedVersion(), DateTimeOffset.UtcNow, ReadInstalledAgentProductVersion());
     }
 
     public RpcdUpdateStatus Start(RpcdUpdateRequest request, IReadOnlyList<string>? relaunch, bool trustCallerBusyReason)
     {
-        if (_stagingError is not null)
-        {
-            return new RpcdUpdateStatus
-            {
-                RequestId = Guid.NewGuid().ToString("N"),
-                Stage = RpcdUpdateStages.Refused,
-                Terminal = true,
-                Error = _stagingError,
-                Detail = _stagingError,
-                UpdatedUtc = DateTimeOffset.UtcNow,
-            };
-        }
+        if (!TryPrepareStaging())
+            return StagingRefusal(null);
 
         bool started;
         RpcdUpdateStatus status;
@@ -530,49 +554,47 @@ internal sealed class RpcdRemoteUpdater : IDisposable
     internal static string? ReadInstalledAgentProductVersion() =>
         RpcdProductVersion.ReadFile(AgentLayout.DefaultAgentExe());
 
-    /// <summary>Checks whether an installed or cached RPCD host process is running.</summary>
-    public static bool IsRpcdHostRunning()
+    /// <summary>The mutex every Host instance holds while it runs. Setup's AppMutex checks the same name.</summary>
+    internal const string HostInstanceMutexName = @"Global\RemotePCDiagnostics.Host";
+
+    /// <summary>
+    /// True while any RPCD Host process runs, from any install location. This is the same test Setup's AppMutex makes, so the
+    /// agent refuses exactly when Setup would. A mutex the agent may not open still exists, so that counts as running.
+    /// </summary>
+    public static bool IsRpcdHostRunning() => IsMutexHeld(HostInstanceMutexName);
+
+    internal static bool IsMutexHeld(string name)
     {
-        var local = AgentPaths.TryFindLocalInstalledHostExe();
-        var store = AgentPaths.TryFindStoreHostExe();
-        var cache = AgentPaths.AppCacheRootDir();
-        var cachedVersion = AgentPaths.GetCachedVersion(cache);
-        var cached = string.IsNullOrEmpty(cachedVersion) ? null :
-            Path.Combine(cache, cachedVersion, "RemotePCDiagnostics.Host.exe");
-        var candidates = Process.GetProcessesByName(RpcdHostShutdown.HostProcessName);
         try
         {
-            foreach (var process in candidates)
-            {
-                try
-                {
-                    var path = process.MainModule?.FileName;
-                    if (path is not null && (string.Equals(path, local, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(path, store, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(path, cached, StringComparison.OrdinalIgnoreCase)))
-                        return true;
-                }
-                catch (System.ComponentModel.Win32Exception) { }
-                catch (InvalidOperationException) { } // The process exited during inspection.
-            }
-            return false;
+            if (!Mutex.TryOpenExisting(name, out var mutex))
+                return false;
+            mutex.Dispose();
+            return true;
         }
-        finally
+        catch (UnauthorizedAccessException)
         {
-            foreach (var process in candidates)
-                process.Dispose();
+            return true;
         }
     }
-
 
     /// <summary>The restart command line for the session the app published, so Setup brings that same session back.</summary>
     public static IReadOnlyList<string>? RelaunchForActiveSession(string? configuredServer)
     {
-        if (!Uri.TryCreate(configuredServer, UriKind.Absolute, out var server))
-            return null;
         var path = AgentLayout.ActiveSessionPath();
         if (!File.Exists(path) && File.Exists(AgentLayout.LegacyActiveSessionPath()))
             path = AgentLayout.LegacyActiveSessionPath();
+        return RelaunchForActiveSession(configuredServer, path, IsHostProcessAlive);
+    }
+
+    /// <summary>
+    /// The restart command line from the session file at <paramref name="path"/>, only while the Host that wrote it still runs.
+    /// A file left behind by a Host that crashed would otherwise reopen the app into a session that is gone.
+    /// </summary>
+    internal static IReadOnlyList<string>? RelaunchForActiveSession(string? configuredServer, string path, Func<int, bool> hostAlive)
+    {
+        if (!Uri.TryCreate(configuredServer, UriKind.Absolute, out var server))
+            return null;
         if (!File.Exists(path))
             return null;
         ActiveSessionInfo? info;
@@ -586,9 +608,25 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         }
         if (info is null || !string.Equals(info.Mode, "Remote", StringComparison.OrdinalIgnoreCase))
             return null;
+        if (!info.Running || info.ProcessId <= 0 || !hostAlive(info.ProcessId))
+            return null;
         if (!Guid.TryParse(info.SessionId, out var sessionId) || sessionId == Guid.Empty)
             return null;
         var args = SessionLaunchOptions.RestartArguments(server, sessionId, info.Unattended, info.Voice, info.Group, info.Admin);
         return SessionLaunchOptions.IsRestartCommandLine(args) ? args : null;
+    }
+
+    private static bool IsHostProcessAlive(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            return !process.HasExited &&
+                string.Equals(process.ProcessName, RpcdHostShutdown.HostProcessName, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
     }
 }

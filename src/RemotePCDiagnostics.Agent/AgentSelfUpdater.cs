@@ -262,6 +262,55 @@ internal static class AgentSelfUpdater
         if (!OperatingSystem.IsWindows() ||
             !ProtectedStateFolder.Ensure(Path.GetDirectoryName(stagingDir)!, stagingDir, null))
             throw new InvalidOperationException("Could not secure update staging for Administrators and SYSTEM.");
+        DeleteOldPackages(stagingDir, DateTime.UtcNow);
+    }
+
+    /// <summary>How old a downloaded package folder must be before it is deleted. An update that is still running is younger.</summary>
+    internal static readonly TimeSpan PackageRetention = TimeSpan.FromHours(6);
+
+    /// <summary>
+    /// Deletes the per-update package folders (named by a GUID) older than <see cref="PackageRetention"/>, so each update's
+    /// Setup and Agent MSI do not stay in ProgramData. A folder that is still in use is left for the next update.
+    /// </summary>
+    internal static int DeleteOldPackages(string stagingDir, DateTime utcNow, Action<string>? log = null)
+    {
+        var deleted = 0;
+        if (!Directory.Exists(stagingDir))
+            return 0;
+        foreach (var dir in new DirectoryInfo(stagingDir).EnumerateDirectories())
+        {
+            if (!Guid.TryParseExact(dir.Name, "N", out _) || (dir.Attributes & FileAttributes.ReparsePoint) != 0)
+                continue;
+            if (utcNow - dir.CreationTimeUtc < PackageRetention)
+                continue;
+            try
+            {
+                dir.Delete(recursive: true);
+                deleted++;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                log?.Invoke($"[agent-update] Could not delete old update package {dir.Name}: {ex.Message}");
+            }
+        }
+        // Builds before per-update folders downloaded Setup and the MSI straight into the staging folder.
+        foreach (var file in new DirectoryInfo(stagingDir).EnumerateFiles())
+        {
+            var ext = file.Extension;
+            if (!(ext.Equals(".exe", StringComparison.OrdinalIgnoreCase) || ext.Equals(".msi", StringComparison.OrdinalIgnoreCase)
+                    || ext.Equals(".part", StringComparison.OrdinalIgnoreCase)) || utcNow - file.LastWriteTimeUtc < PackageRetention)
+                continue;
+            try
+            {
+                file.Delete();
+                deleted++;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                log?.Invoke($"[agent-update] Could not delete old update file {file.Name}: {ex.Message}");
+            }
+        }
+        return deleted;
     }
 
     /// <summary>The exit code Setup's cmd script wrote, or null when it has not written one.</summary>
