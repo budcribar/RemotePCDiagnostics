@@ -998,8 +998,8 @@ public static class BiosArchiveAndXml
 
     /// <summary>
     /// Scans an executable (such as an HP SoftPaq self-extracting cabinet) for an embedded Microsoft Cabinet (<c>MSCF</c>)
-    /// archive and extracts its entries into <paramref name="destinationDirectory"/> using the pure-C# MS-CAB decoder
-    /// (supporting NONE, MSZIP, and LZX), without launching the SFX executable.
+    /// archive and extracts its entries into <paramref name="destinationDirectory"/> without launching the SFX executable.
+    /// Uses native <c>expand.exe</c> on Windows (after validating CAB entry paths) and pure-C# extraction on non-Windows.
     /// </summary>
     public static bool TryExtractEmbeddedCabToDirectory(
         string exePath,
@@ -1049,8 +1049,12 @@ public static class BiosArchiveAndXml
                 var cabSlice = new byte[cbCabinet];
                 Buffer.BlockCopy(data, i, cabSlice, 0, (int)cbCabinet);
 
-                if (OperatingSystem.IsWindows() && TryExtractCabWithWindowsExpand(cabSlice, destRoot))
-                    return true;
+                if (OperatingSystem.IsWindows())
+                {
+                    if (TryExtractCabWithWindowsExpand(cabSlice, coffFiles, cFiles, destRoot, destRootWithSep, maxDecompressedBytes))
+                        return true;
+                    continue;
+                }
 
                 if (!TryExtractCabEntries(cabSlice, out var entries, maxDecompressedBytes) || entries.Count == 0)
                     continue;
@@ -1087,12 +1091,73 @@ public static class BiosArchiveAndXml
         return false;
     }
 
-    private static bool TryExtractCabWithWindowsExpand(byte[] cabSlice, string destRoot)
+    private static bool TryExtractCabWithWindowsExpand(
+        byte[] cabSlice,
+        uint coffFiles,
+        ushort cFiles,
+        string destRoot,
+        string destRootWithSep,
+        long maxDecompressedBytes)
     {
         string? tempCabPath = null;
         try
         {
+            // Validate all CAB entry names (no traversal / ADS / reserved names) and pre-create any
+            // subdirectories inside destRoot so Windows expand.exe can write nested paths cleanly.
+            var span = cabSlice.AsSpan();
+            var filePos = (int)coffFiles;
+            long declaredTotal = 0;
+            var subDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (var f = 0; f < cFiles; f++)
+            {
+                if ((long)filePos + 16 >= cabSlice.Length)
+                    return false;
+
+                var cbFile = BinaryPrimitives.ReadUInt32LittleEndian(span[filePos..]);
+                var attribs = BinaryPrimitives.ReadUInt16LittleEndian(span[(filePos + 14)..]);
+                filePos += 16;
+
+                var searchLimit = Math.Min(cabSlice.Length, filePos + 1024);
+                var nulIdx = -1;
+                for (var k = filePos; k < searchLimit; k++)
+                {
+                    if (span[k] == 0)
+                    {
+                        nulIdx = k;
+                        break;
+                    }
+                }
+                if (nulIdx < 0)
+                    return false;
+
+                var nameBytes = span[filePos..nulIdx];
+                var rawName = (attribs & CabAttribNameIsUtf) != 0
+                    ? Encoding.UTF8.GetString(nameBytes)
+                    : Encoding.Latin1.GetString(nameBytes);
+                filePos = nulIdx + 1;
+
+                if (!TrySanitizeCabEntryName(rawName, out var sanitizedName))
+                    return false;
+
+                declaredTotal += cbFile;
+                if (declaredTotal > maxDecompressedBytes)
+                    return false;
+
+                var normalizedRel = sanitizedName.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar);
+                var fullPath = Path.GetFullPath(Path.Combine(destRoot, normalizedRel));
+                if (!fullPath.StartsWith(destRootWithSep, StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                var parent = Path.GetDirectoryName(fullPath);
+                if (!string.IsNullOrEmpty(parent) && !string.Equals(parent, destRoot, StringComparison.OrdinalIgnoreCase))
+                    subDirs.Add(parent);
+            }
+
             Directory.CreateDirectory(destRoot);
+            foreach (var dir in subDirs)
+                Directory.CreateDirectory(dir);
+
             var parentDir = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(destRoot)) ?? Path.GetTempPath();
             tempCabPath = Path.Combine(parentDir, $"embedded-{Guid.NewGuid():N}.cab");
             File.WriteAllBytes(tempCabPath, cabSlice);
@@ -1105,8 +1170,8 @@ public static class BiosArchiveAndXml
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            psi.ArgumentList.Add(tempCabPath);
             psi.ArgumentList.Add("-F:*");
+            psi.ArgumentList.Add(tempCabPath);
             psi.ArgumentList.Add(destRoot);
 
             using var proc = System.Diagnostics.Process.Start(psi);
