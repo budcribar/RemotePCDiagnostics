@@ -2303,27 +2303,25 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
                     verifiedBySha256: true);
             }
 
-            if (request.VerifyHash)
+            // Even when VerifyHash is false or the catalog omitted a SHA-256 digest,
+            // never allow an unverified package through — always require a pinned Authenticode signature.
+            progress?.Report(new BiosInstallProgress(BiosInstallStage.Verifying, 0, "Verifying package Authenticode signature..."));
+
+            var allowedSigners = BiosAgentInstallModes.AllowedSignerOrganizationsForVendor(VendorId);
+            var signed = allowedSigners.Count > 0
+                && await _signatureVerifier.VerifyAuthenticodeAsync(finalPath, allowedSigners, ct).ConfigureAwait(false);
+            if (!signed)
             {
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Verifying, 0, "Verifying package Authenticode signature..."));
-
-                var signed = await _signatureVerifier.VerifyAuthenticodeAsync(finalPath, ct).ConfigureAwait(false);
-                if (!signed)
-                {
-                    log?.Warn($"[{VendorId}] BIOS package failed Authenticode signature verification. Deleting unverified file.");
-                    return BiosVerifiedPackageResult.Fail("Downloaded BIOS package failed Authenticode signature verification.");
-                }
-
-                keepFile = true;
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Verifying, 100, "Package Authenticode signature verified."));
-                return BiosVerifiedPackageResult.Ok(
-                    finalPath,
-                    downloaded,
-                    verifiedByAuthenticode: true);
+                log?.Warn($"[{VendorId}] BIOS package failed Authenticode signature verification. Deleting unverified file.");
+                return BiosVerifiedPackageResult.Fail("Downloaded BIOS package failed Authenticode signature verification.");
             }
 
             keepFile = true;
-            return BiosVerifiedPackageResult.Ok(finalPath, downloaded);
+            progress?.Report(new BiosInstallProgress(BiosInstallStage.Verifying, 100, "Package Authenticode signature verified."));
+            return BiosVerifiedPackageResult.Ok(
+                finalPath,
+                downloaded,
+                verifiedByAuthenticode: true);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

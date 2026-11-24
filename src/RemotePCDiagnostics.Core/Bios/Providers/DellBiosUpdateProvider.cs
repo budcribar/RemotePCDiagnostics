@@ -722,8 +722,10 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
             }
 
             if (!isScripted
-                && request.VerifyHash
-                && !await _signatureVerifier.VerifyAuthenticodeAsync(validatedPath, ct).ConfigureAwait(false))
+                && !await _signatureVerifier.VerifyAuthenticodeAsync(
+                    validatedPath,
+                    BiosAgentInstallModes.AllowedSignerOrganizations(BiosAgentInstallModes.DellDcuCli),
+                    ct).ConfigureAwait(false))
             {
                 const string msg = "Dell Command | Update CLI failed Authenticode signature verification.";
                 progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, msg));

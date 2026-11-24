@@ -49,8 +49,13 @@ public static class BiosInstallSafetyEvaluator
         if (!string.IsNullOrWhiteSpace(request.Target.DownloadUrl) && !BiosPackageVerifier.IsSafeDownloadUrl(request.Target.DownloadUrl))
             blockers.Add("BIOS update download URL must use HTTPS.");
 
-        if (request.VerifyHash && !string.IsNullOrWhiteSpace(request.Target.DownloadUrl) && string.IsNullOrWhiteSpace(request.Target.Sha256))
-            warnings.Add("Vendor catalog did not publish a SHA-256 checksum; verify the package's Authenticode signature before executing.");
+        if (!string.IsNullOrWhiteSpace(request.Target.DownloadUrl))
+        {
+            if (!request.VerifyHash)
+                warnings.Add("SHA-256 hash verification is disabled; pinned Authenticode signature verification will still be enforced before executing.");
+            else if (string.IsNullOrWhiteSpace(request.Target.Sha256))
+                warnings.Add("Vendor catalog did not publish a SHA-256 checksum; verify the package's Authenticode signature before executing.");
+        }
 
         return new BiosSafetyCheckResult(blockers.Count == 0, blockers, warnings);
     }

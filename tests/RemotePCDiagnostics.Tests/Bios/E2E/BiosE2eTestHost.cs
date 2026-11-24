@@ -667,8 +667,28 @@ internal sealed class StubSignatureVerifier : IBiosSignatureVerifier
         return Task.FromResult(Predicate(filePath));
     }
 
+    public Func<string, string, bool>? CatalogMemberPredicate { get; set; }
+
     public Task<bool> VerifyAuthenticodeAsync(string filePath, IReadOnlyCollection<string> allowedSignerOrganizations, CancellationToken ct = default) =>
         allowedSignerOrganizations is { Count: > 0 } ? VerifyAuthenticodeAsync(filePath, ct) : Task.FromResult(false);
+
+    public Task<bool> VerifyCatalogMemberAsync(
+        string catalogPath,
+        string memberFilePath,
+        IReadOnlyCollection<string> allowedSignerOrganizations,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (allowedSignerOrganizations is not { Count: > 0 })
+            return Task.FromResult(false);
+
+        Assert.True(File.Exists(catalogPath), $"Expected catalog file to exist on disk: {catalogPath}");
+        Assert.True(File.Exists(memberFilePath), $"Expected catalog member file to exist on disk: {memberFilePath}");
+        _verifiedPaths.Enqueue(catalogPath);
+        return Task.FromResult(CatalogMemberPredicate is not null
+            ? CatalogMemberPredicate(catalogPath, memberFilePath)
+            : Predicate(catalogPath));
+    }
 }
 
 internal sealed class StubWindowsUpdateClient : IBiosWindowsUpdateClient

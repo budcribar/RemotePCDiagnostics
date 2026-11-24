@@ -106,6 +106,21 @@ public static class BiosAgentInstallModes
         _ => [],
     };
 
+    /// <summary>
+    /// The certificate organizations (O=) accepted as the signer of a package for <paramref name="vendorId"/>.
+    /// Unknown vendors return an empty collection (fail-closed).
+    /// </summary>
+    public static IReadOnlyCollection<string> AllowedSignerOrganizationsForVendor(string? vendorId) =>
+        (vendorId?.Trim().ToLowerInvariant() ?? "") switch
+        {
+            "hp" => HpSigners,
+            "dell" => DellSigners,
+            "lenovo" => LenovoSigners,
+            "microsoft" => MicrosoftSigners,
+            "framework" => FrameworkSigners,
+            _ => [],
+        };
+
     /// <summary>Signers accepted for the driver catalog (.cat) of a capsule cabinet: Windows Hardware Compatibility Publisher.</summary>
     public static IReadOnlyCollection<string> AllowedCatalogSignerOrganizations { get; } = MicrosoftSigners;
 
@@ -423,7 +438,7 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
 
                 var trusted = cabSigned;
                 if (!trusted && !string.IsNullOrEmpty(normalizedSha256))
-                    trusted = await HasSignedCatalogAsync(extractDir, ct).ConfigureAwait(false);
+                    trusted = await HasSignedCatalogCoveringFileAsync(extractDir, stagedInfPath, ct).ConfigureAwait(false);
 
                 if (!trusted)
                     return Reject("BIOS cabinet package failed Agent signature verification.");
@@ -1035,7 +1050,7 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
         return false;
     }
 
-    private async Task<bool> HasSignedCatalogAsync(string extractDir, CancellationToken ct)
+    private async Task<bool> HasSignedCatalogCoveringFileAsync(string extractDir, string targetFilePath, CancellationToken ct)
     {
         var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(extractDir));
         var rootWithSep = fullRoot.EndsWith(Path.DirectorySeparatorChar)
@@ -1044,6 +1059,10 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
         var pathComparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
+
+        var fullTarget = Path.GetFullPath(targetFilePath);
+        if (!fullTarget.StartsWith(rootWithSep, pathComparison) || !IsRegularNonSymlinkFileWithinRoot(fullTarget, fullRoot))
+            return false;
 
         var catCandidates = Directory
             .EnumerateFiles(fullRoot, "*.cat", SearchOption.AllDirectories)
@@ -1057,8 +1076,14 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
             if (!IsRegularNonSymlinkFileWithinRoot(fullCandidate, fullRoot))
                 continue;
 
-            if (await _signatureVerifier.VerifyAuthenticodeAsync(fullCandidate, BiosAgentInstallModes.AllowedCatalogSignerOrganizations, ct).ConfigureAwait(false))
+            if (await _signatureVerifier.VerifyCatalogMemberAsync(
+                    fullCandidate,
+                    fullTarget,
+                    BiosAgentInstallModes.AllowedCatalogSignerOrganizations,
+                    ct).ConfigureAwait(false))
+            {
                 return true;
+            }
         }
 
         return false;
