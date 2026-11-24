@@ -318,9 +318,26 @@
     private string RunLabel(IDiagnosticModule m) => Screen.RunLabel(m.Name) ?? "";
 
     private readonly Dictionary<string, int> _checkRanks = new(StringComparer.OrdinalIgnoreCase);
+    private CheckStatusFilter? _statusFilter;
+    private CheckGroup _lastFilterGroup = CheckGroup.Checks;
+
+    private void ToggleStatusFilter(CheckGroup g, CheckStatusFilter filter)
+    {
+        _lastFilterGroup = g;
+        _statusFilter = _statusFilter == filter ? null : filter;
+        if (_statusFilter is not null && Screen.IsCollapsed(g))
+            Screen.ToggleCollapsed(g);
+    }
+
+    private void ClearStatusFilter() => _statusFilter = null;
 
     private RenderFragment Group(CheckGroup g, string title, string sub) => __builder =>
     {
+        if (_lastFilterGroup != g)
+        {
+            _lastFilterGroup = g;
+            _statusFilter = null;
+        }
         var mods = Screen.Modules(g);
         var collapsed = Screen.IsCollapsed(g);
         var count = Screen.SelectedCount(g);
@@ -347,9 +364,13 @@
             checkModules = orderedMods.OrderBy(Rank).ToList();
             attentionCount = checkModules.Count(m => Rank(m) < 2);
         }
+        var activeFilter = _statusFilter;
+        var visibleModules = activeFilter is { } f
+            ? checkModules.Where(m => CheckRows.MatchesFilter(CheckRows.KindOf(Store.Get(m.Name)), f)).ToList()
+            : checkModules;
         var allRowIds = checkModules.Select(m => m.Name).ToList();
         var id = g.ToString().ToLowerInvariant();
-        var pills = CheckRows.Pills(mods.Select(m => CheckRows.KindOf(Store.Get(m.Name))));
+        var filterPills = CheckRows.FilterPills(mods.Select(m => CheckRows.KindOf(Store.Get(m.Name))), activeFilter);
         <div class="card ct-group" data-testid="checks-group-@id">
             <div class="ct-group-head">
                 <button class="ct-chevron" aria-expanded="@(collapsed ? "false" : "true")" aria-label="@(collapsed ? "Expand" : "Collapse") @title"
@@ -359,7 +380,26 @@
                         data-testid="checks-selectall-@id" @onclick="() => Screen.SelectAll(g, all != true)">@(all is null ? "–" : all.Value ? "✓" : "")</button>
                 <div class="ct-group-title" @onclick="() => Screen.ToggleCollapsed(g)">
                     <div class="ct-group-line"><strong>@title</strong><span class="meta" data-testid="checks-count-@id">@count of @mods.Count selected</span>
-                        @foreach (var p in pills) { <span class="chip chip-@p.Kind">@p.Text</span> }</div>
+                        @foreach (var p in filterPills)
+                        {
+                            var pillFilter = p.Filter;
+                            var isActive = activeFilter == pillFilter;
+                            var dim = activeFilter is not null && !isActive;
+                            var filterSlug = pillFilter.ToString().ToLowerInvariant();
+                            <button type="button"
+                                    class="chip chip-@p.ChipKind chip-filter @(isActive ? "is-active" : "") @(dim ? "is-dim" : "")"
+                                    aria-pressed="@(isActive ? "true" : "false")"
+                                    data-testid="checks-filter-@filterSlug"
+                                    title="@(isActive ? "Showing only " + filterSlug + " checks (click to show all)" : "Show only " + filterSlug + " checks")"
+                                    @onclick="() => ToggleStatusFilter(g, pillFilter)"
+                                    @onclick:stopPropagation="true">@p.Text</button>
+                        }
+                        @if (activeFilter is not null)
+                        {
+                            <button type="button" class="chip chip-na chip-filter" data-testid="checks-filter-clear"
+                                    title="Show all checks" @onclick="ClearStatusFilter" @onclick:stopPropagation="true">Show all</button>
+                        }
+                    </div>
                     <div class="meta">@sub</div>
                 </div>
                 <div class="ct-group-actions">
@@ -384,13 +424,20 @@
             @if (!collapsed)
             {
                 <div class="ct-rows">
-                    @for (var index = 0; index < checkModules.Count; index++)
+                    @if (visibleModules.Count == 0 && activeFilter is { } emptyFilter)
                     {
-                        @if (attentionCount > 0 && (index == 0 || index == attentionCount))
+                        <div class="ct-filter-empty meta" data-testid="checks-filter-empty">
+                            No @emptyFilter.ToString().ToLowerInvariant() checks right now.
+                            <button type="button" class="btn-small" @onclick="ClearStatusFilter">Show all</button>
+                        </div>
+                    }
+                    @for (var index = 0; index < visibleModules.Count; index++)
+                    {
+                        @if (activeFilter is null && attentionCount > 0 && (index == 0 || index == attentionCount))
                         {
                             <h2 class="ct-section-label">@(index == 0 ? $"Needs attention · {attentionCount}" : "Other checks")</h2>
                         }
-                        var m = checkModules[index];
+                        var m = visibleModules[index];
                         var mod = m;
                         var r = Store.Get(m.Name);
                         var kind = CheckRows.KindOf(r);
@@ -402,12 +449,12 @@
                         var rowDrop = g == CheckGroup.Checks && string.Equals(_dropCheckId, m.Name, StringComparison.OrdinalIgnoreCase) && !rowDragging;
                         <div @key="mod.Name" class="ct-row @(isSel ? "selected" : "") @(kind == RowKind.Running ? "is-running" : "") @(rowDragging ? "dragging" : "") @(rowDrop ? "drop-target" : "")"
                              role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")" @ref="_rowRefs[mod.Name]"
-                             draggable="@(g == CheckGroup.Checks ? "true" : "false")"
-                             @ondragstart="() => { if (g == CheckGroup.Checks) OnCheckDragStart(mod.Name); }"
-                             @ondragover="() => { if (g == CheckGroup.Checks) OnCheckDragOver(mod.Name); }"
-                             @ondragover:preventDefault="@(g == CheckGroup.Checks)"
-                             @ondragleave="() => { if (g == CheckGroup.Checks) OnCheckDragLeave(mod.Name); }"
-                             @ondrop="() => { if (g == CheckGroup.Checks) OnCheckDrop(mod.Name, allRowIds); }"
+                             draggable="@(g == CheckGroup.Checks && activeFilter is null ? "true" : "false")"
+                             @ondragstart="() => { if (g == CheckGroup.Checks && activeFilter is null) OnCheckDragStart(mod.Name); }"
+                             @ondragover="() => { if (g == CheckGroup.Checks && activeFilter is null) OnCheckDragOver(mod.Name); }"
+                             @ondragover:preventDefault="@(g == CheckGroup.Checks && activeFilter is null)"
+                             @ondragleave="() => { if (g == CheckGroup.Checks && activeFilter is null) OnCheckDragLeave(mod.Name); }"
+                             @ondrop="() => { if (g == CheckGroup.Checks && activeFilter is null) OnCheckDrop(mod.Name, allRowIds); }"
                              @ondragend="OnCheckDragEnd"
                              data-testid="checks-row-@m.Name.ToLowerInvariant()" @onclick="() => SelectAndShowAsync(mod)" @onkeydown="e => RowKey(e, mod)" @onkeydown:preventDefault="false">
                             <button class="ct-check" role="checkbox" aria-checked="@(Screen.IsSelected(m.Name) ? "true" : "false")" aria-label="Include @m.DisplayName"

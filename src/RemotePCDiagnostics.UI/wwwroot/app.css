@@ -162,6 +162,13 @@ svg.chart { background: var(--chart-bg); border: 1px solid var(--border); border
 .chip-err { color: var(--chip-err); background: var(--error-bg); } .chip-na, .chip-run { color: var(--chip-na); background: var(--badge-bg); }
 .chip-run { color: var(--dot-running); }
 [data-theme="dark"] .chip { background: transparent; border: 1px solid currentColor; }
+button.chip-filter { border: 1px solid transparent; cursor: pointer; font-family: inherit; transition: opacity .15s, box-shadow .15s, filter .15s; }
+button.chip-filter:hover { filter: brightness(0.95); }
+[data-theme="dark"] button.chip-filter { border: 1px solid currentColor; }
+[data-theme="dark"] button.chip-filter:hover { filter: brightness(1.15); }
+button.chip-filter.is-active { box-shadow: 0 0 0 2px currentColor; }
+button.chip-filter.is-dim { opacity: 0.48; }
+.ct-filter-empty { display: flex; align-items: center; gap: 10px; padding: 14px 12px; }
 .icon-badge { width: 30px; height: 30px; flex: none; display: inline-grid; place-items: center; border-radius: var(--icon-badge-radius); background: var(--icon-badge-bg); color: var(--accent); border: 1px solid var(--icon-badge-border); }
 .icon-badge.icon-warn, .icon-badge.icon-err { color: var(--chip-warn); } .icon-badge.icon-err { color: var(--chip-err); }
 [data-theme="light"] .icon-badge.icon-warn { background: #fdf3d8; } [data-theme="light"] .icon-badge.icon-err { background: #fde4e4; }

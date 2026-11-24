@@ -60,7 +60,46 @@ public static class CheckRows
         return order.Select(o => (o.K, N: list.Count(k => k == o.K))).Where(x => x.N > 0)
             .Select(x => (ChipKind(x.K), $"{x.N} {order.First(o => o.K == x.K).Word}")).ToList();
     }
+
+    public static bool MatchesFilter(RowKind kind, CheckStatusFilter filter) => filter switch
+    {
+        CheckStatusFilter.Running => kind == RowKind.Running,
+        CheckStatusFilter.Passed => kind == RowKind.Passed,
+        CheckStatusFilter.Warning => kind == RowKind.Warning,
+        CheckStatusFilter.Failed => kind is RowKind.Critical or RowKind.CouldNotRun or RowKind.Blocked,
+        _ => true,
+    };
+
+    /// <summary>
+    /// Clickable status filter pills for the Checks / Stress group header: running, passed, warning, and failed
+    /// (critical / couldn't run / blocked). Includes a pill when its count is non-zero or when it is currently active.
+    /// </summary>
+    public static IReadOnlyList<CheckFilterPill> FilterPills(IEnumerable<RowKind> kinds, CheckStatusFilter? activeFilter = null)
+    {
+        var list = kinds.ToList();
+        var buckets = new (CheckStatusFilter Filter, string ChipKind, string Word)[]
+        {
+            (CheckStatusFilter.Running, "run", "running"),
+            (CheckStatusFilter.Passed, "ok", "passed"),
+            (CheckStatusFilter.Warning, "warn", "warning"),
+            (CheckStatusFilter.Failed, "err", "failed"),
+        };
+        var result = new List<CheckFilterPill>(buckets.Length);
+        foreach (var (filter, chipKind, word) in buckets)
+        {
+            var count = list.Count(k => MatchesFilter(k, filter));
+            if (count > 0 || activeFilter == filter)
+                result.Add(new(filter, chipKind, $"{count} {word}", count));
+        }
+        return result;
+    }
 }
+
+/// <summary>Clickable status filter buckets on the Checks &amp; Tests page.</summary>
+public enum CheckStatusFilter { Running, Passed, Warning, Failed }
+
+/// <summary>One clickable status filter pill in the Checks group header.</summary>
+public sealed record CheckFilterPill(CheckStatusFilter Filter, string ChipKind, string Text, int Count);
 
 /// <summary>Group run progress for the banner.</summary>
 public sealed record GroupRunProgress(CheckGroup Group, int Index, int Total, string Current);
