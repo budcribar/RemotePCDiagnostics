@@ -1,3 +1,5 @@
+using Microsoft.Win32;
+using RemotePCDiagnostics.Core.Bios;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -488,6 +490,21 @@ public static class AppUpdateInstaller
             }
             throw new InvalidOperationException("The Agent MSI could not be verified. The update was not installed. " + ex.Message, ex);
         }
+    }
+
+    public static async Task VerifyPublisherAsync(string path, CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new InvalidOperationException("Publisher verification requires Windows.");
+
+        using var machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        using var policy = machine.OpenSubKey(@"SOFTWARE\Policies\RemotePCDiagnostics");
+        var pin = (policy?.GetValue("UpdateSignerSha256") as string)?.Trim();
+        if (pin is null || pin.Length != 64 || !pin.All(Uri.IsHexDigit))
+            throw new InvalidOperationException("The Remote PC Diagnostics update signer policy is missing or invalid.");
+
+        if (!await WinVerifyTrustSignatureVerifier.Instance.VerifyPinnedPublisherAsync(path, pin, ct).ConfigureAwait(false))
+            throw new InvalidOperationException("The update package was not signed by the trusted Remote PC Diagnostics publisher.");
     }
 
     public static async Task<string> ComputeFileSha256Async(string filePath, CancellationToken ct)

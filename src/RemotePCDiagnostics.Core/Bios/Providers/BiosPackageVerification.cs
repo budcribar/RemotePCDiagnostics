@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using RemotePCDiagnostics.Core.Session;
 
@@ -48,6 +49,23 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
     private const uint WTD_STATEACTION_VERIFY = 1;
     private const uint WTD_STATEACTION_CLOSE = 2;
     private const int MaxCatalogMembersToInspect = 4096;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProviderCertificate
+    {
+        public uint Size;
+        public IntPtr Context;
+    }
+
+    [DllImport("wintrust.dll", ExactSpelling = true)]
+    private static extern IntPtr WTHelperProvDataFromStateData(IntPtr state);
+
+    [DllImport("wintrust.dll", ExactSpelling = true)]
+    private static extern IntPtr WTHelperGetProvSignerFromChain(IntPtr provider, uint signerIndex,
+        [MarshalAs(UnmanagedType.Bool)] bool counterSigner, uint counterSignerIndex);
+
+    [DllImport("wintrust.dll", ExactSpelling = true)]
+    private static extern IntPtr WTHelperGetProvCertFromChain(IntPtr signer, uint certificateIndex);
 
     public static WinVerifyTrustSignatureVerifier Instance { get; } = new();
 
@@ -144,8 +162,17 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
         return null;
     }
 
+    internal Task<bool> VerifyPinnedPublisherAsync(string filePath, string certificateSha256, CancellationToken ct)
+    {
+        return Task.Run(() => OperatingSystem.IsWindows() && VerifyAuthenticodeWindows(
+            filePath, checkRevocation: true, ct,
+            signer => string.Equals(signer.GetCertHashString(HashAlgorithmName.SHA256), certificateSha256,
+                StringComparison.OrdinalIgnoreCase)), ct);
+    }
+
     [SupportedOSPlatform("windows")]
-    private static bool VerifyAuthenticodeWindows(string filePath, bool checkRevocation, CancellationToken ct)
+    private static bool VerifyAuthenticodeWindows(string filePath, bool checkRevocation, CancellationToken ct,
+        Func<X509Certificate2, bool>? verifySigner = null)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -188,7 +215,24 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
 
             stateOpened = true;
             var status = WinVerifyTrust(InvalidHandleValue, ref actionGuid, ref trustData);
-            return status == 0;
+            if (status != 0 || verifySigner is null)
+                return status == 0;
+
+            var provider = WTHelperProvDataFromStateData(trustData.hWVTStateData);
+            if (provider == IntPtr.Zero)
+                return false;
+            var signer = WTHelperGetProvSignerFromChain(provider, 0, false, 0);
+            if (signer == IntPtr.Zero)
+                return false;
+            var certificate = WTHelperGetProvCertFromChain(signer, 0);
+            if (certificate == IntPtr.Zero)
+                return false;
+
+            var context = Marshal.PtrToStructure<ProviderCertificate>(certificate).Context;
+            if (context == IntPtr.Zero)
+                return false;
+            using var publisher = new X509Certificate2(context);
+            return verifySigner(publisher);
         }
         catch
         {

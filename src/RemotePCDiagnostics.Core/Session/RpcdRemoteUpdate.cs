@@ -86,7 +86,10 @@ public sealed record RpcdUpdateStatus
 }
 
 /// <summary>The verified installer the agent is allowed to start. No other file is installed.</summary>
-public sealed record RpcdPreparedInstall(string InstallerPath, string Arguments, string TargetVersion, string OldVersion);
+public sealed record RpcdPreparedInstall(string InstallerPath, string Arguments, string TargetVersion, string OldVersion)
+{
+    public string? AgentMsiPath { get; init; }
+}
 
 /// <summary>What the agent needs around the pure update steps: clock, versions, and a way to run Setup.</summary>
 public sealed class RpcdUpdateRun
@@ -409,7 +412,7 @@ public sealed class RpcdUpdateSession
             try
             {
                 exit = await run.RunInstaller(
-                    new RpcdPreparedInstall(installerPath, arguments, target, oldVersion ?? ""),
+                    new RpcdPreparedInstall(installerPath, arguments, target, oldVersion ?? "") { AgentMsiPath = agentMsiPath },
                     ct).ConfigureAwait(false);
             }
             finally
