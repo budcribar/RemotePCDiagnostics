@@ -218,4 +218,37 @@ public class SecurityEssentialsTests
         Assert.Contains(card.Rows, r => r.Values[0] == "2023 cert servicing error" && r.Values[1] == "0x800700C1 (Event 1796)");
         Assert.Contains(card.Rows, r => r.Values[0] == "Pending Secure Boot updates" && r.Values[1] == "0x4000");
     }
+
+    [Fact]
+    public void Tamper_protection_off_offers_open_windows_security_without_counting_as_auto_fixable()
+    {
+        var report = SecurityEssentialsModule.Build(Hardened with { TamperProtection = false });
+        var av = Card(report, "antivirus");
+        Assert.Equal(AreaLevel.Warning, av.Level);
+        Assert.Equal("Tamper Protection is off", av.Headline);
+        var act = Assert.Single(av.Actions!);
+        Assert.Equal(RemediationKind.OpenSettings, act.Kind);
+        Assert.Equal("windowsdefender://threatsettings", act.Target);
+        Assert.DoesNotContain("can be fixed here", report.Summary);
+    }
+
+    [Fact]
+    public async Task OpenSettings_remediation_opens_allowed_uris_and_blocks_others()
+    {
+        string? opened = null;
+        var svc = new RemediationService(new SystemCommandRunner(), openUri: u => opened = u);
+
+        var okAction = new AreaAction(RemediationKind.OpenSettings, "Open Windows Security", "windowsdefender://threatsettings", "Windows Security");
+        var ok = await svc.ExecuteAsync(okAction, TestContext.Current.CancellationToken);
+        Assert.True(ok.Success);
+        Assert.Equal("windowsdefender://threatsettings", opened);
+        Assert.True(RemediationService.IsReadOnly(RemediationKind.OpenSettings));
+        Assert.Contains(RemediationKind.OpenSettings, RemotePCDiagnostics.Core.Workflow.FixCatalog.SkippedRemediation);
+
+        opened = null;
+        var badAction = new AreaAction(RemediationKind.OpenSettings, "Bad", "https://example.com", "Bad");
+        var bad = await svc.ExecuteAsync(badAction, TestContext.Current.CancellationToken);
+        Assert.False(bad.Success);
+        Assert.Null(opened);
+    }
 }

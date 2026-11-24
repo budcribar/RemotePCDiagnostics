@@ -101,8 +101,22 @@
         if (Actions is null) return;
         _blocked = Actions.Running is not null;
         _pendingCardId = cardId;
-        if (_blocked) ActiveCardId = cardId;
-        _plan = _blocked ? null : Actions.Plan(action);
+        if (_blocked)
+        {
+            ActiveCardId = cardId;
+            _plan = null;
+        }
+        else if (action.Kind == RemediationKind.OpenSettings && Actions.Plan(action).Allowed)
+        {
+            ActiveCardId = cardId;
+            _plan = null;
+            _pendingCardId = null;
+            _ = Actions.RunTrackedAsync(action, Origin);
+        }
+        else
+        {
+            _plan = Actions.Plan(action);
+        }
         StateHasChanged();
         if (OnStateChanged.HasDelegate) _ = OnStateChanged.InvokeAsync();
     }

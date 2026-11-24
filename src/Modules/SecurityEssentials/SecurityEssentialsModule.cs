@@ -68,12 +68,15 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
             PuaCard(f), NetworkProtectionCard(f), AsrCard(f), LlmnrCard(f), AutoRunCard(f), GuestCard(f),
         };
         var issues = cards.Count(c => c.Level is AreaLevel.Warning or AreaLevel.Error);
-        var fixable = cards.Count(c => c.Level is AreaLevel.Warning or AreaLevel.Error && c.Actions is { Count: > 0 });
+        var fixable = cards.Count(c => c.Level is AreaLevel.Warning or AreaLevel.Error && c.Actions is { Count: > 0 } acts && acts.Any(a => a.Kind != RemediationKind.OpenSettings));
         var summary = issues == 0 ? "All key security settings look good"
             : $"{Plural(issues, "setting")} worth changing" + (fixable > 0 ? $" ({fixable} can be fixed here)" : "")
               + " · " + string.Join(" · ", cards.Where(c => c.Level is AreaLevel.Warning or AreaLevel.Error).Take(3).Select(c => c.Headline));
         return new(cards, summary, AreaReport.Worst(cards.Select(c => c.Level)));
     }
+
+    private static AreaAction OpenSettings(string buttonText, string uri, string label) =>
+        new(RemediationKind.OpenSettings, buttonText, uri, label);
 
     private static AreaCard SecureBootCard(SecurityFacts f)
     {
@@ -176,20 +179,32 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
                 : "Files on this drive can't be read if the drive is removed from the PC."),
         };
         if (prot == DriveProtection.NotProtected) rows.Add(Row(blocker is null ? AreaLevel.Neutral : AreaLevel.Warning, "Can it be turned on?", blocker is null ? "Yes" : "Not yet: " + blocker));
-        return new("encryption", "Drive encryption", level, headline, name, Cols, rows, Note: how);
+        IReadOnlyList<AreaAction>? actions = prot == DriveProtection.NotProtected && blocker is null
+            ? [OpenSettings("Open Device encryption", "ms-settings:deviceencryption", "Settings (Device encryption)")]
+            : null;
+        return new("encryption", "Drive encryption", level, headline, name, Cols, rows, Note: how, Actions: actions);
     }
 
     private static AreaCard AntivirusCard(SecurityFacts f)
     {
         var others = f.Antivirus.Where(n => !n.Contains("Defender", StringComparison.OrdinalIgnoreCase)).ToList();
         AreaLevel level; string headline; string? note = null;
+        IReadOnlyList<AreaAction>? actions = null;
         if (f.DefenderActive)
         {
             var rtpOff = f.RealTimeProtection == false;
             level = rtpOff ? AreaLevel.Error : f.TamperProtection == false ? AreaLevel.Warning : AreaLevel.Ok;
             headline = rtpOff ? "Real-time protection is off" : f.TamperProtection == false ? "Tamper Protection is off" : "Microsoft Defender is protecting this PC";
-            if (rtpOff) note = "Turn on Real-time protection in Windows Security > Virus & threat protection > Manage settings.";
-            else if (f.TamperProtection == false) note = "Turn on Tamper Protection in Windows Security > Virus & threat protection > Manage settings, so malware can't switch Defender off.";
+            if (rtpOff)
+            {
+                note = "Turn on Real-time protection in Windows Security > Virus & threat protection > Manage settings.";
+                actions = [OpenSettings("Open Windows Security", "windowsdefender://threatsettings", "Windows Security (Virus & threat protection settings)")];
+            }
+            else if (f.TamperProtection == false)
+            {
+                note = "Windows blocks apps from changing Tamper Protection directly. Open Windows Security > Virus & threat protection > Manage settings and switch Tamper Protection on, so malware can't switch Defender off.";
+                actions = [OpenSettings("Open Windows Security", "windowsdefender://threatsettings", "Windows Security (Virus & threat protection settings)")];
+            }
         }
         else if (others.Count > 0) { level = AreaLevel.Ok; headline = $"Protected by {others[0]}"; }
         else if (f.DefenderMode is null && f.Antivirus.Count == 0) { level = AreaLevel.Neutral; headline = "Antivirus not reported"; }
@@ -197,6 +212,7 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
         {
             level = AreaLevel.Error; headline = "No active antivirus";
             note = "Open Windows Security > Virus & threat protection and turn Microsoft Defender back on, or install another antivirus.";
+            actions = [OpenSettings("Open Windows Security", "windowsdefender://threat", "Windows Security (Virus & threat protection)")];
         }
         var rows = new List<AreaRow>
         {
@@ -206,7 +222,7 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
         if (f.DefenderActive && f.RealTimeProtection is { } rtp) rows.Add(Row(rtp ? AreaLevel.Ok : AreaLevel.Error, "Real-time protection", rtp ? "On" : "Off"));
         if (f.DefenderActive && f.TamperProtection is { } tp) rows.Add(Row(tp ? AreaLevel.Ok : AreaLevel.Warning, "Tamper Protection", tp ? "On" : "Off"));
         rows.Add(Means("Antivirus with real-time protection blocks malware as it arrives, before it can run."));
-        return new("antivirus", "Antivirus", level, headline, "", Cols, rows, Note: note);
+        return new("antivirus", "Antivirus", level, headline, "", Cols, rows, Note: note, Actions: actions);
     }
 
     private static AreaCard FirewallCard(SecurityFacts f)
@@ -218,7 +234,8 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
         var rows = f.Firewall.Select(kv => Row(kv.Value ? AreaLevel.Ok : AreaLevel.Warning, $"{kv.Key} networks", kv.Value ? "On" : "Off")).ToList();
         rows.Add(Means("The firewall stops other devices on the network from connecting to programs on this PC."));
         return new("firewall", "Windows Firewall", level, off.Count == 0 ? "Firewall is on" : $"Firewall is off for {string.Join(" and ", off.Select(p => p.ToLowerInvariant()))} networks", "", Cols, rows,
-            Note: off.Count > 0 ? "Turn it back on in Windows Security > Firewall & network protection, unless another security product manages the firewall." : null);
+            Note: off.Count > 0 ? "Turn it back on in Windows Security > Firewall & network protection, unless another security product manages the firewall." : null,
+            Actions: off.Count > 0 ? [OpenSettings("Open Firewall settings", "windowsdefender://network", "Windows Security (Firewall & network protection)")] : null);
     }
 
     private static AreaCard DefenderSettingCard(SecurityFacts f, string id, string key, int? value, string onText, string offText)

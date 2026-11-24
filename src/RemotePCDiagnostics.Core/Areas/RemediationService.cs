@@ -83,7 +83,8 @@ public sealed class RemediationService(
     RetrimLog? retrimLog = null,
     ISystemSettings? settings = null,
     Bios.IBiosUpdateService? bios = null,
-    IRecycleBinDeleter? recycleBin = null)
+    IRecycleBinDeleter? recycleBin = null,
+    Action<string>? openUri = null)
 {
     /// <summary>This app's record of successful retrims (so Drive health stops offering it right away).</summary>
     public RetrimLog? RetrimLog => retrimLog;
@@ -336,6 +337,18 @@ public sealed class RemediationService(
                     : "Requires administrator privileges, AC power, and a restart to finish flashing. Do not turn off or unplug the PC while the BIOS update is applying.",
                 bios is not null),
 
+            RemediationKind.OpenSettings => new(
+                action,
+                $"Open {label}?",
+                "Windows requires changing this setting directly in its own settings screen.",
+                $"Opens {label} on this PC. Make the change there, then re-run this check to verify.",
+                openUri is null
+                    ? "Opening Windows settings is not available in this session."
+                    : !Optimizations.MemoryCommandAllowlist.IsAllowedSettingsUri(action.Target)
+                        ? "This settings link isn't allowed."
+                        : null,
+                openUri is not null && Optimizations.MemoryCommandAllowlist.IsAllowedSettingsUri(action.Target)),
+
             _ => new(action, action.ButtonText, "", "", null, true),
         };
     }
@@ -519,8 +532,20 @@ public sealed class RemediationService(
             $"Couldn't optimize {Display(action)} (administrator rights required).",
             ct, OptimizeTimeout).ConfigureAwait(false),
 
+        RemediationKind.OpenSettings => RunOpenSettings(action),
+
         _ => new(false, "Unsupported action."),
     };
+
+    private RemediationResult RunOpenSettings(AreaAction action)
+    {
+        if (openUri is null)
+            return new(false, "Opening Windows settings is not available in this session.");
+        if (!Optimizations.MemoryCommandAllowlist.IsAllowedSettingsUri(action.Target))
+            return new(false, "This settings link isn't allowed.");
+        openUri(action.Target);
+        return new(true, $"Opened {Display(action)} on this PC. Make the change there, then re-run this check to verify.");
+    }
 
     private async Task<RemediationResult> RunInstallBiosUpdateAsync(CancellationToken ct)
     {
@@ -585,8 +610,8 @@ public sealed class RemediationService(
         _ => null,
     };
 
-    /// <summary>True for a fix that only reads (it leaves nothing to verify, so its check isn't run again afterwards).</summary>
-    public static bool IsReadOnly(RemediationKind kind) => kind == RemediationKind.AnalyzeComponentStore;
+    /// <summary>True for a fix that only reads or opens a Windows settings page (it leaves nothing to verify immediately, so its check isn't run again automatically).</summary>
+    public static bool IsReadOnly(RemediationKind kind) => kind is RemediationKind.AnalyzeComponentStore or RemediationKind.OpenSettings;
 
     // ---- One fix at a time, kept running when its page is left ------------------------------------------------------------
 

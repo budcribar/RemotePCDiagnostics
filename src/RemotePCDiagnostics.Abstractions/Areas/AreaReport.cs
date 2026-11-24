@@ -55,6 +55,8 @@ public enum RemediationKind
     DeleteDuplicateFiles,
     /// <summary>Stops a scheduled task from waking the PC by turning off its WakeToRun setting. Target = full Task Scheduler path (e.g. <c>\Hewlett-Packard\HP Diagnostics\SmartCheckTest</c>). Undo turns WakeToRun back on.</summary>
     DisableWakeTimer,
+    /// <summary>Opens a Windows Settings or Windows Security page (<c>ms-settings:</c> or <c>windowsdefender:</c>) for settings Windows won't let apps change directly (such as Tamper Protection). Target = settings URI.</summary>
+    OpenSettings,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>

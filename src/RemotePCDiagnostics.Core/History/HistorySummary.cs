@@ -417,6 +417,7 @@ public static class HistorySummary
         RemediationKind.DisableDeviceWake => "Device wake",
         RemediationKind.DisableWakeTimer => "Wake timer",
         RemediationKind.InstallBiosUpdate => "BIOS update",
+        RemediationKind.OpenSettings => "Windows Settings",
         _ => "Automated fix",
     };
 
