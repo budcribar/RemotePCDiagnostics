@@ -55,6 +55,12 @@ public static class AgentWindowsUpdate
 {
     public const int SucceededCode = 2, SucceededWithErrorsCode = 3, FailedCode = 4;
 
+    /// <summary>
+    /// Serializes in-process <c>Microsoft.Update.Session</c> COM searches across modules (e.g., Windows Updates and
+    /// BIOS &amp; firmware during AutoRun) so concurrent <c>IUpdateSearcher.Search</c> calls don't contend or time out in <c>wuauserv</c>.
+    /// </summary>
+    internal static readonly SemaphoreSlim WuaSearchLock = new(1, 1);
+
     public static string Criteria(bool driversOnly) => driversOnly ? "IsInstalled=0 and Type='Driver'" : "IsInstalled=0 and Type='Software'";
 
     private static bool Succeeded(int code) => code is SucceededCode or SucceededWithErrorsCode;

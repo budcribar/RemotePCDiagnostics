@@ -1146,9 +1146,20 @@ internal sealed class WindowsUpdateAgentBiosClient : IBiosWindowsUpdateClient
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("Windows Update Agent is only available on Windows.");
 
-        return await Task.Run(SearchPendingFirmwareUpdatesWindows, CancellationToken.None)
-            .WaitAsync(DefaultSearchTimeout, ct)
-            .ConfigureAwait(false);
+        var acquired = await AgentWindowsUpdate.WuaSearchLock.WaitAsync(DefaultSearchTimeout, ct).ConfigureAwait(false);
+        if (!acquired)
+            throw new TimeoutException("Windows Update Agent search timed out waiting for an in-progress update check.");
+
+        try
+        {
+            return await Task.Run(SearchPendingFirmwareUpdatesWindows, CancellationToken.None)
+                .WaitAsync(DefaultSearchTimeout, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            AgentWindowsUpdate.WuaSearchLock.Release();
+        }
     }
 
     public async Task<BiosWuaInstallOutcome> InstallUpdateAsync(Guid updateId, CancellationToken ct = default)
