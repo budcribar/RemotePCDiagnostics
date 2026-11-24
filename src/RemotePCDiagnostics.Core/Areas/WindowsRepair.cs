@@ -342,6 +342,7 @@ public static class WindowsRepair
         var cbsOffset = WindowsIntegrityModule.LogLength(cbsPath);
         var dismOffset = sfc ? null : WindowsIntegrityModule.LogLength(dismPath);
         double last = -1;
+        long lastEmitTickMs = 0;
         var verb = step switch { RepairStep.AnalyzeStore => "Analysis", RepairStep.CleanUpStore => "Cleanup", _ => "Repair" };
         progress?.Report(step switch
         {
@@ -353,10 +354,7 @@ public static class WindowsRepair
         var timeout = step switch { RepairStep.AnalyzeStore => AnalyzeTimeout, RepairStep.SfcScanNow => SfcTimeout, _ => DismTimeout };
         ProcessResult? pr = await commands.RunAsync(exe, args, timeout, ct, line =>
         {
-            var m = Regex.Match(line.Replace("\0", ""), @"(?<![\d.])(\d{1,3}(?:[.,]\d+)?)\s*%");
-            if (!m.Success || !double.TryParse(m.Groups[1].Value.Replace(',', '.'), System.Globalization.NumberStyles.AllowDecimalPoint,
-                    System.Globalization.CultureInfo.InvariantCulture, out var p) || p > 100 || p <= last) return;
-            last = p;
+            if (!WindowsIntegrityModule.TryAcceptProgressPercent(line, ref last, ref lastEmitTickMs, out var p)) return;
             progress?.Report($"{verb} {p:0.#}% complete");
         }).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();

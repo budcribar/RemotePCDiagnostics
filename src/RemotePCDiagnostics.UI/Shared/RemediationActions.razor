@@ -133,19 +133,29 @@
         if (OnStateChanged.HasDelegate) _ = OnStateChanged.InvokeAsync();
     }
 
-    private void OnRunChanged() => _ = InvokeAsync(async () =>
+    private int _renderQueued;
+    private void OnRunChanged()
     {
-        if (_disposed) return;
-        if (Actions?.Running is null) _blocked = false;
-        StateHasChanged();
-        if (OnStateChanged.HasDelegate) await OnStateChanged.InvokeAsync();
-        if (Actions?.LastRun is { } done && done.Seq != _seenSeq)
+        if (_disposed || Interlocked.Exchange(ref _renderQueued, 1) != 0) return;
+        try
         {
-            _seenSeq = done.Seq;
-            if (done.Success && done.Origin == Origin && !RemediationService.IsReadOnly(done.Action.Kind) && OnCompleted.HasDelegate)
-                await OnCompleted.InvokeAsync();
+            _ = InvokeAsync(async () =>
+            {
+                Interlocked.Exchange(ref _renderQueued, 0);
+                if (_disposed) return;
+                if (Actions?.Running is null) _blocked = false;
+                StateHasChanged();
+                if (OnStateChanged.HasDelegate) await OnStateChanged.InvokeAsync();
+                if (Actions?.LastRun is { } done && done.Seq != _seenSeq)
+                {
+                    _seenSeq = done.Seq;
+                    if (done.Success && done.Origin == Origin && !RemediationService.IsReadOnly(done.Action.Kind) && OnCompleted.HasDelegate)
+                        await OnCompleted.InvokeAsync();
+                }
+            });
         }
-    });
+        catch { Interlocked.Exchange(ref _renderQueued, 0); }
+    }
 
     private bool _disposed;
     public void Dispose()
