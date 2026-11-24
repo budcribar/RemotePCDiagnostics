@@ -658,6 +658,9 @@ jobs:
           "TestShop demo bundle install (RPCD + RPCDA) + service verification + clean uninstall passed."
 
           if ($env:TESTSHOP_RELEASE -eq 'true' -and $env:FULL_RELEASE -ne 'true') {
+            pwsh -NoProfile -File msi/Build-AgentMsi.ps1 -Version $ver -Rid win-x64 -SkipPublish -AgentExePath $agentExe -OutputDir 'artifacts/installer'
+            if ($LASTEXITCODE -ne 0) { throw "Build-AgentMsi.ps1 (win-x64) failed ($LASTEXITCODE)" }
+
             pwsh -NoProfile -File installer/Build-Installer.ps1 `
               -Version $ver `
               -SkipPublish `
@@ -676,6 +679,8 @@ jobs:
             artifacts/installer/RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe.sha256
             artifacts/installer/RemotePCDiagnostics-Setup-*-win-x64.exe
             artifacts/installer/RemotePCDiagnostics-Setup-*-win-x64.exe.sha256
+            artifacts/installer/RemotePCDiagnostics.Agent-*-win-x64.msi
+            artifacts/installer/RemotePCDiagnostics.Agent-*-win-x64.msi.sha256
           if-no-files-found: error
           retention-days: 5
 
@@ -780,6 +785,9 @@ jobs:
           if (-not (Test-Path -LiteralPath $testShopSetup)) { throw "ARM64 TestShop bundle missing: $testShopSetup" }
           if (-not (Test-Path -LiteralPath "$testShopSetup.sha256")) { throw "ARM64 TestShop bundle sha256 missing: $testShopSetup.sha256" }
 
+          pwsh -NoProfile -File msi/Build-AgentMsi.ps1 -Version $ver -Rid win-arm64 -SkipPublish -AgentExePath $agentDest -OutputDir $armOutDir
+          if ($LASTEXITCODE -ne 0) { throw "Build-AgentMsi.ps1 (win-arm64) failed ($LASTEXITCODE)" }
+
           pwsh -NoProfile -File installer/Build-Installer.ps1 `
             -Rid win-arm64 `
             -Version $ver `
@@ -788,7 +796,7 @@ jobs:
             -Compression $env:INSTALLER_COMPRESSION `
             -OutputDir $armOutDir
           if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 for ARM64 Setup failed ($LASTEXITCODE)" }
-          "Built ARM64 TestShop and Setup installers."
+          "Built ARM64 TestShop, Setup, and Agent MSI installers."
 
       - name: Upload ARM64 TestShop demo bundle installer
         uses: actions/upload-artifact@v4
@@ -799,6 +807,8 @@ jobs:
             artifacts/testshop-arm64/RemotePCDiagnostics-TestShop-Setup-*-win-arm64.exe.sha256
             artifacts/testshop-arm64/RemotePCDiagnostics-Setup-*-win-arm64.exe
             artifacts/testshop-arm64/RemotePCDiagnostics-Setup-*-win-arm64.exe.sha256
+            artifacts/testshop-arm64/RemotePCDiagnostics.Agent-*-win-arm64.msi
+            artifacts/testshop-arm64/RemotePCDiagnostics.Agent-*-win-arm64.msi.sha256
           if-no-files-found: error
           retention-days: 5
 
@@ -1230,7 +1240,7 @@ jobs:
         run: |
           shopt -s nullglob
           count=0
-          for f in *.exe; do
+          for f in *.exe *.msi; do
             if [[ ! -f "$f.sha256" ]]; then
               echo "::error::Missing checksum file $f.sha256"
               exit 1
@@ -1238,8 +1248,8 @@ jobs:
             sha256sum --check --strict "$f.sha256"
             count=$((count + 1))
           done
-          if [[ $count -lt 4 ]]; then
-            echo "::error::Expected 4 installers (x64 + arm64 Setup and TestShop), found $count"
+          if [[ $count -lt 6 ]]; then
+            echo "::error::Expected 6 installers (x64 + arm64 Setup, TestShop, and Agent MSI), found $count"
             exit 1
           fi
 
