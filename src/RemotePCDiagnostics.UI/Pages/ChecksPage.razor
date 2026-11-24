@@ -34,6 +34,10 @@
                     @onclick="RefreshOrStopChecks">
                 <span class="@(checksRunning ? "dash-spin" : "")"><Icon Name="refresh" Size="15" /></span>
             </button>
+            @if (checksRunning)
+            {
+                <button type="button" class="btn btn-stop" data-testid="checks-stop" @onclick="Screen.Stop">Stop</button>
+            }
         }
         <span class="ct-expand-group">
             <button class="btn-small" data-testid="checks-expand-all" @onclick="() => Screen.SetAllCollapsed(false)">Expand all</button>
@@ -321,7 +325,7 @@
         var collapsed = Screen.IsCollapsed(g);
         var count = Screen.SelectedCount(g);
         var all = Screen.AllSelected(g);
-        var running = Screen.RunningGroup == g;
+        var running = Screen.RunningGroup == g || mods.Any(m => Store.Get(m.Name).Status == DiagnosticStatus.Running);
         var otherBusy = Screen.IsBusy && !running || Diagnostics.IsStressSuiteRunning && !running || (g == CheckGroup.Stress && !running && Diagnostics.IsAnyStressRunning);
         var checkModules = mods;
         var attentionCount = 0;
@@ -351,6 +355,7 @@
                 <button class="ct-chevron" aria-expanded="@(collapsed ? "false" : "true")" aria-label="@(collapsed ? "Expand" : "Collapse") @title"
                         data-testid="checks-chevron-@id" @onclick="() => Screen.ToggleCollapsed(g)">@(collapsed ? "▸" : "▾")</button>
                 <button class="ct-check" role="checkbox" aria-checked="@(all is null ? "mixed" : all.Value ? "true" : "false")" aria-label="Select all @title"
+                        disabled="@running" title="@(running ? "Stop running checks to change selection" : null)"
                         data-testid="checks-selectall-@id" @onclick="() => Screen.SelectAll(g, all != true)">@(all is null ? "–" : all.Value ? "✓" : "")</button>
                 <div class="ct-group-title" @onclick="() => Screen.ToggleCollapsed(g)">
                     <div class="ct-group-line"><strong>@title</strong><span class="meta" data-testid="checks-count-@id">@count of @mods.Count selected</span>
@@ -406,6 +411,7 @@
                              @ondragend="OnCheckDragEnd"
                              data-testid="checks-row-@m.Name.ToLowerInvariant()" @onclick="() => SelectAndShowAsync(mod)" @onkeydown="e => RowKey(e, mod)" @onkeydown:preventDefault="false">
                             <button class="ct-check" role="checkbox" aria-checked="@(Screen.IsSelected(m.Name) ? "true" : "false")" aria-label="Include @m.DisplayName"
+                                    disabled="@running" title="@(running ? "Stop running checks to change selection" : null)"
                                     data-testid="checks-select-@m.Name.ToLowerInvariant()" @onclick="() => Screen.SetSelected(mod.Name, !Screen.IsSelected(mod.Name))" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">@(Screen.IsSelected(m.Name) ? "✓" : "")</button>
                             <span class="dot dot-@CheckRows.DotKind(kind)"></span>
                             <div class="ct-row-text">

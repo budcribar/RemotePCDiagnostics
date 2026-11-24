@@ -342,6 +342,33 @@ public class ChecksScreenTests
         Assert.False(s.IsRunAll);
         Assert.Empty(s.RemainingSteps());
         Assert.Empty(svc.RunningModules);
+    }
 
+    [Fact]
+    public void Stop_CancelsStandaloneCancellableScan()
+    {
+        var store = new ResultStore();
+        var scan = new StubCancellableScan();
+        var svc = new DiagnosticsService(store, [scan]);
+        var s = new ChecksScreenState(svc, store);
+
+        s.Stop();
+
+        Assert.True(scan.Cancelled);
+    }
+
+    private sealed class StubCancellableScan : IDiagnosticModule, RemotePCDiagnostics.Core.Areas.ICancellableScan
+    {
+        public bool Cancelled { get; private set; }
+        public Guid Id { get; } = Guid.NewGuid();
+        public string Name => "StubScan";
+        public string DisplayName => "Stub scan";
+        public bool IncludeInRunAll => false;
+        public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
+        public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) =>
+            Task.FromResult(ModuleAvailability.Available);
+        public Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress = null, CancellationToken ct = default) =>
+            Task.FromResult(new DiagnosticResult(Name, DiagnosticStatus.Ok, "ok", DateTimeOffset.Now));
+        public void Cancel() => Cancelled = true;
     }
 }
