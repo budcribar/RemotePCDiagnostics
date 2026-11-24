@@ -289,6 +289,34 @@
         "preserveRowOrder": false
       },
       {
+        "id": "cloudprotection",
+        "title": "Cloud-delivered protection",
+        "level": "Ok",
+        "headline": "Cloud-delivered protection is on",
+        "meta": "",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Ok",
+            "values": [
+              "Cloud-delivered protection",
+              "On (Advanced)"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Why it matters",
+              "Microsoft Defender checks suspicious files against Microsoft's cloud threat intelligence in real time to block brand-new malware before definition updates arrive."
+            ]
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
         "id": "asr",
         "title": "Attack Surface Reduction rules",
         "level": "Warning",

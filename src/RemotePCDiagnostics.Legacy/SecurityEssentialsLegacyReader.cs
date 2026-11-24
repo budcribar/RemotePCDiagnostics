@@ -22,7 +22,7 @@ public sealed class PowerShellSecurityEssentialsSource(SystemCommandRunner comma
         "'SystemDrive='+$env:SystemDrive;" +
         "try{'Encryption='+(New-Object -ComObject Shell.Application).NameSpace($env:SystemDrive+'\\').Self.ExtendedProperty('System.Volume.BitLockerProtection')}catch{'Encryption='};" +
         "$c=Get-MpComputerStatus;if($c){'DefenderMode='+$c.AMRunningMode;'RealTime='+$c.RealTimeProtectionEnabled;'Tamper='+$c.IsTamperProtected};" +
-        "$p=Get-MpPreference;if($p){'Pua='+[int]$p.PUAProtection;'NetworkProtection='+[int]$p.EnableNetworkProtection;" +
+        "$p=Get-MpPreference;if($p){'Pua='+[int]$p.PUAProtection;'NetworkProtection='+[int]$p.EnableNetworkProtection;'CloudProtection='+[int]$p.MAPSReporting;" +
         "$ids=@($p.AttackSurfaceReductionRules_Ids);$a=@($p.AttackSurfaceReductionRules_Actions);" +
         "'Asr='+((0..($ids.Count-1)|Where-Object{$ids[$_]}|ForEach-Object{$ids[$_]+':'+[int]$a[$_]}) -join ',')};" +
         "'Antivirus='+((Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct|ForEach-Object{$_.displayName}) -join ';');" +
@@ -84,7 +84,7 @@ public sealed class PowerShellSecurityEssentialsSource(SystemCommandRunner comma
         return new(Int("SecureBoot") is { } sb ? sb != 0 : null, Str("Firmware"), Str("Edition"), Int("Encryption"), tpm, Str("SystemDrive") ?? "C:")
         {
             DefenderMode = Str("DefenderMode"), RealTimeProtection = Bool("RealTime"), TamperProtection = Bool("Tamper"),
-            Pua = Int("Pua"), NetworkProtection = Int("NetworkProtection"), AsrRules = asr,
+            Pua = Int("Pua"), NetworkProtection = Int("NetworkProtection"), CloudProtection = Int("CloudProtection"), AsrRules = asr,
             Antivirus = (Str("Antivirus") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Firewall = fw, LlmnrPolicy = Long("Llmnr"), AutoRunPolicy = Long("AutoRun"), AutoRunUserPolicy = Long("AutoRunUser"),
             AutoRunLetterPolicy = Long("AutoRunLetters"), Drives = drives, InsecureGuest = Long("InsecureGuest"),

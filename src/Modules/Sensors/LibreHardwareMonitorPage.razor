@@ -49,9 +49,9 @@
                     {
                         <div class="headline" data-field="hottest-temperature" data-unit="celsius"
                              data-value="@g.Hottest?.ToString(System.Globalization.CultureInfo.InvariantCulture)">Hottest @(g.Hottest is { } h ? $"{h:0}°C" : "-")</div>
-                        @if (g.Readings.Any(x => x.Reading.IsApproximate)) { <div class="meta" data-testid="lhm-approx">Estimate (from Windows)</div> }
-                        @if (g.Readings.Any(x => x.Reading.IsFromWindows)) { <div class="meta" data-testid="lhm-from-windows">From Windows (GPU driver)</div> }
-                        <CardList Items="@([ $"{g.Readings.Count} sensor(s)", .. g.Readings.Select(x => x.Reading.HardwareName).Distinct().Take(2) ])" />
+                        @if (g.Readings.Any(x => x.Reading.IsApproximate)) { <div class="lhm-source-note" data-testid="lhm-approx">Estimate (from Windows)</div> }
+                        @if (g.Readings.Any(x => x.Reading.IsFromWindows)) { <div class="lhm-source-note" data-testid="lhm-from-windows">From Windows (GPU driver)</div> }
+                        <CardList Items="@([ $"{g.Readings.Count} {(g.Readings.Count == 1 ? "sensor" : "sensors")}", .. g.Readings.Select(x => x.Reading.HardwareName).Distinct().Take(2) ])" />
                     }
                 </div>
                 @if (isExpanded)
@@ -88,13 +88,18 @@
     {
         <p class="meta" data-testid="lhm-none">@r.Message</p>
     }
-    @if (report.MissingText is { } missing)
+    @if (report.MissingText is not null || report.Snapshot.CpuNote is not null)
     {
-        <p class="meta" data-testid="lhm-missing">@missing</p>
-    }
-    @if (report.Snapshot.CpuNote is { } cpuNote)
-    {
-        <p class="meta" data-testid="lhm-cpu-note">@cpuNote</p>
+        <div class="lhm-notes">
+            @if (report.MissingText is { } missing)
+            {
+                <p data-testid="lhm-missing">@missing</p>
+            }
+            @if (report.Snapshot.CpuNote is { } cpuNote)
+            {
+                <p data-testid="lhm-cpu-note">@cpuNote</p>
+            }
+        </div>
     }
 }
 

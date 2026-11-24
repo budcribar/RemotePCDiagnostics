@@ -157,17 +157,21 @@ public sealed class AgentNativeUpdatesAndSecurityTests
     private sealed class FakeSecurity : ISecuritySettingsStore
     {
         public int Pua, Network;
+        public int Cloud;
         public bool IgnoreDefenderChanges;
         public Dictionary<string, int> Asr { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, long> Registry { get; } = [];
         public List<string> Calls { get; } = [];
 
-        public DefenderPreferences ReadDefender() => new(Pua, Network, [.. Asr.Keys], [.. Asr.Values]);
+        public DefenderPreferences ReadDefender() => new(Pua, Network, [.. Asr.Keys], [.. Asr.Values], Cloud);
         public void SetDefender(string name, int value)
         {
             Calls.Add($"Set {name}={value}");
             if (IgnoreDefenderChanges) return;
-            if (name == "PUAProtection") Pua = value; else if (name == "EnableNetworkProtection") Network = value; else throw new InvalidOperationException(name);
+            if (name == "PUAProtection") Pua = value;
+            else if (name == "EnableNetworkProtection") Network = value;
+            else if (name == "MAPSReporting") Cloud = value;
+            else throw new InvalidOperationException(name);
         }
         public void AddAsrRules(IReadOnlyList<string> ids, IReadOnlyList<int> actions)
         {
@@ -204,15 +208,22 @@ public sealed class AgentNativeUpdatesAndSecurityTests
     [Fact]
     public void Defender_fixes_exit_3_when_windows_does_not_keep_them()
     {
-        var s = new FakeSecurity { Pua = 2 };
+        var s = new FakeSecurity { Pua = 2, Cloud = 0 };
         Assert.Equal("2", AgentSecuritySettings.Read(s, SecurityFixes.Pua).StdOut);
         Assert.Equal(0, AgentSecuritySettings.Apply(s, SecurityFixes.Pua).ExitCode);
         Assert.Equal(1, s.Pua);
         AgentSecuritySettings.Restore(s, SecurityFixes.Pua, SecurityFixes.ParsePrevious(SecurityFixes.Pua, "2")!);
         Assert.Equal(2, s.Pua);
 
+        Assert.Equal("0", AgentSecuritySettings.Read(s, SecurityFixes.CloudProtection).StdOut);
+        Assert.Equal(0, AgentSecuritySettings.Apply(s, SecurityFixes.CloudProtection).ExitCode);
+        Assert.Equal(2, s.Cloud);
+        AgentSecuritySettings.Restore(s, SecurityFixes.CloudProtection, SecurityFixes.ParsePrevious(SecurityFixes.CloudProtection, "0")!);
+        Assert.Equal(0, s.Cloud);
+
         var tamper = new FakeSecurity { IgnoreDefenderChanges = true };
         Assert.Equal(AgentSecuritySettings.NotKeptExitCode, AgentSecuritySettings.Apply(tamper, SecurityFixes.NetworkProtection).ExitCode);
+        Assert.Equal(AgentSecuritySettings.NotKeptExitCode, AgentSecuritySettings.Apply(tamper, SecurityFixes.CloudProtection).ExitCode);
         Assert.Equal(AgentSecuritySettings.NotKeptExitCode, AgentSecuritySettings.Apply(tamper, SecurityFixes.AsrRules).ExitCode);
     }
 

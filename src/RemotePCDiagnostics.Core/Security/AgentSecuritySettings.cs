@@ -18,13 +18,13 @@ public sealed record SecurityApplyAction(string Key) : AgentNativeAction;
 public sealed record SecurityRestoreAction(string Key, SecurityFixes.Previous Previous) : AgentNativeAction;
 
 /// <summary>Defender's settings the Security fixes read (<c>MSFT_MpPreference</c>).</summary>
-public sealed record DefenderPreferences(int PuaProtection, int NetworkProtection, IReadOnlyList<string> AsrIds, IReadOnlyList<int> AsrActions);
+public sealed record DefenderPreferences(int PuaProtection, int NetworkProtection, IReadOnlyList<string> AsrIds, IReadOnlyList<int> AsrActions, int CloudProtection = 2);
 
 /// <summary>The calls behind the Security fixes (<see cref="WindowsSecuritySettingsStore"/> on Windows, a fake in tests).</summary>
 public interface ISecuritySettingsStore
 {
     DefenderPreferences ReadDefender();
-    /// <summary><c>MSFT_MpPreference.Set</c> with one byte setting (PUAProtection, EnableNetworkProtection).</summary>
+    /// <summary><c>MSFT_MpPreference.Set</c> with one byte setting (PUAProtection, EnableNetworkProtection, MAPSReporting).</summary>
     void SetDefender(string name, int value);
     void AddAsrRules(IReadOnlyList<string> ids, IReadOnlyList<int> actions);
     void RemoveAsrRules(IReadOnlyList<string> ids);
@@ -77,13 +77,17 @@ public static class AgentSecuritySettings
     /// <summary>The value each policy fix writes.</summary>
     private static long AppliedValue(string key) => key == SecurityFixes.AutoRun ? SecurityFixes.AutoRunAllDrives : 0;
 
-    /// <summary>The Defender preference behind a Defender fix (PUA and network protection).</summary>
+    /// <summary>The Defender preference behind a Defender fix (PUA, network protection, and cloud-delivered protection).</summary>
     private static string? DefenderSetting(string key) => key switch
     {
         SecurityFixes.Pua => "PUAProtection",
         SecurityFixes.NetworkProtection => "EnableNetworkProtection",
+        SecurityFixes.CloudProtection => "MAPSReporting",
         _ => null,
     };
+
+    /// <summary>The value each Defender fix writes (1 = block/enable, 2 = Advanced MAPS reporting).</summary>
+    private static int DefenderAppliedValue(string key) => key == SecurityFixes.CloudProtection ? 2 : 1;
 
     private static string Hklm(string psPath)
     {
@@ -106,6 +110,7 @@ public static class AgentSecuritySettings
         {
             SecurityFixes.Pua => Ok(Number(p.PuaProtection)),
             SecurityFixes.NetworkProtection => Ok(Number(p.NetworkProtection)),
+            SecurityFixes.CloudProtection => Ok(Number(p.CloudProtection)),
             SecurityFixes.AsrRules => Ok(AsrJournal(p)),
             _ => throw new InvalidOperationException($"'{key}' can't be read here."),
         };
@@ -130,10 +135,17 @@ public static class AgentSecuritySettings
         }
         if (DefenderSetting(key) is { } setting)
         {
-            store.SetDefender(setting, 1);
+            var target = DefenderAppliedValue(key);
+            store.SetDefender(setting, target);
             var after = store.ReadDefender();
-            var kept = (key == SecurityFixes.Pua ? after.PuaProtection : after.NetworkProtection) == 1;
-            return kept ? Ok() : NotKept();
+            var actual = key switch
+            {
+                SecurityFixes.Pua => after.PuaProtection,
+                SecurityFixes.NetworkProtection => after.NetworkProtection,
+                SecurityFixes.CloudProtection => after.CloudProtection,
+                _ => -1,
+            };
+            return actual == target ? Ok() : NotKept();
         }
         if (key != SecurityFixes.AsrRules) throw new InvalidOperationException($"'{key}' can't be changed here.");
 
@@ -190,7 +202,8 @@ public sealed class WindowsSecuritySettingsStore : ISecuritySettingsStore
                     Convert.ToInt32(o["EnableNetworkProtection"] ?? 0, CultureInfo.InvariantCulture),
                     o["AttackSurfaceReductionRules_Ids"] is string[] ids ? ids : [],
                     o["AttackSurfaceReductionRules_Actions"] is Array actions
-                        ? actions.Cast<object>().Select(a => Convert.ToInt32(a, CultureInfo.InvariantCulture)).ToList() : []);
+                        ? actions.Cast<object>().Select(a => Convert.ToInt32(a, CultureInfo.InvariantCulture)).ToList() : [],
+                    Convert.ToInt32(o["MAPSReporting"] ?? 0, CultureInfo.InvariantCulture));
             }
         }
         throw new InvalidOperationException("Microsoft Defender's settings aren't available (Defender may be turned off or replaced by another antivirus).");

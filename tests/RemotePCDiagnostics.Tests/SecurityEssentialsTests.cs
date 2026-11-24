@@ -27,7 +27,7 @@ public class SecurityEssentialsTests
 
     private static SecurityFacts Hardened => new(true, "UEFI", "Professional", 1, Tpm2)
     {
-        DefenderMode = "Normal", RealTimeProtection = true, TamperProtection = true, Pua = 1, NetworkProtection = 1,
+        DefenderMode = "Normal", RealTimeProtection = true, TamperProtection = true, Pua = 1, NetworkProtection = 1, CloudProtection = 2,
         AsrRules = SecurityFixes.SafeAsrRules.ToDictionary(r => r.Id, _ => 1), Antivirus = ["Windows Defender"],
         Firewall = new Dictionary<string, bool> { ["Domain"] = true, ["Private"] = true, ["Public"] = true },
         LlmnrPolicy = 0, AutoRunPolicy = 255, InsecureGuest = 0,

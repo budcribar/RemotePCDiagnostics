@@ -65,7 +65,7 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
         var cards = new List<AreaCard>
         {
             EncryptionCard(f), SecureBootCard(f), TpmCard(f), AntivirusCard(f), FirewallCard(f),
-            PuaCard(f), NetworkProtectionCard(f), AsrCard(f), LlmnrCard(f), AutoRunCard(f), GuestCard(f),
+            PuaCard(f), NetworkProtectionCard(f), CloudProtectionCard(f), AsrCard(f), LlmnrCard(f), AutoRunCard(f), GuestCard(f),
         };
         var issues = cards.Count(c => c.Level is AreaLevel.Warning or AreaLevel.Error);
         var fixable = cards.Count(c => c.Level is AreaLevel.Warning or AreaLevel.Error && c.Actions is { Count: > 0 } acts && acts.Any(a => a.Kind != RemediationKind.OpenSettings));
@@ -202,7 +202,7 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
             }
             else if (f.TamperProtection == false)
             {
-                note = "Windows blocks apps from changing Tamper Protection directly. Open Windows Security > Virus & threat protection > Manage settings and switch Tamper Protection on, so malware can't switch Defender off.";
+                note = "Windows blocks apps and remote tools from changing Tamper Protection. Ask the person at this PC to open Windows Security > Virus & threat protection > Manage settings and switch Tamper Protection on, so malware can't switch Defender off.";
                 actions = [OpenSettings("Open Windows Security", "windowsdefender://threatsettings", "Windows Security (Virus & threat protection settings)")];
             }
         }
@@ -255,6 +255,22 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
 
     private static AreaCard NetworkProtectionCard(SecurityFacts f) =>
         DefenderSettingCard(f, "networkprotection", SecurityFixes.NetworkProtection, f.NetworkProtection, "Dangerous sites are blocked", "Network protection is off");
+
+    private static AreaCard CloudProtectionCard(SecurityFacts f)
+    {
+        var fix = SecurityFixes.Find(SecurityFixes.CloudProtection)!;
+        if (!f.DefenderActive || f.CloudProtection is null)
+            return new("cloudprotection", fix.Label, AreaLevel.Neutral, f.DefenderActive ? "Not reported" : "Managed by your antivirus", "", Cols,
+                [Row(AreaLevel.Neutral, fix.Label, f.DefenderActive ? "Not reported" : "Microsoft Defender isn't the active antivirus"), Means(fix.WhatItIs)]);
+        var on = f.CloudProtection is 1 or 2;
+        var level = on ? AreaLevel.Ok : AreaLevel.Warning;
+        var state = f.CloudProtection switch { 2 => "On (Advanced)", 1 => "On (Basic)", _ => "Off" };
+        return new("cloudprotection", fix.Label, level, on ? "Cloud-delivered protection is on" : "Cloud-delivered protection is off",
+            f.CloudProtection == 1 ? "Basic" : "", Cols,
+            [Row(level, fix.Label, state), Means(fix.WhatItIs)],
+            Note: on ? null : fix.WhatHappens + (fix.Caveat is { } c ? " " + c : ""),
+            Actions: on ? null : [Fix(SecurityFixes.CloudProtection)]);
+    }
 
     private static AreaCard AsrCard(SecurityFacts f)
     {

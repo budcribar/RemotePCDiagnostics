@@ -21,6 +21,8 @@ public sealed record SecurityFacts(bool? SecureBoot, string? Firmware, string? E
     public int? Pua { get; init; }
     /// <summary>Get-MpPreference EnableNetworkProtection: 0 off, 1 block, 2 audit.</summary>
     public int? NetworkProtection { get; init; }
+    /// <summary>Get-MpPreference MAPSReporting: 0 off, 1 basic, 2 advanced.</summary>
+    public int? CloudProtection { get; init; }
     /// <summary>Configured ASR rules (lower-case id → action: 0 off, 1 block, 2 audit, 6 warn). Null = couldn't read.</summary>
     public IReadOnlyDictionary<string, int>? AsrRules { get; init; }
     /// <summary>Registered antivirus products (Security Center), e.g. ["Windows Defender"].</summary>
@@ -141,7 +143,7 @@ public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource 
     public const string DrivesSql = Areas.WmiHardwareInventorySource.LogicalDrivesSql;
     public const string EncryptionSql = "SELECT DriveLetter, ProtectionStatus, ConversionStatus, IsVolumeInitializedForProtection FROM Win32_EncryptableVolume";
     public const string DefenderStatusSql = "SELECT AMRunningMode, RealTimeProtectionEnabled, IsTamperProtected FROM MSFT_MpComputerStatus";
-    public const string DefenderPreferenceSql = "SELECT PUAProtection, EnableNetworkProtection, AttackSurfaceReductionRules_Ids, AttackSurfaceReductionRules_Actions FROM MSFT_MpPreference";
+    public const string DefenderPreferenceSql = "SELECT PUAProtection, EnableNetworkProtection, MAPSReporting, AttackSurfaceReductionRules_Ids, AttackSurfaceReductionRules_Actions FROM MSFT_MpPreference";
     public const string AntivirusSql = "SELECT displayName FROM AntiVirusProduct";
     public const string FirewallSql = "SELECT Name, Enabled FROM MSFT_NetFirewallProfile";
 
@@ -223,6 +225,7 @@ public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource 
             TamperProtection = status?.Bool("IsTamperProtected"),
             Pua = Int(preference, "PUAProtection"),
             NetworkProtection = Int(preference, "EnableNetworkProtection"),
+            CloudProtection = Int(preference, "MAPSReporting"),
             AsrRules = preference is null ? null : Asr(preference),
             Antivirus = (antivirus ?? []).Select(r => r.Str("displayName")).Where(n => n.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Firewall = Firewall(firewall),

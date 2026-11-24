@@ -14,7 +14,7 @@ public sealed record SecurityFix(string Key, string Label, string ButtonText, st
 /// </summary>
 public static class SecurityFixes
 {
-    public const string Pua = "pua", NetworkProtection = "network-protection", AsrRules = "asr", Llmnr = "llmnr", AutoRun = "autorun", GuestLogons = "guest-logons";
+    public const string Pua = "pua", NetworkProtection = "network-protection", CloudProtection = "cloud-protection", AsrRules = "asr", Llmnr = "llmnr", AutoRun = "autorun", GuestLogons = "guest-logons";
 
     /// <summary>Attack Surface Reduction rules that rarely get in a home user's way (the ones Microsoft suggests starting with).</summary>
     public static readonly IReadOnlyList<(string Id, string Name)> SafeAsrRules =
@@ -52,6 +52,11 @@ public static class SecurityFixes
             "Turns on Microsoft Defender network protection.",
             "A site Microsoft rates as dangerous is blocked in every browser and app.",
             "Turned on network protection.", "Network protection is back to how it was."),
+        new(CloudProtection, "Cloud-delivered protection", "Turn on cloud-delivered protection",
+            "Microsoft Defender checks suspicious files against Microsoft's cloud threat intelligence in real time to block brand-new malware before definition updates arrive.",
+            "Turns on Microsoft Defender cloud-delivered protection (Advanced MAPS reporting).",
+            "If Tamper Protection is already on, Windows may require switching this on locally in Windows Security > Virus & threat protection > Manage settings.",
+            "Turned on cloud-delivered protection.", "Cloud-delivered protection is back to how it was."),
         new(AsrRules, "Attack Surface Reduction rules", "Turn on 5 protection rules",
             "Attack Surface Reduction rules block the most common ways malware gets in: Office macros starting programs, disguised scripts, email attachments, and password theft. Windows doesn't turn them on by itself.",
             "Turns on 5 Microsoft Defender rules: " + string.Join("; ", SafeAsrRules.Select(r => r.Name)) + ".",
@@ -85,7 +90,7 @@ public static class SecurityFixes
         text = (text ?? "").Trim();
         switch (Find(key)?.Key)
         {
-            case Pua or NetworkProtection:
+            case Pua or NetworkProtection or CloudProtection:
                 return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) && n is >= 0 and <= 6 ? new(n, []) : null;
             case Llmnr or AutoRun or GuestLogons:
                 if (text.Length == 0) return new(null, []);

@@ -21,6 +21,7 @@ public class SecurityFixesTests
         Tamper=True
         Pua=0
         NetworkProtection=0
+        CloudProtection=0
         Asr=
         Antivirus=Windows Defender
         Firewall=Domain:True,Private:True,Public:False
@@ -35,13 +36,14 @@ public class SecurityFixesTests
         var f = PowerShellSecurityEssentialsSource.ParseProbe(ProbeOutput, Tpm2);
         Assert.True(f.DefenderActive);
         Assert.Equal(0, f.Pua);
+        Assert.Equal(0, f.CloudProtection);
         Assert.Empty(f.AsrRules!);
         Assert.False(f.Firewall["Public"]);
         Assert.Null(f.LlmnrPolicy);
         var rep = SecurityEssentialsModule.Build(f);
         Assert.Equal(AreaLevel.Error, Card(rep, "firewall").Level);
         Assert.Equal("Firewall is off for public networks", Card(rep, "firewall").Headline);
-        foreach (var (id, key) in new[] { ("pua", SecurityFixes.Pua), ("networkprotection", SecurityFixes.NetworkProtection), ("asr", SecurityFixes.AsrRules), ("llmnr", SecurityFixes.Llmnr), ("autorun", SecurityFixes.AutoRun) })
+        foreach (var (id, key) in new[] { ("pua", SecurityFixes.Pua), ("networkprotection", SecurityFixes.NetworkProtection), ("cloudprotection", SecurityFixes.CloudProtection), ("asr", SecurityFixes.AsrRules), ("llmnr", SecurityFixes.Llmnr), ("autorun", SecurityFixes.AutoRun) })
         {
             var a = Assert.Single(Card(rep, id).Actions!);
             Assert.Equal(RemediationKind.ApplySecuritySetting, a.Kind);
@@ -67,9 +69,9 @@ public class SecurityFixesTests
     {
         // #71: the explanation row said "It's off" under an "on" headline.
         var asr = string.Join(",", SecurityFixes.SafeAsrRules.Select(r => r.Id + ":1"));
-        var f = PowerShellSecurityEssentialsSource.ParseProbe($"DefenderMode=Normal\nPua=1\nNetworkProtection=1\nAsr={asr}", Tpm2);
+        var f = PowerShellSecurityEssentialsSource.ParseProbe($"DefenderMode=Normal\nPua=1\nNetworkProtection=1\nCloudProtection=2\nAsr={asr}", Tpm2);
         var rep = SecurityEssentialsModule.Build(f);
-        foreach (var id in new[] { "pua", "networkprotection", "asr" })
+        foreach (var id in new[] { "pua", "networkprotection", "cloudprotection", "asr" })
         {
             var card = Card(rep, id);
             Assert.Equal(AreaLevel.Ok, card.Level);
@@ -81,11 +83,11 @@ public class SecurityFixesTests
     [Fact]
     public void Another_antivirus_means_no_defender_fixes()
     {
-        var f = PowerShellSecurityEssentialsSource.ParseProbe("DefenderMode=Passive mode\nPua=0\nNetworkProtection=0\nAsr=\nAntivirus=Windows Defender;Norton 360", Tpm2);
+        var f = PowerShellSecurityEssentialsSource.ParseProbe("DefenderMode=Passive mode\nPua=0\nNetworkProtection=0\nCloudProtection=0\nAsr=\nAntivirus=Windows Defender;Norton 360", Tpm2);
         var rep = SecurityEssentialsModule.Build(f);
         Assert.Equal("Protected by Norton 360", Card(rep, "antivirus").Headline);
         Assert.Equal(AreaLevel.Ok, Card(rep, "antivirus").Level);
-        foreach (var id in new[] { "pua", "networkprotection", "asr" })
+        foreach (var id in new[] { "pua", "networkprotection", "cloudprotection", "asr" })
         {
             Assert.Equal(AreaLevel.Neutral, Card(rep, id).Level);
             Assert.Null(Card(rep, id).Actions);
