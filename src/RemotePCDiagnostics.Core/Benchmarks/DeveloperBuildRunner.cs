@@ -30,7 +30,7 @@ public interface IDeveloperEnvironmentProbe
 /// </summary>
 public static class DeveloperCSharpPin
 {
-    public const string PinId = "csharp-rpcd-bench-v1";
+    public const string PinId = "csharp-rpcd-bench-v2";
 
     /// <summary>Oldest SDK major this pin can build. Older SDKs are hidden rather than offered a project they cannot compile.</summary>
     public const int MinSdkMajor = 8;
@@ -54,7 +54,7 @@ public static class DeveloperCSharpPin
     }
 
     /// <summary>
-    /// Materializes the pinned 5-project C# solution into <paramref name="targetDir"/> and returns the solution path and SHA-256 hash of all source files.
+    /// Materializes the pinned 21-project C# solution into <paramref name="targetDir"/> and returns the entry project path and SHA-256 hash of all source files.
     /// </summary>
     public static (string SolutionPath, string TreeSha256) Materialize(string targetDir, int sdkMajor = 10)
     {
@@ -79,49 +79,110 @@ public static class DeveloperCSharpPin
         return (Path.Combine(targetDir, "BenchApp", "BenchApp.csproj"), hash);
     }
 
+    private const int UnitsPerLibrary = 24;
+
     private static Dictionary<string, string> BuildFiles(string tfm)
     {
         var files = new Dictionary<string, string>(StringComparer.Ordinal);
-        string[] libs = ["BenchCore", "BenchMath", "BenchParse", "BenchGraph"];
+        string[] tier0 = ["BenchCore", "BenchCollections", "BenchText", "BenchMath"];
+        string[] tier1 = ["BenchParse", "BenchGraph", "BenchQuery", "BenchFormat", "BenchRules", "BenchIndex", "BenchMetrics", "BenchCache"];
+        string[] tier2 = ["BenchEngine01", "BenchEngine02", "BenchEngine03", "BenchEngine04", "BenchEngine05", "BenchEngine06", "BenchEngine07", "BenchEngine08"];
 
-        foreach (var lib in libs)
+        static string ProjectXml(string tfm, IReadOnlyList<string> refs, bool isExe = false)
         {
-            var refs = lib == "BenchCore" ? "" : $"\n  <ItemGroup><ProjectReference Include=\"..\\BenchCore\\BenchCore.csproj\" /></ItemGroup>";
-            files[$"{lib}/{lib}.csproj"] =
-                $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{tfm}</TargetFramework>\n    <Nullable>enable</Nullable>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <Deterministic>true</Deterministic>\n  </PropertyGroup>{refs}\n</Project>\n";
-
-            for (var i = 0; i < 8; i++)
-            {
-                files[$"{lib}/Unit{i:00}.cs"] = GenerateUnit(lib, i);
-            }
+            var outType = isExe ? "\n    <OutputType>Exe</OutputType>" : "";
+            var refBlock = refs.Count == 0
+                ? ""
+                : "\n  <ItemGroup>\n" + string.Join("\n", refs.Select(r => $"    <ProjectReference Include=\"..\\{r}\\{r}.csproj\" />")) + "\n  </ItemGroup>";
+            return $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>{outType}\n    <TargetFramework>{tfm}</TargetFramework>\n    <Nullable>enable</Nullable>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <Deterministic>true</Deterministic>\n  </PropertyGroup>{refBlock}\n</Project>\n";
         }
 
-        var appRefs = string.Join("\n", libs.Select(l => $"    <ProjectReference Include=\"..\\{l}\\{l}.csproj\" />"));
-        files["BenchApp/BenchApp.csproj"] =
-            $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{tfm}</TargetFramework>\n    <Nullable>enable</Nullable>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <Deterministic>true</Deterministic>\n  </PropertyGroup>\n  <ItemGroup>\n{appRefs}\n  </ItemGroup>\n</Project>\n";
+        void AddLibrary(string lib, IReadOnlyList<string> refs, string? upstreamCall)
+        {
+            files[$"{lib}/{lib}.csproj"] = ProjectXml(tfm, refs);
+            for (var i = 0; i < UnitsPerLibrary; i++)
+                files[$"{lib}/Unit{i:00}.cs"] = GenerateUnit(lib, i, upstreamCall);
+        }
 
-        files["BenchApp/Program.cs"] =
-            "using BenchCore;\nusing BenchMath;\nusing BenchParse;\nusing BenchGraph;\n" +
-            "var sum = BenchCore.Unit00.Compute(42) + BenchMath.Unit00.Compute(42) + BenchParse.Unit00.Compute(42) + BenchGraph.Unit00.Compute(42);\n" +
-            "Console.WriteLine(sum);\n";
+        foreach (var lib in tier0)
+            AddLibrary(lib, [], null);
+
+        for (var i = 0; i < tier1.Length; i++)
+        {
+            var dep = tier0[i % tier0.Length];
+            AddLibrary(tier1[i], [tier0[0], dep == tier0[0] ? tier0[1] : dep], $"{dep}.Unit00.Compute(seed)");
+        }
+
+        for (var i = 0; i < tier2.Length; i++)
+        {
+            var depA = tier1[i % tier1.Length];
+            var depB = tier1[(i + 1) % tier1.Length];
+            AddLibrary(tier2[i], [tier0[0], depA, depB], $"{depA}.Unit00.Compute(seed) ^ {depB}.Unit01.Compute(seed + 1)");
+        }
+
+        files["BenchApp/BenchApp.csproj"] = ProjectXml(tfm, tier2, isExe: true);
+        var usings = string.Join("\n", tier2.Select(l => $"using {l};"));
+        var sumExpr = string.Join(" + ", tier2.Select(l => $"{l}.Unit00.Compute(42)"));
+        files["BenchApp/Program.cs"] = $"{usings}\nvar sum = {sumExpr};\nConsole.WriteLine(sum);\n";
 
         return files;
     }
 
-    private static string GenerateUnit(string ns, int idx) =>
-        $"namespace {ns};\n" +
-        $"public static class Unit{idx:00}\n" +
-        "{\n" +
-        $"    public sealed record Item{idx:00}(int Id, string Key, double Value);\n" +
-        $"    public static long Compute(int seed)\n" +
-        "    {\n" +
-        $"        var items = Enumerable.Range(1, 32).Select(i => new Item{idx:00}(i + seed, $\"k{{i}}_{idx}\", (i * 1.6180339) / (seed + 1))).ToList();\n" +
-        "        var grouped = items.GroupBy(x => x.Id % 7).ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.Value).Select(x => x.Key.Length + x.Id).Sum());\n" +
-        "        long acc = seed;\n" +
-        "        foreach (var kv in grouped) acc = (acc * 31) ^ (kv.Key * 17L + kv.Value);\n" +
-        "        return acc;\n" +
-        "    }\n" +
-        "}\n";
+    private static string GenerateUnit(string ns, int idx, string? upstreamCall)
+    {
+        var upstream = upstreamCall is null ? "0L" : upstreamCall;
+        return
+            $"namespace {ns};\n" +
+            $"public sealed record Item{idx:00}<T>(int Id, string Key, double Value, T Tag) where T : struct;\n" +
+            $"public readonly record struct Metric{idx:00}(int Bucket, long Count, double Sum, double Min, double Max);\n" +
+            $"public static class Unit{idx:00}\n" +
+            "{\n" +
+            $"    private static readonly int[] Weights = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41];\n" +
+            $"    public static IReadOnlyList<Metric{idx:00}> Analyze<T>(ReadOnlySpan<int> input, T tag) where T : struct\n" +
+            "    {\n" +
+            $"        var items = new List<Item{idx:00}<T>>(input.Length);\n" +
+            "        for (var i = 0; i < input.Length; i++)\n" +
+            "        {\n" +
+            "            var v = input[i];\n" +
+            $"            var score = (v * Weights[i % Weights.Length] * 1.6180339) / ((i % 9) + 1.0);\n" +
+            $"            items.Add(new Item{idx:00}<T>(v, $\"k{{v}}_{idx}_{{i}}\", score, tag));\n" +
+            "        }\n" +
+            "        return items\n" +
+            "            .GroupBy(x => Math.Abs(x.Id) % 11)\n" +
+            "            .OrderBy(g => g.Key)\n" +
+            "            .Select(g =>\n" +
+            "            {\n" +
+            "                double sum = 0, min = double.MaxValue, max = double.MinValue;\n" +
+            "                long count = 0;\n" +
+            "                foreach (var x in g)\n" +
+            "                {\n" +
+            "                    sum += x.Value;\n" +
+            "                    if (x.Value < min) min = x.Value;\n" +
+            "                    if (x.Value > max) max = x.Value;\n" +
+            "                    count++;\n" +
+            "                }\n" +
+            $"                return new Metric{idx:00}(g.Key, count, sum, min, max);\n" +
+            "            })\n" +
+            "            .ToList();\n" +
+            "    }\n" +
+            $"    public static long Classify(Metric{idx:00} m) => m switch\n" +
+            "    {\n" +
+            "        { Count: <= 0 } => 0L,\n" +
+            "        { Max: > 100.0, Count: >= 3 } => (long)(m.Sum * 13) ^ (m.Bucket * 31L),\n" +
+            "        { Min: < 0.0 } => (long)(m.Max * 7) + m.Count,\n" +
+            "        _ => (long)(m.Sum * 3) + m.Bucket + m.Count,\n" +
+            "    };\n" +
+            "    public static long Compute(int seed)\n" +
+            "    {\n" +
+            "        Span<int> buf = stackalloc int[48];\n" +
+            "        for (var i = 0; i < buf.Length; i++) buf[i] = ((seed + i) * 31) ^ (i * 17);\n" +
+            "        var metrics = Analyze(buf, seed);\n" +
+            $"        long acc = {upstream};\n" +
+            "        foreach (var m in metrics) acc = unchecked((acc * 397) ^ Classify(m));\n" +
+            "        return acc;\n" +
+            "    }\n" +
+            "}\n";
+    }
 }
 
 /// <summary>Options controlling repeat counts and timeouts for developer clean builds.</summary>
