@@ -237,7 +237,7 @@ public class AppUpdateTests
         var info = await service.CheckForUpdateAsync(force: true);
         Assert.True(info.UpdateAvailable);
         Assert.Equal(AppInstallKind.Standalone, info.InstallKind);
-        Assert.True(info.CanInstallSilently);
+        Assert.False(info.CanInstallSilently);
         Assert.Equal("1.3.0-ci.800.1", info.LatestVersion);
 
         var result = await service.InstallUpdateAsync();

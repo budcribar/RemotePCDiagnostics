@@ -605,7 +605,8 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
                     var feed = await AppUpdateInstaller.FetchFeedAsync(_http, _feedUrl, ct).ConfigureAwait(false);
                     var selected = _channel == AppUpdateChannel.Prerelease ? feed?.Prerelease : feed?.Stable;
                     var isNewer = AppVersionComparer.IsNewer(selected?.Version, _installedVersion) == true;
-                    var hasAgentBridge = _getElevatedBridge?.Invoke()?.IsConnected == true;
+                    var hasAgentBridge = _elevation is not { HasAdminCapabilities: false } &&
+                        _getElevatedBridge?.Invoke()?.IsConnected == true;
                     var downloads = selected?.ResolveDownloads(RuntimeInformation.OSArchitecture);
                     info = new AppUpdateInfo(
                         UpdateAvailable: isNewer,
