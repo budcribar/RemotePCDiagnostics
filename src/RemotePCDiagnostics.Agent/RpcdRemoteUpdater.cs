@@ -22,15 +22,12 @@ internal sealed class RpcdRemoteUpdater : IDisposable
     private readonly Func<string?> _configuredServer;
     private readonly string _stagingDirectory;
     private readonly string _statusPath;
-    private readonly string _activityPath;
-    private readonly string _sessionActivityPath;
-    private readonly TimeSpan _activityProbeTimeout;
     private readonly string _lockPath;
     private readonly Action<string>? _log;
+    private readonly string? _stagingError;
 
     /// <summary>
-    /// The agent service and an app's elevated helper each have one of these. They share the status, the app's activity report,
-    /// and a lock file in the admin-only staging folder, so either can answer and only one update runs at a time.
+    /// The service and elevated helper share the update status and a lock file in the admin-only staging folder.
     /// </summary>
     public RpcdRemoteUpdater(
         Func<string?> installedVersion,
@@ -39,17 +36,13 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         Action<string>? log,
         HttpClient? http = null,
         string? stagingDirectory = null,
-        Func<string?>? configuredServer = null,
-        string? sessionActivityPath = null,
-        TimeSpan? activityProbeTimeout = null)
+        Func<string?>? configuredServer = null)
     {
         _installedVersion = installedVersion;
         _hostRunning = hostRunning;
         _relaunchArguments = relaunchArguments;
         _configuredServer = configuredServer ?? (() => null);
         _log = log;
-        _sessionActivityPath = sessionActivityPath ?? AgentLayout.UpdateActivityPath();
-        _activityProbeTimeout = activityProbeTimeout ?? TimeSpan.FromSeconds(15);
         _ownsHttp = http is null;
         _http = http ?? new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
         {
@@ -57,41 +50,52 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         };
         _stagingDirectory = stagingDirectory ?? AgentSelfUpdater.StagingDirectory();
         _statusPath = Path.Combine(_stagingDirectory, "rpcd-update-status.json");
-        _activityPath = Path.Combine(_stagingDirectory, "rpcd-update-activity.json");
         _lockPath = Path.Combine(_stagingDirectory, "rpcd-update.lock");
         _session = new RpcdUpdateSession(Persist);
-        Restore();
+        try
+        {
+            if (stagingDirectory is null)
+                AgentSelfUpdater.PrepareStaging(_stagingDirectory);
+            Restore();
+        }
+        catch (Exception ex)
+        {
+            _stagingError = ex.Message;
+            _log?.Invoke($"[rpcd-update] Could not secure update staging: {ex.Message}");
+        }
     }
 
-    public void ReportActivity(string? busyReason)
-    {
-        var now = DateTimeOffset.UtcNow;
-        _session.ReportActivity(busyReason, now);
-        WriteAtomically(_activityPath, new RpcdActivityReport(string.IsNullOrWhiteSpace(busyReason) ? null : busyReason.Trim(), now).ToJson(), "activity report");
-    }
+
 
     public void Bind(AdminPipeServerOptions options)
     {
         options.StartUpdate = (request, relaunch, _) => Task.FromResult(Start(request, relaunch, trustCallerBusyReason: true));
         options.ReadUpdate = requestId => Current(requestId);
-        options.ReportActivity = ReportActivity;
     }
 
     public RpcdUpdateStatus? Current(string? requestId)
     {
+        if (_stagingError is not null)
+            return null;
         LoadShared();
         return _session.Current(requestId, _installedVersion(), DateTimeOffset.UtcNow, ReadInstalledAgentProductVersion());
     }
 
     public RpcdUpdateStatus Start(RpcdUpdateRequest request, IReadOnlyList<string>? relaunch, bool trustCallerBusyReason)
     {
-        // A hub command must not trust its own "idle". The page's activity-data is what get_session_status reads.
-        // The app sends that same verdict over the admin pipe (the staging file) and writes it to the session folder.
-        // Only the pipe copy can confirm idle; the session copy can only add a busy reason (see ReadActivityFiles).
-        // On a slow ARM64 box the write can land just after this call, so wait before refusing.
-        string? probeProblem = null;
-        if (!trustCallerBusyReason && _hostRunning())
-            probeProblem = WaitForActivity();
+        if (_stagingError is not null)
+        {
+            return new RpcdUpdateStatus
+            {
+                RequestId = Guid.NewGuid().ToString("N"),
+                Stage = RpcdUpdateStages.Refused,
+                Terminal = true,
+                Error = _stagingError,
+                Detail = _stagingError,
+                UpdatedUtc = DateTimeOffset.UtcNow,
+            };
+        }
+
         bool started;
         RpcdUpdateStatus status;
         var now = DateTimeOffset.UtcNow;
@@ -110,17 +114,11 @@ internal sealed class RpcdRemoteUpdater : IDisposable
                     UpdatedUtc = now,
                 };
             }
-            // The other agent process may have started an update, or heard from the app, since this one last looked.
             LoadShared();
             now = DateTimeOffset.UtcNow;
-            if (!trustCallerBusyReason && _hostRunning())
-                probeProblem = _session.ActivityDiagnosis(now) is { } again
-                    ? JoinProbe(again, probeProblem)
-                    : null;
-            started = _session.TryBegin(request, _hostRunning(), trustCallerBusyReason, now, probeProblem, out status);
+            started = _session.TryBegin(request, !trustCallerBusyReason && _hostRunning(), trustCallerBusyReason,
+                now, activityProblem: null, out status, blockWhileHostRunning: true);
         }
-        if (probeProblem is not null)
-            _log?.Invoke("[rpcd-update] " + probeProblem);
         if (!started)
             return status;
 
@@ -144,7 +142,7 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             UtcNow = now,
             IsPersistentAgentInstalled = PersistentAgentInstalled,
             ReadInstalledAgentVersion = ReadInstalledAgentProductVersion,
-            RunInstaller = (install, ct) => RunInstallerAsync(install, relaunchArgs, ct),
+            RunInstaller = (install, ct) => RunInstallerAsync(install, relaunchArgs, fleetUpdate: !trustCallerBusyReason, ct),
         };
         _ = Task.Run(() => _session.ExecuteAsync(request, run, CancellationToken.None));
         return status;
@@ -204,29 +202,25 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             _http.Dispose();
     }
 
-    private async Task<int> RunInstallerAsync(RpcdPreparedInstall install, IReadOnlyList<string>? relaunch, CancellationToken ct)
+    private async Task<int> RunInstallerAsync(RpcdPreparedInstall install, IReadOnlyList<string>? relaunch,
+        bool fleetUpdate, CancellationToken ct)
     {
-        try
-        {
-            AgentSelfUpdater.PrepareStaging(_stagingDirectory);
-            // Saved only once Setup is about to start, so a refused or failed check does not restart the app.
-            if (relaunch is not null)
-                PendingAppRelaunch.Save(_stagingDirectory, relaunch);
-        }
-        catch (Exception ex)
-        {
-            _log?.Invoke($"[rpcd-update] Could not secure the staging directory: {ex.Message}");
-            return -1;
-        }
+        await AppUpdateInstaller.VerifyPublisherAsync(install.InstallerPath, ct).ConfigureAwait(false);
+        if (install.AgentMsiPath is { } agentMsiPath)
+            await AppUpdateInstaller.VerifyPublisherAsync(agentMsiPath, ct).ConfigureAwait(false);
+        if (fleetUpdate && _hostRunning())
+            throw new InvalidOperationException("Remote PC Diagnostics opened during the download. Close it and retry the fleet update.");
+
+        // Save only when Setup is about to start so a refused update does not restart the app.
+        if (relaunch is not null)
+            PendingAppRelaunch.Save(_stagingDirectory, relaunch);
 
         // Session 0 (the agent service) can end the Host and still wait for Setup. The elevated helper is in the
         // Host's kill-on-close job, so it must not: Setup's script closes the Host after Setup has left that job.
         // Either way the Host has to be gone before Setup initializes. /SUPPRESSMSGBOXES answers the AppMutex
         // prompt with Cancel, and that Abort is exit code 1, before CloseApplications runs.
-        if (RpcdSetupLog.CanCloseHostBeforeSetup(OperatingSystem.IsWindows() ? Process.GetCurrentProcess().SessionId : -1))
+        if (!fleetUpdate && RpcdSetupLog.CanCloseHostBeforeSetup(OperatingSystem.IsWindows() ? Process.GetCurrentProcess().SessionId : -1))
             RpcdHostShutdown.CloseRunningHost(_log);
-        else
-            _log?.Invoke("[rpcd-update] Leaving Remote PC Diagnostics running until Setup has started. Setup closes it.");
 
         // Cleared before Setup stops this service, so a crash during the hand-off does not start a second copy
         // that exits 0 and stays stopped. StartAndWait puts the actions back when Setup returns. Setup also puts
@@ -295,7 +289,7 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         return SessionLaunchOptions.IsRestartCommandLine(args) ? args : null;
     }
 
-    /// <summary>Reads what the other agent process saved: its update status and the app's last activity report.</summary>
+    /// <summary>Reads the update status shared with the other agent process.</summary>
     private void LoadShared()
     {
         try
@@ -307,71 +301,6 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         {
             _log?.Invoke($"[rpcd-update] Could not read the saved update status: {ex.Message}");
         }
-        _ = ReadActivityFiles(DateTimeOffset.UtcNow);
-    }
-
-    /// <summary>
-    /// Waits until the app's activity report is fresh, or the probe time runs out.
-    /// The returned text is the failure, for the log and the refusal detail.
-    /// </summary>
-    private string? WaitForActivity()
-    {
-        var deadline = DateTime.UtcNow + _activityProbeTimeout;
-        string? problem = null;
-        while (true)
-        {
-            problem = ReadActivityFiles(DateTimeOffset.UtcNow);
-            if (problem is null || DateTime.UtcNow >= deadline)
-                return problem;
-            Thread.Sleep(TimeSpan.FromMilliseconds(200));
-        }
-    }
-
-    /// <summary>
-    /// Null when a fresh report is now held. Otherwise why the files did not confirm the page.
-    /// Only the staging copy, which the app sends over the admin pipe, can say the app is idle. Any local process can write the
-    /// session folder, so its copy is used only when it says the app is busy: a forged file can hold an update back but never start one.
-    /// </summary>
-    private string? ReadActivityFiles(DateTimeOffset reportedAt)
-    {
-        var (secured, securedError) = ReadActivityFile(_activityPath);
-        var (session, sessionError) = ReadActivityFile(_sessionActivityPath);
-        var best = RpcdActivityReport.Trusted(secured, session);
-        var ioProblem = securedError ?? sessionError;
-        if (best is not null)
-            _session.ReportActivity(best.BusyReason, best.At);
-        var diagnosis = _session.ActivityDiagnosis(reportedAt);
-        if (diagnosis is null)
-            return null;
-        return JoinProbe(diagnosis, ioProblem);
-    }
-
-    private static (RpcdActivityReport? Report, string? Error) ReadActivityFile(string path)
-    {
-        try
-        {
-            if (!File.Exists(path))
-                return (null, null);
-            var report = RpcdActivityReport.Parse(File.ReadAllText(path));
-            return report is null
-                ? (null, $"Probe: activity file '{Path.GetFileName(path)}' could not be read.")
-                : (report, null);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return (null, $"Probe: could not read '{Path.GetFileName(path)}': {ex.Message}");
-        }
-    }
-
-    private static string JoinProbe(string diagnosis, string? extra)
-    {
-        if (string.IsNullOrWhiteSpace(extra))
-            return diagnosis;
-        if (extra.Contains(diagnosis, StringComparison.Ordinal))
-            return extra.Trim();
-        if (diagnosis.Contains(extra.Trim(), StringComparison.Ordinal))
-            return diagnosis;
-        return diagnosis + " " + extra.Trim();
     }
 
     /// <summary>An exclusive handle on the lock file while one process decides whether to start, or null after a few seconds of waiting.</summary>
@@ -601,35 +530,40 @@ internal sealed class RpcdRemoteUpdater : IDisposable
     internal static string? ReadInstalledAgentProductVersion() =>
         RpcdProductVersion.ReadFile(AgentLayout.DefaultAgentExe());
 
-    /// <summary>True when the app the agent started is still running, so its activity report has to be fresh.</summary>
-    public static bool IsTrackedHostRunning()
+    /// <summary>Checks whether an installed or cached RPCD host process is running.</summary>
+    public static bool IsRpcdHostRunning()
     {
-        var path = AgentLayout.ActiveSessionPath();
-        if (!File.Exists(path) && File.Exists(AgentLayout.LegacyActiveSessionPath()))
-            path = AgentLayout.LegacyActiveSessionPath();
-        if (!File.Exists(path))
-            return false;
-        ActiveSessionInfo? info;
+        var local = AgentPaths.TryFindLocalInstalledHostExe();
+        var store = AgentPaths.TryFindStoreHostExe();
+        var cache = AgentPaths.AppCacheRootDir();
+        var cachedVersion = AgentPaths.GetCachedVersion(cache);
+        var cached = string.IsNullOrEmpty(cachedVersion) ? null :
+            Path.Combine(cache, cachedVersion, "RemotePCDiagnostics.Host.exe");
+        var candidates = Process.GetProcessesByName(RpcdHostShutdown.HostProcessName);
         try
         {
-            info = ActiveSessionInfo.Parse(File.ReadAllText(path));
-        }
-        catch
-        {
+            foreach (var process in candidates)
+            {
+                try
+                {
+                    var path = process.MainModule?.FileName;
+                    if (path is not null && (string.Equals(path, local, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(path, store, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(path, cached, StringComparison.OrdinalIgnoreCase)))
+                        return true;
+                }
+                catch (System.ComponentModel.Win32Exception) { }
+                catch (InvalidOperationException) { } // The process exited during inspection.
+            }
             return false;
         }
-        if (info is not { Running: true, ProcessId: > 0 })
-            return false;
-        try
+        finally
         {
-            using var process = Process.GetProcessById(info.ProcessId);
-            return !process.HasExited;
-        }
-        catch
-        {
-            return false;
+            foreach (var process in candidates)
+                process.Dispose();
         }
     }
+
 
     /// <summary>The restart command line for the session the app published, so Setup brings that same session back.</summary>
     public static IReadOnlyList<string>? RelaunchForActiveSession(string? configuredServer)

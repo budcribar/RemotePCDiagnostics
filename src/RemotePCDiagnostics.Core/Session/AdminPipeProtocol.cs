@@ -1699,7 +1699,6 @@ public sealed class AdminPipeServer(
         AdminPipeFraming.OpWmiQuery,
         AdminPipeFraming.OpStateRead,
         AdminPipeFraming.OpJournalList,
-        AdminPipeFraming.OpReportActivity,
         AdminPipeFraming.OpUpdateRpcdStatus,
         AdminPipeFraming.OpAgentEnrollment,
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);

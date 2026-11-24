@@ -12,134 +12,23 @@ public class RpcdRemoteUpdaterTests
 {
     private static readonly RpcdUpdateRequest Approved = new("stable", null, Approved: true, ApprovedBy: "shop owner");
 
-    [Fact]
-    public void Activity_reported_to_the_helper_lets_the_service_accept_a_hub_update()
+    [Theory]
+    [InlineData(true, null)]
+    [InlineData(true, "")]
+    [InlineData(false, "Reported busy")]
+    public void Hub_update_uses_agent_observed_host_state(bool hostRunning, string? reportedActivity)
     {
         var dir = TempDir();
         using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
-        using var helper = NewUpdater(dir, http);
-        using var service = NewUpdater(dir, http);
+        using var service = NewUpdater(dir, http, hostRunning: hostRunning);
+        var status = service.Start(Approved with { BusyReason = reportedActivity },
+            relaunch: null, trustCallerBusyReason: false);
 
-        // The app talks to its helper only. Without the shared report the service would say it could not confirm the PC is idle.
-        helper.ReportActivity(null);
-        var status = service.Start(Approved, relaunch: null, trustCallerBusyReason: false);
-
-        Assert.Equal(RpcdUpdateStages.Checking, status.Stage);
+        Assert.Equal(hostRunning ? RpcdUpdateStages.Refused : RpcdUpdateStages.Checking, status.Stage);
+        if (hostRunning)
+            Assert.Contains("Close Remote PC Diagnostics", status.Error);
     }
 
-    [Fact]
-    public void A_busy_report_to_the_helper_refuses_the_hub_update_on_the_service()
-    {
-        var dir = TempDir();
-        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
-        using var helper = NewUpdater(dir, http);
-        using var service = NewUpdater(dir, http);
-
-        helper.ReportActivity("A fix is running.");
-        var status = service.Start(Approved, relaunch: null, trustCallerBusyReason: false);
-
-        Assert.Equal(RpcdUpdateStages.Refused, status.Stage);
-        Assert.Equal("A fix is running.", status.Error);
-    }
-
-    [Fact]
-    public void An_idle_session_activity_file_alone_does_not_start_a_hub_update()
-    {
-        // Any local process can write the session folder, so its "idle" must not be enough to start an update.
-        var dir = TempDir();
-        var sessionFile = Path.Combine(dir, "session", AgentLayout.UpdateActivityFileName);
-        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
-        using var service = NewUpdater(dir, http, sessionFile, TimeSpan.Zero);
-
-        Assert.Null(RpcdActivityReport.TryWrite(sessionFile, null, DateTimeOffset.UtcNow));
-        var status = service.Start(Approved, relaunch: null, trustCallerBusyReason: false);
-
-        Assert.Equal(RpcdUpdateStages.Refused, status.Stage);
-        Assert.Equal(RpcdUpdateSession.ActivityUnconfirmed, status.Error);
-    }
-
-    [Fact]
-    public void A_busy_session_activity_file_refuses_even_after_an_older_idle_pipe_report()
-    {
-        var dir = TempDir();
-        var sessionFile = Path.Combine(dir, "session", AgentLayout.UpdateActivityFileName);
-        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
-        using var helper = NewUpdater(dir, http, sessionFile);
-        using var service = NewUpdater(dir, http, sessionFile, TimeSpan.Zero);
-
-        helper.ReportActivity(null);
-        Assert.Null(RpcdActivityReport.TryWrite(sessionFile, "A check is running.", DateTimeOffset.UtcNow.AddSeconds(1)));
-        var status = service.Start(Approved, relaunch: null, trustCallerBusyReason: false);
-
-        Assert.Equal(RpcdUpdateStages.Refused, status.Stage);
-        Assert.Equal("A check is running.", status.Error);
-    }
-
-    [Fact]
-    public void Trusted_report_ignores_an_idle_session_copy_and_keeps_a_newer_busy_one()
-    {
-        var now = DateTimeOffset.UtcNow;
-        var securedIdle = new RpcdActivityReport(null, now);
-        Assert.Same(securedIdle, RpcdActivityReport.Trusted(securedIdle, new RpcdActivityReport(null, now.AddSeconds(5))));
-        Assert.Null(RpcdActivityReport.Trusted(null, new RpcdActivityReport(null, now)));
-        var busy = new RpcdActivityReport("A fix is running.", now.AddSeconds(5));
-        Assert.Same(busy, RpcdActivityReport.Trusted(securedIdle, busy));
-        Assert.Same(securedIdle, RpcdActivityReport.Trusted(securedIdle, busy with { At = now.AddSeconds(-5) }));
-    }
-
-    [Fact]
-    public void A_missing_activity_file_is_logged_and_named_in_the_refusal_detail()
-    {
-        var dir = TempDir();
-        var log = new List<string>();
-        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
-        using var service = NewUpdater(dir, http, Path.Combine(dir, "missing-activity.json"), TimeSpan.Zero, log);
-
-        var status = service.Start(Approved, relaunch: null, trustCallerBusyReason: false);
-
-        Assert.Equal(RpcdUpdateStages.Refused, status.Stage);
-        Assert.Equal(RpcdUpdateSession.ActivityUnconfirmed, status.Error);
-        Assert.Contains(RpcdUpdateSession.ProbeNoReport, status.Detail);
-        Assert.Contains(log, line => line.StartsWith("[rpcd-update] ", StringComparison.Ordinal) && line.Contains(RpcdUpdateSession.ProbeNoReport, StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task The_probe_waits_for_the_pipe_activity_report()
-    {
-        var dir = TempDir();
-        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
-        using var helper = NewUpdater(dir, http);
-        using var service = NewUpdater(dir, http, probe: TimeSpan.FromSeconds(3));
-        var write = Task.Run(async () =>
-        {
-            await Task.Delay(400);
-            helper.ReportActivity(null);
-        });
-
-        var status = service.Start(Approved, relaunch: null, trustCallerBusyReason: false);
-        await write;
-
-        Assert.Equal(RpcdUpdateStages.Checking, status.Stage);
-    }
-
-    [Fact]
-    public void An_unreadable_activity_file_is_named_in_the_refusal_detail()
-    {
-        var dir = TempDir();
-        var sessionFile = Path.Combine(dir, "session-activity.json");
-        File.WriteAllText(sessionFile, "{}");
-        using var held = new FileStream(sessionFile, FileMode.Open, FileAccess.Read, FileShare.None);
-        var log = new List<string>();
-        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
-        using var service = NewUpdater(dir, http, sessionFile, TimeSpan.Zero, log);
-
-        var status = service.Start(Approved, relaunch: null, trustCallerBusyReason: false);
-
-        Assert.Equal(RpcdUpdateStages.Refused, status.Stage);
-        Assert.Contains("could not read", status.Detail);
-        Assert.Contains(log, line => line.Contains("could not read", StringComparison.Ordinal));
-        held.Dispose();
-    }
 
     [Fact]
     public async Task An_update_running_in_one_agent_process_refuses_one_in_the_other()
@@ -329,15 +218,13 @@ public class RpcdRemoteUpdaterTests
         Assert.Contains("'Missing'", query);
     }
 
-    private static RpcdRemoteUpdater NewUpdater(string dir, HttpClient http, string? sessionActivityPath = null, TimeSpan? probe = null, List<string>? log = null, string? installedVersion = null) => new(
+    private static RpcdRemoteUpdater NewUpdater(string dir, HttpClient http, string? installedVersion = null, bool hostRunning = false) => new(
         installedVersion: () => installedVersion ?? "1.2.0",
-        hostRunning: () => true,
+        hostRunning: () => hostRunning,
         relaunchArguments: () => null,
-        log: log is null ? null : log.Add,
+        log: null,
         http: http,
-        stagingDirectory: dir,
-        sessionActivityPath: sessionActivityPath ?? Path.Combine(dir, "session-activity.json"),
-        activityProbeTimeout: probe ?? TimeSpan.Zero);
+        stagingDirectory: dir);
 
     private static string TempDir()
     {

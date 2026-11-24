@@ -16,7 +16,7 @@ internal static class AgentRunLoop
     {
         using var updater = new RpcdRemoteUpdater(
             installedVersion: AgentPaths.GetUpdateInstalledVersion,
-            hostRunning: RpcdRemoteUpdater.IsTrackedHostRunning,
+            hostRunning: RpcdRemoteUpdater.IsRpcdHostRunning,
             relaunchArguments: () => RpcdRemoteUpdater.RelaunchForActiveSession(config.Server),
             log: log,
             configuredServer: () => config.Server);

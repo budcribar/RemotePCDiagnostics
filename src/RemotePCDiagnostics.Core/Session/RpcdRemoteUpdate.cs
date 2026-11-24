@@ -143,7 +143,10 @@ public sealed record RpcdActivityReport(string? BusyReason, DateTimeOffset At)
 }
 
 /// <summary>The verified installer the agent is allowed to start. No other file is installed.</summary>
-public sealed record RpcdPreparedInstall(string InstallerPath, string Arguments, string TargetVersion, string OldVersion);
+public sealed record RpcdPreparedInstall(string InstallerPath, string Arguments, string TargetVersion, string OldVersion)
+{
+    public string? AgentMsiPath { get; init; }
+}
 
 /// <summary>What the agent needs around the pure update steps: clock, versions, and a way to run Setup.</summary>
 public sealed class RpcdUpdateRun
@@ -301,7 +304,7 @@ public sealed class RpcdUpdateSession
         TryBegin(request, hostRunning, trustCallerBusyReason, utcNow, null, out status);
 
     /// <param name="activityProblem">Why the activity probe failed. Appended to the refusal detail. Null when the caller has no extra fact.</param>
-    public bool TryBegin(RpcdUpdateRequest request, bool hostRunning, bool trustCallerBusyReason, DateTimeOffset utcNow, string? activityProblem, out RpcdUpdateStatus status)
+    public bool TryBegin(RpcdUpdateRequest request, bool hostRunning, bool trustCallerBusyReason, DateTimeOffset utcNow, string? activityProblem, out RpcdUpdateStatus status, bool blockWhileHostRunning = false)
     {
         var requestId = Guid.NewGuid().ToString("N");
         var channel = RpcdGitHubRelease.NormalizeChannel(request.Channel);
@@ -352,6 +355,8 @@ public sealed class RpcdUpdateSession
             string? detail = null;
             if (trustCallerBusyReason)
                 busy = string.IsNullOrWhiteSpace(request.BusyReason) ? null : request.BusyReason.Trim();
+            else if (blockWhileHostRunning)
+                busy = hostRunning ? "Close Remote PC Diagnostics before starting a fleet update." : null;
             else
             {
                 busy = ActivityBlock(hostRunning, utcNow);
@@ -476,11 +481,12 @@ public sealed class RpcdUpdateSession
                 UpdatedUtc = DateTimeOffset.UtcNow,
             });
 
+            var packageDirectory = Path.Combine(run.StagingDirectory, Guid.NewGuid().ToString("N"));
             var installerPath = await AppUpdateInstaller.DownloadAndVerifyAsync(
                 run.Http,
                 release.Choice.InstallerUrl,
                 release.Choice.Sha256Url,
-                run.StagingDirectory,
+                packageDirectory,
                 progress => ReportDownload(current, oldVersion, target, progress),
                 ct).ConfigureAwait(false);
 
@@ -493,7 +499,7 @@ public sealed class RpcdUpdateSession
                     run.Http,
                     release.Choice.AgentMsiUrl,
                     release.Choice.AgentMsiSha256Url,
-                    run.StagingDirectory,
+                    packageDirectory,
                     required: true,
                     progress => ReportDownload(current, oldVersion, target, progress),
                     onSkipped: null,
@@ -543,7 +549,7 @@ public sealed class RpcdUpdateSession
             try
             {
                 exit = await run.RunInstaller(
-                    new RpcdPreparedInstall(installerPath, arguments, target, oldVersion ?? ""),
+                    new RpcdPreparedInstall(installerPath, arguments, target, oldVersion ?? "") { AgentMsiPath = agentMsiPath },
                     ct).ConfigureAwait(false);
             }
             finally

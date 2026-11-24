@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Security.AccessControl;
-using System.Security.Principal;
 using Microsoft.Extensions.Logging;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Session;
@@ -53,7 +51,7 @@ internal static class AgentSelfUpdater
 
         try
         {
-            PrepareSecuredStagingDirectory(stagingDir);
+            PrepareStaging(stagingDir);
         }
         catch (Exception ex)
         {
@@ -61,6 +59,7 @@ internal static class AgentSelfUpdater
             return new AppUpdateResult(false, Error: "Could not prepare a secure update staging directory.");
         }
 
+        var packageDir = Path.Combine(stagingDir, Guid.NewGuid().ToString("N"));
         string installerPath;
         try
         {
@@ -68,9 +67,10 @@ internal static class AgentSelfUpdater
                 http,
                 selected.InstallerUrl,
                 selected.InstallerSha256Url,
-                stagingDir,
+                packageDir,
                 progress: null,
                 ct).ConfigureAwait(false);
+            await AppUpdateInstaller.VerifyPublisherAsync(installerPath, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -81,16 +81,20 @@ internal static class AgentSelfUpdater
         string? msiPath = null;
         if (File.Exists(AgentPaths.DefaultInstalledAgentExe()))
         {
-            // A failed MSI check does not block the desktop update. Remote update_rpcd uses the same helper with required: true.
-            msiPath = await AppUpdateInstaller.DownloadAgentMsiAsync(
-                http,
-                selected.AgentMsiUrl,
-                selected.AgentMsiSha256Url,
-                stagingDir,
-                required: false,
-                progress: null,
-                onSkipped: message => log.Warn($"[agent-update] Agent MSI download/verification skipped: {message}"),
-                ct).ConfigureAwait(false);
+            try
+            {
+                msiPath = await AppUpdateInstaller.DownloadAgentMsiAsync(
+                    http, selected.AgentMsiUrl, selected.AgentMsiSha256Url, packageDir,
+                    required: false, progress: null,
+                    onSkipped: message => log.Warn($"[agent-update] Agent MSI download/verification skipped: {message}"),
+                    ct).ConfigureAwait(false);
+                if (msiPath is not null)
+                    await AppUpdateInstaller.VerifyPublisherAsync(msiPath, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return new AppUpdateResult(false, Error: ex.Message);
+            }
         }
 
         // Setup closes the app, and this helper (a child of the app) ends with it, so nothing may be left for this process
@@ -253,7 +257,12 @@ internal static class AgentSelfUpdater
         }
     }
 
-    internal static void PrepareStaging(string stagingDir) => PrepareSecuredStagingDirectory(stagingDir);
+    internal static void PrepareStaging(string stagingDir)
+    {
+        if (!OperatingSystem.IsWindows() ||
+            !ProtectedStateFolder.Ensure(Path.GetDirectoryName(stagingDir)!, stagingDir, null))
+            throw new InvalidOperationException("Could not secure update staging for Administrators and SYSTEM.");
+    }
 
     /// <summary>The exit code Setup's cmd script wrote, or null when it has not written one.</summary>
     internal static int? ReadSetupExit(string exitPath)
@@ -316,26 +325,5 @@ internal static class AgentSelfUpdater
         });
         started = proc is not null;
         return proc;
-    }
-
-    private static void PrepareSecuredStagingDirectory(string stagingDir)
-    {
-        var dirInfo = Directory.CreateDirectory(stagingDir);
-        if ((dirInfo.Attributes & FileAttributes.ReparsePoint) != 0)
-            throw new InvalidOperationException("Staging directory must not be a symlink or junction.");
-
-        if (!OperatingSystem.IsWindows())
-            return;
-
-        var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
-        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
-        const InheritanceFlags all = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
-
-        var security = new DirectorySecurity();
-        security.SetOwner(admins);
-        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-        security.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
-        security.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
-        dirInfo.SetAccessControl(security);
     }
 }
