@@ -70,7 +70,7 @@ public static class BatteryReader
         return limit is null && freq is null ? null : new ProcessorPerformanceSample(limit, freq);
     }
 
-    private static bool IsNoBattery(string? error) =>
+    public static bool IsNoBattery(string? error) =>
         error is not null && new[] { "Not supported", "NotSupported", "Not found", "NotFound" }.Any(e => error.Contains(e, StringComparison.OrdinalIgnoreCase));
 
     private static WmiRow? Match(WmiQueryResult r, string instanceName) =>

@@ -69,6 +69,8 @@ public static class ModuleIds
     public static readonly Guid DeveloperSetup = new("c4e8a912-3f7b-4d61-9b5e-2e8f1a7c4d03");
     /// <summary>Slug <c>BiosFirmware</c>.</summary>
     public static readonly Guid BiosFirmware = new("7f3c9b2e-5d1a-4c8f-a6e0-9b4d2e1f8a3c");
+    /// <summary>Slug <c>Sound</c>.</summary>
+    public static readonly Guid Sound = new("56dea360-0bd7-4230-b072-0d54d91e90e4");
     /// <summary>Slug <c>WindowsMaintenance</c>.</summary>
     public static readonly Guid WindowsMaintenance = new("f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41");
 
@@ -106,6 +108,7 @@ public static class ModuleIds
         [SleepWake] = ModuleSlugs.SleepWake,
         [DeveloperSetup] = ModuleSlugs.DeveloperSetup,
         [BiosFirmware] = ModuleSlugs.BiosFirmware,
+        [Sound] = ModuleSlugs.Sound,
         [WindowsMaintenance] = ModuleSlugs.WindowsMaintenance,
     };
 
@@ -153,5 +156,6 @@ public static class ModuleSlugs
     public const string SleepWake = "SleepWake";
     public const string DeveloperSetup = "DeveloperSetup";
     public const string BiosFirmware = "BiosFirmware";
+    public const string Sound = "Sound";
     public const string WindowsMaintenance = "WindowsMaintenance";
 }

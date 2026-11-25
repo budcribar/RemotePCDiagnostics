@@ -3,7 +3,7 @@ using System.Diagnostics;
 namespace RemotePCDiagnostics.Core.Audio;
 
 /// <summary>Plays the microphone back through the speakers (live monitor) with a capped gain and a feedback brake. The audible part is the remote user's call.</summary>
-public sealed class MicToSpeakerModule(IAudioIo io, ILogger? log = null) : AudioModuleBase(io, log)
+public sealed class MicToSpeakerModule(IAudioIo io, ILogger? log = null, IAudioStateSource? state = null) : AudioModuleBase(io, log, state)
 {
     public const string ModuleName = ModuleSlugs.MicToSpeaker;
     public static readonly TimeSpan DefaultDuration = TimeSpan.FromSeconds(10);
@@ -28,6 +28,12 @@ public sealed class MicToSpeakerModule(IAudioIo io, ILogger? log = null) : Audio
             var none = new MicToSpeakerReport(output?.Name ?? "None found", input?.Name ?? "None found", AudioMath.SilenceDbfs, AudioMath.SilenceDbfs, duration, Settings.HalfDuplex, false, false, false, false, null,
                 output is null && input is null ? "No speaker and no microphone were found." : output is null ? "No speaker / audio output was found." : "No microphone was found.");
             return new DiagnosticResult<MicToSpeakerReport>(Name, DiagnosticStatus.Warning, AudioVerdicts.MessageOf(AudioVerdict.NoDevice), DateTimeOffset.Now, none);
+        }
+        if (await PreCheckAsync(output, input, ct).ConfigureAwait(false) is { } blocked)
+        {
+            Log($"{Name}: pre-check stopped the test: {blocked}");
+            var rep = new MicToSpeakerReport(output.Name, input.Name, AudioMath.SilenceDbfs, AudioMath.SilenceDbfs, duration, Settings.HalfDuplex, false, false, false, false, null, blocked);
+            return new DiagnosticResult(Name, DiagnosticStatus.Error, blocked, DateTimeOffset.Now, rep);
         }
         var privacy = false;
         try { privacy = Io.IsMicrophoneBlockedByPrivacy(); } catch { }

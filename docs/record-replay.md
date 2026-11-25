@@ -59,12 +59,17 @@ A check whose answers a recording doesn't hold (a recording made before the reco
 | Crashes & unexpected restarts | The event logs (wevtutil), the dump files from WMI (`CIM_DataFile`, `Win32_Directory`), the graphics drivers from `Win32_PnPSignedDriver` | The event logs (wevtutil), the dump folders listed by the app, osquery `drivers` |
 | Windows error log | The event logs (wevtutil) | The same |
 | Sleep, wake & standby drain | powercfg, the System log (wevtutil), the battery report (`powercfg /batteryreport`, kept by name) | The same |
+| Sound | Core Audio (`IAudioStateSource`, kept as one JSON answer, `RecordedCall.AudioKind`), WMI (`Win32_Service`, `Win32_PnPEntity`, `Win32_PnPSignedDriver` for MEDIA, `BatteryStaticData`), the registry (microphone privacy, mono audio) | None (no Store edition fallback; without Core Audio its device cards say they couldn't be read) |
 
 The event log checks are built at the time the PC was recorded, in UTC (`ReportClock`, `FixedClock`), so "in the last 7 days" and the
 times shown stay the same wherever and whenever the tests run. The battery report is a file powercfg writes under a new name each run, so it
 is kept as a file answer (`RecordedCall.FileKind`) under a fixed name; its serial number and the PC's name are replaced like any other.
 The legacy dump lists are kept the same way, as JSON. Event messages are kept as Windows wrote them, with the PC's and users' names
 replaced, which is one more reason real recordings stay in the private Admin repo.
+
+Sound endpoints on Bluetooth are named after the headset, which people often name after themselves, so the scrubber replaces their names
+(`<bluetooth:…>`). Device instance paths of Bluetooth and USB devices (`DeviceID`, `InstanceId`) hold a MAC address or serial and are
+replaced too, with the same placeholder wherever the same path appears.
 
 The Network check (`INetworkSource`) is recorded without `netsh wlan` and the network event logs, whose answers hold the Wi-Fi network's name
 and its router's address, and offline: the reachability probes and the DNS speed comparison ask the live network, so they aren't replayed.

@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
-using Microsoft.Win32;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using RemotePCDiagnostics.Core.Audio;
@@ -20,62 +19,69 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
     private const int E_ACCESSDENIED = unchecked((int)0x80070005);
     private const int AUDCLNT_E_DEVICE_IN_USE = unchecked((int)0x8889000A);
     private const int AUDCLNT_E_DEVICE_INVALIDATED = unchecked((int)0x88890004);
-    private const string ConsentKey = @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
 
     private void Log(string m) => log.Info("Audio: " + m);
     private void LogWarn(string m) => log.Warn("Audio: " + m);
 
-    private void EnsureSpeakerUnmutedAndAudible(MMDevice dev)
+    /// <summary>What a test changed on one endpoint so it could be heard, to put back afterwards.</summary>
+    private sealed record LevelChange(MMDevice Device, string What, bool WasMuted, float? PreviousLevel);
+
+    /// <summary>Unmutes the endpoint and raises its level to <paramref name="setTo"/> when below <paramref name="minLevel"/>, for the test only:
+    /// <see cref="RestoreLevels"/> puts both back. Null when nothing was changed.</summary>
+    private LevelChange? EnsureAudible(MMDevice dev, string what, float minLevel, float setTo)
     {
         try
         {
             var vol = dev.AudioEndpointVolume;
-            if (vol is not null)
+            if (vol is null) return null;
+            var wasMuted = vol.Mute;
+            float? prev = null;
+            if (wasMuted)
             {
-                if (vol.Mute)
-                {
-                    vol.Mute = false;
-                    Log($"Speakers on '{dev.FriendlyName}' were muted. Unmuted for audio test.");
-                }
-                if (vol.MasterVolumeLevelScalar < 0.5f)
-                {
-                    var prev = vol.MasterVolumeLevelScalar;
-                    vol.MasterVolumeLevelScalar = 0.5f;
-                    Log($"Speaker volume on '{dev.FriendlyName}' was {prev:P0}. Turned up to 50% for audio test.");
-                }
+                vol.Mute = false;
+                Log($"{what} on '{dev.FriendlyName}' was muted. Unmuted for the audio test.");
             }
+            if (vol.MasterVolumeLevelScalar < minLevel)
+            {
+                prev = vol.MasterVolumeLevelScalar;
+                vol.MasterVolumeLevelScalar = setTo;
+                Log($"{what} volume on '{dev.FriendlyName}' was {prev:P0}. Turned up to {setTo:P0} for the audio test.");
+            }
+            return wasMuted || prev is not null ? new LevelChange(dev, what, wasMuted, prev) : null;
         }
         catch (Exception ex)
         {
-            LogWarn($"Could not inspect/adjust speaker volume: {ex.Message}");
+            LogWarn($"Could not inspect/adjust {what.ToLowerInvariant()} volume: {ex.Message}");
+            return null;
         }
     }
 
-    private void EnsureMicrophoneUnmutedAndAudible(MMDevice dev)
+    /// <summary>Puts back what <see cref="EnsureAudible"/> changed, and says so: a muted or nearly silent device is often the real fault.</summary>
+    private string? RestoreLevels(params LevelChange?[] changes)
     {
-        try
+        var notes = new List<string>();
+        foreach (var c in changes)
         {
-            var vol = dev.AudioEndpointVolume;
-            if (vol is not null)
+            if (c is null) continue;
+            var found = c.WasMuted && c.PreviousLevel is { } p ? $"muted and its volume was {p:P0}"
+                : c.WasMuted ? "muted" : $"at {c.PreviousLevel:P0} volume";
+            try
             {
-                if (vol.Mute)
-                {
-                    vol.Mute = false;
-                    Log($"Microphone on '{dev.FriendlyName}' was muted. Unmuted for audio test.");
-                }
-                if (vol.MasterVolumeLevelScalar < 0.6f)
-                {
-                    var prev = vol.MasterVolumeLevelScalar;
-                    vol.MasterVolumeLevelScalar = 0.8f;
-                    Log($"Microphone volume on '{dev.FriendlyName}' was {prev:P0}. Turned up to 80% for audio test.");
-                }
+                var vol = c.Device.AudioEndpointVolume;
+                if (c.PreviousLevel is { } level) vol.MasterVolumeLevelScalar = level;
+                if (c.WasMuted) vol.Mute = true;
+                notes.Add($"The {c.What.ToLowerInvariant()} was {found}. It was changed for the test and put back afterwards.");
+            }
+            catch (Exception ex)
+            {
+                LogWarn($"Could not restore {c.What.ToLowerInvariant()} volume: {ex.Message}");
+                notes.Add($"The {c.What.ToLowerInvariant()} was {found}. It was changed for the test and couldn't be put back.");
             }
         }
-        catch (Exception ex)
-        {
-            LogWarn($"Could not inspect/adjust microphone volume: {ex.Message}");
-        }
+        return notes.Count == 0 ? null : string.Join(" ", notes);
     }
+
+    private static string? Join(string? a, string? b) => a is null ? b : b is null ? a : a + " " + b;
 
     public IReadOnlyList<AudioDevice> ListDevices()
     {
@@ -104,13 +110,9 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
 
     public bool IsMicrophoneBlockedByPrivacy()
     {
-        static bool Deny(RegistryKey root, string path)
-        {
-            try { using var k = root.OpenSubKey(path); return string.Equals(k?.GetValue("Value") as string, "Deny", StringComparison.OrdinalIgnoreCase); }
-            catch { return false; }
-        }
-        // Device-wide switch (HKLM), the user's switch, and "Let desktop apps access your microphone" (NonPackaged).
-        return Deny(Registry.LocalMachine, ConsentKey) || Deny(Registry.CurrentUser, ConsentKey) || Deny(Registry.CurrentUser, ConsentKey + @"\NonPackaged");
+        // The same three switches the Sound check reads: device-wide (HKLM), the user's, and "Let desktop apps access your microphone".
+        try { return CapturePrivacy.ReadAsync(new RemotePCDiagnostics.Core.DataSources.SystemRegistrySource(), CapturePrivacy.Microphone).GetAwaiter().GetResult().Blocked; }
+        catch { return false; }
     }
 
     public Task<PlayCaptureResult> PlayAndCaptureAsync(PlayCaptureRequest r, CancellationToken ct) => Task.Run(async () =>
@@ -120,9 +122,11 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
             using var en = new MMDeviceEnumerator();
             using var outDev = Device(en, r.OutputId, DataFlow.Render);
             using var inDev = Device(en, r.InputId, DataFlow.Capture);
-            EnsureSpeakerUnmutedAndAudible(outDev);
-            EnsureMicrophoneUnmutedAndAudible(inDev);
+            var speakerChange = EnsureAudible(outDev, "Speaker", 0.5f, 0.5f);
+            var micChange = EnsureAudible(inDev, "Microphone", 0.6f, 0.8f);
             string? note = null;
+            try
+            {
             var toneTime = TimeSpan.FromSeconds((double)r.Tone.Length / r.SampleRate);
 
             async Task<Capture?> PlayWith(bool mic, bool loop)
@@ -162,8 +166,16 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
                 await PlayWith(mic: true, loop: false).ConfigureAwait(false);
             }
             else lc = await PlayWith(mic: true, loop: true).ConfigureAwait(false);
+            PlayCaptureResult result;
             using (lc)
-                return new PlayCaptureResult(_mic, _micRate, lc?.Samples(), lc?.SampleRate ?? 0, _micRaw, note);
+                result = new PlayCaptureResult(_mic, _micRate, lc?.Samples(), lc?.SampleRate ?? 0, _micRaw, note);
+            return result with { Note = Join(result.Note, RestoreLevels(speakerChange, micChange)) };
+            }
+            finally
+            {
+                // Put back on cancel and error too (a second restore after the normal path is harmless: same values).
+                RestoreLevels(speakerChange, micChange);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { throw Map(ex); }
     }, ct);
@@ -180,8 +192,10 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
             using var en = new MMDeviceEnumerator();
             using var outDev = Device(en, r.OutputId, DataFlow.Render);
             using var inDev = Device(en, r.InputId, DataFlow.Capture);
-            EnsureSpeakerUnmutedAndAudible(outDev);
-            EnsureMicrophoneUnmutedAndAudible(inDev);
+            var speakerChange = EnsureAudible(outDev, "Speaker", 0.5f, 0.5f);
+            var micChange = EnsureAudible(inDev, "Microphone", 0.6f, 0.8f);
+            try
+            {
             using var stop = new CancellationTokenSource();
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, stop.Token);
             var queue = new ConcurrentQueue<float[]>();
@@ -263,7 +277,9 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
                 mic.Stop();
                 ct.ThrowIfCancellationRequested();
             }
-            return new MonitorResult(mic.SampleRate, mic.RawApplied, stoppedEarly);
+            return new MonitorResult(mic.SampleRate, mic.RawApplied, stoppedEarly, RestoreLevels(speakerChange, micChange));
+            }
+            finally { RestoreLevels(speakerChange, micChange); }
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { throw Map(ex); }
     }, ct);

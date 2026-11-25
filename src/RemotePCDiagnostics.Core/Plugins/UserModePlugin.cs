@@ -38,6 +38,9 @@ public static class UserModePlugin
             services.AddSingleton<DataSources.IWmiSource>(new DataSources.HostWmiSource(hostQueries, log));
         if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.PackagesList, StringComparer.Ordinal))
             services.AddSingleton<DataSources.IPackageSource>(new DataSources.HostPackageSource(hostQueries, log));
+        // Core Audio in the restricted module host isn't guaranteed, so a module that lists audio.state reads it through the app.
+        if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.AudioState, StringComparer.Ordinal))
+            services.AddSingleton<Audio.IAudioStateSource>(new Audio.HostAudioStateSource(hostQueries, log));
         plugin.Register(services, context);
         var sp = services.BuildServiceProvider();
         var modules = sp.GetServices<IDiagnosticModule>().ToList();

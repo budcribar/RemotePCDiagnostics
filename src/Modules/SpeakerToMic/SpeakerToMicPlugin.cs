@@ -6,7 +6,7 @@ namespace RemotePCDiagnostics.Modules.SpeakerToMic;
 public sealed class SpeakerToMicPlugin : IModulePlugin
 {
     public void Register(IServiceCollection services, IPluginContext context) =>
-        services.AddModule(context, sp => new SpeakerToMicModule(sp.GetRequiredService<IAudioIo>(), sp.LoggerFor<SpeakerToMicModule>()),
+        services.AddModule(context, sp => new SpeakerToMicModule(sp.GetRequiredService<IAudioIo>(), sp.LoggerFor<SpeakerToMicModule>(), sp.GetService<IAudioStateSource>()),
             ModuleIds.SpeakerToMic, typeof(SpeakerToMicPage));
 }
 
