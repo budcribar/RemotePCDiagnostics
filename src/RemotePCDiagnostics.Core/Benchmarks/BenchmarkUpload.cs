@@ -47,7 +47,8 @@ public sealed record BenchmarkUploadRequest(
     DateTimeOffset MeasuredUtc,
     bool Completed,
     BenchmarkUploadConditions Conditions,
-    IReadOnlyList<BenchmarkUploadResult> Results);
+    IReadOnlyList<BenchmarkUploadResult> Results,
+    string? Goal = null);
 
 public static class BenchmarkUpload
 {
@@ -84,7 +85,7 @@ public static class BenchmarkUpload
                 run.Conditions.PerformanceLimitPercent,
                 run.Conditions.PerformanceLimitPowerSource,
                 run.Conditions.AcMaxProcessorStatePercent,
-                run.Conditions.DischargingOnAc), results);
+                run.Conditions.DischargingOnAc), results, BenchmarkGoals.Normalize(run.Goal));
     }
 
     /// <summary>Speedometer names the browser it ran in (scores from different browsers do not compare); other kinds keep their own breakdown.</summary>

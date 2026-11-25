@@ -77,13 +77,64 @@
     </div>
 </section>
 
+@{
+    var hasDevEnv = Bench.IsKindAvailable(BenchmarkKind.DeveloperCSharp);
+    var activeGoal = BenchmarkGoals.Normalize(s.Goal);
+    var latestRun = BenchmarkUpload.LatestRun(before, after);
+    var currentPowerMode = latestRun?.Conditions.PowerMode ?? latestRun?.Conditions.PowerPlan;
+}
+<section class="card" data-testid="bench-goals" style="margin-bottom:12px">
+    <div class="bench-presets" style="margin:0">
+        <div class="bench-preset-group" role="tablist" aria-label="Benchmark goal preset">
+            <button type="button"
+                    class="@(activeGoal is null or BenchmarkGoals.TuneUp ? "btn-small btn-primary" : "btn-small")"
+                    data-testid="bench-goal-tuneup"
+                    disabled="@running"
+                    @onclick="() => ApplyGoalPreset(BenchmarkGoals.TuneUp)">
+                Full tune-up
+            </button>
+            <button type="button"
+                    class="@(activeGoal == BenchmarkGoals.Browsing ? "btn-small btn-primary" : "btn-small")"
+                    data-testid="bench-goal-browsing"
+                    disabled="@running"
+                    @onclick="() => ApplyGoalPreset(BenchmarkGoals.Browsing)">
+                Web browsing
+            </button>
+            @if (hasDevEnv)
+            {
+                <button type="button"
+                        class="@(activeGoal == BenchmarkGoals.Build ? "btn-small btn-primary" : "btn-small")"
+                        data-testid="bench-goal-build"
+                        disabled="@running"
+                        @onclick="() => ApplyGoalPreset(BenchmarkGoals.Build)">
+                    Build speed
+                </button>
+            }
+        </div>
+        <span class="meta" data-testid="bench-goal-context">
+            @if (activeGoal == BenchmarkGoals.Browsing)
+            {
+                <span>DNS lookup &amp; Speedometer@(currentPowerMode is { Length: > 0 } pm ? $" · {pm}" : "") · <a href="/checks">Network &amp; Wi-Fi →</a> · <a href="/stress">Bufferbloat test →</a></span>
+            }
+            else if (activeGoal == BenchmarkGoals.Build && hasDevEnv)
+            {
+                <span>C# clean build &amp; disk latency@(currentPowerMode is { Length: > 0 } pm2 ? $" · {pm2}" : "") · <a href="/checks">Dev Drive &amp; setup →</a></span>
+            }
+            else
+            {
+                <span>Before / After tune-up suite@(currentPowerMode is { Length: > 0 } pm3 ? $" · {pm3}" : "") · customize tests under Advanced below</span>
+            }
+        </span>
+    </div>
+</section>
+
 <details class="card bench-customize" data-testid="bench-settings" open="@_customizeOpen">
     @* The click saves the open state, so a view-only mirror and a controlling mirror show the same panel the start buttons do. *@
     <summary class="bench-customize-summary" data-testid="bench-settings-toggle" aria-expanded="@(_customizeOpen ? "true" : "false")"
              @onclick="ToggleCustomize" @onclick:preventDefault="true">
         <span class="bench-customize-title">
             <span class="bench-customize-caret" aria-hidden="true">▸</span>
-            <span>Customize tests</span>
+            <span>Advanced: customize tests</span>
             <span class="meta">(@s.Enabled.Count(Bench.IsKindAvailable) of @available.Count selected · @s.Runs @(s.Runs == 1 ? "run" : "runs") each · about @Minutes(s.EstimatedSeconds()))</span>
         </span>
     </summary>
@@ -92,8 +143,8 @@
             <div class="bench-preset-group">
                 <button type="button" class="btn-small" data-testid="bench-preset-standard" disabled="@running" @onclick="ApplyStandardPreset">Standard (All · 3 runs)</button>
                 <button type="button" class="btn-small" data-testid="bench-preset-quick" disabled="@running" @onclick="ApplyQuickPreset">Quick (Core · 1 run)</button>
-                <button type="button" class="btn-small" data-testid="bench-select-all" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Enabled = available.Select(i => i.Kind).ToList() })">Select all</button>
-                <button type="button" class="btn-small" data-testid="bench-select-none" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Enabled = [] })">Select none</button>
+                <button type="button" class="btn-small" data-testid="bench-select-all" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Goal = BenchmarkGoals.TuneUp, Enabled = available.Select(i => i.Kind).ToList() })">Select all</button>
+                <button type="button" class="btn-small" data-testid="bench-select-none" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Goal = null, Enabled = [] })">Select none</button>
             </div>
             <label class="meta">Runs per test
                 <select data-testid="bench-runs" disabled="@running" @onchange="SetRuns">
@@ -330,11 +381,33 @@ else if (!running)
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
     public void Dispose() { Bench.Changed -= OnChanged; Uploader.Changed -= OnChanged; }
 
+    [SupplyParameterFromQuery(Name = "goal")] public string? GoalQuery { get; set; }
+    private string? _appliedGoalQuery;
+
+    protected override void OnParametersSet()
+    {
+        if (GoalQuery is { Length: > 0 } q && !string.Equals(q, _appliedGoalQuery, StringComparison.OrdinalIgnoreCase))
+        {
+            _appliedGoalQuery = q;
+            var norm = BenchmarkGoals.Normalize(q);
+            if (norm is not null && BenchmarkGoals.IsGoalAvailable(norm, Bench.AvailableBenchmarks.Select(b => b.Kind)))
+                ApplyGoalPreset(norm);
+        }
+    }
+
+    private void ApplyGoalPreset(string goal)
+    {
+        var avail = Bench.AvailableBenchmarks.Select(b => b.Kind).ToList();
+        if (!BenchmarkGoals.IsGoalAvailable(goal, avail)) return;
+        var kinds = BenchmarkGoals.KindsFor(goal, avail);
+        Bench.UpdateSettings(Bench.Settings with { Goal = BenchmarkGoals.Normalize(goal), Enabled = [.. kinds] });
+    }
+
     private void ApplyStandardPreset() =>
-        Bench.UpdateSettings(Bench.Settings with { Enabled = [.. Benchmarks.DefaultEnabled], Runs = 3 });
+        Bench.UpdateSettings(Bench.Settings with { Goal = BenchmarkGoals.TuneUp, Enabled = [.. Benchmarks.DefaultEnabled], Runs = 3 });
 
     private void ApplyQuickPreset() =>
-        Bench.UpdateSettings(Bench.Settings with { Enabled = [.. QuickCoreKinds], Runs = 1 });
+        Bench.UpdateSettings(Bench.Settings with { Goal = null, Enabled = [.. QuickCoreKinds], Runs = 1 });
 
     private void RunAvComparison()
     {
@@ -361,7 +434,7 @@ else if (!running)
     private void ToggleCustomize() => _customizeOpen = !_customizeOpen;
 
     private void Toggle(BenchmarkKind k, bool on) =>
-        Bench.UpdateSettings(Bench.Settings with { Enabled = BenchmarkTestRules.WithEnabled(Bench.Settings, k, on, Bench.IsKindAvailable(k)) });
+        Bench.UpdateSettings(Bench.Settings with { Goal = null, Enabled = BenchmarkTestRules.WithEnabled(Bench.Settings, k, on, Bench.IsKindAvailable(k)) });
 
     private void SetRuns(ChangeEventArgs e)
     {
