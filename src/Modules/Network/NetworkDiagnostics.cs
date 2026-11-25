@@ -59,26 +59,124 @@ public static class NetworkDiagnostics
         _ => "Network event"
     };
 
+    public const string DualStackProbeHost = "speed.cloudflare.com";
+    public static readonly TimeSpan Ipv6ProbeTimeout = TimeSpan.FromSeconds(3);
+
     public static async Task<AreaCard> ProbeAsync(string? gateway, CancellationToken ct)
     {
         var gatewayPing = IPAddress.TryParse(gateway, out var address) ? PingAsync(address, ct) : Task.FromResult<bool?>(null);
         var destinationPing = PingAsync(DnsSpeedTest.CloudflareIp, ct);
         var dns = ResolveAsync(ct);
-        await Task.WhenAll(gatewayPing, destinationPing, dns).ConfigureAwait(false);
-        return BuildProbes(gateway, await gatewayPing.ConfigureAwait(false), await dns.ConfigureAwait(false), await destinationPing.ConfigureAwait(false));
+        var ipv6 = ProbeIpv6FallbackAsync(DualStackProbeHost, Ipv6ProbeTimeout, ct: ct);
+        await Task.WhenAll(gatewayPing, destinationPing, dns, ipv6).ConfigureAwait(false);
+        return BuildProbes(gateway, await gatewayPing.ConfigureAwait(false), await dns.ConfigureAwait(false), await destinationPing.ConfigureAwait(false), await ipv6.ConfigureAwait(false));
     }
 
-    public static AreaCard BuildProbes(string? gateway, bool? gatewayReply, bool? dnsReply, bool? destinationReply)
+    public static AreaCard BuildProbes(string? gateway, bool? gatewayReply, bool? dnsReply, bool? destinationReply, Ipv6FallbackResult? ipv6 = null)
     {
         AreaRow PingRow(string label, string? target, bool? reply) => new(AreaLevel.Neutral,
             [label, target ?? "Unavailable", reply switch { true => "Replied", false => "No ICMP reply", null => "Unavailable" }]);
-        return new("network-reachability", "Reachability now", AreaLevel.Neutral,
-            gatewayReply == true && dnsReply == true && destinationReply == true ? "All three probes responded" : "See individual probe results",
-            "Current snapshot", ["Layer", "Target", "Result"],
-            [PingRow("Gateway", string.IsNullOrWhiteSpace(gateway) ? null : gateway, gatewayReply),
-             new(AreaLevel.Neutral, ["System DNS", DnsName, dnsReply switch { true => "Resolved", false => "Resolution failed or timed out", null => "Unavailable" }]),
-             PingRow("Public IP", DnsSpeedTest.CloudflareIp.ToString(), destinationReply)],
-            Note: "ICMP can be blocked even when traffic works. DNS uses the system resolver, which may have a cached answer. Compare this snapshot with event times when investigating earlier drops.");
+
+        var rows = new List<AreaRow>
+        {
+            PingRow("Gateway", string.IsNullOrWhiteSpace(gateway) ? null : gateway, gatewayReply),
+            new(AreaLevel.Neutral, ["System DNS", DnsName, dnsReply switch { true => "Resolved", false => "Resolution failed or timed out", null => "Unavailable" }]),
+            PingRow("Public IP", DnsSpeedTest.CloudflareIp.ToString(), destinationReply),
+        };
+
+        var brokenIpv6 = ipv6 is { BrokenIpv6Fallback: true };
+        if (ipv6 is { HasGlobalIpv6WithRoute: true })
+        {
+            if (brokenIpv6)
+                rows.Add(new(AreaLevel.Warning, ["IPv6 fallback", $"{ipv6.Host}:443", "IPv6 failed; IPv4 works"]));
+            else if (ipv6.Ipv6Connected == true)
+                rows.Add(new(AreaLevel.Neutral, ["IPv6", $"{ipv6.Host}:443", "Connected"]));
+            else
+                rows.Add(new(AreaLevel.Neutral, ["IPv6", $"{ipv6.Host}:443", "IPv6 and IPv4 both failed"]));
+        }
+
+        var level = brokenIpv6 ? AreaLevel.Warning : AreaLevel.Neutral;
+        var headline = brokenIpv6
+            ? "Broken IPv6 fallback (IPv6 failed, IPv4 works)"
+            : gatewayReply == true && dnsReply == true && destinationReply == true
+                ? "All three probes responded"
+                : "See individual probe results";
+        var note = brokenIpv6
+            ? "This PC has a global IPv6 address and IPv6 default route, but TCP 443 over IPv6 failed while IPv4 succeeded. Apps and browsers may stall while falling back to IPv4. "
+            : "";
+        note += "ICMP can be blocked even when traffic works. DNS uses the system resolver, which may have a cached answer. Compare this snapshot with event times when investigating earlier drops.";
+
+        return new("network-reachability", "Reachability now", level, headline,
+            "Current snapshot", ["Layer", "Target", "Result"], rows, Note: note);
+    }
+
+    public static async Task<Ipv6FallbackResult> ProbeIpv6FallbackAsync(
+        string host = DualStackProbeHost,
+        TimeSpan? timeout = null,
+        Func<bool>? hasGlobalIpv6WithRoute = null,
+        Func<string, AddressFamily, TimeSpan, CancellationToken, Task<bool>>? tcpConnect = null,
+        CancellationToken ct = default)
+    {
+        var checkIpv6 = hasGlobalIpv6WithRoute ?? HasGlobalIpv6AndDefaultRoute;
+        if (!checkIpv6())
+            return new Ipv6FallbackResult(false, null, null, host);
+
+        var t = timeout ?? Ipv6ProbeTimeout;
+        var connect = tcpConnect ?? ConnectTcp443Async;
+        var v6Task = SafeConnectAsync(connect, host, AddressFamily.InterNetworkV6, t, ct);
+        var v4Task = SafeConnectAsync(connect, host, AddressFamily.InterNetwork, t, ct);
+        await Task.WhenAll(v6Task, v4Task).ConfigureAwait(false);
+        return new Ipv6FallbackResult(true, await v6Task.ConfigureAwait(false), await v4Task.ConfigureAwait(false), host);
+    }
+
+    public static bool HasGlobalIpv6AndDefaultRoute()
+    {
+        try
+        {
+            foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.OperationalStatus != OperationalStatus.Up) continue;
+                if (nic.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel) continue;
+                var props = nic.GetIPProperties();
+                var hasGlobalV6 = props.UnicastAddresses.Any(u => IsGlobalUnicastIpv6(u.Address));
+                if (!hasGlobalV6) continue;
+                var hasV6Gateway = props.GatewayAddresses.Any(g => g.Address.AddressFamily == AddressFamily.InterNetworkV6 && !g.Address.Equals(IPAddress.IPv6None));
+                if (hasV6Gateway) return true;
+            }
+            return false;
+        }
+        catch (NetworkInformationException) { return false; }
+    }
+
+    public static bool IsGlobalUnicastIpv6(IPAddress address)
+    {
+        if (address.AddressFamily != AddressFamily.InterNetworkV6) return false;
+        if (address.IsIPv6LinkLocal || address.IsIPv6SiteLocal || address.IsIPv6Multicast || IPAddress.IsLoopback(address)) return false;
+        if (address.Equals(IPAddress.IPv6Any) || address.Equals(IPAddress.IPv6None)) return false;
+        var bytes = address.GetAddressBytes();
+        // Exclude Unique Local Addresses (fc00::/7)
+        if ((bytes[0] & 0xfe) == 0xfc) return false;
+        // Global unicast is 2000::/3 (first 3 bits = 001)
+        return (bytes[0] & 0xe0) == 0x20;
+    }
+
+    private static async Task<bool> SafeConnectAsync(Func<string, AddressFamily, TimeSpan, CancellationToken, Task<bool>> connect,
+        string host, AddressFamily family, TimeSpan timeout, CancellationToken ct)
+    {
+        try { return await connect(host, family, timeout, ct).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch { return false; }
+    }
+
+    private static async Task<bool> ConnectTcp443Async(string host, AddressFamily family, TimeSpan timeout, CancellationToken ct)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeout);
+        var addresses = await Dns.GetHostAddressesAsync(host, family, cts.Token).ConfigureAwait(false);
+        if (addresses.Length == 0) return false;
+        using var socket = new Socket(family, SocketType.Stream, ProtocolType.Tcp);
+        await socket.ConnectAsync(addresses[0], 443, cts.Token).ConfigureAwait(false);
+        return true;
     }
 
     private static async Task<bool?> PingAsync(IPAddress address, CancellationToken ct)
@@ -100,4 +198,9 @@ public static class NetworkDiagnostics
         catch (SocketException) { return false; }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return false; }
     }
+}
+
+public sealed record Ipv6FallbackResult(bool HasGlobalIpv6WithRoute, bool? Ipv6Connected, bool? Ipv4Connected, string Host)
+{
+    public bool BrokenIpv6Fallback => HasGlobalIpv6WithRoute && Ipv6Connected == false && Ipv4Connected == true;
 }

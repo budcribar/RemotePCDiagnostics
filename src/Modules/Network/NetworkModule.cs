@@ -56,8 +56,11 @@ public sealed class NetworkModule(INetworkSource source, SystemCommandRunner? co
         var history = commands is null ? Task.FromResult<AreaCard?>(null) : Nullable(NetworkDiagnostics.ReadHistoryAsync(commands, ct));
         var probes = offline ? Task.FromResult<AreaCard?>(null) : Nullable(NetworkDiagnostics.ProbeAsync(gateway, ct));
         await Task.WhenAll(history, probes).ConfigureAwait(false);
-        var wifiRep = wlanOk || ipOk ? WifiConfigModule.Build(
-            wlanOk ? WifiConfigModule.ParseNetshWlan(wlanRes!.StdOut) : null, wlanOk, ipSnap, dns, connectedAdapters) : null;
+        var wifi = wlanOk ? WifiConfigModule.ParseNetshWlan(wlanRes!.StdOut) : null;
+        var bandContext = !offline && commands is not null && wifi is { Connected: true } && WifiConfigModule.Is24Ghz(wifi)
+            ? await WifiConfigModule.ReadBandContextAsync(commands, wifi.Ssid, ct).ConfigureAwait(false)
+            : null;
+        var wifiRep = wlanOk || ipOk ? WifiConfigModule.Build(wifi, wlanOk, ipSnap, dns, connectedAdapters, bandContext) : null;
         // Without commands netsh wasn't asked, so there is no Wi-Fi card to show (rather than one saying it couldn't be read).
         var combinedCards = (wifiRep?.Cards ?? []).Where(c => commands is not null || c.Id != "wifi").Concat(baseReport.Cards)
             .Concat(new[] { await history.ConfigureAwait(false), await probes.ConfigureAwait(false) }.OfType<AreaCard>()).ToList();

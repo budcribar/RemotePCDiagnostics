@@ -94,8 +94,23 @@ else if (report is not null)
             <div class="card" data-testid="nettest-card-speed">
                 <div class="card-head"><span class="@Dot(report.DownloadMbps is null ? null : true)"></span><strong>Speed</strong></div>
                 <div class="headline">↓ @NetworkTestReport.Speed(report.DownloadMbps) · ↑ @NetworkTestReport.Speed(report.UploadMbps)</div>
-                <div class="meta">@(report.DownloadMbps is null ? "Speed couldn't be measured" : "Download · Upload")</div>
+                <div class="meta">@(report.DownloadMbps is null ? "Speed couldn't be measured" : "Download · Upload")@(!string.IsNullOrWhiteSpace(report.WifiLinkRateText) ? $" · Wi-Fi link {report.WifiLinkRateText}" : "")</div>
             </div>
+            @if (report.Bufferbloat is { } bloat)
+            {
+                <div class="card" data-testid="nettest-card-bufferbloat">
+                    <div class="card-head"><span class="@Dot(bloat.Grade is null ? null : bloat.Grade is "A" or "B")"></span><strong>Bufferbloat</strong></div>
+                    <div class="headline">@bloat.HeadlineText</div>
+                    @if (bloat.Grade is not null)
+                    {
+                        <CardList Text="@($"Idle {NetworkTestReport.Ms(bloat.IdleMedianMs)}{(bloat.DownloadAddedMs is { } da ? $" · ↓ +{da:0} ms" : "")}{(bloat.UploadAddedMs is { } ua ? $" · ↑ +{ua:0} ms" : "")}")" />
+                    }
+                    @if (!string.IsNullOrWhiteSpace(bloat.UngradedReason))
+                    {
+                        <div class="meta">@bloat.UngradedReason</div>
+                    }
+                </div>
+            }
             <div class="card" data-testid="nettest-card-adapter">
                 <div class="card-head"><span class="@Dot(report.NewAdapterErrors is null ? null : report.NewAdapterErrors == 0 && report.NewAdapterDrops == 0)"></span><strong>Adapter errors</strong></div>
                 <div class="headline">@(report.NewAdapterErrors is null ? "Not reported" : report.NewAdapterErrors == 0 && report.NewAdapterDrops == 0 ? "No new errors" : $"{report.NewAdapterErrors:N0} new errors · {report.NewAdapterDrops:N0} dropped")</div>
