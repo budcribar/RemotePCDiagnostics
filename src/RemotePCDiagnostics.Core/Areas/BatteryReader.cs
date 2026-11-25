@@ -12,13 +12,17 @@ public static class BatteryReader
     public const string StaticSql = "SELECT InstanceName, Capabilities, Chemistry, DesignedCapacity, DeviceName, ManufactureName FROM BatteryStaticData";
     public const string FullChargeSql = "SELECT InstanceName, FullChargedCapacity FROM BatteryFullChargedCapacity";
     public const string CycleCountSql = "SELECT InstanceName, CycleCount FROM BatteryCycleCount";
-    public const string StatusSql = "SELECT InstanceName, PowerOnline, Charging, Discharging, RemainingCapacity FROM BatteryStatus";
+    public const string StatusSql = "SELECT InstanceName, PowerOnline, Charging, Discharging, RemainingCapacity, DischargeRate, ChargeRate FROM BatteryStatus";
+    public const string ProcessorPerformanceNamespace = @"root\cimv2";
+    public const string ProcessorPerformanceSql = "SELECT Name, PercentPerformanceLimit, PercentofMaximumFrequency FROM Win32_PerfFormattedData_Counters_ProcessorInformation WHERE Name = '_Total'";
 
     /// <summary>BATTERY_SYSTEM_BATTERY and BATTERY_IS_SHORT_TERM: osquery (and so this) skips a UPS or other short-term battery.</summary>
     public const long SystemBatteryFlag = 0x80000000;
     public const long ShortTermFlag = 0x20000000;
     /// <summary>What a battery driver reports for a capacity it doesn't know (BATTERY_UNKNOWN_CAPACITY).</summary>
     public const long UnknownCapacity = 0xFFFFFFFF;
+    /// <summary>What a battery driver reports for a charge/discharge rate it doesn't know (BATTERY_UNKNOWN_RATE).</summary>
+    public const long UnknownRate = 0x80000000;
 
     public static async Task<IReadOnlyList<BatteryStatus>?> ReadWmiAsync(IWmiSource wmi, CancellationToken ct)
     {
@@ -42,9 +46,28 @@ public static class BatteryReader
             var remaining = Capacity(st?.Long("RemainingCapacity"));
             var cycle = Match(cycles, name)?.Long("CycleCount");
             list.Add(new(s.Str("DeviceName"), s.Str("ManufactureName"), Chemistry(s.Long("Chemistry")), State(st),
-                Percent(remaining, max), ToInt(design), ToInt(max), cycle is > 0 and <= 100_000 ? (int)cycle.Value : null));
+                Percent(remaining, max), ToInt(design), ToInt(max), cycle is > 0 and <= 100_000 ? (int)cycle.Value : null,
+                PowerOnline: st?.Bool("PowerOnline"),
+                IsCharging: st?.Bool("Charging"),
+                IsDischarging: st?.Bool("Discharging"),
+                DischargeRateMw: RateMw(st?.Long("DischargeRate")),
+                ChargeRateMw: RateMw(st?.Long("ChargeRate"))));
         }
         return list;
+    }
+
+    /// <summary>
+    /// Reads <c>PercentPerformanceLimit</c> (1..100; 0 is treated as unknown/unpopulated) and <c>PercentofMaximumFrequency</c>
+    /// from WMI perf counters. Returns null when the query fails (perflib disabled or corrupt).
+    /// </summary>
+    public static async Task<ProcessorPerformanceSample?> ReadProcessorPerformanceWmiAsync(IWmiSource wmi, CancellationToken ct)
+    {
+        var q = await wmi.QueryAsync(ProcessorPerformanceNamespace, ProcessorPerformanceSql, ct).ConfigureAwait(false);
+        if (!q.Success || q.Rows is not { Count: > 0 }) return null;
+        var row = q.Rows[0];
+        var limit = row.Long("PercentPerformanceLimit") is >= 1 and <= 100 and var l ? (int)l : (int?)null;
+        var freq = row.Long("PercentofMaximumFrequency") is >= 1 and <= 1000 and var f ? (int)f : (int?)null;
+        return limit is null && freq is null ? null : new ProcessorPerformanceSample(limit, freq);
     }
 
     private static bool IsNoBattery(string? error) =>
@@ -56,6 +79,9 @@ public static class BatteryReader
 
     /// <summary>A capacity in mWh, or null when the driver doesn't know it (0, negative, or BATTERY_UNKNOWN_CAPACITY).</summary>
     public static long? Capacity(long? mWh) => mWh is > 0 and < UnknownCapacity and <= int.MaxValue ? mWh : null;
+
+    /// <summary>A charge/discharge rate in mW, or null when 0, negative, or BATTERY_UNKNOWN_RATE.</summary>
+    public static int? RateMw(long? mW) => mW is > 0 and < UnknownRate and <= int.MaxValue ? (int)mW.Value : null;
 
     private static int? ToInt(long? v) => v is { } l ? (int)l : null;
 

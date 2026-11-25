@@ -65,7 +65,36 @@ public static class HardwareInventoryReport
         var rows = slots.Select(d => new AreaRow(AreaLevel.Neutral,
             [d.DeviceLocator, d.BankLocator, d.SizeMb is > 0 ? HardwareInventory.FormatBytes(d.SizeMb * 1024 * 1024) : "Empty", d.MemoryType, d.FormFactor,
                 d.ConfiguredClockSpeedMts is > 0 ? $"{d.ConfiguredClockSpeedMts} MT/s" : "", d.Manufacturer, d.PartNumber])).ToList();
-        return new("memory", "Memory", AreaLevel.Ok, total, meta, columns, rows);
+
+        var totalBytes = inv.TotalMemoryBytes ?? 0;
+        const long Gib = 1024L * 1024 * 1024;
+        // Installed DIMM sums are exact multiples of 1 GiB; WMI TotalPhysicalMemory fallback can be ~0.2 GiB lower due to hardware reserve.
+        var belowEightGb = totalBytes > 0 && totalBytes < (long)(7.5 * Gib);
+        var exactlyEightGb = !belowEightGb && totalBytes >= (long)(7.5 * Gib) && totalBytes <= (long)(8.5 * Gib);
+
+        var level = belowEightGb ? AreaLevel.Warning : AreaLevel.Ok;
+        var notes = new List<string>();
+        if (belowEightGb)
+            notes.Add("Less than 8 GB of memory is installed. Upgrading to at least 16 GB will noticeably improve Windows 11 and browsing responsiveness.");
+        else if (exactlyEightGb)
+            notes.Add("8 GB is the minimum for comfortable Windows 11 use.");
+
+        if (IsSinglePopulatedUpgradeableSlot(slots, used))
+            notes.Add("Adding a matching module would enable dual-channel memory.");
+
+        return new("memory", "Memory", level, total, meta, columns, rows, Note: notes.Count > 0 ? string.Join(" ", notes) : null);
+    }
+
+    internal static bool IsSinglePopulatedUpgradeableSlot(IReadOnlyList<MemoryDevice> slots, IReadOnlyList<MemoryDevice> used)
+    {
+        if (used.Count != 1 || slots.Count < 2) return false;
+        var m = used[0];
+        var formFactor = m.FormFactor.Trim();
+        var isDimm = string.Equals(formFactor, "DIMM", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(formFactor, "SODIMM", StringComparison.OrdinalIgnoreCase);
+        if (!isDimm) return false;
+        if (m.MemoryType.Contains("LPDDR", StringComparison.OrdinalIgnoreCase)) return false;
+        return true;
     }
 
     private static AreaCard Disks(HardwareInventory inv)

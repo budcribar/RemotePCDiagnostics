@@ -35,6 +35,17 @@ public sealed class RecordingPackageSource(IPackageSource inner, CallRecorder re
     }
 }
 
+/// <summary>Passes each Windows Security Center antivirus read to the real source and records the answer.</summary>
+public sealed class RecordingAntivirusProductSource(Security.IAntivirusProductSource inner, CallRecorder recorder) : Security.IAntivirusProductSource
+{
+    public async Task<Security.AntivirusInventoryResult> ReadAsync(CancellationToken ct = default)
+    {
+        var r = await inner.ReadAsync(ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromAntivirus(r));
+        return r;
+    }
+}
+
 public sealed class RecordingRegistrySource(IRegistrySource inner, CallRecorder recorder) : IRegistrySource
 {
     public async Task<WmiQueryResult> ReadAsync(RegistryRead read, CancellationToken ct = default)
@@ -99,6 +110,7 @@ public sealed class RecordingReplay
     public IWmiSource Wmi => new ReplayWmi(this);
     public IRegistrySource Registry => new ReplayRegistry(this);
     public IPackageSource Packages => new ReplayPackages(this);
+    public Security.IAntivirusProductSource AntivirusProducts => new ReplayAntivirusProducts(this);
     public IProcessLauncher Launcher => new ReplayLauncher(this);
 
     /// <summary>The report file recorded under <paramref name="name"/>; null when it wasn't made or isn't in the recording.</summary>
@@ -122,11 +134,13 @@ public sealed class RecordingReplay
         RecordedCall.WmiKind => WmiKey(c.Namespace ?? "", c.Query ?? ""),
         RecordedCall.RegistryKind => RegistryKey(c.Namespace ?? "", c.Query ?? ""),
         RecordedCall.PackagesKind => PackagesKey,
+        RecordedCall.AntivirusKind => AntivirusKey,
         RecordedCall.FileKind => FileKey(c.File ?? ""),
         _ => ProcessKey(c.File ?? "", c.Args ?? []),
     };
 
     public const string PackagesKey = "packages";
+    public const string AntivirusKey = "antivirus";
     public static string FileKey(string name) => "file\n" + name;
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
     /// <remarks>WQL ignores case, and a path in a query is spelled as Windows gave it (C:\WINDOWS on one PC, C:\Windows on another).</remarks>
@@ -151,6 +165,14 @@ public sealed class RecordingReplay
     {
         public Task<WmiQueryResult> ReadPackagesAsync(CancellationToken ct = default) =>
             Task.FromResult(replay.Answer(PackagesKey, "packages")?.ToWmiResult() ?? PackageList.Failed("Not in the recording."));
+    }
+
+    private sealed class ReplayAntivirusProducts(RecordingReplay replay) : Security.IAntivirusProductSource
+    {
+        public Task<Security.AntivirusInventoryResult> ReadAsync(CancellationToken ct = default) =>
+            Task.FromResult(replay.Answer(AntivirusKey, "antivirus") is { } c
+                ? Security.AntivirusInventoryResult.FromRecordedResult(c.ToWmiResult())
+                : Security.AntivirusInventoryResult.Unavailable("Not in the recording."));
     }
 
     private sealed class ReplayLauncher(RecordingReplay replay) : IProcessLauncher

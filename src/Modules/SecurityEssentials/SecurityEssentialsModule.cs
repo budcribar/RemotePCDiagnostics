@@ -187,10 +187,24 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
 
     private static AreaCard AntivirusCard(SecurityFacts f)
     {
-        var others = f.Antivirus.Where(n => !n.Contains("Defender", StringComparison.OrdinalIgnoreCase)).ToList();
+        var products = f.AntivirusProducts.Count > 0
+            ? f.AntivirusProducts
+            : f.Antivirus.Select(n => new AntivirusProductInfo(n, AntivirusProductState.Unknown, AntivirusSignatureStatus.Unknown, "wmi")).ToList();
+        var thirdParty = products.Where(p => !p.IsDefender).ToList();
+        var activeThirdParty = thirdParty.Where(p => p.State == AntivirusProductState.On).ToList();
+        var defenderConfirmedActive = f.DefenderActive && f.RealTimeProtection != false;
+        var totalActive = (defenderConfirmedActive ? 1 : 0) + activeThirdParty.Count;
+
         AreaLevel level; string headline; string? note = null;
         IReadOnlyList<AreaAction>? actions = null;
-        if (f.DefenderActive)
+
+        if (totalActive >= 2)
+        {
+            level = AreaLevel.Warning;
+            headline = totalActive == 2 ? "Two antivirus programs are fighting" : $"{totalActive} antivirus programs are active";
+            note = "Running more than one real-time antivirus at the same time slows disk and browser activity and can cause conflicts. Keep one active and uninstall or disable the extra one.";
+        }
+        else if (f.DefenderActive)
         {
             var rtpOff = f.RealTimeProtection == false;
             level = rtpOff ? AreaLevel.Error : f.TamperProtection == false ? AreaLevel.Warning : AreaLevel.Ok;
@@ -206,19 +220,81 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
                 actions = [OpenSettings("Open Windows Security", "windowsdefender://threatsettings", "Windows Security (Virus & threat protection settings)")];
             }
         }
-        else if (others.Count > 0) { level = AreaLevel.Ok; headline = $"Protected by {others[0]}"; }
-        else if (f.DefenderMode is null && f.Antivirus.Count == 0) { level = AreaLevel.Neutral; headline = "Antivirus not reported"; }
+        else if (activeThirdParty.Count == 1)
+        {
+            var active = activeThirdParty[0];
+            if (active.Signatures == AntivirusSignatureStatus.OutOfDate)
+            {
+                level = AreaLevel.Warning;
+                headline = $"{active.Name} virus definitions are out of date";
+                note = $"Open {active.Name} and update its virus definitions so it recognizes current threats.";
+            }
+            else
+            {
+                level = AreaLevel.Ok;
+                headline = $"Protected by {active.Name}";
+            }
+        }
         else
         {
-            level = AreaLevel.Error; headline = "No active antivirus";
-            note = "Open Windows Security > Virus & threat protection and turn Microsoft Defender back on, or install another antivirus.";
-            actions = [OpenSettings("Open Windows Security", "windowsdefender://threat", "Windows Security (Virus & threat protection)")];
+            var confirmedDisabled = thirdParty.FirstOrDefault(p => p.State is AntivirusProductState.Off or AntivirusProductState.Expired);
+            var confirmedSnoozed = thirdParty.FirstOrDefault(p => p.State == AntivirusProductState.Snoozed);
+            var unconfirmed = thirdParty.Where(p => p.State == AntivirusProductState.Unknown).ToList();
+
+            if (confirmedDisabled is not null)
+            {
+                level = AreaLevel.Error;
+                headline = confirmedDisabled.State == AntivirusProductState.Expired
+                    ? $"{confirmedDisabled.Name} has expired"
+                    : $"{confirmedDisabled.Name} is turned off";
+                note = "Open Windows Security > Virus & threat protection and turn Microsoft Defender back on, or renew/enable your antivirus.";
+                actions = [OpenSettings("Open Windows Security", "windowsdefender://threat", "Windows Security (Virus & threat protection)")];
+            }
+            else if (confirmedSnoozed is not null)
+            {
+                level = AreaLevel.Warning;
+                headline = $"{confirmedSnoozed.Name} is snoozed";
+                note = $"Real-time protection in {confirmedSnoozed.Name} is temporarily paused. Resume it when ready.";
+            }
+            else if (unconfirmed.Count > 0)
+            {
+                level = AreaLevel.Neutral;
+                headline = "Antivirus state could not be confirmed";
+                note = $"Registered antivirus ({string.Join(", ", unconfirmed.Select(p => p.Name))}) was found, but Windows Security Center did not confirm whether real-time protection is on.";
+            }
+            else if (f.AntivirusInventoryStatus == AntivirusInventoryStatus.Ok || f.DefenderMode is not null)
+            {
+                level = AreaLevel.Error;
+                headline = "No active antivirus";
+                note = "Open Windows Security > Virus & threat protection and turn Microsoft Defender back on, or install another antivirus.";
+                actions = [OpenSettings("Open Windows Security", "windowsdefender://threat", "Windows Security (Virus & threat protection)")];
+            }
+            else
+            {
+                level = AreaLevel.Neutral;
+                headline = "Antivirus not reported";
+            }
         }
+
         var rows = new List<AreaRow>
         {
             Row(AreaLevel.Neutral, "Antivirus", f.Antivirus.Count > 0 ? string.Join(", ", f.Antivirus) : "Not reported"),
             Row(AreaLevel.Neutral, "Microsoft Defender", f.DefenderActive ? "Active" : f.DefenderMode ?? "Not reported"),
         };
+        foreach (var p in thirdParty)
+        {
+            var pLevel = p.State switch
+            {
+                AntivirusProductState.On when p.Signatures == AntivirusSignatureStatus.OutOfDate => AreaLevel.Warning,
+                AntivirusProductState.On => AreaLevel.Ok,
+                AntivirusProductState.Snoozed => AreaLevel.Warning,
+                AntivirusProductState.Off or AntivirusProductState.Expired => totalActive >= 1 ? AreaLevel.Neutral : AreaLevel.Error,
+                _ => AreaLevel.Neutral,
+            };
+            rows.Add(Row(pLevel, $"Product · {p.Name}", p.FormatState()));
+        }
+        if (f.AntivirusInventoryStatus == AntivirusInventoryStatus.Incomplete)
+            rows.Add(Row(AreaLevel.Neutral, "Security Center inventory", "Incomplete (some registrations could not be read)"));
         if (f.DefenderActive && f.RealTimeProtection is { } rtp) rows.Add(Row(rtp ? AreaLevel.Ok : AreaLevel.Error, "Real-time protection", rtp ? "On" : "Off"));
         if (f.DefenderActive && f.TamperProtection is { } tp) rows.Add(Row(tp ? AreaLevel.Ok : AreaLevel.Warning, "Tamper Protection", tp ? "On" : "Off"));
         rows.Add(Means("Antivirus with real-time protection blocks malware as it arrives, before it can run."));

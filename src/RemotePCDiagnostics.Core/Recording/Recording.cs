@@ -86,6 +86,7 @@ public sealed record RecordedCall
     public const string WmiKind = "wmi";
     public const string RegistryKind = "registry";
     public const string PackagesKind = "packages";
+    public const string AntivirusKind = "antivirus";
     public const string FileKind = "file";
 
     public string Kind { get; init; } = "";
@@ -130,9 +131,10 @@ public sealed record RecordedCall
 
     public static RecordedCall FromRegistry(WmiQueryResult r) => FromWmi(r) with { Kind = RegistryKind };
     public static RecordedCall FromPackages(WmiQueryResult r) => FromWmi(r) with { Kind = PackagesKind };
+    public static RecordedCall FromAntivirus(Security.AntivirusInventoryResult r) => FromWmi(r.ToRecordedResult()) with { Kind = AntivirusKind };
 
-    /// <summary>Kept as rows, like WMI (WMI, registry, the package list).</summary>
-    public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind;
+    /// <summary>Kept as rows, like WMI (WMI, registry, the package list, antivirus products).</summary>
+    public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind or AntivirusKind;
 
     /// <summary>Short text naming the call, for test messages.</summary>
     public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : $"{File} {string.Join(' ', Args ?? [])}";

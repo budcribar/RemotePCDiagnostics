@@ -6,12 +6,18 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// <summary>One physical drive's health (Windows Storage: MSFT_PhysicalDisk + storage reliability counters). Strings as reported.</summary>
 public sealed record DriveHealth(
     string Name, string Serial, string MediaType, string BusType, string Health, string Operational,
-    long? SizeBytes, int? TemperatureC, int? Wear, long? ReadErrors, long? WriteErrors, long? PowerOnHours, string Letters = "", string UniqueId = "")
+    long? SizeBytes, int? TemperatureC, int? Wear, long? ReadErrors, long? WriteErrors, long? PowerOnHours,
+    string Letters = "", string UniqueId = "", int? SpindleSpeedRpm = null)
 {
     public static DriveHealth FromRow(IReadOnlyDictionary<string, string> r) => new(
         r.Str("Name"), r.Str("Serial"), r.Str("MediaType"), r.Str("BusType"), r.Str("Health"), r.Str("Operational"),
         r.Long("Size") is > 0 and var size ? size : null, Range(r.Int("Temperature"), 1, 150), Range(r.Int("Wear"), 0, 100),
         NonNegative(r.Long("ReadErrors")), NonNegative(r.Long("WriteErrors")), NonNegative(r.Long("PowerOnHours")), r.Str("Letters"), r.Str("Id"));
+
+    /// <summary>True when Windows identifies the disk as a spinning hard drive (MediaType HDD, or Unspecified with SpindleSpeed &gt; 0).</summary>
+    public bool IsSpinningHdd =>
+        string.Equals(MediaType, "HDD", StringComparison.OrdinalIgnoreCase)
+        || (string.Equals(MediaType, "Unspecified", StringComparison.OrdinalIgnoreCase) && SpindleSpeedRpm is > 0);
 
     // A counter outside what a drive can report is a bad reading, not a value to show (or to warn on).
     internal static int? Range(long? v, int min, int max) => v is { } x && x >= min && x <= max ? (int)x : null;
@@ -56,7 +62,11 @@ public sealed record DriveHealth(
 
     public string Kind => MediaType switch
     {
-        "SSD" => "SSD", "HDD" => "Hard drive", "SCM" => "Storage-class memory", _ => BusType.Equals("NVMe", StringComparison.OrdinalIgnoreCase) ? "SSD" : "Drive",
+        "SSD" => "SSD",
+        "HDD" => "Hard drive",
+        "SCM" => "Storage-class memory",
+        _ when SpindleSpeedRpm is > 0 => "Hard drive",
+        _ => BusType.Equals("NVMe", StringComparison.OrdinalIgnoreCase) ? "SSD" : "Drive",
     };
 }
 
@@ -317,6 +327,14 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
         return volumes.Count == 1 ? $"{free} free on {volumes[0].Letter}" : $"{free} free on {string.Join(", ", volumes.Take(volumes.Count - 1).Select(v => v.Letter))} and {volumes[^1].Letter}";
     }
 
+    public const string HddBootWarning = "Windows is on a spinning hard drive. An SSD is the single biggest speed-up.";
+
+    internal static char ReadSystemDriveLetter()
+    {
+        var env = Environment.GetEnvironmentVariable("SystemDrive");
+        return env is { Length: >= 1 } && char.IsAsciiLetter(env[0]) ? char.ToUpperInvariant(env[0]) : 'C';
+    }
+
     /// <summary>One report of <paramref name="drives"/>. With <paramref name="capacities"/> (the PC's volumes) each volume counts for
     /// the drive it is on, and a "Drive Capacity" card lists them all first.</summary>
     public static AreaReport Build(
@@ -324,8 +342,9 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
         IReadOnlyDictionary<char, RetrimRecord>? retrims = null,
         DateTimeOffset? now = null,
         IDriveHealthHistoryStore? historyStore = null,
-        IReadOnlyList<DriveCapacityInfo>? capacities = null) =>
-        BuildReport(drives, retrims, now ?? DateTimeOffset.Now, historyStore, DriveVolumeMap.Assign(drives, capacities ?? []), capacityCard: true);
+        IReadOnlyList<DriveCapacityInfo>? capacities = null,
+        char? systemDriveLetter = null) =>
+        BuildReport(drives, retrims, now ?? DateTimeOffset.Now, historyStore, DriveVolumeMap.Assign(drives, capacities ?? []), capacityCard: true, systemDriveLetter: systemDriveLetter);
 
     /// <param name="volumes">The PC's volumes by drive (of every drive read, also when <paramref name="drives"/> is only some of them).</param>
     /// <param name="capacityCard">False for one drive's own result: no table of every volume, and no other drive's volume counts.</param>
@@ -335,10 +354,12 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
         DateTimeOffset timestamp,
         IDriveHealthHistoryStore? historyStore,
         DriveVolumeMap volumes,
-        bool capacityCard)
+        bool capacityCard,
+        char? systemDriveLetter = null)
     {
         if (drives.Count == 0)
             return new([], "No drives were found to check.", DiagnosticStatus.Warning);
+        var sysLetter = char.ToUpperInvariant(systemDriveLetter ?? ReadSystemDriveLetter());
         string[] cols = ["Detail", "Value"];
         var cards = drives.Select((d, i) =>
         {
@@ -362,6 +383,15 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
                 reasons.AddRange(nearlyFull.Select(v => v.NearlyFullText));
             }
 
+            var holdsSystemDrive = d.Letters.Any(c => char.ToUpperInvariant(c) == sysLetter)
+                || own.Any(v => v.Letter.Length > 0 && char.ToUpperInvariant(v.Letter[0]) == sysLetter);
+            var bootOnHdd = holdsSystemDrive && d.IsSpinningHdd;
+            if (bootOnHdd)
+            {
+                if (level < AreaLevel.Warning) { level = AreaLevel.Warning; verdict = "Needs attention"; }
+                reasons.Add(HddBootWarning);
+            }
+
             var meta = string.Join(" · ", new[]
             {
                 d.Kind, d.SizeBytes is > 0 ? HardwareInventory.FormatBytes(d.SizeBytes) : null,
@@ -375,7 +405,9 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
             Add("Status reported by Windows", d.Health.Length > 0 ? $"{d.Health}{(d.Operational.Length > 0 && d.Operational != "OK" ? $" ({d.Operational})" : "")}" : "Not reported");
             if (trend is not null)
                 Add("Health trend", trend.SummaryText, trend.IsDegrading ? AreaLevel.Warning : AreaLevel.Neutral, detail: trend.HistoryDetail);
-            Add("Type", d.Kind);
+            Add("Type", d.Kind, bootOnHdd ? AreaLevel.Warning : AreaLevel.Neutral);
+            if (bootOnHdd)
+                Add("Windows boot drive", HddBootWarning, AreaLevel.Warning);
             Add("Connection", d.BusType);
             Add("Size", d.SizeBytes is > 0 ? HardwareInventory.FormatBytes(d.SizeBytes) : null);
             foreach (var vol in own)
@@ -399,6 +431,7 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
             if (dueLetters.Length > 0)
                 actions.Add(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", dueLetters, d.Name.Length > 0 ? d.Name : "SSD"));
             return new AreaCard($"drive{i}", d.Name.Length > 0 ? d.Name : $"Drive {i + 1}", level, verdict, meta, cols, rows,
+                Note: bootOnHdd ? HddBootWarning : null,
                 Actions: actions.Count > 0 ? actions : null);
         }).ToList();
 

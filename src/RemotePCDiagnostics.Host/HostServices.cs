@@ -56,6 +56,7 @@ public static class HostServices
         // The registry keys checks read need no administrator rights, so the app reads them itself.
         services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IRegistrySource>(_ => new RemotePCDiagnostics.Core.DataSources.SystemRegistrySource(L<RemotePCDiagnostics.Core.DataSources.SystemRegistrySource>()));
         services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IPackageSource>(_ => new RemotePCDiagnostics.Host.Platform.SystemPackageSource(L<RemotePCDiagnostics.Host.Platform.SystemPackageSource>()));
+        services.AddSingleton<RemotePCDiagnostics.Core.Security.IAntivirusProductSource>(_ => new WindowsAntivirusProductSource(L<WindowsAntivirusProductSource>()));
         services.AddReaders();
 #if RPCD_STORE
         // The Store edition may have no Agent: then it reads as a standard user, with the legacy readers.

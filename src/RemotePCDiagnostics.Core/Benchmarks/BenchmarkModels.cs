@@ -162,7 +162,39 @@ public sealed record BenchmarkMeasurement(BenchmarkKind Kind, IReadOnlyList<doub
 }
 
 /// <summary>Conditions that change results a lot; compared between before and after.</summary>
-public sealed record BenchmarkConditions(bool? OnBattery, double? CpuTemperatureC, string? PowerPlan = null, string? PowerMode = null);
+public sealed record BenchmarkConditions(
+    bool? OnBattery,
+    double? CpuTemperatureC,
+    string? PowerPlan = null,
+    string? PowerMode = null,
+    int? PerformanceLimitPercent = null,
+    string? PerformanceLimitPowerSource = null,
+    int? AcMaxProcessorStatePercent = null,
+    bool? DischargingOnAc = null)
+{
+    public const int PerformanceLimitCautionThreshold = 90;
+
+    /// <summary>Human-readable cautions for this run's conditions, using the same labels on RPCD and Admin.</summary>
+    public IReadOnlyList<string> FormatCautions()
+    {
+        var list = new List<string>();
+        if (PerformanceLimitPercent is > 0 and < PerformanceLimitCautionThreshold)
+        {
+            var src = PerformanceLimitPowerSource?.Trim().ToLowerInvariant();
+            list.Add(src switch
+            {
+                "ac" => $"Processor held back on AC ({PerformanceLimitPercent}% limit)",
+                "battery" => $"Processor held back on battery ({PerformanceLimitPercent}% limit)",
+                _ => $"Processor held back ({PerformanceLimitPercent}% limit)",
+            });
+        }
+        if (DischargingOnAc == true)
+            list.Add("Battery discharging while plugged in (observed at run start)");
+        if (AcMaxProcessorStatePercent is >= 0 and < 100)
+            list.Add($"Configured maximum processor state on AC is {AcMaxProcessorStatePercent}%");
+        return list;
+    }
+}
 
 /// <summary>Maps Windows 10/11 power mode overlay GUIDs (from <c>PowerGetEffectiveOverlayScheme</c>) to readable labels.</summary>
 public static class PowerModeNames
