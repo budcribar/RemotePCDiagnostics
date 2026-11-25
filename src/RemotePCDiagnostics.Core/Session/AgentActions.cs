@@ -36,6 +36,9 @@ public sealed record SetTaskWakeToRunAction(string TaskPath, bool WakeToRun) : A
 /// <summary>Runs the installed Windows kernel debugger on an allowlisted system dump file as the elevated Agent.</summary>
 public sealed record AnalyzeCrashDumpAction(string DumpPath) : AgentNativeAction;
 
+/// <summary>Sets the device-wide (HKLM) ConsentStore <c>Value</c> of the microphone or camera: "Allow", "Deny", or null to delete it.</summary>
+public sealed record SetCapturePrivacyAction(string Capability, string? Value) : AgentNativeAction;
+
 /// <summary>What the Agent does for an <see cref="AdminPipeScript"/>: PowerShell it built (<see cref="Script"/>) or a change it makes itself (<see cref="Native"/>).</summary>
 public sealed record AgentPlan(string? Script, AgentNativeAction? Native);
 
@@ -175,6 +178,7 @@ public sealed partial class WindowsAgentNativeOps : IAgentNativeOps
                 RemoveTaskAction remove => Task.FromResult(RemoveTask(remove.TaskName)),
                 SetTaskWakeToRunAction wake => Task.FromResult(SetTaskWakeToRun(wake)),
                 AnalyzeCrashDumpAction dump => AnalyzeCrashDumpAsync(dump, ct),
+                SetCapturePrivacyAction privacy => Task.FromResult(SetCapturePrivacy(privacy)),
                 _ => RunOtherAsync(action, ct),
             };
         }
@@ -195,6 +199,16 @@ public sealed partial class WindowsAgentNativeOps : IAgentNativeOps
 
     /// <summary>Hook for another file of this partial class to handle more actions (it sets <paramref name="result"/>).</summary>
     partial void RunMore(AgentNativeAction action, CancellationToken ct, ref ProcessResult result);
+
+    private static ProcessResult SetCapturePrivacy(SetCapturePrivacyAction a)
+    {
+        if (!OperatingSystem.IsWindows()) return Failed("This change needs Windows.");
+        if (!Audio.CapturePrivacy.IsCapability(a.Capability) || !Audio.CapturePrivacy.IsValue(a.Value)) return Failed("That isn't a privacy switch this app changes.");
+        var store = new Audio.WindowsCapturePrivacyStore();
+        store.Write(DataSources.RegistryRoot.LocalMachine, a.Capability, nonPackaged: false, a.Value);
+        var now = store.Read(DataSources.RegistryRoot.LocalMachine, a.Capability, nonPackaged: false);
+        return string.Equals(now, a.Value, StringComparison.OrdinalIgnoreCase) ? Ok() : Failed("Windows didn't keep the change (an organization policy may set it).");
+    }
 
     public static ProcessResult Ok(object? json = null) => new(0, json is null ? "" : JsonSerializer.Serialize(json), "");
     public static ProcessResult Failed(string why) => new(1, "", why);

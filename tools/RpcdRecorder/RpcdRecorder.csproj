@@ -13,6 +13,7 @@
     <Compile Include="..\..\src\RemotePCDiagnostics.Host\Platform\SystemPackageSource.cs" Link="SystemPackageSource.cs" />
     <!-- Core Audio for the Sound check, shared with the app. -->
     <Compile Include="..\..\src\RemotePCDiagnostics.Host\WasapiAudioStateSource.cs" Link="WasapiAudioStateSource.cs" />
+    <Compile Include="..\..\src\RemotePCDiagnostics.Host\WasapiAudioEndpointControl.cs" Link="WasapiAudioEndpointControl.cs" />
     <PackageReference Include="NAudio.Wasapi" Version="3.3.0" />
     <Using Include="Microsoft.Extensions.Logging.ILogger" Alias="ILogger" />
     <Using Include="RemotePCDiagnostics.Logging" />

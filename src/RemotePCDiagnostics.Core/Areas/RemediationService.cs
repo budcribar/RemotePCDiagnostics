@@ -87,7 +87,8 @@ public sealed class RemediationService(
     Action<string>? openUri = null,
     Optimizations.IRegistryTweaks? registryTweaks = null,
     IPowerSettingController? powerSettings = null,
-    IUserEnvironmentStore? userEnv = null)
+    IUserEnvironmentStore? userEnv = null,
+    Audio.AudioFixService? audio = null)
 {
     /// <summary>This app's record of successful retrims (so Drive health stops offering it right away).</summary>
     public RetrimLog? RetrimLog => retrimLog;
@@ -387,8 +388,74 @@ public sealed class RemediationService(
                     true)
                 : new(action, action.ButtonText, "", "This cache target isn't on the allowlist.", "This cache target isn't on the allowlist.", Allowed: false),
 
+            RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint
+                or RemediationKind.EnableAudioEndpoint or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements
+                or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy or RemediationKind.CloseAudioHolder => PlanAudio(action, label),
+
             _ => new(action, action.ButtonText, "", "", null, true),
         };
+    }
+
+    /// <summary>The Sound fixes. A dialog fix's Target before the choice ("output", or the busy device) is allowed: Go waits for the choice.</summary>
+    private RemediationPlan PlanAudio(AreaAction action, string label)
+    {
+        var unavailable = audio is not { Available: true } ? "Sound devices can't be changed in this session."
+            : Audio.AudioFixService.NeedsPolicyConfig(action.Kind) && !audio.CanChangeSettings ? "Windows doesn't let this app change that sound setting on this PC. Use Sound settings instead."
+            : null;
+        RemediationPlan P(string title, string what, string happens, string? warning, bool valid) =>
+            new(action, title, what, happens, unavailable ?? (valid ? warning : "This isn't a sound device this app can change."), unavailable is null && valid);
+        var t = action.Target;
+        var device = Audio.AudioTargets.TrySplit(t, out var id, out var rest);
+        switch (action.Kind)
+        {
+            case RemediationKind.UnmuteAudioEndpoint:
+                return P($"Unmute {label}?", $"{label} is muted, so nothing {(Audio.AudioTargets.FlowOf(id) == Audio.AudioFlow.Input ? "you say is heard" : "plays")}.",
+                    "Turns mute off on this device, as the speaker icon in the taskbar does. Undo mutes it again.", null, device && rest.Length == 0);
+            case RemediationKind.RaiseAudioVolume:
+                var input = Audio.AudioTargets.FlowOf(id) == Audio.AudioFlow.Input;
+                return P($"Raise the {(input ? "microphone level" : "volume")} of {label}?",
+                    input ? $"{label} is set so low that others may not hear you." : $"{label} is so quiet it may sound silent.",
+                    $"Sets the level to {(input ? "80" : "50")}%. Undo puts the old level back.", null, device && rest.Length == 0);
+            case RemediationKind.SetDefaultAudioEndpoint:
+                if (t is Audio.AudioTargets.Output or Audio.AudioTargets.Input)
+                    return P(t == Audio.AudioTargets.Input ? "Choose the microphone" : "Choose where sound plays",
+                        t == Audio.AudioTargets.Input ? "Pick the microphone apps should use." : "Pick the speakers or headphones apps should play to.",
+                        "Makes the device you pick the Windows default. Undo makes the previous device the default again.", null, true);
+                var calls = t.EndsWith(Audio.AudioTargets.CallsSuffix, StringComparison.Ordinal);
+                var deviceId = calls ? t[..^Audio.AudioTargets.CallsSuffix.Length] : t;
+                return P($"Make {label} the default?", $"Apps will {(Audio.AudioTargets.FlowOf(deviceId) == Audio.AudioFlow.Input ? "record from" : "play sound on")} {label}{(calls ? ", calls included" : "")}.",
+                    "Changes the Windows default device. Undo makes the previous device the default again.", null, Audio.AudioTargets.IsEndpointId(deviceId));
+            case RemediationKind.EnableAudioEndpoint:
+                return P($"Turn on {label}?", $"{label} is disabled in Windows' Sound settings, so apps can't use it.",
+                    "Turns the device back on, as Enable in the Sound control panel does. Undo turns it off again.", null, device && rest.Length == 0);
+            case RemediationKind.ResetAudioFormat:
+                return P($"Reset the sound format of {label}?", $"The format of {label} was changed from the driver's default, which can stop it playing or recording.",
+                    "Puts the driver's default format back (the Sound control panel's Advanced tab). Undo puts the old format back.", null, device && rest.Length == 0);
+            case RemediationKind.ToggleAudioEnhancements:
+                var off = rest == Audio.AudioTargets.Off;
+                return P($"Turn audio enhancements {(off ? "off" : "on")} for {label}?",
+                    off ? $"Sound makers' enhancements (equalizers, virtual surround) can stop {label} from working." : $"Audio enhancements are off for {label}.",
+                    $"Turns the device's \"Audio enhancements\" switch {(off ? "off" : "on")}. Undo puts it back.", "Some devices sound different with enhancements off.",
+                    device && rest is Audio.AudioTargets.Off or Audio.AudioTargets.On);
+            case RemediationKind.UnmuteAudioSession:
+                return P($"Unmute {rest} in the Volume mixer?", $"{rest} is muted in the Volume mixer, so it makes no sound.",
+                    "Unmutes that app only. Undo mutes it again while it's still running.", null, device && Session.AgentScripts.IsProcessName(rest));
+            case RemediationKind.AllowCapturePrivacy:
+                var thing = Audio.CapturePrivacy.IsCapability(t) ? Audio.CapturePrivacy.Thing(t) : "Microphone";
+                return P($"Turn on {thing.ToLowerInvariant()} access?", $"Windows privacy settings stop apps from using the {thing.ToLowerInvariant()}.",
+                    $"Turns on the {thing.ToLowerInvariant()} switches that are off: the per-account ones here, the device-wide one through the Agent. Undo turns them off again.",
+                    "Apps that are already open may need to be restarted.", Audio.CapturePrivacy.IsCapability(t));
+            case RemediationKind.CloseAudioHolder:
+                if (device && rest.Length == 0)
+                    return P("Close the app holding the device?", $"An app has taken over {label}, so other apps can't use it.",
+                        "Pick the app to close. It's closed right away, like End task.", "Unsaved work in that app may be lost.", true);
+                var holder = new AreaAction(RemediationKind.EndProcessGroup, action.ButtonText, rest, rest);
+                if (!device || !Session.AgentScripts.IsProcessName(rest) || ProcessProtection.IsProtected(rest))
+                    return new(action, $"Close {rest}?", "", "This app can't be closed from here.", $"{rest} is protected or isn't an app this app can close.", false);
+                return P($"Close {rest}?", $"{rest} is using {label} so other apps can't.", PlanEndProcess(holder, rest).WhatWillHappen + " Not undoable.",
+                    "Any unsaved work inside that app will be lost.", true);
+        }
+        return new(action, action.ButtonText, "", "", null, false);
     }
 
     private static RemediationPlan PlanEndProcess(AreaAction action, string label)
@@ -578,8 +645,34 @@ public sealed class RemediationService(
 
         RemediationKind.MovePackageCacheToDevDrive => RunMovePackageCacheToDevDrive(action),
 
+        RemediationKind.CloseAudioHolder => await RunCloseAudioHolderAsync(action, ct).ConfigureAwait(false),
+
+        RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint
+            or RemediationKind.EnableAudioEndpoint or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements
+            or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy => await RunAudioAsync(action, ct).ConfigureAwait(false),
+
         _ => new(false, "Unsupported action."),
     };
+
+    /// <summary>A Sound fix: the service journals each value it changed (a picker change can change up to three roles).</summary>
+    private async Task<RemediationResult> RunAudioAsync(AreaAction action, CancellationToken ct)
+    {
+        if (audio is null) return new(false, "Sound devices can't be changed in this session.");
+        var o = await audio.RunAsync(action, Actor, ct).ConfigureAwait(false);
+        foreach (var c in o.Changes)
+            try { journal?.Add(c); } catch (Exception ex) { Log($"journal: {ex.Message}"); }
+        return new(o.Success, o.Message);
+    }
+
+    /// <summary>Device busy: closes the chosen app, only while it still has a session on that device, through the End task path.</summary>
+    private async Task<RemediationResult> RunCloseAudioHolderAsync(AreaAction action, CancellationToken ct)
+    {
+        if (!Audio.AudioTargets.TrySplit(action.Target, out var id, out var process) || process.Length == 0) return new(false, "Pick the app to close first.");
+        if (!Session.AgentScripts.IsProcessName(process) || ProcessProtection.IsProtected(process)) return new(false, $"{process} is protected and cannot be closed.");
+        if (audio?.SessionsOn(id) is { } sessions && !sessions.Any(x => string.Equals(x.ProcessName, process, StringComparison.OrdinalIgnoreCase)))
+            return new(false, $"{process} isn't using the sound device anymore, so it was left open. Run Sound again.");
+        return await RunEndProcessAsync(new AreaAction(RemediationKind.EndProcessGroup, action.ButtonText, process, process), ct).ConfigureAwait(false);
+    }
 
     private RemediationResult RunEnableStorageSense(AreaAction action)
     {

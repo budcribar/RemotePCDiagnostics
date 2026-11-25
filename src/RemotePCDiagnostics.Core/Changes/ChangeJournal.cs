@@ -33,6 +33,9 @@ public enum ChangeKind
     WakeTimer,           // Target = scheduled task full path (DeviceWake.IsSafeTaskPath); Previous = "true"; undo turns Settings.WakeToRun back on
     PowerSetting,        // Target = "schemeGuid|subgroupGuid|settingGuid|AC" (allowlisted PROCTHROTTLEMAX only); Previous = old AC value (0..100); undo writes it back without switching plans
     UserEnvironmentVariable, // Target = user env var name on DevDrivePackageCaches.Allowlist; Previous = old HKCU\Environment value or null (absent: undo deletes it)
+    AudioEndpoint,       // Target = "{endpointId}|mute" | "|volume" | "|default:Console" (Multimedia, Communications) | "|state" | "|format" | "|sysfx" (AudioTargets); Previous = "true"/"false", "0.050", the old default's id (or null), "Disabled", base64 WAVEFORMATEX, "true"/"false"
+    AudioSession,        // Target = "{endpointId}|{process name}"; Previous = "true" (it was muted); undo mutes it again while the app still runs
+    CapturePrivacy,      // Target = "HKCU|microphone", "HKCU|microphone|NonPackaged", "HKLM|microphone" (or webcam; CapturePrivacy.TryParseJournalTarget); Previous = "Allow" | "Deny" | null (absent: undo deletes it); HKLM through the Agent
 }
 
 /// <param name="Label">Friendly, e.g. "Spotify won't start with Windows".</param>

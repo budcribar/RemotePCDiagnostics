@@ -56,7 +56,7 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
 /// </summary>
 public sealed class UndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem? memory = null, IServiceControlBackend? services = null,
     Action<LogLevel, string>? events = null, ILogger? log = null, ISystemSettings? settings = null,
-    IPowerSettingController? powerSettings = null, IUserEnvironmentStore? userEnv = null)
+    IPowerSettingController? powerSettings = null, IUserEnvironmentStore? userEnv = null, Audio.AudioFixService? audio = null)
 {
     public const string NotUndoableNote = "Installed updates, uninstalled programs, removed apps without a Microsoft Store listing, and deleted temporary files, caches or Recycle Bin items can't be put back; undo lists them as left as is. "
         + "Removed Microsoft Store apps marked \"undo reinstalls from Store\" are reinstalled from the Store for the signed-in account (needs internet; their settings and data aren't restored).";
@@ -255,6 +255,9 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 }
                 envStore.Write(c.Target, c.Previous);
                 return Ok($"Restored {c.Target} to {c.Previous}.");
+
+            case ChangeKind.AudioEndpoint or ChangeKind.AudioSession or ChangeKind.CapturePrivacy:
+                return audio is null ? Fail("Sound settings can't be changed in this session.") : await audio.UndoAsync(c, ct).ConfigureAwait(false);
 
             case ChangeKind.DeviceWake:
                 if (!DeviceWake.IsSafeName(c.Target)) return Fail("The device wasn't recorded, so it was left as is.");

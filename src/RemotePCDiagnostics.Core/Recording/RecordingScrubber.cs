@@ -180,7 +180,9 @@ public sealed class RecordingScrubber
                 foreach (var (name, child) in o.ToList())
                 {
                     if (child is JsonValue v && v.TryGetValue<string>(out var s))
-                        o[name] = bluetooth && name.Equals("name", StringComparison.OrdinalIgnoreCase) ? Placeholder("bluetooth", s) : Scalar(name, s);
+                        // A window title names the open document or page ("Budget 2027.xlsx - Excel"): kept out of recordings.
+                        o[name] = bluetooth && name.Equals("name", StringComparison.OrdinalIgnoreCase) ? Placeholder("bluetooth", s)
+                            : name.Equals("windowTitle", StringComparison.OrdinalIgnoreCase) ? Placeholder("window", s) : Scalar(name, s);
                     else if (child is not null) ScrubNode(child);
                 }
                 break;

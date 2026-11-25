@@ -46,12 +46,42 @@ public static class AgentExports
     // ---- Fix state ------------------------------------------------------------------------------------------------------
 
     /// <summary>The fix running now and how the last one ended, for browser agents (fix-data). <c>Origin</c> is the check the fix belongs to.</summary>
-    public sealed record ExportedFixState(int Schema, ExportedFixRun? Running, ExportedFixResult? Last);
+    public sealed record ExportedFixState(int Schema, ExportedFixRun? Running, ExportedFixResult? Last)
+    {
+        /// <summary>The fix confirmation open now, when it asks for a choice or consent (device picker, privacy, device busy).</summary>
+        public ExportedFixDialog? Dialog { get; init; }
+    }
+
+    /// <summary>
+    /// An open fix confirmation with a list to pick from: what each <c>remediation-choice</c> (<c>data-choice-id</c>) is, which one is
+    /// picked, the option box under the list and the consent box. <c>ChosenTarget</c> is the Target Go would run with now.
+    /// </summary>
+    public sealed record ExportedFixDialog(string Kind, string Target, bool Allowed, IReadOnlyList<ExportedFixChoice> Choices, string? EmptyText,
+        ExportedFixOption? Option, ExportedFixConsent? Consent, string? ChosenTarget, bool CanConfirm);
+    public sealed record ExportedFixChoice(string Id, string Label, string? Detail, string? DisabledReason, bool Selected);
+    public sealed record ExportedFixOption(string Label, bool On);
+    public sealed record ExportedFixConsent(string Text, bool Checked);
+
+    /// <summary>The dialog part of fix-data for <paramref name="plan"/>, or null when it has no choices and no consent.</summary>
+    public static ExportedFixDialog? BuildFixDialog(RemediationPlan? plan, string? chosenId, bool optionOn, bool consentChecked)
+    {
+        if (plan is null) return null;
+        var a = plan.Action;
+        if (a.Choices is null && a.Consent is null) return null;
+        var chosen = a.Choices?.FirstOrDefault(c => c.Id == chosenId && c.DisabledReason is null);
+        var choices = (a.Choices ?? []).Take(MaxFixes).Select(c => new ExportedFixChoice(V(c.Id) ?? "", V(c.Label) ?? "", V(c.Detail), V(c.DisabledReason), c.Id == chosen?.Id)).ToList();
+        var canConfirm = plan.Allowed && (a.Choices is null || chosen is not null) && (a.Consent is null || consentChecked);
+        return new(a.Kind.ToString(), V(a.Target) ?? "", plan.Allowed, choices, a.Choices is { Count: 0 } ? T(a.EmptyChoicesText) : null,
+            a.Option is { } o ? new(V(o.Label) ?? "", optionOn) : null, a.Consent is { } c ? new(T(c) ?? "", consentChecked) : null,
+            chosen is null ? a.Choices is null ? V(a.Target) : null : V(a.TargetFor(chosen, optionOn)), canConfirm);
+    }
+
     public sealed record ExportedFixRun(string Kind, string Target, string? Title, string Origin, DateTimeOffset StartedAt, string? Progress);
     public sealed record ExportedFixResult(int Seq, string Kind, string Target, string Origin, string Outcome, string? Message, bool RestartNeeded,
         bool ReadOnly, DateTimeOffset FinishedAt);
 
-    public static string FixState(FixRun? running, FixRunResult? last) => JsonSerializer.Serialize(BuildFixState(running, last), Json);
+    public static string FixState(FixRun? running, FixRunResult? last, ExportedFixDialog? dialog = null) =>
+        JsonSerializer.Serialize(BuildFixState(running, last) with { Dialog = dialog }, Json);
 
     public static ExportedFixState BuildFixState(FixRun? running, FixRunResult? last) => new(SchemaVersion,
         running is null ? null : new(running.Action.Kind.ToString(), V(running.Action.Target) ?? "", V(running.Title), running.Origin, running.StartedUtc, V(running.Progress)),
