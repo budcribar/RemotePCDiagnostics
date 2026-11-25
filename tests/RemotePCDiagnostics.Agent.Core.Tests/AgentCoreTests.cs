@@ -264,6 +264,18 @@ public class LaunchRulesTests
     }
 
     [Theory]
+    [InlineData(null, " -i=7e57c0de-0000-4000-8000-000000000004 --unattended --no-window")]
+    [InlineData("acme", " -g=acme --unattended --no-window")]
+    public void A_hidden_launch_adds_the_no_window_switch_last(string? group, string expectedEnd)
+    {
+        var session = Guid.Parse("7e57c0de-0000-4000-8000-000000000004");
+        var line = LaunchRules.AppCommandLine(@"C:\Cache\1.2.3\RemotePCDiagnostics.Host.exe", "https://relay.example:34544", session, group, hidden: true);
+
+        Assert.EndsWith(expectedEnd, line);
+        Assert.DoesNotContain("--no-window", LaunchRules.AppCommandLine(@"C:\Cache\1.2.3\RemotePCDiagnostics.Host.exe", "https://relay.example:34544", session, group));
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]

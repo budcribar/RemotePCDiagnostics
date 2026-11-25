@@ -84,18 +84,23 @@ public static class LaunchRules
     };
 
     /// <summary>
-    /// The app's command line: <c>"&lt;entry path&gt;" -u=&lt;server&gt; -i=&lt;session&gt; [-g=&lt;group&gt;] --unattended</c>. A session the agent
-    /// starts is shared like any other (the app shows at the PC, the requester joins at the session's link), and unattended, so
+    /// The app's command line: <c>"&lt;entry path&gt;" -u=&lt;server&gt; -i=&lt;session&gt; [-g=&lt;group&gt;] --unattended [--no-window]</c>. A session the
+    /// agent starts is shared like any other (the app shows at the PC, the requester joins at the session's link), and unattended, so
     /// the requester gets control on joining without anyone at the PC handing it over. This is not the agent's own "unattended"
-    /// setting, which is about skipping the consent prompt.
+    /// setting, which is about skipping the consent prompt. <paramref name="hidden"/> (LaunchCommand.hidden, set by the relay only
+    /// for a session nobody was asked about) adds <see cref="NoWindowArg"/>: the app runs with no window and shows a tray icon.
     /// </summary>
-    public static string AppCommandLine(string entryPath, string server, Guid session, string? group = null)
+    public static string AppCommandLine(string entryPath, string server, Guid session, string? group = null, bool hidden = false)
     {
-        var normalizedGroup = string.IsNullOrWhiteSpace(group) ? null : group.Trim().ToLowerInvariant();
-        return normalizedGroup is null
-            ? WindowsCommandLine.Join([entryPath, "-u=" + server, "-i=" + session.ToString("D"), "--unattended"])
-            : WindowsCommandLine.Join([entryPath, "-u=" + server, "-i=" + session.ToString("D"), "-g=" + normalizedGroup, "--unattended"]);
+        var parts = new List<string> { entryPath, "-u=" + server, "-i=" + session.ToString("D") };
+        if (!string.IsNullOrWhiteSpace(group)) parts.Add("-g=" + group.Trim().ToLowerInvariant());
+        parts.Add("--unattended");
+        if (hidden) parts.Add(NoWindowArg);
+        return WindowsCommandLine.Join(parts);
     }
+
+    /// <summary>The app's no-window switch (RemotePCDiagnostics.Core.Session.NoWindowStart.Arg; this project doesn't reference Core).</summary>
+    public const string NoWindowArg = "--no-window";
 
     /// <summary>The consent prompt's command line, run in the user's session.</summary>
     public static string ConsentCommandLine(string agentExe, string requester, int timeoutSeconds) =>

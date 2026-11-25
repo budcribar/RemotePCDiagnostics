@@ -31,4 +31,15 @@ public class NoWindowStartTests
         Assert.False(NoWindowStart.Applies(args, None, SessionMode.Local));
         Assert.False(NoWindowStart.Applies([], None, SessionMode.Remote));
     }
+
+    [Fact]
+    public void The_agent_starts_the_app_with_the_switch_the_app_reads()
+    {
+        var line = RemotePCDiagnostics.Agent.Core.LaunchRules.AppCommandLine(@"C:\App\RemotePCDiagnostics.Host.exe", "https://relay.example", Guid.NewGuid(), hidden: true);
+        var args = line.Split(' ').Skip(1);
+        Assert.True(NoWindowStart.Applies(args, None, SessionLaunchOptions.Parse(args).Mode));
+    }
+
+    [Fact]
+    public void Tray_tip_fits_the_notification_area_limit() => Assert.InRange(NoWindowStart.TrayTip.Length, 1, 127);
 }
