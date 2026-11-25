@@ -29,6 +29,8 @@ public static class LogEventIds
     public const int Error = 1900;
     /// <summary>A warning-level line from the app log that no specific category claimed.</summary>
     public const int AppWarning = 1910;
+    /// <summary>An alert the Agent raised, cleared or escalated (Core.Alerts.AlertEventText), so the app can show the PC's alerts.</summary>
+    public const int Alert = 2000;
 }
 
 /// <summary>Extra fields written into each 1100 event (test display name, machine, app version).</summary>

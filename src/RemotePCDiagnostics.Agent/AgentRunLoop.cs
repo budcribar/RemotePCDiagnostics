@@ -50,9 +50,17 @@ internal static class AgentRunLoop
             }
             catch (Exception ex) { log?.Invoke($"Scheduled metrics unavailable: {ex.Message}"); }
         }
+        // Alerts (persistent agents only): event watchers and level readings, an outbox in the protected state folder.
+        AgentAlerts? alerts = null;
+        if (config.AgentLifetime != AgentLifetime.Session && OperatingSystem.IsWindows())
+        {
+            try { alerts = new AgentAlerts(RemotePCDiagnostics.Core.ProtectedState.Folder(), AgentPaths.GetInstalledOrCachedAppVersion, log: log); }
+            catch (Exception ex) { log?.Invoke($"Alerts unavailable: {ex.Message}"); }
+        }
         var worker = new AgentHubWorker(config, platform, new AgentSessionOptions
         {
             Metrics = metrics,
+            Alerts = alerts,
             Log = log,
             LinkChanged = (connected, group) => publisher.Publish(connected, group),
             ReleaseAnnounced = (stable, prerelease) => publisher.PublishRelease(stable, prerelease),

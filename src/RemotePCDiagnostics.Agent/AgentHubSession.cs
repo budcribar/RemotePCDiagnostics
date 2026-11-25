@@ -76,6 +76,9 @@ public sealed class AgentSessionOptions
 
     /// <summary>The scheduled metrics pass and its outbox (null: this agent runs none, as in tests and session-lifetime agents).</summary>
     public AgentMetrics? Metrics { get; init; }
+
+    /// <summary>The event watchers, level readings and alert outbox (null: this agent raises none, as in tests and session-lifetime agents).</summary>
+    public AgentAlerts? Alerts { get; init; }
 }
 
 /// <summary>
@@ -576,6 +579,8 @@ public sealed class AgentHubWorker(
         // Passes run on their schedule whether or not the relay is reachable; their runs wait in the outbox.
         using var metricsCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         var metricsLoop = _options.Metrics?.RunAsync(IsBusyForMetrics, metricsCts.Token) ?? Task.CompletedTask;
+        // Alerts are watched whether or not the relay is reachable; they wait in the outbox.
+        var alertsLoop = _options.Alerts?.RunAsync(metricsCts.Token) ?? Task.CompletedTask;
 
         while (!stoppingToken.IsCancellationRequested && !_stopAfterSingleSession)
         {
@@ -627,6 +632,7 @@ public sealed class AgentHubWorker(
         }
         await metricsCts.CancelAsync().ConfigureAwait(false);
         try { await metricsLoop.ConfigureAwait(false); } catch { }
+        try { await alertsLoop.ConfigureAwait(false); } catch { }
     }
 
     /// <summary>The app (or a session) is running: a scheduled pass waits, so it never competes with a technician's checks.</summary>
@@ -680,6 +686,7 @@ public sealed class AgentHubWorker(
                 ? Lifetime.RemoveAfterSession
                 : Lifetime.Persistent,
             MetricsScheduleRevision = _options.Metrics?.ScheduleRevision ?? 0,
+            AlertSettingsRevision = _options.Alerts?.SettingsRevision ?? 0,
         };
         if (platform.GetBootTime() is { } booted)
             hello.BootTime = Google.Protobuf.WellKnownTypes.Timestamp.FromDateTimeOffset(booted);
@@ -730,6 +737,7 @@ public sealed class AgentHubWorker(
 
         var heartbeatTask = PumpHeartbeatsAsync(WriteMessageAsync, token);
         _options.Metrics?.Attach(WriteMessageAsync);
+        _options.Alerts?.Attach(WriteMessageAsync);
         Task? activeLaunchTask = null;
 
         try
@@ -778,6 +786,18 @@ public sealed class AgentHubWorker(
                             Log("Collect metrics: a pass was asked for a moment ago; ignored.");
                         break;
 
+                    case HubCommand.BodyOneofCase.AlertsAck:
+                        _options.Alerts?.Acknowledge(command.AlertsAck.ThroughSeq);
+                        break;
+
+                    case HubCommand.BodyOneofCase.AlertSettings:
+                        _options.Alerts?.ApplySettings(command.AlertSettings);
+                        break;
+
+                    case HubCommand.BodyOneofCase.AlertState:
+                        _options.Alerts?.ApplyState(command.AlertState);
+                        break;
+
                     case HubCommand.BodyOneofCase.AssignAgentToken:
                         var assigned = command.AssignAgentToken?.AgentToken?.Trim();
                         if (!string.IsNullOrEmpty(assigned))
@@ -810,7 +830,10 @@ public sealed class AgentHubWorker(
                 }
             }
             if (wasCurrent)
+            {
                 _options.Metrics?.Attach(null);
+                _options.Alerts?.Attach(null);
+            }
             await streamCts.CancelAsync().ConfigureAwait(false);
             try { await heartbeatTask.ConfigureAwait(false); } catch { }
             // Completes when the launch ends, or once it reached READY and no longer depends on this stream.
@@ -850,6 +873,7 @@ public sealed class AgentHubWorker(
                     SessionId = sessionId,
                     CachedAppVersion = platform.GetCachedOrInstalledAppVersion(),
                     MetricsScheduleRevision = _options.Metrics?.ScheduleRevision ?? 0,
+                    AlertSettingsRevision = _options.Alerts?.SettingsRevision ?? 0,
                 };
                 await writeAsync(new AgentMessage { Heartbeat = hb }, ct).ConfigureAwait(false);
                 AnnounceLink(true);
