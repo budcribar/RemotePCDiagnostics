@@ -1,0 +1,12 @@
+{
+  "id": "f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41",
+  "slug": "WindowsMaintenance",
+  "displayName": "Windows maintenance",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.WindowsMaintenance.WindowsMaintenancePlugin",
+  "needsAdmin": false,
+  "hasUi": false,
+  "outOfProcess": false,
+  "portableUi": false,
+  "detailsReplaceReport": false
+}

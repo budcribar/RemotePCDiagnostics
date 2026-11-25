@@ -43,6 +43,7 @@ public class ModuleIdsTests
         ["SleepWake"] = "d8665737-c11d-44ad-b1d3-72b14dcdaedd",
         ["DeveloperSetup"] = "c4e8a912-3f7b-4d61-9b5e-2e8f1a7c4d03",
         ["BiosFirmware"] = "7f3c9b2e-5d1a-4c8f-a6e0-9b4d2e1f8a3c",
+        ["WindowsMaintenance"] = "f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41",
     };
 
     [Fact]

@@ -44,6 +44,8 @@ public static class WmiQueryPolicy
         @"root\cimv2", @"root\wmi", @"root\cimv2\power", @"root\Microsoft\Windows\Storage", @"root\StandardCimv2",
         // Security essentials: Defender, Security Center's antivirus list, BitLocker.
         @"root\Microsoft\Windows\Defender", @"root\SecurityCenter2", @"root\cimv2\Security\MicrosoftVolumeEncryption",
+        // Windows maintenance: System Restore points (SystemRestore).
+        @"root\default",
     };
 
     /// <summary>Why the Agent won't run this query, or null when it will.</summary>

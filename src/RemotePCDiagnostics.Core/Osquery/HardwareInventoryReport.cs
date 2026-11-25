@@ -75,9 +75,9 @@ public static class HardwareInventoryReport
         var level = belowEightGb ? AreaLevel.Warning : AreaLevel.Ok;
         var notes = new List<string>();
         if (belowEightGb)
-            notes.Add("Less than 8 GB of memory is installed. Upgrading to at least 16 GB will noticeably improve Windows 11 and browsing responsiveness.");
+            notes.Add("Less than 8 GB of memory is installed. Upgrading to at least 8 GB (16 GB recommended) will noticeably improve Windows and browsing responsiveness.");
         else if (exactlyEightGb)
-            notes.Add("8 GB is the minimum for comfortable Windows 11 use.");
+            notes.Add("8 GB is the practical minimum for comfortable everyday Windows use; 16 GB+ is recommended for heavier multitasking or local AI.");
 
         if (IsSinglePopulatedUpgradeableSlot(slots, used))
             notes.Add("Adding a matching module would enable dual-channel memory.");
