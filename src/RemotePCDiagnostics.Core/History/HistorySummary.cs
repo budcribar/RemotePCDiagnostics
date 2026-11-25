@@ -421,6 +421,7 @@ public static class HistorySummary
         RemediationKind.EnableStorageSense => "Storage Sense",
         RemediationKind.ResetMaxProcessorState => "Maximum processor state",
         RemediationKind.MovePackageCacheToDevDrive => "Dev Drive package cache",
+        RemediationKind.CreatePersistentDevDrive => "Persistent Dev Drive",
         _ => "Automated fix",
     };
 

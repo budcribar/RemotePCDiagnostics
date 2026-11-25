@@ -11,7 +11,7 @@
 @* Before/after performance benchmarks for a service call: shows the client what the fixes actually changed. *@
 @{
     var s = Bench.Settings;
-    var running = Bench.Running is not null || Bench.Settling is not null || Bench.RunningDeveloperAction;
+    var running = Bench.Running is not null || Bench.Settling is not null || Bench.RunningDeveloperAction || Bench.ExperimentRunning;
     var cmp = Bench.Comparison;
     var before = Bench.Before;
     var after = Bench.After;
@@ -127,6 +127,78 @@
         </span>
     </div>
 </section>
+
+@{
+    var improvements = BenchmarkImprovements.ForGoal(activeGoal, Bench.GetImprovementContext());
+    var selectedImprovements = improvements.Where(i => !i.AlreadyApplied && _selectedImprovements.Contains(i.Id)).ToList();
+}
+@if (improvements.Count > 0)
+{
+    <section class="card" data-testid="bench-improvements" style="margin-bottom:12px">
+        <div class="card-head">
+            <strong>Improvements to test &amp; apply for the After pass</strong>
+            <span class="meta">Check the improvements you want to measure, then click Start to run Before → Apply → After automatically.</span>
+        </div>
+        <div class="bench-kinds" style="margin-top:8px">
+            @foreach (var imp in improvements)
+            {
+                var isChecked = imp.AlreadyApplied || _selectedImprovements.Contains(imp.Id);
+                <label class="bench-kind" title="@imp.Description">
+                    <input type="checkbox"
+                           data-testid="bench-imp-@imp.Id"
+                           checked="@isChecked"
+                           disabled="@(running || imp.AlreadyApplied)"
+                           @onchange="() => ToggleImprovement(imp, improvements)" />
+                    <span>
+                        @imp.Title
+                        @if (imp.AlreadyApplied && !string.IsNullOrWhiteSpace(imp.AlreadyAppliedNote))
+                        {
+                            <span class="meta"> (@imp.AlreadyAppliedNote)</span>
+                        }
+                        else if (imp.Reversible)
+                        {
+                            <span class="meta"> · reversible</span>
+                        }
+                    </span>
+                </label>
+            }
+        </div>
+        <div class="bench-hero-actions" style="margin-top:10px">
+            <button type="button"
+                    class="btn btn-primary"
+                    data-testid="bench-run-experiment"
+                    disabled="@(running || selectedImprovements.Count == 0 || s.Enabled.Count == 0)"
+                    @onclick="() => RunExperimentAsync(selectedImprovements)">
+                <Icon Name="play" Size="12" />
+                @(selectedImprovements.Count == 0
+                    ? "Select improvements above to run Before → Apply → After"
+                    : $"Start: Before → Apply {selectedImprovements.Count} {(selectedImprovements.Count == 1 ? "improvement" : "improvements")} → After")
+            </button>
+            @if (Bench.ExperimentRunning)
+            {
+                <button type="button" class="btn btn-stop" data-testid="bench-experiment-stop" @onclick="Bench.Stop">Stop</button>
+            }
+        </div>
+        @if (Bench.ExperimentRunning && !string.IsNullOrWhiteSpace(Bench.ExperimentStep))
+        {
+            <p class="status-line is-running" data-testid="bench-experiment-status" style="margin-top:8px">
+                <span class="dot dot-running"></span>@Bench.ExperimentStep
+            </p>
+        }
+        @if (Bench.LastExperiment is { Outcomes.Count: > 0 } exp)
+        {
+            <div data-testid="bench-experiment-summary" style="margin-top:10px">
+                <div class="meta"><strong>Improvements applied in last run:</strong></div>
+                <ul class="meta" style="margin:4px 0 0 18px;padding:0">
+                    @foreach (var o in exp.Outcomes)
+                    {
+                        <li>@(o.Succeeded ? "✓" : o.Skipped ? "–" : "✗") <strong>@o.Title</strong> — @o.Message</li>
+                    }
+                </ul>
+            </div>
+        }
+    </section>
+}
 
 <details class="card bench-customize" data-testid="bench-settings" open="@_customizeOpen">
     @* The click saves the open state, so a view-only mirror and a controlling mirror show the same panel the start buttons do. *@
@@ -395,13 +467,40 @@ else if (!running)
         }
     }
 
+    private readonly HashSet<string> _selectedImprovements = new(StringComparer.OrdinalIgnoreCase);
+
     private void ApplyGoalPreset(string goal)
     {
         var avail = Bench.AvailableBenchmarks.Select(b => b.Kind).ToList();
         if (!BenchmarkGoals.IsGoalAvailable(goal, avail)) return;
         var kinds = BenchmarkGoals.KindsFor(goal, avail);
+        _selectedImprovements.Clear();
         Bench.UpdateSettings(Bench.Settings with { Goal = BenchmarkGoals.Normalize(goal), Enabled = [.. kinds] });
     }
+
+    private void ToggleImprovement(BenchmarkImprovement imp, IReadOnlyList<BenchmarkImprovement> all)
+    {
+        if (imp.AlreadyApplied) return;
+        if (!_selectedImprovements.Add(imp.Id))
+        {
+            _selectedImprovements.Remove(imp.Id);
+            // Unchecking Create persistent Dev Drive also unchecks dependent cache moves.
+            if (string.Equals(imp.Id, BenchmarkImprovements.CreateDevDriveId, StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var dep in all.Where(x => x.RequiresDevDrive))
+                    _selectedImprovements.Remove(dep.Id);
+            }
+        }
+        else if (imp.RequiresDevDrive)
+        {
+            // Checking a Dev Drive cache move when no Dev Drive exists auto-checks Create persistent Dev Drive.
+            if (all.Any(x => string.Equals(x.Id, BenchmarkImprovements.CreateDevDriveId, StringComparison.OrdinalIgnoreCase) && !x.AlreadyApplied))
+                _selectedImprovements.Add(BenchmarkImprovements.CreateDevDriveId);
+        }
+    }
+
+    private Task RunExperimentAsync(IReadOnlyList<BenchmarkImprovement> selected) =>
+        selected.Count == 0 ? Task.CompletedTask : Bench.RunExperimentAsync(selected);
 
     private void ApplyStandardPreset() =>
         Bench.UpdateSettings(Bench.Settings with { Goal = BenchmarkGoals.TuneUp, Enabled = [.. Benchmarks.DefaultEnabled], Runs = 3 });

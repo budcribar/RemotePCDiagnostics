@@ -33,6 +33,7 @@ public enum ChangeKind
     WakeTimer,           // Target = scheduled task full path (DeviceWake.IsSafeTaskPath); Previous = "true"; undo turns Settings.WakeToRun back on
     PowerSetting,        // Target = "schemeGuid|subgroupGuid|settingGuid|AC" (allowlisted PROCTHROTTLEMAX only); Previous = old AC value (0..100); undo writes it back without switching plans
     UserEnvironmentVariable, // Target = user env var name on DevDrivePackageCaches.Allowlist; Previous = old HKCU\Environment value or null (absent: undo deletes it)
+    PersistentDevDrive, // Target = persistent VHDX path (DevDriveRules.IsRpcdPersistentDevDriveVhdx); Previous = mounted drive letter (e.g. "D")
 }
 
 /// <param name="Label">Friendly, e.g. "Spotify won't start with Windows".</param>

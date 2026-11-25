@@ -63,6 +63,8 @@ public enum RemediationKind
     ResetMaxProcessorState,
     /// <summary>Points an allowlisted developer package cache user environment variable (<c>NUGET_PACKAGES</c>, <c>npm_config_cache</c>, <c>PIP_CACHE_DIR</c>, <c>VCPKG_DEFAULT_BINARY_CACHE</c>) to a Dev Drive folder.</summary>
     MovePackageCacheToDevDrive,
+    /// <summary>Creates and mounts a persistent dynamically expanding ReFS Dev Drive VHDX (~50 GB) via the Agent. Undo detaches and deletes it.</summary>
+    CreatePersistentDevDrive,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>

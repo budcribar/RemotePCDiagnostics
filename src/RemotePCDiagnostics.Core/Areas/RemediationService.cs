@@ -50,7 +50,8 @@ public sealed record RemediationResult(
     int RemovedFiles = 0,
     long FreedMemoryBytes = 0,
     int UpdatesInstalled = 0,
-    bool RestartNeeded = false);
+    bool RestartNeeded = false,
+    string? CreatedDriveRoot = null);
 
 /// <summary>A fix that is running now (started from a page or by a remote agent). It keeps running when its page is left.</summary>
 public sealed record FixRun(AreaAction Action, string Title, string Origin, DateTimeOffset StartedUtc, string? Progress = null);
@@ -87,7 +88,8 @@ public sealed class RemediationService(
     Action<string>? openUri = null,
     Optimizations.IRegistryTweaks? registryTweaks = null,
     IPowerSettingController? powerSettings = null,
-    IUserEnvironmentStore? userEnv = null)
+    IUserEnvironmentStore? userEnv = null,
+    IMachineTweaks? machineTweaks = null)
 {
     /// <summary>This app's record of successful retrims (so Drive health stops offering it right away).</summary>
     public RetrimLog? RetrimLog => retrimLog;
@@ -387,6 +389,14 @@ public sealed class RemediationService(
                     true)
                 : new(action, action.ButtonText, "", "This cache target isn't on the allowlist.", "This cache target isn't on the allowlist.", Allowed: false),
 
+            RemediationKind.CreatePersistentDevDrive => new(
+                action,
+                "Create persistent Dev Drive (50 GB ReFS)?",
+                "Creates a dynamically expanding 50 GB ReFS Dev Drive VHDX with Defender Performance Mode so builds and package caches run faster.",
+                "Mounts a persistent Dev Drive via the elevated Agent and grants your account modify permissions. Undo detaches and removes the VHDX.",
+                AdminNote("Requires Windows 11 with Dev Drive support and at least 50 GB free on the system drive."),
+                true),
+
             _ => new(action, action.ButtonText, "", "", null, true),
         };
     }
@@ -578,8 +588,42 @@ public sealed class RemediationService(
 
         RemediationKind.MovePackageCacheToDevDrive => RunMovePackageCacheToDevDrive(action),
 
+        RemediationKind.CreatePersistentDevDrive => await RunCreatePersistentDevDriveAsync(action, ct).ConfigureAwait(false),
+
         _ => new(false, "Unsupported action."),
     };
+
+    private async Task<RemediationResult> RunCreatePersistentDevDriveAsync(AreaAction action, CancellationToken ct)
+    {
+        var tweaks = machineTweaks ?? (commands.ElevatedBridge is { } b ? new AgentMachineTweaks(b, log) : null);
+        if (tweaks is null)
+            return new(false, "Administrator Agent is required to create a persistent Dev Drive.");
+
+        var sizeGb = int.TryParse(action.Target, out var parsed) && parsed >= DevDriveRules.MinSizeGb && parsed <= DevDriveRules.MaxSizeGb
+            ? parsed
+            : DevDriveRules.DefaultSizeGb;
+
+        string? userSid = null;
+        if (OperatingSystem.IsWindows())
+        {
+            try { userSid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value; }
+            catch { }
+        }
+
+        var mounted = await tweaks.CreatePersistentDevDriveAsync(sizeGb, userSid, ct).ConfigureAwait(false);
+        if (!mounted.Ok || string.IsNullOrWhiteSpace(mounted.VhdxPath) || string.IsNullOrWhiteSpace(mounted.DriveLetter))
+            return new(false, mounted.Error ?? "Could not create persistent Dev Drive.");
+
+        var driveRoot = $"{mounted.DriveLetter.TrimEnd(':', '\\').ToUpperInvariant()}:\\";
+        journal?.Add(Changes.ChangeRecord.New(
+            Changes.ChangeKind.PersistentDevDrive,
+            mounted.VhdxPath,
+            driveRoot,
+            $"Created persistent Dev Drive ({driveRoot})",
+            Actor));
+
+        return new(true, $"Created and mounted persistent Dev Drive on {driveRoot} ({sizeGb} GB expandable ReFS).", CreatedDriveRoot: driveRoot);
+    }
 
     private RemediationResult RunEnableStorageSense(AreaAction action)
     {

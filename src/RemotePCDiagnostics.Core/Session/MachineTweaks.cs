@@ -49,6 +49,12 @@ public interface IMachineTweaks
     /// <summary>Detaches and deletes a temporary RPCD Dev Drive VHDX inside the Agent's temp folder.</summary>
     Task<bool> RemoveTempDevDriveAsync(string vhdxPath, CancellationToken ct) =>
         Task.FromResult(false);
+    /// <summary>Creates, attaches, and formats a persistent dynamically expanding RPCD Dev Drive VHDX (~50 GB).</summary>
+    Task<DevDriveMountResult> CreatePersistentDevDriveAsync(int sizeGb, string? grantUserSid, CancellationToken ct) =>
+        Task.FromResult(new DevDriveMountResult(false, Error: "Persistent Dev Drive actions are not supported by this Agent."));
+    /// <summary>Detaches and deletes a persistent RPCD Dev Drive VHDX inside the Agent's devdrive folder.</summary>
+    Task<bool> RemovePersistentDevDriveAsync(string vhdxPath, CancellationToken ct) =>
+        Task.FromResult(false);
 }
 
 /// <summary>One <see cref="AdminPipeFraming.OpMachineTweak"/> request: which change (<see cref="Action"/>) and its arguments.</summary>
@@ -82,6 +88,10 @@ public sealed record AdminPipeTweak(
     public const string DevDriveCreate = "devdrive_create";
     /// <summary>Target = VHDX path inside the Agent's devdrive-temp folder.</summary>
     public const string DevDriveRemove = "devdrive_remove";
+    /// <summary>Number = size in GB (50..64), Text = optional signed-in user SID to grant modify access on the persistent Dev Drive root.</summary>
+    public const string PersistentDevDriveCreate = "persistent_devdrive_create";
+    /// <summary>Target = VHDX path inside the Agent's devdrive folder.</summary>
+    public const string PersistentDevDriveRemove = "persistent_devdrive_remove";
 }
 
 /// <summary>
@@ -157,6 +167,18 @@ public static class MachineTweakRules
                     ? null
                     : "Dev Drive removal is only allowed for RPCD VHDX files inside the Agent's devdrive-temp folder.";
 
+            case AdminPipeTweak.PersistentDevDriveCreate:
+                if (t.Number is { } pgb && (pgb < DevDriveRules.MinSizeGb || pgb > DevDriveRules.MaxSizeGb))
+                    return $"Persistent Dev Drive size must be between {DevDriveRules.MinSizeGb} and {DevDriveRules.MaxSizeGb} GB.";
+                if (!string.IsNullOrEmpty(t.Text) && !DevDriveRules.IsValidUserSid(t.Text))
+                    return "Invalid user SID for persistent Dev Drive.";
+                return null;
+
+            case AdminPipeTweak.PersistentDevDriveRemove:
+                return DevDriveRules.IsRpcdPersistentDevDriveVhdx(t.Target)
+                    ? null
+                    : "Persistent Dev Drive removal is only allowed for RPCD VHDX files inside the Agent's devdrive folder.";
+
             default:
                 return $"Unknown change '{t.Action}'.";
         }
@@ -203,6 +225,11 @@ public static class MachineTweakRules
                 return (mounted.Ok, mounted.ToJson());
             case AdminPipeTweak.DevDriveRemove:
                 return (await backend.RemoveTempDevDriveAsync(t.Target!, ct).ConfigureAwait(false), null);
+            case AdminPipeTweak.PersistentDevDriveCreate:
+                var persistent = await backend.CreatePersistentDevDriveAsync(t.Number ?? DevDriveRules.DefaultSizeGb, t.Text, ct).ConfigureAwait(false);
+                return (persistent.Ok, persistent.ToJson());
+            case AdminPipeTweak.PersistentDevDriveRemove:
+                return (await backend.RemovePersistentDevDriveAsync(t.Target!, ct).ConfigureAwait(false), null);
             default:
                 throw new InvalidOperationException($"Unknown change '{t.Action}'.");
         }
@@ -447,6 +474,24 @@ public sealed class AgentMachineTweaks(IElevatedCommandBridge? bridge, ILogger? 
     {
         var r = await bridge.RequireAgent().MachineTweakAsync(new(AdminPipeTweak.DevDriveRemove, Target: vhdxPath), ct).ConfigureAwait(false);
         if (!r.Ok) log.Warn("[machine-tweaks] Temporary Dev Drive not removed: " + r.Error);
+        return r.Ok;
+    }
+
+    public async Task<DevDriveMountResult> CreatePersistentDevDriveAsync(int sizeGb, string? grantUserSid, CancellationToken ct)
+    {
+        var r = await bridge.RequireAgent().MachineTweakAsync(new(AdminPipeTweak.PersistentDevDriveCreate, Number: sizeGb, Text: grantUserSid), ct).ConfigureAwait(false);
+        if (!r.Ok)
+        {
+            log.Warn("[machine-tweaks] Persistent Dev Drive not created: " + r.Error);
+            return new(false, Error: r.Error ?? "The Agent could not create a persistent Dev Drive.");
+        }
+        return DevDriveMountResult.FromJson(r.StdOut) ?? new(false, Error: "The Agent returned an unreadable Dev Drive response.");
+    }
+
+    public async Task<bool> RemovePersistentDevDriveAsync(string vhdxPath, CancellationToken ct)
+    {
+        var r = await bridge.RequireAgent().MachineTweakAsync(new(AdminPipeTweak.PersistentDevDriveRemove, Target: vhdxPath), ct).ConfigureAwait(false);
+        if (!r.Ok) log.Warn("[machine-tweaks] Persistent Dev Drive not removed: " + r.Error);
         return r.Ok;
     }
 
@@ -745,4 +790,10 @@ public sealed class WindowsMachineTweaks(ILogger? log = null, IProcessLauncher? 
 
     public Task<bool> RemoveTempDevDriveAsync(string vhdxPath, CancellationToken ct) =>
         new WindowsDevDriveManager(log, _launcher).RemoveAsync(vhdxPath, ct);
+
+    public Task<DevDriveMountResult> CreatePersistentDevDriveAsync(int sizeGb, string? grantUserSid, CancellationToken ct) =>
+        new WindowsDevDriveManager(log, _launcher).CreatePersistentAsync(sizeGb, grantUserSid, ct);
+
+    public Task<bool> RemovePersistentDevDriveAsync(string vhdxPath, CancellationToken ct) =>
+        new WindowsDevDriveManager(log, _launcher).RemovePersistentAsync(vhdxPath, ct);
 }
