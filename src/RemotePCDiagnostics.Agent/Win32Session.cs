@@ -362,6 +362,50 @@ internal static class Win32Session
         return "";
     }
 
+    /// <summary>
+    /// Seconds since the keyboard or mouse was last used in this process's own session (GetLastInputInfo works only there, so the
+    /// agent runs this in the user's session as "idle"). Null when it can't be read.
+    /// </summary>
+    public static int? SecondsSinceLastInput()
+    {
+        var info = new LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf<LASTINPUTINFO>() };
+        if (!GetLastInputInfo(ref info))
+            return null;
+        // Both are milliseconds since boot; dwTime is 32-bit and wraps every 49.7 days, as the low half of the tick count does.
+        var elapsed = unchecked((uint)Environment.TickCount64 - info.dwTime);
+        return (int)Math.Min(elapsed / 1000, int.MaxValue);
+    }
+
+    /// <summary>True when the signed-in user's session is locked (WTSSessionInfoEx). False when unlocked or unknown.</summary>
+    public static bool IsActiveSessionLocked()
+    {
+        var sessionId = FindActiveUserSessionId();
+        if (sessionId == NoSessionId)
+            return false;
+        if (!WTSQuerySessionInformationW(IntPtr.Zero, sessionId, (WTS_INFO_CLASS)WTSSessionInfoEx, out var buffer, out var bytes) || buffer == IntPtr.Zero)
+            return false;
+        try
+        {
+            // WTSINFOEXW: DWORD Level, then WTSINFOEX_LEVEL1_W { ULONG SessionId; WTS_CONNECTSTATE_CLASS SessionState; LONG SessionFlags; ... }.
+            if (bytes < 16 || Marshal.ReadInt32(buffer, 0) != 1)
+                return false;
+            return Marshal.ReadInt32(buffer, 12) == WTS_SESSIONSTATE_LOCK;
+        }
+        finally
+        {
+            WTSFreeMemory(buffer);
+        }
+    }
+
+    private const int WTSSessionInfoEx = 25;
+    private const int WTS_SESSIONSTATE_LOCK = 0;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
     private static uint FindActiveUserSessionId()
     {
         var consoleId = WTSGetActiveConsoleSessionId();

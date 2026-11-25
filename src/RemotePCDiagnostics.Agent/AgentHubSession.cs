@@ -23,6 +23,14 @@ public interface IAgentPlatform
     string GetCachedOrInstalledAppVersion();
     /// <summary>When Windows last started, so Admin can drop the hardware inventory it kept from before. Null when unknown.</summary>
     DateTimeOffset? GetBootTime() => null;
+    /// <summary>On AC or on battery now (a PC with no battery is on AC).</summary>
+    PowerReading GetPowerSource() => PowerReading.Unknown;
+    /// <summary>The PC's local time now.</summary>
+    DateTimeOffset GetLocalNow() => DateTimeOffset.Now;
+    /// <summary>True when the signed-in user's session is locked.</summary>
+    bool IsSessionLocked() => false;
+    /// <summary>Seconds since the signed-in user last used the keyboard or mouse, or null when it can't be read.</summary>
+    Task<int?> GetUserIdleSecondsAsync(CancellationToken ct) => Task.FromResult<int?>(null);
     Task<ConsentOutcome> RequestConsentAsync(string requester, int timeoutSeconds, CancellationToken ct);
     Task<(string? ExePath, string? Error)> ResolveHostExecutableAsync(
         Func<LaunchStage, string, int, Task> reportStageAsync,
@@ -118,6 +126,46 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
     /// Fast Startup on resumes the same kernel session and keeps it.
     /// </summary>
     public DateTimeOffset? GetBootTime() => BootTime.From(DateTimeOffset.UtcNow, Environment.TickCount64);
+
+    public PowerReading GetPowerSource() => AgentPower.Read();
+
+    public bool IsSessionLocked()
+    {
+        try { return Win32Session.IsActiveSessionLocked(); }
+        catch { return false; }
+    }
+
+    /// <summary>GetLastInputInfo only sees its own session, so the agent starts itself there as "idle" and reads the exit code.</summary>
+    public async Task<int?> GetUserIdleSecondsAsync(CancellationToken ct)
+    {
+        var agentExe = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(agentExe) || !File.Exists(agentExe))
+            return null;
+        var (proc, error) = Win32Session.StartInActiveUserSession(agentExe, LaunchRules.IdleProbeCommandLine(agentExe),
+            Path.GetDirectoryName(agentExe) ?? AppContext.BaseDirectory, preferElevatedToken: false, createNoWindow: true);
+        if (proc is null || error is not null)
+        {
+            Log("idle check: " + (error ?? "could not start"));
+            return null;
+        }
+        using (proc)
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            try
+            {
+                await proc.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+                return proc.ExitCode >= 0 ? proc.ExitCode : null;
+            }
+            catch (OperationCanceledException)
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { }
+                if (ct.IsCancellationRequested)
+                    throw;
+                return null;
+            }
+        }
+    }
 
     public async Task<ConsentOutcome> RequestConsentAsync(string requester, int timeoutSeconds, CancellationToken ct)
     {
@@ -687,6 +735,8 @@ public sealed class AgentHubWorker(
                 : Lifetime.Persistent,
             MetricsScheduleRevision = _options.Metrics?.ScheduleRevision ?? 0,
             AlertSettingsRevision = _options.Alerts?.SettingsRevision ?? 0,
+            UtcOffsetMinutes = UtcOffsetMinutes(platform.GetLocalNow()),
+            PowerSource = ToProto(platform.GetPowerSource()),
         };
         if (platform.GetBootTime() is { } booted)
             hello.BootTime = Google.Protobuf.WellKnownTypes.Timestamp.FromDateTimeOffset(booted);
@@ -874,6 +924,8 @@ public sealed class AgentHubWorker(
                     CachedAppVersion = platform.GetCachedOrInstalledAppVersion(),
                     MetricsScheduleRevision = _options.Metrics?.ScheduleRevision ?? 0,
                     AlertSettingsRevision = _options.Alerts?.SettingsRevision ?? 0,
+                    UtcOffsetMinutes = UtcOffsetMinutes(platform.GetLocalNow()),
+                    PowerSource = ToProto(platform.GetPowerSource()),
                 };
                 await writeAsync(new AgentMessage { Heartbeat = hb }, ct).ConfigureAwait(false);
                 AnnounceLink(true);
@@ -884,6 +936,16 @@ public sealed class AgentHubWorker(
             // Normal stream shutdown.
         }
     }
+
+    /// <summary>The PC's local time minus UTC, in whole minutes.</summary>
+    internal static int UtcOffsetMinutes(DateTimeOffset localNow) => (int)Math.Round(localNow.Offset.TotalMinutes);
+
+    internal static PowerSource ToProto(PowerReading power) => power switch
+    {
+        PowerReading.Ac => PowerSource.PowerAc,
+        PowerReading.Battery => PowerSource.PowerBattery,
+        _ => PowerSource.PowerUnknown,
+    };
 
     internal static (bool Running, string SessionId) ResolveSessionStatus(
         bool internalRunning,
@@ -1101,6 +1163,23 @@ public sealed class AgentHubWorker(
 
         try
         {
+            // A hidden launch for scheduled checks starts only when the PC is free: in the allowed hours, plugged in, nobody using it.
+            if (launch.Hidden && launch.Conditions is { } conditions)
+            {
+                var locked = platform.IsSessionLocked();
+                var idle = LaunchConditionRules.NeedsIdle(conditions.MinIdleMinutes, locked)
+                    ? await platform.GetUserIdleSecondsAsync(launchCt).ConfigureAwait(false)
+                    : null;
+                var notMet = LaunchConditionRules.Check(conditions.RequireAcPower, conditions.MinIdleMinutes, conditions.WindowStartMinute,
+                    conditions.WindowEndMinute, platform.GetLocalNow(), platform.GetPowerSource(), locked, idle);
+                if (notMet is not null)
+                {
+                    Log($"Launch {launch.RequestId} not started: {notMet}");
+                    await ReportProgressSafeAsync(writeAsync, launch.RequestId, sessionIdStr, LaunchStage.StageConditionsNotMet, notMet, 0, streamCts.Token).ConfigureAwait(false);
+                    return;
+                }
+            }
+
             if (ConsentPolicy.MustAsk(config.ConsentCeiling, launch.RequireConsent))
             {
                 await ReportProgressSafeAsync(
