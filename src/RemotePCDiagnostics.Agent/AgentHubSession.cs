@@ -687,6 +687,7 @@ public sealed class AgentHubWorker(
         await WriteMessageAsync(new AgentMessage { Hello = hello }, token).ConfigureAwait(false);
         Log($"Sent AgentHello (machine={hello.MachineName}, user='{hello.SignedInUser}', version={hello.AgentVersion}).");
         AnnounceLink(true);
+        TriggerHardwareSyncOnConnect(hello.MachineName, token);
 
         LaunchProgress? undelivered;
         lock (_stateGate)
@@ -1422,6 +1423,32 @@ public sealed class AgentHubWorker(
         }
         try { _options.LinkChanged?.Invoke(connected, group); }
         catch { /* The badge file must not take down the stream. */ }
+    }
+
+    private void TriggerHardwareSyncOnConnect(string machineName, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(config.Key)
+            || !config.Key.Trim().StartsWith(RemotePCDiagnostics.Core.Workflow.ShopRelayClient.ApiKeyPrefix, StringComparison.Ordinal)
+            || !RemotePCDiagnostics.Core.Workflow.ShopRelayClient.TryParseRelayUri(config.Server, out var relayUri)
+            || relayUri is null)
+            return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await RemotePCDiagnostics.Core.Benchmarks.HardwareSyncService.SyncIfChangedAsync(
+                    relayUri,
+                    config.Key,
+                    config.MachineId,
+                    machineName,
+                    AgentPaths.ProgramDataDir(),
+                    log: Log,
+                    ct: ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { Log($"Hardware sync skipped: {ex.Message}"); }
+        }, CancellationToken.None);
     }
 
     private void Log(string message) =>
