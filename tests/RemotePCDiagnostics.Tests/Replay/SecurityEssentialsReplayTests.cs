@@ -7,11 +7,6 @@ namespace RemotePCDiagnostics.Tests.Replay;
 /// <summary>Security essentials as the app runs it and as the Store edition without an Agent runs it, on a recorded PC.</summary>
 internal static class SecurityEssentialsReplay
 {
-    /// <summary>WMI (the Agent's), the registry and tpmtool (the app's).</summary>
-    public static SecurityEssentialsModule SecurityEssentials(this ReplayedPc pc) => new(new WmiSecurityEssentialsSource(pc.Wmi, pc.Registry, pc.Commands));
-    /// <summary>The Store edition without an Agent: the PowerShell probe and tpmtool.</summary>
-    public static SecurityEssentialsModule SecurityEssentialsOld(this ReplayedPc pc) => new(new PowerShellSecurityEssentialsSource(pc.Commands));
-
     public static bool HasSecurityEssentials(this ReplayedPc pc) => pc.HasWmi(WmiSecurityEssentialsSource.OsSql);
     public static bool HasSecurityEssentialsOld(this ReplayedPc pc) =>
         pc.Has(c => c.Kind == Core.Recording.RecordedCall.ProcessKind && c.Args?.LastOrDefault() == PowerShellSecurityEssentialsSource.ProbeScript);

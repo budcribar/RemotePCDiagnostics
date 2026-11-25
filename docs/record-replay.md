@@ -89,3 +89,8 @@ readers it uses:
   PowerShell, all as a standard user) and uses it whenever no Agent is connected.
 
 The recorder runs both, and the replay tests compare them on every recording, so the Store edition's readers stay checked against real PCs.
+
+## Fault injection on the real pages
+
+[fault-injection.md](fault-injection.md) runs the real pages on a recording (tools/RpcdReplayHost), breaks the answers one at a time while
+Playwright drives them, and checks every page copes.

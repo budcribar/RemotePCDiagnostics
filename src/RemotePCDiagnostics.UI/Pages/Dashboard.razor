@@ -30,7 +30,7 @@
 
     var enabledResults = enabledModules.Select(m => (Module: m, Result: Store.Get(m.Name))).ToList();
     var runningCount = enabledResults.Count(x => x.Result.Status == DiagnosticStatus.Running);
-    var completedCount = enabledResults.Count(x => x.Result.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error);
+    var completedCount = enabledResults.Count(x => x.Result.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error && !x.Result.Cancelled);
     var checking = Screen.RunningGroup == CheckGroup.Checks || runningCount > 0;
 
     var problems = enabledResults
@@ -38,6 +38,9 @@
                     && !x.Result.Cancelled && !CheckEnableRules.IsTurnedOff(x.Result))
         .OrderBy(x => x.Result.Status == DiagnosticStatus.Error ? 0 : 1)
         .ToList();
+    // Only a finished, good result counts as passed: a check stopped before it finished (or not run yet) didn't pass.
+    var passedCount = enabledResults.Count(x => x.Result.Status == DiagnosticStatus.Ok && !x.Result.Cancelled);
+    var stoppedCount = enabledResults.Count(x => x.Result.Cancelled);
     var errorCount = problems.Count(x => x.Result.Status == DiagnosticStatus.Error);
     var warningCount = problems.Count(x => x.Result.Status == DiagnosticStatus.Warning);
 
@@ -130,7 +133,7 @@
                             }
                             else
                             {
-                                <span>@(enabledModules.Count - problems.Count) of @enabledModules.Count enabled checks passed.</span>
+                                <span>@passedCount of @enabledModules.Count enabled checks passed.@(stoppedCount > 0 ? $" {stoppedCount} stopped before finishing." : "")</span>
                             }
                         </div>
                     </div>
@@ -153,6 +156,10 @@
                                 {
                                     <span>Checking… (@completedCount / @enabledModules.Count)</span>
                                 }
+                                else if (completedCount > 0 && stoppedCount > 0)
+                                {
+                                    <span>No problems found so far</span>
+                                }
                                 else if (completedCount > 0)
                                 {
                                     <span>System looks healthy</span>
@@ -164,7 +171,7 @@
                             </strong>
                             @if (!checking && completedCount > 0 && enabledModules.Count > 0)
                             {
-                                <span class="chip chip-ok" data-testid="dashboard-verdict-pill">@completedCount / @enabledModules.Count passed</span>
+                                <span class="chip chip-ok" data-testid="dashboard-verdict-pill">@passedCount / @enabledModules.Count passed</span>
                             }
                         </div>
                         <div class="meta dash-verdict-sub" data-testid="dashboard-last-checked">
@@ -175,6 +182,10 @@
                             else if (checking)
                             {
                                 <span>Cards update as each check finishes.</span>
+                            }
+                            else if (stoppedCount > 0)
+                            {
+                                <span>@passedCount of @enabledModules.Count enabled checks passed. @stoppedCount stopped before finishing.</span>
                             }
                             else if (completedCount > 0)
                             {
