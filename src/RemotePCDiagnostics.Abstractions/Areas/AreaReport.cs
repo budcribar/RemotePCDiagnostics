@@ -67,10 +67,55 @@ public enum RemediationKind
     CreatePersistentDevDrive,
     /// <summary>Installs an allowlisted .NET SDK side-by-side via winget (<c>Microsoft.DotNet.SDK.10</c> or <c>Microsoft.DotNet.SDK.11</c>).</summary>
     InstallDotNetSdk,
+
+    // 8. Sound (Core Audio in the signed-in user's session; IPolicyConfig for the default device, the endpoint switch, format and enhancements)
+    /// <summary>Unmutes an audio endpoint. Target = the endpoint id. Undo mutes it again.</summary>
+    UnmuteAudioEndpoint,
+    /// <summary>Raises a quiet endpoint (outputs to 50%, microphones to 80%). Target = the endpoint id. Undo puts the old level back.</summary>
+    RaiseAudioVolume,
+    /// <summary>A dialog fix (device picker). Target before the choice = "output" or "input"; after = the endpoint id, plus "|calls" when it
+    /// becomes the default for calls too. Undo makes the previous defaults the defaults again.</summary>
+    SetDefaultAudioEndpoint,
+    /// <summary>Turns a disabled endpoint back on (the Sound control panel's Enable). Target = the endpoint id. Undo disables it again.</summary>
+    EnableAudioEndpoint,
+    /// <summary>Puts the shared-mode format back to the driver's default. Target = the endpoint id. Undo puts the old format back.</summary>
+    ResetAudioFormat,
+    /// <summary>Turns audio enhancements off ("{id}|off") or on ("{id}|on"). Undo puts the switch back.</summary>
+    ToggleAudioEnhancements,
+    /// <summary>Unmutes one app in the Volume mixer. Target = "{endpointId}|{process name}". Undo mutes it again while it still runs.</summary>
+    UnmuteAudioSession,
+    /// <summary>A consent dialog: turns on the Windows privacy switches that block the microphone or camera. Target = "microphone" or
+    /// "webcam". The per-account switches change in the app; the device-wide one through the Agent, only when it's the one that's off.</summary>
+    AllowCapturePrivacy,
+    /// <summary>A dialog fix (device busy): closes the app holding an audio device. Target before the choice = the endpoint id; after =
+    /// "{endpointId}|{process name}". Runs the End task path (protected processes refused, the Agent for an elevated app). Not undoable.</summary>
+    CloseAudioHolder,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>
-public sealed record AreaAction(RemediationKind Kind, string ButtonText, string Target = "", string TargetLabel = "", string? CurrentSetting = null);
+public sealed record AreaAction(RemediationKind Kind, string ButtonText, string Target = "", string TargetLabel = "", string? CurrentSetting = null)
+{
+    /// <summary>
+    /// A fix that needs a choice (which device, which app): its confirmation lists these and Go waits until one is picked (or one is
+    /// <see cref="AreaChoice.Selected"/>). The picked choice's <see cref="AreaChoice.Id"/> becomes the fix's Target. Null = no choice.
+    /// </summary>
+    public IReadOnlyList<AreaChoice>? Choices { get; init; }
+    /// <summary>A checkbox under the choices ("Also use for calls"); ticked adds its <see cref="AreaChoiceOption.Suffix"/> to the Target.</summary>
+    public AreaChoiceOption? Option { get; init; }
+    /// <summary>A box the person must tick before Go is enabled (what they agree to). Null = no consent needed.</summary>
+    public string? Consent { get; init; }
+    /// <summary>What the dialog says when <see cref="Choices"/> is empty (nothing to pick).</summary>
+    public string? EmptyChoicesText { get; init; }
+
+    /// <summary>The Target once <paramref name="choice"/> is picked and the option is ticked or not.</summary>
+    public string TargetFor(AreaChoice choice, bool optionTicked) => choice.Id + (optionTicked && Option is { } o ? o.Suffix : "");
+}
+
+/// <summary>One row of a fix dialog's list. <see cref="DisabledReason"/> set = shown greyed out with the reason, not selectable.</summary>
+public sealed record AreaChoice(string Id, string Label, string? Detail = null, string? DisabledReason = null, bool Selected = false);
+
+/// <summary>The checkbox under a fix dialog's list. <see cref="Suffix"/> is added to the chosen Target when it's ticked.</summary>
+public sealed record AreaChoiceOption(string Label, string Suffix, bool DefaultOn = true);
 
 /// <summary>A button on an <see cref="AreaCard"/> that runs another check (a stress test, say) as the suggested next step. Unlike an
 /// <see cref="AreaAction"/> it changes nothing on the PC; it is run like Run just this.</summary>

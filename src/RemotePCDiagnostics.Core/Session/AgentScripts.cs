@@ -44,6 +44,8 @@ public static class AgentScripts
     public const string TaskWakeToRun = "task_wake_to_run";
     /// <summary>Args: allowlisted system dump path under <c>%SystemRoot%\Minidump</c>, <c>LiveKernelReports</c>, or <c>MEMORY.DMP</c>.</summary>
     public const string AnalyzeCrashDump = "analyze_crash_dump";
+    /// <summary>Args: "microphone" or "webcam", then "Allow", "Deny" or "" (delete). The device-wide (HKLM) ConsentStore switch only.</summary>
+    public const string CapturePrivacySet = "capture_privacy_set";
 
     public const string RebootTask = "reboot";
     public const string WorkflowTask = "workflow";
@@ -135,6 +137,11 @@ public static class AgentScripts
                 if (a.Count != 1 || !Areas.CrashDumpDebugger.IsAllowedSystemDumpPath(Arg(0)))
                     return Refuse("That dump path isn't in a Windows system dump folder.");
                 return Native(new AnalyzeCrashDumpAction(Arg(0)!.Trim()));
+
+            case CapturePrivacySet:
+                if (a.Count != 2 || !Audio.CapturePrivacy.IsCapability(Arg(0)) || !Audio.CapturePrivacy.IsValue(Arg(1)))
+                    return Refuse("That isn't a privacy switch this app changes.");
+                return Native(new SetCapturePrivacyAction(Arg(0)!, Arg(1) is { Length: > 0 } v ? v : null));
 
             default:
                 return Refuse($"Unknown script '{request.Name}'.");

@@ -176,8 +176,9 @@ public class SoundTests
         var row = RowOf(Card(Build([Speaker(), Mic()], Facts(mic: new CapturePrivacy.Switches(false, false, true, true))), "audio-input"), "Microphone privacy");
         Assert.Equal(AreaLevel.Warning, row.Level);
         Assert.Contains("Let desktop apps access your microphone", row.Values[2]);
-        Assert.Equal(RemediationKind.OpenSettings, row.Actions![0].Kind);
-        Assert.Equal("ms-settings:privacy-microphone", row.Actions[0].Target);
+        Assert.Equal(RemediationKind.AllowCapturePrivacy, row.Actions![0].Kind);
+        Assert.Equal(RemediationKind.OpenSettings, row.Actions[1].Kind);
+        Assert.Equal("ms-settings:privacy-microphone", row.Actions[1].Target);
     }
 
     [Fact]

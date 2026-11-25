@@ -12,7 +12,9 @@ public static class FixCatalog
     /// </summary>
     public static readonly IReadOnlySet<RemediationKind> SkippedRemediation = new HashSet<RemediationKind>
         { RemediationKind.ScheduleCleanRestart, RemediationKind.CancelScheduledRestart, RemediationKind.EndProcessGroup, RemediationKind.DisableFastStartup,
-          RemediationKind.AnalyzeComponentStore, RemediationKind.DeleteDuplicateFiles, RemediationKind.OpenSettings };
+          RemediationKind.AnalyzeComponentStore, RemediationKind.DeleteDuplicateFiles, RemediationKind.OpenSettings,
+          // Need a person: a device to pick, consent for the privacy switches, an app to close (the restart closes it anyway).
+          RemediationKind.SetDefaultAudioEndpoint, RemediationKind.AllowCapturePrivacy, RemediationKind.CloseAudioHolder };
 
     /// <summary>
     /// Offered on a check's own card but listed differently here: the repairs come from <see cref="RepairFixes"/> (with the scan's
@@ -24,7 +26,9 @@ public static class FixCatalog
     /// <summary>Single repair steps a technician picks on purpose: listed, but not ticked to start with.
     /// Stopping a device from waking the PC changes how the customer wakes it, so it is listed but left for the technician to tick.</summary>
     private static bool OptIn(RemediationKind k) => k is RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStoreFromImage
-        or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer or RemediationKind.InstallBiosUpdate;
+        or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer or RemediationKind.InstallBiosUpdate
+        // Audio enhancements change how everything sounds: listed for the technician to tick.
+        or RemediationKind.ToggleAudioEnhancements;
 
     /// <summary>Memory actions that persist across a restart and need nobody at the keyboard.</summary>
     public static readonly IReadOnlySet<MemoryActionType> UnattendedMemoryActions = new HashSet<MemoryActionType>
@@ -52,6 +56,7 @@ public static class FixCatalog
         [ModuleSlugs.BatteryPower] = "Performance & power", [ModuleSlugs.SleepWake] = "Performance & power", [ModuleSlugs.Network] = "Network", [ModuleSlugs.DriveHealth] = "Storage", [ModuleSlugs.Services] = "Services",
         [ModuleSlugs.SecurityEssentials] = "Security",
         [ModuleSlugs.DismScanHealth] = RepairArea, [ModuleSlugs.SfcVerifyOnly] = RepairArea,
+        [ModuleSlugs.Sound] = "Sound",
     };
 
     /// <summary>Order groups: quick settings first, cleanup next, network renew near the end, long downloads last.</summary>
@@ -59,6 +64,12 @@ public static class FixCatalog
     {
         RemediationKind.SetBalancedPowerPlan or RemediationKind.ResetMaxProcessorState or RemediationKind.DisableFastStartup or RemediationKind.DisableSystemProxy
             or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer => 10,
+        // Sound, in the order that makes a silent device play: turn it on, unmute, volume, format, enhancements.
+        RemediationKind.EnableAudioEndpoint => 24,
+        RemediationKind.UnmuteAudioEndpoint or RemediationKind.UnmuteAudioSession => 25,
+        RemediationKind.RaiseAudioVolume => 26,
+        RemediationKind.ResetAudioFormat => 27,
+        RemediationKind.ToggleAudioEnhancements => 28,
         RemediationKind.EnableDevice or RemediationKind.RestartDevice or RemediationKind.ScanHardwareChanges => 30,
         RemediationKind.CleanTempFiles or RemediationKind.DeleteDuplicateFiles or RemediationKind.OptimizeSsd or RemediationKind.EnableStorageSense => 40,
         RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns or RemediationKind.FlushDnsAndRenewIp => 60,
@@ -188,6 +199,11 @@ public static class FixCatalog
                 RemediationKind.ResetMaxProcessorState => HasKind(Changes.ChangeKind.PowerSetting),
                 RemediationKind.MovePackageCacheToDevDrive => Has(Changes.ChangeKind.UserEnvironmentVariable, DevDrivePackageCaches.TargetEnvVar(a.Target)),
                 RemediationKind.CreatePersistentDevDrive => HasKind(Changes.ChangeKind.PersistentDevDrive),
+                RemediationKind.UnmuteAudioEndpoint => Has(Changes.ChangeKind.AudioEndpoint, $"{a.Target}|{Audio.AudioTargets.Mute}"),
+                RemediationKind.RaiseAudioVolume => Has(Changes.ChangeKind.AudioEndpoint, $"{a.Target}|{Audio.AudioTargets.Volume}"),
+                RemediationKind.EnableAudioEndpoint => Has(Changes.ChangeKind.AudioEndpoint, $"{a.Target}|{Audio.AudioTargets.State}"),
+                RemediationKind.ResetAudioFormat => Has(Changes.ChangeKind.AudioEndpoint, $"{a.Target}|{Audio.AudioTargets.Format}"),
+                RemediationKind.UnmuteAudioSession => Has(Changes.ChangeKind.AudioSession, a.Target),
                 _ => false,
             };
         }

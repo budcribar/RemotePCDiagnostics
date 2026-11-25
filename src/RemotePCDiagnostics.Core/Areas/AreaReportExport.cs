@@ -69,6 +69,11 @@ public static class AreaReportExport
                 Slow = FixTraits.Slow(a.Kind) ? true : null,
                 MayNeedRestart = FixTraits.MayNeedRestart(a.Kind) ? true : null,
                 RestartsPc = a.Kind == RemediationKind.ScheduleCleanRestart ? true : null,
+                Choices = a.Choices?.Select(c => new ExportedChoice(Text(c.Id, MaxValueLength) ?? "", Text(c.Label, MaxValueLength) ?? "",
+                    Text(c.Detail, MaxValueLength), Text(c.DisabledReason, MaxValueLength)) { Selected = c.Selected ? true : null }).ToList(),
+                Option = a.Option is { } o ? new ExportedOption(Text(o.Label, MaxValueLength) ?? "", o.Suffix, o.DefaultOn) : null,
+                Consent = Text(a.Consent, MaxValueLength),
+                EmptyChoicesText = a.Choices is { Count: 0 } ? Text(a.EmptyChoicesText, MaxValueLength) : null,
             }).ToList()
             : null;
 
@@ -216,7 +221,24 @@ public static class AreaReportExport
         public bool? MayNeedRestart { get; init; }
         /// <summary>True for the fix that restarts the PC itself.</summary>
         public bool? RestartsPc { get; init; }
+        /// <summary>
+        /// The dialog's list to pick from (the Sound check's device picker and device busy); the picked id becomes the fix's target.
+        /// Empty: nothing could be found to pick (see <see cref="EmptyChoicesText"/>). Null: a plain Go or Cancel dialog.
+        /// </summary>
+        public IReadOnlyList<ExportedChoice>? Choices { get; init; }
+        /// <summary>The dialog's option box ("Also use for calls"); ticked, it adds Suffix to the chosen target.</summary>
+        public ExportedOption? Option { get; init; }
+        /// <summary>The consent box's text: the person at the PC must agree before Go (microphone or camera access).</summary>
+        public string? Consent { get; init; }
+        public string? EmptyChoicesText { get; init; }
     }
+
+    public sealed record ExportedChoice(string Id, string Label, string? Detail, string? DisabledReason)
+    {
+        public bool? Selected { get; init; }
+    }
+
+    public sealed record ExportedOption(string Label, string Suffix, bool DefaultOn);
 
     public sealed record ExportedService(string Name, string? DisplayName, string? Status, string? StartType,
         bool CanStart, bool CanStop, bool CanRestart, bool Protected);

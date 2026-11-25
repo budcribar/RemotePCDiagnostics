@@ -52,12 +52,16 @@ public sealed record AudioEndpointInfo(
     };
 }
 
-/// <summary>An app playing sound on the default output (Volume mixer).</summary>
-public sealed record AudioSessionInfo(string ProcessName, int ProcessId, bool Muted, double Volume, bool Active);
+/// <summary>An app with an audio session on a default device (the Volume mixer).</summary>
+/// <param name="EndpointId">The endpoint the app plays on (or records from); empty in recordings made before it was kept.</param>
+/// <param name="WindowTitle">The app's main window title, when it has one (for the device busy dialog).</param>
+public sealed record AudioSessionInfo(string ProcessName, int ProcessId, bool Muted, double Volume, bool Active, string EndpointId = "", string? WindowTitle = null);
 
 /// <summary>Everything the Sound check reads from Core Audio, in one go.</summary>
 /// <param name="Error">Why Core Audio couldn't be read; null when it could.</param>
-public sealed record AudioState(IReadOnlyList<AudioEndpointInfo> Endpoints, IReadOnlyList<AudioSessionInfo> Sessions, string? Error = null)
+/// <param name="CanChangeSettings">Windows' <c>IPolicyConfig</c> answered, so the default device, the endpoint switch, the format and the
+/// enhancements switch can be changed; null when unknown (the Sound check then offers those fixes, and they fail closed).</param>
+public sealed record AudioState(IReadOnlyList<AudioEndpointInfo> Endpoints, IReadOnlyList<AudioSessionInfo> Sessions, string? Error = null, bool? CanChangeSettings = null)
 {
     public bool Available => Error is null;
 
@@ -117,7 +121,36 @@ public sealed class HostAudioStateSource(Plugins.IHostQueries host, ILogger? log
 public static class CapturePrivacy
 {
     public const string Microphone = "microphone", Webcam = "webcam";
+    public const string Allow = "Allow", Deny = "Deny";
     public static string Key(string capability) => @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\" + capability;
+    public static string KeyFor(string capability, bool nonPackaged) => Key(capability) + (nonPackaged ? @"\NonPackaged" : "");
+
+    /// <summary>The only switches the fix changes.</summary>
+    public static bool IsCapability(string? c) => c is Microphone or Webcam;
+    /// <summary>"Allow", "Deny" or absent (null or empty: delete the value).</summary>
+    public static bool IsValue(string? v) => v is null or "" or Allow or Deny;
+    public static string Thing(string capability) => capability == Webcam ? "Camera" : "Microphone";
+
+    /// <summary>The switch's name as Windows Settings shows it.</summary>
+    public static string SwitchName(RegistryRoot root, bool nonPackaged, string thing) =>
+        root == RegistryRoot.LocalMachine ? $"{thing} access for this device"
+        : nonPackaged ? $"Let desktop apps access your {thing.ToLowerInvariant()}" : $"Let apps access your {thing.ToLowerInvariant()}";
+
+    /// <summary>Journal target (<c>ChangeKind.CapturePrivacy</c>): "HKLM|microphone", "HKCU|microphone", "HKCU|microphone|NonPackaged".</summary>
+    public static string JournalTarget(RegistryRoot root, string capability, bool nonPackaged) =>
+        (root == RegistryRoot.LocalMachine ? "HKLM|" : "HKCU|") + capability + (nonPackaged ? "|NonPackaged" : "");
+
+    public static bool TryParseJournalTarget(string? target, out RegistryRoot root, out string capability, out bool nonPackaged)
+    {
+        root = RegistryRoot.CurrentUser; capability = ""; nonPackaged = false;
+        var parts = (target ?? "").Split('|');
+        if (parts.Length is < 2 or > 3 || !IsCapability(parts[1])) return false;
+        if (parts[0] == "HKLM" && parts.Length == 2) root = RegistryRoot.LocalMachine;
+        else if (parts[0] != "HKCU" || parts.Length == 3 && parts[2] != "NonPackaged") return false;
+        capability = parts[1];
+        nonPackaged = parts.Length == 3;
+        return true;
+    }
 
     /// <summary>Which switches are off, in the order Settings shows them.</summary>
     public sealed record Switches(bool DeviceOff, bool AppsOff, bool DesktopAppsOff, bool Read)

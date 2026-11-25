@@ -8,7 +8,7 @@ namespace RemotePCDiagnostics.Host;
 /// <summary>
 /// <see cref="IAudioStateSource"/> over Core Audio (NAudio): every endpoint in every state, the Windows defaults for each role, mute,
 /// volume, the shared-mode and driver default formats, the enhancements switch, a shared-mode open of each default endpoint (no Start, so
-/// nothing plays or records) and the apps playing on the default output. Only reads; runs in the signed-in user's session, no admin.
+/// nothing plays or records) and the apps with a session on each default device. Only reads; runs in the signed-in user's session, no admin.
 /// </summary>
 public sealed class WasapiAudioStateSource(ILogger? log = null, TimeSpan? probeTimeout = null) : IAudioStateSource
 {
@@ -62,8 +62,8 @@ public sealed class WasapiAudioStateSource(ILogger? log = null, TimeSpan? probeT
                     }
                 }
             }
-            var sessions = ReadSessions(en);
-            return new AudioState(endpoints, sessions);
+            var sessions = ReadSessions(en, endpoints);
+            return new AudioState(endpoints, sessions, CanChangeSettings: PolicyConfig.IsAvailable());
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -150,36 +150,51 @@ public sealed class WasapiAudioStateSource(ILogger? log = null, TimeSpan? probeT
         return (AudioProbeOutcome.TimedOut, null);
     }
 
-    private List<AudioSessionInfo> ReadSessions(MMDeviceEnumerator en)
+    /// <summary>The apps with a session on each active default device (the Volume mixer per device), for the muted-app and device-busy rows.</summary>
+    private List<AudioSessionInfo> ReadSessions(MMDeviceEnumerator en, IReadOnlyList<AudioEndpointInfo> endpoints)
     {
         var list = new List<AudioSessionInfo>();
-        try
+        foreach (var e in endpoints.Where(e => e.IsActive && e.DefaultFor.Count > 0))
         {
-            if (!en.TryGetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia, out var dev)) return list;
-            using (dev)
+            try
             {
-                var manager = dev.AudioSessionManager;
-                manager.RefreshSessions();
-                var sessions = manager.Sessions;
-                for (var i = 0; i < sessions.Count; i++)
-                {
-                    try
-                    {
-                        using var s = sessions[i];
-                        if (s.IsSystemSoundsSession) continue;
-                        var pid = (int)s.GetProcessID;
-                        if (pid == 0) continue;
-                        string process;
-                        try { using var p = Process.GetProcessById(pid); process = p.ProcessName; }
-                        catch { continue; } // it exited
-                        list.Add(new AudioSessionInfo(process, pid, s.SimpleAudioVolume.Mute, Math.Round(s.SimpleAudioVolume.Volume, 3),
-                            s.State == NAudio.CoreAudioApi.Interfaces.AudioSessionState.AudioSessionStateActive));
-                    }
-                    catch (Exception ex) { Warn("session: " + ex.Message); }
-                }
+                using var dev = en.GetDevice(e.Id);
+                list.AddRange(SessionsOf(dev, e.Id, Warn));
             }
+            catch (Exception ex) { Warn($"sessions of '{e.Name}': {ex.Message}"); }
         }
-        catch (Exception ex) { Warn("sessions: " + ex.Message); }
+        return list;
+    }
+
+    /// <summary>The app sessions on one endpoint (system sounds and exited processes left out).</summary>
+    internal static List<AudioSessionInfo> SessionsOf(MMDevice dev, string endpointId, Action<string> warn)
+    {
+        var list = new List<AudioSessionInfo>();
+        var manager = dev.AudioSessionManager;
+        manager.RefreshSessions();
+        var sessions = manager.Sessions;
+        for (var i = 0; i < sessions.Count; i++)
+        {
+            try
+            {
+                using var s = sessions[i];
+                if (s.IsSystemSoundsSession) continue;
+                var pid = (int)s.GetProcessID;
+                if (pid == 0) continue;
+                string process;
+                string? title;
+                try
+                {
+                    using var p = Process.GetProcessById(pid);
+                    process = p.ProcessName;
+                    title = p.MainWindowTitle is { Length: > 0 } t ? t : null;
+                }
+                catch { continue; } // it exited
+                list.Add(new AudioSessionInfo(process, pid, s.SimpleAudioVolume.Mute, Math.Round(s.SimpleAudioVolume.Volume, 3),
+                    s.State == NAudio.CoreAudioApi.Interfaces.AudioSessionState.AudioSessionStateActive, endpointId, title));
+            }
+            catch (Exception ex) { warn("session: " + ex.Message); }
+        }
         return list;
     }
 

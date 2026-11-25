@@ -45,6 +45,15 @@ public static class FixKeys
         [RemediationKind.MovePackageCacheToDevDrive] = "movepackagecachetodevdrive",
         [RemediationKind.CreatePersistentDevDrive] = "createpersistentdevdrive",
         [RemediationKind.InstallDotNetSdk] = "installdotnetsdk",
+        [RemediationKind.UnmuteAudioEndpoint] = "unmuteaudioendpoint",
+        [RemediationKind.RaiseAudioVolume] = "raiseaudiovolume",
+        [RemediationKind.SetDefaultAudioEndpoint] = "setdefaultaudioendpoint",
+        [RemediationKind.EnableAudioEndpoint] = "enableaudioendpoint",
+        [RemediationKind.ResetAudioFormat] = "resetaudioformat",
+        [RemediationKind.ToggleAudioEnhancements] = "toggleaudioenhancements",
+        [RemediationKind.UnmuteAudioSession] = "unmuteaudiosession",
+        [RemediationKind.AllowCapturePrivacy] = "allowcaptureprivacy",
+        [RemediationKind.CloseAudioHolder] = "closeaudioholder",
     };
 
     public static readonly IReadOnlyDictionary<MemoryActionType, string> Memory = new Dictionary<MemoryActionType, string>

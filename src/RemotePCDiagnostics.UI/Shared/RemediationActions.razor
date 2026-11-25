@@ -10,7 +10,7 @@
 }
 @if (Actions is not null)
 {
-    <AgentData TestId="fix-data" Json="@AgentExports.FixState(running, Actions.LastRun)" />
+    <AgentData TestId="fix-data" Json="@AgentExports.FixState(running, Actions.LastRun, running is null ? AgentExports.BuildFixDialog(_plan, _choiceId, _option, _consent) : null)" />
 }
 @if (_plan is not null && running is null)
 {
@@ -18,14 +18,54 @@
     <div class="svc-modal" role="dialog" aria-modal="true" aria-label="@_plan.Title" tabindex="-1"
          @onkeydown='e => { if (e.Key == "Escape") CloseDialog(); }' data-testid="remediation-confirm"
          data-action-kind="@_plan.Action.Kind" data-action-target="@_plan.Action.Target" data-allowed="@(_plan.Allowed ? "true" : "false")"
+         data-chosen-target="@ChosenTarget" data-can-confirm="@(CanConfirm ? "true" : "false")"
          data-state="confirm">
         <strong>@_plan.Title</strong>
         @if (_plan.WhatItIs.Length > 0) { <p>@_plan.WhatItIs</p> }
         @if (_plan.WhatWillHappen.Length > 0) { <p>@_plan.WhatWillHappen</p> }
+        @if (_plan.Action.Choices is { } choices)
+        {
+            @if (choices.Count == 0)
+            {
+                <p data-testid="remediation-choices-empty">@(_plan.Action.EmptyChoicesText ?? "There's nothing to pick.")</p>
+            }
+            else
+            {
+                <div class="fix-choices" role="radiogroup" aria-label="@_plan.Title" data-testid="remediation-choices">
+                    @foreach (var c in choices)
+                    {
+                        var choice = c;
+                        var disabled = choice.DisabledReason is not null;
+                        var selected = _choiceId == choice.Id;
+                        <label class="fix-choice @(disabled ? "is-disabled" : "") @(selected ? "is-selected" : "")" data-testid="remediation-choice" data-action="fix-choice"
+                               data-choice-id="@choice.Id" data-selected="@(selected ? "true" : "false")" data-disabled="@(disabled ? "true" : "false")">
+                            <input type="radio" name="fix-choice" value="@choice.Id" disabled="@disabled" checked="@selected" @onchange="() => Pick(choice)" />
+                            <span class="fix-choice-text">
+                                <span class="fix-choice-label">@choice.Label</span>
+                                @if (choice.Detail is { Length: > 0 } d) { <span class="fix-choice-detail">@d</span> }
+                                @if (disabled) { <span class="fix-choice-detail svc-warn">@choice.DisabledReason</span> }
+                            </span>
+                        </label>
+                    }
+                </div>
+                @if (_plan.Action.Option is { } opt)
+                {
+                    <label class="fix-option" data-testid="remediation-option" data-action="fix-option" data-checked="@(_option ? "true" : "false")">
+                        <input type="checkbox" checked="@_option" @onchange="e => _option = e.Value is true" /> @opt.Label
+                    </label>
+                }
+            }
+        }
+        @if (_plan.Action.Consent is { } consent)
+        {
+            <label class="fix-option fix-consent" data-testid="remediation-consent" data-action="fix-consent" data-checked="@(_consent ? "true" : "false")">
+                <input type="checkbox" checked="@_consent" @onchange="e => _consent = e.Value is true" /> @consent
+            </label>
+        }
         @if (_plan.Warning is { } w) { <p class="svc-warn" data-testid="remediation-warning">@w</p> }
         <div class="buttons">
             <button data-testid="remediation-cancel" @onclick="CloseDialog">Cancel</button>
-            @if (_plan.Allowed) { <button data-testid="remediation-confirm-go" @onclick="Run">@_plan.Action.ButtonText</button> }
+            @if (_plan.Allowed && _plan.Action.Choices is not { Count: 0 }) { <button data-testid="remediation-confirm-go" disabled="@(!CanConfirm)" @onclick="Run">@_plan.Action.ButtonText</button> }
         </div>
     </div>
 }
@@ -79,6 +119,16 @@
     public bool IsBlocked => _blocked;
 
     private RemediationPlan? _plan;
+    // The dialog's choice, option box and consent box (device picker, privacy, device busy).
+    private string? _choiceId;
+    private bool _option;
+    private bool _consent;
+
+    private AreaChoice? Chosen => _plan?.Action.Choices?.FirstOrDefault(c => c.Id == _choiceId && c.DisabledReason is null);
+    private string? ChosenTarget => _plan is null ? null : _plan.Action.Choices is null ? _plan.Action.Target : Chosen is { } c ? _plan.Action.TargetFor(c, _option) : null;
+    private bool CanConfirm => _plan is { Allowed: true } p && (p.Action.Choices is null || Chosen is not null) && (p.Action.Consent is null || _consent);
+
+    private void Pick(AreaChoice c) { if (c.DisabledReason is null) _choiceId = c.Id; }
     private string? _pendingCardId;
     private bool _blocked;
     private RemediationService? _subscribed;
@@ -114,17 +164,25 @@
         else
         {
             _plan = Actions.Plan(action);
+            _choiceId = action.Choices?.FirstOrDefault(c => c.Selected && c.DisabledReason is null)?.Id;
+            _option = action.Option?.DefaultOn ?? false;
+            _consent = false;
         }
         StateHasChanged();
         if (OnStateChanged.HasDelegate) _ = OnStateChanged.InvokeAsync();
     }
 
-    private void CloseDialog() { _plan = null; _pendingCardId = null; }
+    private void CloseDialog() { _plan = null; _pendingCardId = null; _choiceId = null; _consent = false; }
 
     private void Run()
     {
-        if (Actions is null || _plan is null) return;
+        if (Actions is null || _plan is null || !CanConfirm) return;
         var act = _plan.Action;
+        // The picked choice becomes the fix's Target (and its name the label the result and History show).
+        if (act.Choices is not null && Chosen is { } chosen)
+            act = act with { Target = act.TargetFor(chosen, _option), TargetLabel = chosen.Label, Choices = null, Option = null };
+        _choiceId = null;
+        _consent = false;
         ActiveCardId = _pendingCardId;
         _plan = null;
         _pendingCardId = null;

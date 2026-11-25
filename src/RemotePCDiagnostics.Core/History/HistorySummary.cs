@@ -423,6 +423,10 @@ public static class HistorySummary
         RemediationKind.MovePackageCacheToDevDrive => "Dev Drive package cache",
         RemediationKind.CreatePersistentDevDrive => "Persistent Dev Drive",
         RemediationKind.InstallDotNetSdk => ".NET SDK",
+        RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint or RemediationKind.EnableAudioEndpoint
+            or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements or RemediationKind.UnmuteAudioSession => "Sound",
+        RemediationKind.AllowCapturePrivacy => "Privacy",
+        RemediationKind.CloseAudioHolder => "Sound / app closed",
         _ => "Automated fix",
     };
 

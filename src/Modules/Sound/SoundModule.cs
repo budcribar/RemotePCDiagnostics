@@ -20,7 +20,8 @@ public sealed record SoundFacts(
 /// <summary>
 /// Sound: the checks HP's Audio Check runs for the speaker and the microphone (service, disabled, muted, low volume, default device,
 /// unplugged, device problem, enhancements, format, generic driver), plus mic privacy, a device held in exclusive mode, an app muted in the
-/// Volume mixer, a Bluetooth headset in call mode, sound to a monitor and mono audio. Read-only; the fixes come in later batches.
+/// Volume mixer, a Bluetooth headset in call mode, sound to a monitor and mono audio. The fixes run in the app (Core Audio and IPolicyConfig
+/// in the user's session); the ones that need a choice open a dialog: the device picker, microphone access (with consent) and device busy.
 /// Core Audio is read by the app in the user's session (<see cref="IAudioStateSource"/>); services, devices and drivers come from WMI
 /// (through the Agent); privacy and mono audio from the registry.
 /// </summary>
@@ -162,6 +163,10 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
         var def = active.FirstOrDefault(e => e.DefaultFor.Contains(AudioEndpointInfo.Multimedia)) ?? active.FirstOrDefault(e => e.IsDefault);
         var rows = new List<AreaRow>();
 
+        var policy = state.CanChangeSettings != false; // unknown: offered, and the fix fails closed
+        AreaAction picker = Picker(state, flow);
+        IReadOnlyList<AreaAction>? Pick() => policy && active.Count > 0 ? [picker] : null;
+
         // Default device
         if (active.Count == 0)
         {
@@ -170,7 +175,7 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
                 output && facts.HasBattery == true ? "A laptop has built-in speakers: they may be disabled or their driver may be missing." : ""));
         }
         else if (def is null)
-            rows.Add(Row(AreaLevel.Warning, "Default device", "No default device", $"Windows has no default {thing}, so apps may have nowhere to send sound."));
+            rows.Add(Row(AreaLevel.Warning, "Default device", "No default device", $"Windows has no default {thing}, so apps may have nowhere to send sound.", "default", Pick()));
         else
         {
             var calls = active.FirstOrDefault(e => e.IsDefaultForCalls);
@@ -180,24 +185,29 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
 
         // Disabled or unplugged
         var off = mine.Where(e => e.State is AudioEndpointState.Disabled or AudioEndpointState.Unplugged).ToList();
+        IReadOnlyList<AreaAction>? enable = policy && off.Any(e => e.State == AudioEndpointState.Disabled)
+            ? off.Where(e => e.State == AudioEndpointState.Disabled).Select(e => new AreaAction(RemediationKind.EnableAudioEndpoint, $"Turn on {e.Name}", e.Id, e.Name)).ToList()
+            : null;
         if (active.Count == 0 && off.Count > 0)
             rows.Add(Row(AreaLevel.Warning, "Disabled or unplugged", string.Join(", ", off.Select(e => $"{e.Name}: {e.FriendlyState.ToLowerInvariant()}")),
-                off.Any(e => e.State == AudioEndpointState.Disabled) ? "Turn the device back on in Sound settings." : "Plug the device in, or check the jack."));
+                off.Any(e => e.State == AudioEndpointState.Disabled) ? "Turn the device back on." : "Plug the device in, or check the jack.", "off", enable));
         else if (off.Count > 0)
             rows.Add(Row(AreaLevel.Neutral, "Disabled or unplugged", AreaModuleBase.Plural(off.Count, "other device"),
-                string.Join(", ", off.Select(e => $"{e.Name} ({e.FriendlyState.ToLowerInvariant()})"))));
+                string.Join(", ", off.Select(e => $"{e.Name} ({e.FriendlyState.ToLowerInvariant()})")), "off", enable));
         else rows.Add(Row(AreaLevel.Ok, "Disabled or unplugged", NoIssues));
 
         // Muted and volume (the default device)
         if (def is not null)
         {
-            if (def.Muted == true) rows.Add(Row(AreaLevel.Warning, "Muted", $"{def.Name} is muted", ""));
+            if (def.Muted == true) rows.Add(Row(AreaLevel.Warning, "Muted", $"{def.Name} is muted", "", "mute",
+                [new AreaAction(RemediationKind.UnmuteAudioEndpoint, "Unmute", def.Id, def.Name)]));
             else if (def.Muted == false) rows.Add(Row(AreaLevel.Ok, "Muted", NoIssues));
             var low = output ? LowOutputVolume : LowInputVolume;
             if (def.Volume is { } v)
                 rows.Add(v < low
                     ? Row(AreaLevel.Warning, output ? "Low volume" : "Low microphone level", $"{Percent(v)}",
-                        output ? "Very quiet or silent at this volume." : "Others may not hear you at this level.")
+                        output ? "Very quiet or silent at this volume." : "Others may not hear you at this level.", "volume",
+                        [new AreaAction(RemediationKind.RaiseAudioVolume, output ? "Raise volume to 50%" : "Raise level to 80%", def.Id, def.Name)])
                     : Row(AreaLevel.Ok, output ? "Low volume" : "Low microphone level", NoIssues, Percent(v)));
         }
 
@@ -207,7 +217,7 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
             {
                 AudioProbeOutcome.Ok => Row(AreaLevel.Ok, "Device responds", NoIssues),
                 AudioProbeOutcome.DeviceInUse => Row(AreaLevel.Warning, "Device responds", "Another app has exclusive control of this device",
-                    "Close music, recording or game apps that may have taken it over."),
+                    "Close music, recording or game apps that may have taken it over.", "busy", [Busy(state, def)]),
                 AudioProbeOutcome.TimedOut or AudioProbeOutcome.ServiceNotRunning => Row(AreaLevel.Warning, "Device responds", "Windows Audio isn't answering",
                     "See Windows Audio services below."),
                 _ => Row(AreaLevel.Warning, "Device responds", "Windows couldn't open this device", "The driver may have a problem: restart the device or update its driver."),
@@ -220,10 +230,20 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
             var probeFailed = def.Probe is AudioProbeOutcome.Failed or AudioProbeOutcome.EndpointCreateFailed;
             rows.Add(!changed ? Row(AreaLevel.Ok, "Sound format", NoIssues, fmt)
                 : Row(probeFailed ? AreaLevel.Warning : AreaLevel.Neutral, "Sound format", "Changed from the driver's default",
-                    $"{fmt} (default {def.OemFormat})"));
+                    $"{fmt} (default {def.OemFormat})", "format",
+                    policy ? [new AreaAction(RemediationKind.ResetAudioFormat, "Reset to the default format", def.Id, def.Name)] : null));
         }
         if (def?.EnhancementsDisabled is { } fxOff)
-            rows.Add(Row(AreaLevel.Neutral, "Audio enhancements", fxOff ? "Off" : "On"));
+        {
+            // Turning them off is the usual fix when a device won't open; turning them back on is offered too (undoing a sound maker's advice).
+            var probeFailed = def.Probe is AudioProbeOutcome.Failed or AudioProbeOutcome.EndpointCreateFailed;
+            IReadOnlyList<AreaAction>? fx = !policy ? null
+                : fxOff ? [new AreaAction(RemediationKind.ToggleAudioEnhancements, "Turn enhancements on", $"{def.Id}|{AudioTargets.On}", def.Name)]
+                : probeFailed ? [new AreaAction(RemediationKind.ToggleAudioEnhancements, "Turn enhancements off", $"{def.Id}|{AudioTargets.Off}", def.Name)]
+                : null;
+            rows.Add(Row(!fxOff && probeFailed ? AreaLevel.Warning : AreaLevel.Neutral, "Audio enhancements", fxOff ? "Off" : "On",
+                !fxOff && probeFailed ? "Sound makers' enhancements can stop a device from opening: try turning them off." : "", "sysfx", fx));
+        }
 
         // Device Manager problems on sound hardware
         var bad = (facts.Problems ?? []).Where(p => IsSoundDevice(p, flow)).ToList();
@@ -250,16 +270,21 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
 
         if (output)
         {
-            var muted = state.Sessions.Where(s => s.Muted).Select(s => s.ProcessName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            // Sessions on an output (recordings made before sessions carried their device only have the default output's).
+            var outputs = state.Sessions.Where(x => x.EndpointId.Length == 0 || mine.Any(e => e.Id == x.EndpointId)).ToList();
+            var muted = outputs.Where(x => x.Muted).GroupBy(x => x.ProcessName, StringComparer.OrdinalIgnoreCase).Select(g => g.First()).ToList();
             rows.Add(muted.Count > 0
-                ? Row(AreaLevel.Neutral, "App muted in Volume mixer", string.Join(", ", muted), "These apps won't make sound until they're unmuted in the Volume mixer.")
+                ? Row(AreaLevel.Neutral, "App muted in Volume mixer", string.Join(", ", muted.Select(x => x.ProcessName)),
+                    "These apps won't make sound until they're unmuted in the Volume mixer.", "apps-muted",
+                    muted.Where(x => x.EndpointId.Length > 0 && Core.Session.AgentScripts.IsProcessName(x.ProcessName))
+                        .Select(x => new AreaAction(RemediationKind.UnmuteAudioSession, $"Unmute {x.ProcessName}", $"{x.EndpointId}|{x.ProcessName}", x.ProcessName)).ToList() is { Count: > 0 } un ? un : null)
                 : Row(AreaLevel.Ok, "App muted in Volume mixer", NoIssues));
             if (def is not null && def.IsBluetoothHandsFree)
                 rows.Add(Row(AreaLevel.Neutral, "Bluetooth call mode", "Sound is going to the headset's call mode",
-                    "Call mode is mono and sounds worse. Pick the headset's Stereo output for music and video."));
+                    "Call mode is mono and sounds worse. Pick the headset's Stereo output for music and video.", "bluetooth-call", Pick()));
             if (def is not null && def.IsDisplayAudio && active.Any(e => !e.IsDisplayAudio))
                 rows.Add(Row(AreaLevel.Neutral, "Sound goes to a monitor", def.Name,
-                    "Sound only plays if the monitor or TV has speakers. Pick another output if you hear nothing."));
+                    "Sound only plays if the monitor or TV has speakers. Pick another output if you hear nothing.", "display-audio", Pick()));
             if (facts.MonoAudio == true)
                 rows.Add(Row(AreaLevel.Neutral, "Mono audio", "On", "Left and right are mixed together (accessibility setting).", "mono",
                     [new AreaAction(RemediationKind.OpenSettings, "Open Audio accessibility", "ms-settings:easeofaccess-audio", "Settings (Audio)")]));
@@ -269,7 +294,8 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
             rows.Add(priv.Blocked
                 ? Row(AreaLevel.Warning, "Microphone privacy", "Microphone access is turned off",
                     string.Join(", ", CapturePrivacy.OffNames(priv, "Microphone")) + " is off in Windows privacy settings.", "privacy",
-                    [new AreaAction(RemediationKind.OpenSettings, "Open Microphone privacy", "ms-settings:privacy-microphone", "Settings (Microphone)")])
+                    [PrivacyAction(CapturePrivacy.Microphone, priv),
+                     new AreaAction(RemediationKind.OpenSettings, "Open Microphone privacy", "ms-settings:privacy-microphone", "Settings (Microphone)")])
                 : Row(AreaLevel.Ok, "Microphone privacy", NoIssues));
         }
 
@@ -281,8 +307,82 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
         var warnings = rows.Count(r => r.Level >= AreaLevel.Warning);
         var headline = warnings == 0 ? NoIssues : AreaModuleBase.Plural(warnings, "problem");
         var meta = def is not null ? def.Name : active.Count == 0 ? $"No {thing} found" : "No default device";
-        var card = new AreaCard(id, title, level == AreaLevel.Neutral ? AreaLevel.Ok : level, headline, meta, Columns, rows, PreserveRowOrder: true);
+        var card = new AreaCard(id, title, level == AreaLevel.Neutral ? AreaLevel.Ok : level, headline, meta, Columns, rows, PreserveRowOrder: true,
+            Actions: policy && active.Count > 1 ? [picker] : null);
         return generic.Count > 0 ? card with { RunCheck = new AreaCheckLink(ModuleSlugs.DeviceDrivers, "Check Device Manager & drivers") } : card;
+    }
+
+    // ---------------------------------------------------------------- the fix dialogs
+
+    /// <summary>
+    /// The device picker: every output (or microphone) Windows knows, the connected ones first, a Bluetooth headset's Stereo output above
+    /// its Hands-free one; unplugged and turned-off devices are listed greyed out with the reason. "Also use for calls" is ticked to start.
+    /// Nothing is picked to start with, so Go waits for a choice.
+    /// </summary>
+    public static AreaAction Picker(AudioState state, AudioFlow flow)
+    {
+        var output = flow == AudioFlow.Output;
+        var list = state.Endpoints.Where(e => e.Flow == flow && e.State != AudioEndpointState.NotPresent)
+            .OrderBy(e => e.IsActive ? 0 : 1).ThenBy(e => e.IsBluetoothHandsFree ? 1 : 0).ThenByDescending(e => e.IsDefault)
+            .ThenBy(e => e.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Select(e => new AreaChoice(e.Id, e.Name, ChoiceDetail(e), e.State switch
+            {
+                AudioEndpointState.Disabled => "Turned off: turn it on first.",
+                AudioEndpointState.Unplugged => "Unplugged: plug it in first.",
+                _ => null,
+            })).ToList();
+        return new AreaAction(RemediationKind.SetDefaultAudioEndpoint, output ? "Change output device" : "Change microphone",
+            output ? AudioTargets.Output : AudioTargets.Input, output ? "Speakers & headphones" : "Microphones")
+        {
+            Choices = list,
+            Option = new AreaChoiceOption("Also use for calls", AudioTargets.CallsSuffix),
+            EmptyChoicesText = output ? "Windows doesn't list any speakers or headphones." : "Windows doesn't list any microphones.",
+        };
+    }
+
+    private static string ChoiceDetail(AudioEndpointInfo e)
+    {
+        var parts = new List<string>();
+        if (e.Bus == AudioBus.Bluetooth && e.Flow == AudioFlow.Output) parts.Add(e.IsBluetoothHandsFree ? "Hands-free (calls): mono, call quality" : "Stereo (music and video)");
+        else if (FormFactorWords(e.FormFactor) is { Length: > 0 } kind) parts.Add(char.ToUpperInvariant(kind[0]) + kind[1..]);
+        parts.Add(e.Bus switch { AudioBus.Bluetooth => "Bluetooth", AudioBus.Usb => "USB", AudioBus.Internal => "built-in", _ => "" });
+        if (e.DefaultFor.Contains(AudioEndpointInfo.Multimedia) || e.DefaultFor.Contains(AudioEndpointInfo.Console)) parts.Add("default now");
+        else if (e.IsDefaultForCalls) parts.Add("default for calls now");
+        var text = string.Join(" · ", parts.Where(p => p.Length > 0));
+        return e.IsDisplayAudio ? text + ". Only plays sound if the monitor has speakers." : text;
+    }
+
+    /// <summary>
+    /// Device busy: the apps with a session on the device (protected Windows processes left out). When none can be identified, the
+    /// Volume mixer instead (an exclusive-mode stream may not show up as a session).
+    /// </summary>
+    public static AreaAction Busy(AudioState state, AudioEndpointInfo device)
+    {
+        var apps = state.Sessions.Where(x => x.EndpointId == device.Id && Core.Session.AgentScripts.IsProcessName(x.ProcessName) && !ProcessProtection.IsProtected(x.ProcessName))
+            .GroupBy(x => x.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(x => x.Active).First())
+            .OrderByDescending(x => x.Active).ThenBy(x => x.ProcessName, StringComparer.CurrentCultureIgnoreCase)
+            .Select(x => new AreaChoice($"{device.Id}|{x.ProcessName}", x.WindowTitle is { Length: > 0 } t ? $"{x.ProcessName} ({t})" : x.ProcessName,
+                x.Active ? "Using the device now" : "Has the device open"))
+            .ToList();
+        if (apps.Count == 0)
+            return new AreaAction(RemediationKind.OpenSettings, "Open Volume mixer", "ms-settings:apps-volume", "Settings (Volume mixer)");
+        return new AreaAction(RemediationKind.CloseAudioHolder, "Close the app", device.Id, device.Name)
+        {
+            Choices = apps,
+            EmptyChoicesText = "No app could be identified. The app holding the device may not show up here: close music, recording or game apps.",
+        };
+    }
+
+    /// <summary>Microphone (or camera) access, with the person's consent.</summary>
+    public static AreaAction PrivacyAction(string capability, CapturePrivacy.Switches off)
+    {
+        var thing = CapturePrivacy.Thing(capability).ToLowerInvariant();
+        return new AreaAction(RemediationKind.AllowCapturePrivacy, $"Turn on {thing} access", capability, $"{CapturePrivacy.Thing(capability)} access",
+            string.Join(", ", CapturePrivacy.OffNames(off, CapturePrivacy.Thing(capability))))
+        {
+            Consent = $"I'm the person using this PC (or they agreed) and I want {thing} access turned on.",
+        };
     }
 
     private static string DeviceDetail(AudioEndpointInfo e)

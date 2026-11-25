@@ -29,7 +29,11 @@ public static class Undoability
             or RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns or RemediationKind.ApplySecuritySetting
             or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer
             or RemediationKind.EnableStorageSense or RemediationKind.ResetMaxProcessorState
-            or RemediationKind.MovePackageCacheToDevDrive or RemediationKind.CreatePersistentDevDrive => UndoSupport.Full,
+            or RemediationKind.MovePackageCacheToDevDrive or RemediationKind.CreatePersistentDevDrive
+            or RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint
+            or RemediationKind.EnableAudioEndpoint or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements
+            or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy => UndoSupport.Full,
+        RemediationKind.CloseAudioHolder => UndoSupport.None, // a closed app isn't reopened
         RemediationKind.CleanTempFiles or RemediationKind.DeleteDuplicateFiles => UndoSupport.None,
         RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles or RemediationKind.RepairComponentStoreFromImage
             or RemediationKind.CleanUpComponentStore => UndoSupport.None, // repaired or removed Windows files aren't put back

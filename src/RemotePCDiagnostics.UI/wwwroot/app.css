@@ -370,6 +370,19 @@ td.svc-actions button + button { margin-left: 6px; }
 .svc-modal h3 { margin: 0 0 8px; font-size: 16px; color: var(--text-strong); }
 .svc-modal p { margin: 6px 0; font-size: 13.5px; line-height: 1.45; }
 .svc-modal .buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+/* Fix dialogs with a choice (device picker, device busy) and a consent box */
+.fix-choices { display: grid; gap: 6px; margin: 10px 0; max-height: 40vh; overflow: auto; }
+.fix-choice { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.fix-choice input { margin-top: 3px; border: 0; }
+.fix-choice.is-selected { border-color: var(--accent); background: var(--accent-soft); }
+.fix-choice.is-disabled { opacity: .6; cursor: not-allowed; }
+.fix-choice-text { display: grid; gap: 2px; min-width: 0; }
+.fix-choice-label { font-size: 13.5px; color: var(--text-strong); overflow-wrap: anywhere; }
+.fix-choice-detail { font-size: 12px; color: var(--text-muted); }
+.fix-choice-detail.svc-warn { color: var(--warn-text); padding: 2px 6px; }
+.fix-option { display: flex; gap: 8px; align-items: center; margin: 8px 0; font-size: 13px; cursor: pointer; }
+.fix-option input { border: 0; }
+.fix-consent { padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 8px; align-items: flex-start; }
 .svc-warn { background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; }
 .svc-result-ok { background: var(--ok-bg); color: var(--chip-ok); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .svc-recent { margin-top: 18px; }
