@@ -57,6 +57,12 @@ public enum RemediationKind
     DisableWakeTimer,
     /// <summary>Opens a Windows Settings or Windows Security page (<c>ms-settings:</c> or <c>windowsdefender:</c>) for settings Windows won't let apps change directly (such as Tamper Protection). Target = settings URI.</summary>
     OpenSettings,
+    /// <summary>Turns on Windows Storage Sense (<c>HKCU\...\StoragePolicy\01 = 1</c>) while preserving existing cadence and cleanup choices.</summary>
+    EnableStorageSense,
+    /// <summary>Resets configured AC Maximum processor state (<c>PROCTHROTTLEMAX</c>) on the active power scheme back to 100%.</summary>
+    ResetMaxProcessorState,
+    /// <summary>Points an allowlisted developer package cache user environment variable (<c>NUGET_PACKAGES</c>, <c>npm_config_cache</c>, <c>PIP_CACHE_DIR</c>, <c>VCPKG_DEFAULT_BINARY_CACHE</c>) to a Dev Drive folder.</summary>
+    MovePackageCacheToDevDrive,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>

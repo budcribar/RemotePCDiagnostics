@@ -39,7 +39,10 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
                 if (t == RegistryAllowlist.WidgetsPolicy) return "Widgets";
                 if (t == RegistryAllowlist.SearchHighlightsPolicy || t == RegistryAllowlist.SearchHighlightsToggle) return "Search highlights";
                 if (t == RegistryAllowlist.EdgeStartupBoostPolicy) return "Edge Startup Boost";
+                if (t == RegistryAllowlist.StorageSenseEnabled) return "Storage Sense";
                 break;
+            case ChangeKind.PowerSetting: return "maximum processor state";
+            case ChangeKind.UserEnvironmentVariable: return $"{c.Target} cache path";
         }
         var label = c.Label.Trim();
         var cut = label.IndexOf(" (", StringComparison.Ordinal);
@@ -52,7 +55,8 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
 /// removed apps) and deleted temporary files are reported as skipped; deleted files are never recreated.
 /// </summary>
 public sealed class UndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem? memory = null, IServiceControlBackend? services = null,
-    Action<LogLevel, string>? events = null, ILogger? log = null, ISystemSettings? settings = null)
+    Action<LogLevel, string>? events = null, ILogger? log = null, ISystemSettings? settings = null,
+    IPowerSettingController? powerSettings = null, IUserEnvironmentStore? userEnv = null)
 {
     public const string NotUndoableNote = "Installed updates, uninstalled programs, removed apps without a Microsoft Store listing, and deleted temporary files, caches or Recycle Bin items can't be put back; undo lists them as left as is. "
         + "Removed Microsoft Store apps marked \"undo reinstalls from Store\" are reinstalled from the Store for the signed-in account (needs internet; their settings and data aren't restored).";
@@ -229,6 +233,28 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 if (c.Previous is null || !Guid.TryParse(c.Previous, out var g)) return Fail("The original power plan wasn't recorded.");
                 var pr = await commands.RunAsync(SystemCommandRunner.SystemTool("powercfg.exe"), ["/setactive", g.ToString()], ct).ConfigureAwait(false);
                 return pr is { ExitCode: 0 } ? Ok("Previous power plan active again.") : Fail("Couldn't switch the power plan back.");
+
+            case ChangeKind.PowerSetting:
+                if (!PowerSettingTarget.TryParse(c.Target, out var psTarget))
+                    return Fail("That power setting isn't on the allowlist, so it was left as is.");
+                if (c.Previous is null || !int.TryParse(c.Previous, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var prevPct) || prevPct is < 0 or > 100)
+                    return Fail("The previous processor state value wasn't recorded.");
+                var psCtrl = powerSettings ?? new WindowsPowerSettingController(commands.ElevatedBridge, log);
+                // Restore on the recorded scheme without activating it if the user has switched to a different plan.
+                var psRes = await psCtrl.WriteAcMaxProcessorStateAsync(psTarget.SchemeGuid, prevPct, activateIfActive: true, ct).ConfigureAwait(false);
+                return psRes.Success ? Ok($"Maximum processor state on AC restored to {prevPct}%.") : Fail(psRes.Message);
+
+            case ChangeKind.UserEnvironmentVariable:
+                if (!DevDrivePackageCaches.IsAllowlisted(c.Target))
+                    return Fail($"Environment variable '{c.Target}' isn't on the allowlist, so it was left as is.");
+                var envStore = userEnv ?? new WindowsUserEnvironmentStore();
+                if (c.Previous is null)
+                {
+                    envStore.Delete(c.Target);
+                    return Ok($"Removed user environment variable {c.Target} (reverts to default cache location).");
+                }
+                envStore.Write(c.Target, c.Previous);
+                return Ok($"Restored {c.Target} to {c.Previous}.");
 
             case ChangeKind.DeviceWake:
                 if (!DeviceWake.IsSafeName(c.Target)) return Fail("The device wasn't recorded, so it was left as is.");

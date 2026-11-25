@@ -104,7 +104,8 @@ public static class HostServices
         services.AddSingleton<ISystemSettings>(sp => new WindowsSystemSettings(L<WindowsSystemSettings>(), sp.GetRequiredService<IAdminSettingsBackend>()));
         services.AddSingleton(sp => new RemediationService(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), L<RemediationService>(), sp.GetRequiredService<RebootResumeCoordinator>(),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(), sp.GetRequiredService<RetrimLog>(), sp.GetRequiredService<ISystemSettings>(),
-            sp.GetService<IBiosUpdateService>(), openUri: sp.GetRequiredService<IMemorySystem>().OpenUri));
+            sp.GetService<IBiosUpdateService>(), openUri: sp.GetRequiredService<IMemorySystem>().OpenUri,
+            registryTweaks: sp.GetService<RemotePCDiagnostics.Core.Optimizations.IRegistryTweaks>()));
         services.AddSingleton(sp => CreateUndoService(sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(), sp.GetRequiredService<SystemCommandRunner>(),
             sp.GetRequiredService<IMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(), L<UndoService>(), logEvent));
         // Audio tests (speaker→mic, mic→speaker): on-demand only, own pages, not part of Run All or the stress run.

@@ -57,10 +57,10 @@ public static class FixCatalog
     /// <summary>Order groups: quick settings first, cleanup next, network renew near the end, long downloads last.</summary>
     private static int OrderOf(RemediationKind k) => k switch
     {
-        RemediationKind.SetBalancedPowerPlan or RemediationKind.DisableFastStartup or RemediationKind.DisableSystemProxy
+        RemediationKind.SetBalancedPowerPlan or RemediationKind.ResetMaxProcessorState or RemediationKind.DisableFastStartup or RemediationKind.DisableSystemProxy
             or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer => 10,
         RemediationKind.EnableDevice or RemediationKind.RestartDevice or RemediationKind.ScanHardwareChanges => 30,
-        RemediationKind.CleanTempFiles or RemediationKind.DeleteDuplicateFiles or RemediationKind.OptimizeSsd => 40,
+        RemediationKind.CleanTempFiles or RemediationKind.DeleteDuplicateFiles or RemediationKind.OptimizeSsd or RemediationKind.EnableStorageSense => 40,
         RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns or RemediationKind.FlushDnsAndRenewIp => 60,
         RemediationKind.CleanUpComponentStore => CleanupOrder,
         RemediationKind.RepairComponentStoreFromImage => DismRepairOrder,
@@ -184,6 +184,9 @@ public static class FixCatalog
                 RemediationKind.ApplySecuritySetting => Has(Changes.ChangeKind.SecuritySetting, a.Target),
                 RemediationKind.DisableDeviceWake => Has(Changes.ChangeKind.DeviceWake, a.Target),
                 RemediationKind.DisableWakeTimer => Has(Changes.ChangeKind.WakeTimer, a.Target),
+                RemediationKind.EnableStorageSense => Has(Changes.ChangeKind.RegistryValue, Changes.RegistryAllowlist.StorageSenseEnabled.Target),
+                RemediationKind.ResetMaxProcessorState => HasKind(Changes.ChangeKind.PowerSetting),
+                RemediationKind.MovePackageCacheToDevDrive => Has(Changes.ChangeKind.UserEnvironmentVariable, DevDrivePackageCaches.TargetEnvVar(a.Target)),
                 _ => false,
             };
         }

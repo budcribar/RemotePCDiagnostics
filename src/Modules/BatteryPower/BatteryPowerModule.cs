@@ -164,6 +164,14 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
         if (hasAcCapWarning)
             planNotes.Add($"Configured maximum processor state on AC is {acCap}%. This is a configured power-plan limit; effective behavior can also depend on Windows Power mode, Energy Saver, or OEM controls.");
 
+        var planActions = new List<AreaAction>();
+        if (isSaver)
+            planActions.Add(new(RemediationKind.SetBalancedPowerPlan, "Switch to Balanced plan", RemediationService.BalancedPlanGuid, "Balanced power plan"));
+        if (hasAcCapWarning && policy?.AcMaxProcessorStateEditable != false)
+            planActions.Add(new(RemediationKind.ResetMaxProcessorState, "Set max processor state to 100%", "", "Maximum processor state (AC)"));
+        if (hasAcCapWarning && policy?.AcMaxProcessorStateEditable == false)
+            planNotes.Add("This setting is controlled by Group Policy and cannot be edited here.");
+
         cards.Add(new("plan", "Windows power plan", planLevel, planName,
             isSaver ? "Power saver reduces CPU speed to save battery"
                 : heldBackOnAc ? "Processor held back while plugged in"
@@ -172,7 +180,7 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
             ["Detail", "Value"],
             planRows,
             Note: planNotes.Count > 0 ? string.Join(" ", planNotes) : null,
-            Actions: isSaver ? [new(RemediationKind.SetBalancedPowerPlan, "Switch to Balanced plan", RemediationService.BalancedPlanGuid, "Balanced power plan")] : null));
+            Actions: planActions.Count > 0 ? planActions : null));
         if (!string.IsNullOrWhiteSpace(powerPlan)) parts.Add($"{planName} plan");
         if (heldBackOnAc) parts.Add("processor held back on AC");
 

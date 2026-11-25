@@ -80,7 +80,8 @@ public sealed record DriveHealth(
 /// nearly full volume needs attention, in its own result as well as in the report.
 /// </summary>
 public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retrims = null, Func<DateTimeOffset>? clock = null,
-    IDriveHealthHistoryStore? historyStore = null, Func<IReadOnlyList<DriveCapacityInfo>>? volumes = null, ILogger? log = null)
+    IDriveHealthHistoryStore? historyStore = null, Func<IReadOnlyList<DriveCapacityInfo>>? volumes = null, ILogger? log = null,
+    DataSources.IRegistrySource? registry = null)
     : AreaModuleBase(log), IPerDeviceModule, IInstanceSummary, IHasAreaPanels
 {
     private readonly IDriveHealthHistoryStore _history = historyStore ?? new DriveHealthHistoryStore(DriveHealthHistoryStore.DefaultPath(), log);
@@ -104,7 +105,8 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
     {
         var read = await ReadDrivesAsync(progress, ct).ConfigureAwait(false);
         if (read.Drives is null) return AreaReport.Failed(FailedMessage);
-        return BuildReport(read.Drives, read.Retrims, read.Now, _history, read.Volumes, capacityCard: true) with { Notice = read.Notice };
+        var storageSense = registry is not null ? await StorageSenseReader.ReadAsync(registry, ct).ConfigureAwait(false) : null;
+        return BuildReport(read.Drives, read.Retrims, read.Now, _history, read.Volumes, capacityCard: true, storageSense: storageSense) with { Notice = read.Notice };
     }
 
     /// <summary>The drives as last read: health (or the osquery list with <see cref="Notice"/>), retrim dates, and when.</summary>
@@ -343,8 +345,9 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
         DateTimeOffset? now = null,
         IDriveHealthHistoryStore? historyStore = null,
         IReadOnlyList<DriveCapacityInfo>? capacities = null,
-        char? systemDriveLetter = null) =>
-        BuildReport(drives, retrims, now ?? DateTimeOffset.Now, historyStore, DriveVolumeMap.Assign(drives, capacities ?? []), capacityCard: true, systemDriveLetter: systemDriveLetter);
+        char? systemDriveLetter = null,
+        StorageSenseStatus? storageSense = null) =>
+        BuildReport(drives, retrims, now ?? DateTimeOffset.Now, historyStore, DriveVolumeMap.Assign(drives, capacities ?? []), capacityCard: true, systemDriveLetter: systemDriveLetter, storageSense: storageSense);
 
     /// <param name="volumes">The PC's volumes by drive (of every drive read, also when <paramref name="drives"/> is only some of them).</param>
     /// <param name="capacityCard">False for one drive's own result: no table of every volume, and no other drive's volume counts.</param>
@@ -355,7 +358,8 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
         IDriveHealthHistoryStore? historyStore,
         DriveVolumeMap volumes,
         bool capacityCard,
-        char? systemDriveLetter = null)
+        char? systemDriveLetter = null,
+        StorageSenseStatus? storageSense = null)
     {
         if (drives.Count == 0)
             return new([], "No drives were found to check.", DiagnosticStatus.Warning);
@@ -449,6 +453,8 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
             if (volumes.Unassigned.Where(v => v.IsLowOnSpace).Select(v => v.Letter).ToList() is { Count: > 0 } adrift)
                 freePart += $" · {string.Join(", ", adrift)} nearly full";
         }
+        if (capacityCard && storageSense is not null)
+            cards.Add(BuildStorageSenseCard(storageSense));
         var summary = bad > 0 ? $"{bad} of {Plural(drives.Count, "drive")} need{(bad == 1 ? "s" : "")} attention{freePart}"
             : unknown ? $"{Plural(drives.Count, "drive")} found · health not reported{freePart}"
             : drives.Count == 1 ? $"1 drive · healthy{freePart}" : $"{drives.Count} drives · all healthy{freePart}";
@@ -456,6 +462,35 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
             summary = $"{summary} ({Plural(degrading, "drive")} getting worse)";
         // One drive's own result (each drive is its own History series): free space, life used and media errors over time.
         return new(cards, summary, AreaReport.Worst(cards.Select(c => c.Level))) { KeyMetrics = drives.Count == 1 ? KeyMetrics(drives[0], volumes.Of(drives[0])) : null };
+    }
+
+    public static AreaCard BuildStorageSenseCard(StorageSenseStatus ss)
+    {
+        var level = ss.Enabled ? AreaLevel.Ok : AreaLevel.Neutral;
+        var headline = ss.Enabled
+            ? (ss.PolicyControlled ? "Storage Sense is on (managed by policy)" : "Storage Sense is on")
+            : (ss.PolicyControlled ? "Storage Sense is off (managed by policy)" : "Storage Sense is off");
+        var rows = new List<AreaRow>
+        {
+            new(level, ["Status", ss.Enabled ? "On" : "Off"]),
+            new(AreaLevel.Neutral, ["Schedule", ss.CadenceText]),
+            new(AreaLevel.Neutral, ["Temporary files", ss.TempFilesText]),
+            new(AreaLevel.Neutral, ["Recycle Bin", ss.RecycleBinText]),
+            new(AreaLevel.Neutral, ["Downloads", ss.DownloadsText]),
+        };
+        if (ss.PolicyControlled)
+            rows.Add(new(AreaLevel.Neutral, ["Group Policy", $"AllowStorageSenseGlobal = {ss.PolicyGlobalValue}"]));
+
+        var actions = ss.CanOfferEnable
+            ? new List<AreaAction> { new(RemediationKind.EnableStorageSense, "Turn on Storage Sense", ss.DescribeEffectiveBehavior(), "Windows Storage Sense") }
+            : null;
+        return new("storage-sense", "Windows Storage Sense", level, headline,
+            ss.Enabled ? ss.CadenceText : "Automatic temp file cleanup is off",
+            ["Detail", "Value"], rows,
+            Note: ss.PolicyControlled
+                ? "Storage Sense is controlled by Group Policy and cannot be changed here."
+                : ss.Enabled ? null : ss.DescribeEffectiveBehavior(),
+            Actions: actions);
     }
 
     /// <summary>What a drive's History charts: free space shrinking toward full, SMART life used and uncorrected errors climbing.</summary>

@@ -32,6 +32,9 @@ public static class WindowsPowerPolicyReader
     [DllImport("powrprof.dll")]
     private static extern uint PowerGetActiveScheme(IntPtr userRootPowerKey, out IntPtr activePolicyGuid);
 
+    public const uint ErrorAccessDenied = 5;
+    private const int AccessAcPowerSettingIndex = 0;
+
     [DllImport("powrprof.dll")]
     private static extern uint PowerReadACValueIndex(
         IntPtr rootPowerKey,
@@ -39,6 +42,20 @@ public static class WindowsPowerPolicyReader
         ref Guid subGroupOfPowerSettingsGuid,
         ref Guid powerSettingGuid,
         out uint acValueIndex);
+
+    [DllImport("powrprof.dll")]
+    private static extern uint PowerWriteACValueIndex(
+        IntPtr rootPowerKey,
+        ref Guid schemeGuid,
+        ref Guid subGroupOfPowerSettingsGuid,
+        ref Guid powerSettingGuid,
+        uint acValueIndex);
+
+    [DllImport("powrprof.dll")]
+    private static extern uint PowerSetActiveScheme(IntPtr userRootPowerKey, ref Guid schemeGuid);
+
+    [DllImport("powrprof.dll")]
+    private static extern uint PowerSettingAccessCheck(int accessFlags, ref Guid powerGuid);
 
     /// <summary>True when running on battery, false on AC, null when unknown or non-Windows.</summary>
     public static (bool? OnBattery, bool EnergySaver) ReadPowerLineStatus(ILogger? log = null)
@@ -71,23 +88,61 @@ public static class WindowsPowerPolicyReader
         catch (Exception ex) { log.Info("[power] PowerGetEffectiveOverlayScheme failed: " + ex.Message); return null; }
     }
 
-    /// <summary>
-    /// Reads the configured AC Maximum processor state (<c>PROCTHROTTLEMAX</c>) on the active power scheme (0..100).
-    /// Returns null on any non-zero Win32 error code (stripped Modern Standby scheme, access denied, etc.).
-    /// </summary>
-    public static int? ReadAcMaxProcessorStatePercent(ILogger? log = null)
+    /// <summary>Returns the active Windows power scheme GUID, or null on non-Windows/error.</summary>
+    public static Guid? ReadActiveSchemeGuid(ILogger? log = null)
     {
         if (!OperatingSystem.IsWindows()) return null;
         IntPtr schemePtr = IntPtr.Zero;
         try
         {
-            var activeErr = PowerGetActiveScheme(IntPtr.Zero, out schemePtr);
-            if (activeErr != 0 || schemePtr == IntPtr.Zero)
+            var err = PowerGetActiveScheme(IntPtr.Zero, out schemePtr);
+            if (err != 0 || schemePtr == IntPtr.Zero)
             {
-                log.Info($"[power] PowerGetActiveScheme returned error {activeErr}");
+                log.Info($"[power] PowerGetActiveScheme returned error {err}");
                 return null;
             }
-            var scheme = Marshal.PtrToStructure<Guid>(schemePtr);
+            return Marshal.PtrToStructure<Guid>(schemePtr);
+        }
+        catch (EntryPointNotFoundException) { return null; }
+        catch (Exception ex) { log.Info("[power] ReadActiveSchemeGuid failed: " + ex.Message); return null; }
+        finally
+        {
+            if (schemePtr != IntPtr.Zero) LocalFree(schemePtr);
+        }
+    }
+
+    /// <summary>
+    /// Checks <c>PowerSettingAccessCheck(ACCESS_AC_POWER_SETTING_INDEX, PROCTHROTTLEMAX)</c>.
+    /// Returns false when Group Policy overrides or locks the setting, true when editable, null when unknown/non-Windows.
+    /// </summary>
+    public static bool? IsAcMaxProcessorStateEditable(ILogger? log = null)
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        try
+        {
+            var setting = ProcThrottleMaxGuid;
+            var err = PowerSettingAccessCheck(AccessAcPowerSettingIndex, ref setting);
+            if (err == 0) return true;
+            log.Info($"[power] PowerSettingAccessCheck(PROCTHROTTLEMAX) returned {err}");
+            return false;
+        }
+        catch (EntryPointNotFoundException) { return null; }
+        catch (Exception ex) { log.Info("[power] PowerSettingAccessCheck failed: " + ex.Message); return null; }
+    }
+
+    /// <summary>
+    /// Reads the configured AC Maximum processor state (<c>PROCTHROTTLEMAX</c>) on the active power scheme (0..100).
+    /// Returns null on any non-zero Win32 error code (stripped Modern Standby scheme, access denied, etc.).
+    /// </summary>
+    public static int? ReadAcMaxProcessorStatePercent(ILogger? log = null) =>
+        ReadActiveSchemeGuid(log) is { } scheme ? ReadAcMaxProcessorStatePercent(scheme, log) : null;
+
+    public static int? ReadAcMaxProcessorStatePercent(Guid schemeGuid, ILogger? log = null)
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        try
+        {
+            var scheme = schemeGuid;
             var sub = SubProcessorGuid;
             var setting = ProcThrottleMaxGuid;
             var readErr = PowerReadACValueIndex(IntPtr.Zero, ref scheme, ref sub, ref setting, out var value);
@@ -104,9 +159,37 @@ public static class WindowsPowerPolicyReader
             log.Info("[power] ReadAcMaxProcessorStatePercent failed: " + ex.Message);
             return null;
         }
-        finally
+    }
+
+    public static uint WriteAcMaxProcessorStatePercent(Guid schemeGuid, int value, ILogger? log = null)
+    {
+        if (!OperatingSystem.IsWindows()) return 50; // ERROR_NOT_SUPPORTED
+        try
         {
-            if (schemePtr != IntPtr.Zero) LocalFree(schemePtr);
+            var scheme = schemeGuid;
+            var sub = SubProcessorGuid;
+            var setting = ProcThrottleMaxGuid;
+            return PowerWriteACValueIndex(IntPtr.Zero, ref scheme, ref sub, ref setting, (uint)Math.Clamp(value, 0, 100));
+        }
+        catch (Exception ex)
+        {
+            log.Info("[power] WriteAcMaxProcessorStatePercent failed: " + ex.Message);
+            return 1;
+        }
+    }
+
+    public static uint SetActiveScheme(Guid schemeGuid, ILogger? log = null)
+    {
+        if (!OperatingSystem.IsWindows()) return 50;
+        try
+        {
+            var scheme = schemeGuid;
+            return PowerSetActiveScheme(IntPtr.Zero, ref scheme);
+        }
+        catch (Exception ex)
+        {
+            log.Info("[power] PowerSetActiveScheme failed: " + ex.Message);
+            return 1;
         }
     }
 
@@ -116,6 +199,7 @@ public static class WindowsPowerPolicyReader
         var (_, energySaver) = ReadPowerLineStatus(log);
         var mode = ReadPowerMode(energySaver, log);
         var acMax = ReadAcMaxProcessorStatePercent(log);
-        return mode is null && acMax is null ? null : new PowerPolicySnapshot(mode, acMax);
+        var editable = acMax.HasValue ? IsAcMaxProcessorStateEditable(log) : null;
+        return mode is null && acMax is null ? null : new PowerPolicySnapshot(mode, acMax, editable);
     }
 }

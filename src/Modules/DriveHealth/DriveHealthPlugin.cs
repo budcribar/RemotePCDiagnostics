@@ -13,7 +13,12 @@ public sealed class DriveHealthPlugin : IModulePlugin
             var retrims = host is not null ? new RemotePCDiagnostics.Core.Plugins.HostRetrimHistory(host)
                 : sp.GetService<IRetrimHistory>() ?? new RetrimHistory(new RetrimLog(RetrimLog.DefaultPath()));
             IDriveSource drives = host is not null ? new HostDriveSource(host, DriveHealthModule.ModuleName, context.Log) : sp.GetRequiredService<IDriveSource>();
-            return new DriveHealthModule(drives, retrims, historyStore: sp.GetService<IDriveHealthHistoryStore>(), log: context.Log);
+            return new DriveHealthModule(
+                drives,
+                retrims,
+                historyStore: sp.GetService<IDriveHealthHistoryStore>(),
+                log: context.Log,
+                registry: sp.GetService<RemotePCDiagnostics.Core.DataSources.IRegistrySource>());
         });
 }
 

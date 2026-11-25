@@ -40,6 +40,9 @@ public static class FixKeys
         [RemediationKind.DeleteDuplicateFiles] = "deleteduplicatefiles",
         [RemediationKind.DisableWakeTimer] = "disablewaketimer",
         [RemediationKind.OpenSettings] = "opensettings",
+        [RemediationKind.EnableStorageSense] = "enablestoragesense",
+        [RemediationKind.ResetMaxProcessorState] = "resetmaxprocessorstate",
+        [RemediationKind.MovePackageCacheToDevDrive] = "movepackagecachetodevdrive",
     };
 
     public static readonly IReadOnlyDictionary<MemoryActionType, string> Memory = new Dictionary<MemoryActionType, string>
