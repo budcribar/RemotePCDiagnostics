@@ -45,9 +45,22 @@ public class SoundTests
         var r = Build([Speaker(), Mic()]);
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
         Assert.Equal("No sound problems found", r.Summary);
-        Assert.Equal(["audio-output", "audio-input", "audio-services"], r.Cards.Select(c => c.Id));
+        Assert.Equal(["audio-output", "audio-input", "audio-services", "audio-drivers"], r.Cards.Select(c => c.Id));
         Assert.Equal("Speakers (Realtek(R) Audio)", RowOf(Card(r, "audio-output"), "Default device").Values[1]);
         Assert.All(r.Cards, c => Assert.Equal(AreaLevel.Ok, c.Level));
+    }
+
+    [Fact]
+    public void Healthy_services_card_says_no_issues_not_running()
+    {
+        var card = Card(Build([Speaker(), Mic()]), "audio-services");
+        Assert.Equal("No issues found", card.Headline);
+        Assert.Equal("All audio services running", card.Meta);
+        Assert.Equal("Running", card.Rows.First(r => r.Key == SoundModule.AudioSrv).Values[1]);
+
+        var stopped = Card(Build([Speaker(), Mic()], Facts([Svc(SoundModule.AudioSrv, "STOPPED"), Svc(SoundModule.EndpointBuilder)])), "audio-services");
+        Assert.Equal("1 problem", stopped.Headline);
+        Assert.Equal("Windows Audio and Endpoint Builder", stopped.Meta);
     }
 
     [Theory]
@@ -146,10 +159,22 @@ public class SoundTests
     public void Oem_audio_services_and_drivers_are_listed_as_info()
     {
         var drivers = new[] { new AudioDriver("Realtek(R) Audio", @"HDAUDIO\FUNC_01&VEN_10EC&DEV_0257\4&1", @"HDAUDIO\FUNC_01&VEN_10EC&DEV_0257", "oem12.inf", "Realtek", "6.0.9549.1") };
-        var card = Card(Build([Speaker(), Mic()], Facts([.. HealthyServices, Svc("RtkAudioUniversalService", "STOPPED", "DEMAND_START")], drivers: drivers)), "audio-services");
-        Assert.Contains(card.Rows, r => r.Key == "RtkAudioUniversalService" && r.Level == AreaLevel.Neutral);
-        Assert.Contains(card.Rows, r => r.Values[0] == "Driver: Realtek(R) Audio" && r.Values[1] == "6.0.9549.1");
+        var report = Build([Speaker(), Mic()], Facts([.. HealthyServices, Svc("RtkAudioUniversalService", "STOPPED", "DEMAND_START"),
+            Svc("QWAVE", "STOPPED", "DEMAND_START"), Svc("RtkAudioDisabled", "STOPPED", "DISABLED")], drivers: drivers));
+        var card = Card(report, "audio-services");
+        // Stopped Manual helpers are trigger-start: normal, and said so.
+        var helper = card.Rows.Single(r => r.Key == "RtkAudioUniversalService");
+        Assert.Equal(AreaLevel.Neutral, helper.Level);
+        Assert.Equal("Stopped (starts when needed)", helper.Values[1]);
+        Assert.Equal("Stopped", card.Rows.Single(r => r.Key == "RtkAudioDisabled").Values[1]);
+        Assert.Equal("No issues found", card.Headline);
         Assert.Equal(AreaLevel.Ok, card.Level);
+        // Drivers have their own card.
+        Assert.DoesNotContain(card.Rows, r => r.Values[0].Contains("Realtek(R) Audio"));
+        var driversCard = Card(report, "audio-drivers");
+        Assert.Equal(AreaLevel.Ok, driversCard.Level);
+        Assert.Equal("1 driver", driversCard.Headline);
+        Assert.Contains(driversCard.Rows, r => r.Values[0] == "Realtek(R) Audio" && r.Values[1] == "6.0.9549.1" && r.Values[2] == "Realtek · oem12.inf");
     }
 
     [Fact]
@@ -349,7 +374,7 @@ public class SoundTests
         var report = Assert.IsType<AreaReport>(result.Payload);
         Assert.Equal(2, reads);
         Assert.Equal(AreaLevel.Ok, Card(report, "audio-services").Rows.First(r => r.Key == SoundModule.AudioSrv).Level);
-        Assert.Contains(Card(report, "audio-services").Rows, r => r.Values[0] == "Driver: Realtek(R) Audio");
+        Assert.Contains(Card(report, "audio-drivers").Rows, r => r.Values[0] == "Realtek(R) Audio");
         Assert.Equal(AreaLevel.Warning, RowOf(Card(report, "audio-input"), "Microphone privacy").Level);
         Assert.Equal(DiagnosticStatus.Warning, result.Status);
     }

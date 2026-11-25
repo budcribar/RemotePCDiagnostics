@@ -138,6 +138,7 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
             cards.Add(AreaCard.Failed("audio-input", "Microphones", "Couldn't read the microphones on this PC."));
         }
         cards.Add(ServicesCard(facts, serviceHung, state.Available));
+        if (facts.Drivers is { } drivers && cards.Any(c => c.Level != AreaLevel.Error)) cards.Add(DriversCard(drivers));
         if (cards.All(c => c.Level == AreaLevel.Error)) return AreaReport.Failed("Couldn't check sound on this PC.");
 
         var problems = cards.SelectMany(c => c.Rows).Where(r => r.Level >= AreaLevel.Warning).ToList();
@@ -476,12 +477,25 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
                      && (x.Name.Contains("Audio", StringComparison.OrdinalIgnoreCase) || x.DisplayName.Contains("Audio", StringComparison.OrdinalIgnoreCase))
                      && !x.Name.StartsWith("AudioEndpoint", StringComparison.OrdinalIgnoreCase))
                      .OrderBy(x => x.Label, StringComparer.CurrentCultureIgnoreCase))
-            rows.Add(new(AreaLevel.Neutral, [s.Label, s.FriendlyStatus, s.FriendlyStartType], Key: s.Name));
-        foreach (var d in (facts.Drivers ?? []).OrderBy(d => d.DeviceName, StringComparer.CurrentCultureIgnoreCase))
-            rows.Add(new(AreaLevel.Neutral, [$"Driver: {d.DeviceName.Trim()}", d.Version, $"{d.Provider} · {d.InfName}"], Key: d.DeviceId));
+            // A stopped Manual helper (QWAVE, the virtual audio proxy) is trigger-start: Windows starts it when an app needs it.
+            rows.Add(new(AreaLevel.Neutral, [s.Label, s.IsStopped && !s.IsDisabled && IsManual(s) ? "Stopped (starts when needed)" : s.FriendlyStatus, s.FriendlyStartType], Key: s.Name));
         var warnings = rows.Count(r => r.Level >= AreaLevel.Warning);
         var level = warnings > 0 ? AreaLevel.Warning : AreaLevel.Ok;
-        return new AreaCard("audio-services", "Windows Audio services", level, warnings == 0 ? "Running" : AreaModuleBase.Plural(warnings, "problem"),
-            audioRead ? "Windows Audio, Endpoint Builder and sound drivers" : "Sound devices couldn't be read", cols, rows, PreserveRowOrder: true);
+        // "No issues found" like the other two cards: "Running" as a headline read as if the check were still running.
+        return new AreaCard("audio-services", "Windows Audio services", level, warnings == 0 ? NoIssues : AreaModuleBase.Plural(warnings, "problem"),
+            !audioRead ? "Sound devices couldn't be read" : warnings == 0 ? "All audio services running" : "Windows Audio and Endpoint Builder",
+            cols, rows, PreserveRowOrder: true);
+    }
+
+    private static bool IsManual(ServiceInfo s) => s.FriendlyStartType.StartsWith("Manual", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The sound drivers, on their own card (informational: the problems they cause show on the device cards).</summary>
+    private static AreaCard DriversCard(IReadOnlyList<AudioDriver> drivers)
+    {
+        var rows = drivers.OrderBy(d => d.DeviceName, StringComparer.CurrentCultureIgnoreCase)
+            .Select(d => new AreaRow(AreaLevel.Neutral, [d.DeviceName.Trim(), d.Version, $"{d.Provider} · {d.InfName}"], Key: d.DeviceId)).ToList();
+        return new AreaCard("audio-drivers", "Sound drivers", AreaLevel.Ok,
+            AreaModuleBase.Plural(rows.Count, "driver"), "Drivers for sound devices",
+            ["Device", "Version", "Provider"], rows, EmptyText: "No sound drivers found.", PreserveRowOrder: true);
     }
 }
