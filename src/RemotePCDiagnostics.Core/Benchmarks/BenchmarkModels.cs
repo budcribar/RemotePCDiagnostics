@@ -127,6 +127,9 @@ public sealed record BenchmarkSettings
 
     /// <summary>Active goal preset (<c>"browsing"</c>, <c>"build"</c>, <c>"tuneup"</c>, or null for custom).</summary>
     public string? Goal { get; init; }
+
+    /// <summary>Optional pinned .NET SDK major version (10 or 11) for the After pass of a Build speed experiment.</summary>
+    public int? TargetDotNetSdkMajor { get; init; }
 }
 
 /// <summary>Goal presets over the existing <see cref="BenchmarkSettings.Enabled"/> list (never a separate run path).</summary>

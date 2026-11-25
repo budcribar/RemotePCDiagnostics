@@ -16,10 +16,10 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
 {
     private void Log(string m) => log.Info("[benchmark] " + m);
 
-    public Task<DeveloperBuildResult?> RunDeveloperCSharpAsync(bool includeAntivirusComparison, IProgress<string>? progress, CancellationToken ct) =>
+    public Task<DeveloperBuildResult?> RunDeveloperCSharpAsync(bool includeAntivirusComparison, IProgress<string>? progress, CancellationToken ct, int? targetDotNetSdkMajor = null) =>
         devRunner is null
             ? Task.FromResult<DeveloperBuildResult?>(null)
-            : devRunner.RunCSharpCleanBuildAsync(new DeveloperBuildOptions(IncludeAntivirusComparison: includeAntivirusComparison), progress, ct).ContinueWith(t => (DeveloperBuildResult?)t.Result, ct, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            : devRunner.RunCSharpCleanBuildAsync(new DeveloperBuildOptions(IncludeAntivirusComparison: includeAntivirusComparison, TargetDotNetSdkMajor: targetDotNetSdkMajor), progress, ct).ContinueWith(t => (DeveloperBuildResult?)t.Result, ct, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
     // ---- conditions ----
     public BenchmarkConditions ReadConditions()
