@@ -19,6 +19,7 @@ public static class BuiltInModules
         new(ModuleIds.Services, ModuleSlugs.Services, "Services", ModuleKind.Check, ModuleGroups.Windows, 100),
         new(ModuleIds.EventLog, ModuleSlugs.EventLog, "Windows error log", ModuleKind.Check, ModuleGroups.Windows, 200),
         new(ModuleIds.Crashes, ModuleSlugs.Crashes, "Crashes & unexpected restarts", ModuleKind.Check, ModuleGroups.Windows, 300),
+        new(ModuleIds.WindowsMaintenance, ModuleSlugs.WindowsMaintenance, "Windows maintenance", ModuleKind.Check, ModuleGroups.Windows, 350),
         new(ModuleIds.Programs, ModuleSlugs.Programs, "Programs & updates", ModuleKind.Check, ModuleGroups.Apps, 100),
         new(ModuleIds.DeveloperSetup, ModuleSlugs.DeveloperSetup, "Developer setup", ModuleKind.Check, ModuleGroups.Apps, 200),
         new(ModuleIds.DismScanHealth, ModuleSlugs.DismScanHealth, "Windows component store (DISM)", ModuleKind.OnDemand, ModuleGroups.Windows, 400),

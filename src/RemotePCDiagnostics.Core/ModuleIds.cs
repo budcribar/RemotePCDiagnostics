@@ -71,6 +71,8 @@ public static class ModuleIds
     public static readonly Guid BiosFirmware = new("7f3c9b2e-5d1a-4c8f-a6e0-9b4d2e1f8a3c");
     /// <summary>Slug <c>Sound</c>.</summary>
     public static readonly Guid Sound = new("56dea360-0bd7-4230-b072-0d54d91e90e4");
+    /// <summary>Slug <c>WindowsMaintenance</c>.</summary>
+    public static readonly Guid WindowsMaintenance = new("f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41");
 
     /// <summary>Every built-in id with its slug (the module's Name). Includes modules that are not registered on every build.</summary>
     public static IReadOnlyDictionary<Guid, string> BuiltIn { get; } = new Dictionary<Guid, string>
@@ -107,6 +109,7 @@ public static class ModuleIds
         [DeveloperSetup] = ModuleSlugs.DeveloperSetup,
         [BiosFirmware] = ModuleSlugs.BiosFirmware,
         [Sound] = ModuleSlugs.Sound,
+        [WindowsMaintenance] = ModuleSlugs.WindowsMaintenance,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -154,4 +157,5 @@ public static class ModuleSlugs
     public const string DeveloperSetup = "DeveloperSetup";
     public const string BiosFirmware = "BiosFirmware";
     public const string Sound = "Sound";
+    public const string WindowsMaintenance = "WindowsMaintenance";
 }

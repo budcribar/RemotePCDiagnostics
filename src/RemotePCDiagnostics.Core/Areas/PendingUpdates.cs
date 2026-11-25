@@ -22,7 +22,8 @@ public sealed record FailedUpdate(
 public sealed record PendingUpdateList(
     IReadOnlyList<PendingUpdate> Updates,
     bool RebootRequired,
-    IReadOnlyList<FailedUpdate>? FailedUpdates = null);
+    IReadOnlyList<FailedUpdate>? FailedUpdates = null,
+    IReadOnlyList<string>? RebootReasons = null);
 
 /// <summary>
 /// Reads pending updates and recent failed update history directly from Windows Update Agent's local COM cache
@@ -212,6 +213,7 @@ public static class PendingUpdates
 
             var failed = ReadFailedHistoryWindows(searcher, now);
 
+            var rebootReasons = new List<string>();
             var rebootRequired = false;
             try
             {
@@ -219,13 +221,23 @@ public static class PendingUpdates
                 if (sysInfoType is not null)
                 {
                     sysInfoObj = Activator.CreateInstance(sysInfoType);
-                    if (sysInfoObj is not null)
-                        rebootRequired = (bool)((dynamic)sysInfoObj).RebootRequired;
+                    if (sysInfoObj is not null && (bool)((dynamic)sysInfoObj).RebootRequired)
+                    {
+                        rebootRequired = true;
+                        rebootReasons.Add("Windows Update Agent");
+                    }
                 }
             }
             catch { }
 
-            return new(pending, rebootRequired, failed);
+            foreach (var reason in ReadRegistryRebootReasons())
+            {
+                rebootRequired = true;
+                if (!rebootReasons.Contains(reason, StringComparer.OrdinalIgnoreCase))
+                    rebootReasons.Add(reason);
+            }
+
+            return new(pending, rebootRequired, failed, rebootReasons.Count > 0 ? rebootReasons : null);
         }
         finally
         {
@@ -426,6 +438,40 @@ public static class PendingUpdates
 
     private static bool Bool(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
 
+    public const string CbsRebootPendingKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending";
+    public const string WuRebootRequiredKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired";
+    public const string SessionManagerKey = @"SYSTEM\CurrentControlSet\Control\Session Manager";
+    public const string PendingFileRenameValue = "PendingFileRenameOperations";
+
+    /// <summary>Reads standard HKLM pending-restart markers: CBS RebootPending, WU RebootRequired, and PendingFileRenameOperations.</summary>
+    public static IReadOnlyList<string> ReadRegistryRebootReasons(
+        Func<string, bool>? hklmKeyExists = null,
+        Func<string, string, bool>? hklmNonEmptyMultiString = null)
+    {
+        var keyExists = hklmKeyExists ?? (path =>
+        {
+            if (!OperatingSystem.IsWindows()) return false;
+            try { using var k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(path, writable: false); return k is not null; }
+            catch { return false; }
+        });
+        var hasMulti = hklmNonEmptyMultiString ?? ((path, name) =>
+        {
+            if (!OperatingSystem.IsWindows()) return false;
+            try
+            {
+                using var k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(path, writable: false);
+                return k?.GetValue(name) is string[] arr && arr.Any(s => !string.IsNullOrWhiteSpace(s));
+            }
+            catch { return false; }
+        });
+
+        var reasons = new List<string>();
+        if (keyExists(CbsRebootPendingKey)) reasons.Add("Component-Based Servicing (CBS)");
+        if (keyExists(WuRebootRequiredKey)) reasons.Add("Windows Update");
+        if (hasMulti(SessionManagerKey, PendingFileRenameValue)) reasons.Add("Pending file rename operations");
+        return reasons;
+    }
+
     /// <summary>
     /// The card listing the pending Windows updates (<paramref name="drivers"/> false) or driver updates (true), one Install button per
     /// update. A list that couldn't be read gives a neutral card that says so: it doesn't change the check's result.
@@ -455,7 +501,8 @@ public static class PendingUpdates
             actions.Add(new(RemediationKind.CheckAndInstallWindowsUpdates, "Check & install all updates"));
         if (list.RebootRequired) actions.Add(RestartAction);
         var headline = mine.Count == 0 ? (drivers ? "No driver updates waiting" : "No updates waiting") : AreaModuleBase.Plural(mine.Count, word) + " waiting";
-        var meta = list.RebootRequired ? "Windows is waiting for a restart to finish installing updates"
+        var rebootSuffix = list.RebootReasons is { Count: > 0 } ? $" ({string.Join(", ", list.RebootReasons)})" : "";
+        var meta = list.RebootRequired ? $"Windows is waiting for a restart to finish installing updates{rebootSuffix}"
             : mine.Count == 0 ? "As of Windows' last check with Windows Update" : "Install one at a time, or all at once";
         return new(id, title, mine.Count == 0 && !list.RebootRequired ? AreaLevel.Ok : AreaLevel.Neutral, headline, meta, columns, rows,
             EmptyText: mine.Count == 0 ? "Windows lists nothing waiting. \"Check & install\" asks Windows Update for anything newer." : null,
