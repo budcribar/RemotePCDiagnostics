@@ -83,7 +83,11 @@ public class SecurityFixesTests
     [Fact]
     public void Another_antivirus_means_no_defender_fixes()
     {
-        var f = PowerShellSecurityEssentialsSource.ParseProbe("DefenderMode=Passive mode\nPua=0\nNetworkProtection=0\nCloudProtection=0\nAsr=\nAntivirus=Windows Defender;Norton 360", Tpm2);
+        var f = PowerShellSecurityEssentialsSource.ParseProbe("DefenderMode=Passive mode\nPua=0\nNetworkProtection=0\nCloudProtection=0\nAsr=\nAntivirus=Windows Defender;Norton 360", Tpm2) with
+        {
+            AntivirusProducts = [new("Norton 360", AntivirusProductState.On, AntivirusSignatureStatus.UpToDate)],
+            AntivirusInventoryStatus = AntivirusInventoryStatus.Ok,
+        };
         var rep = SecurityEssentialsModule.Build(f);
         Assert.Equal("Protected by Norton 360", Card(rep, "antivirus").Headline);
         Assert.Equal(AreaLevel.Ok, Card(rep, "antivirus").Level);

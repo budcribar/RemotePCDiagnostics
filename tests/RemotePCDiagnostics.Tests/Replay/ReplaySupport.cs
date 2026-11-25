@@ -60,7 +60,7 @@ internal sealed class ReplayedPc(MachineRecording recording)
     public IPackageSource Packages => Replay.Packages;
 
     /// <summary>The check as the app runs it (WMI, through the Agent).</summary>
-    public BatteryPowerModule BatteryPower() => new(new WmiBatteryPowerSource(Wmi));
+    public BatteryPowerModule BatteryPower() => new(new WmiBatteryPowerSource(Wmi, readPowerPolicy: () => null));
     /// <summary>The Store edition without an Agent (osquery and powercfg).</summary>
     public BatteryPowerModule BatteryPowerOld() => new(new OsqueryBatteryPowerSource(Osquery, Commands));
 
