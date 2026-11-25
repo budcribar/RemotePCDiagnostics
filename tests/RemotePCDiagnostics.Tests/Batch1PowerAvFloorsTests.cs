@@ -346,7 +346,7 @@ public sealed class Batch1PowerAvFloorsTests
             new("DIMM1", "BANK1", "SODIMM", "DDR4", 4096, 3200, 3200, "Crucial", "P1", "S2")), DiagnosticStatus.Ok, null);
         var eightCard = eightGb.Cards.Single(c => c.Id == "memory");
         Assert.Equal(AreaLevel.Ok, eightCard.Level);
-        Assert.Contains("8 GB is the minimum", eightCard.Note ?? "");
+        Assert.Contains("8 GB is the practical minimum", eightCard.Note ?? "");
         Assert.DoesNotContain("dual-channel", eightCard.Note ?? "");
 
         // 1 of 2 LPDDR5 -> no dual-channel upgrade note
