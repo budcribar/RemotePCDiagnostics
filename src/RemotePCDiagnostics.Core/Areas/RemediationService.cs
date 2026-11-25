@@ -410,7 +410,8 @@ public sealed class RemediationService(
 
             RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint
                 or RemediationKind.EnableAudioEndpoint or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements
-                or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy or RemediationKind.CloseAudioHolder => PlanAudio(action, label),
+                or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy or RemediationKind.CloseAudioHolder
+                or RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic => PlanAudio(action, label),
 
             _ => new(action, action.ButtonText, "", "", null, true),
         };
@@ -419,7 +420,8 @@ public sealed class RemediationService(
     /// <summary>The Sound fixes. A dialog fix's Target before the choice ("output", or the busy device) is allowed: Go waits for the choice.</summary>
     private RemediationPlan PlanAudio(AreaAction action, string label)
     {
-        var unavailable = audio is not { Available: true } ? "Sound devices can't be changed in this session."
+        // The Windows Audio service fixes go through the Agent only; the rest need the sound devices.
+        var unavailable = audio is null || (!audio.Available && !Audio.AudioFixService.IsServiceFix(action.Kind)) ? "Sound devices can't be changed in this session."
             : Audio.AudioFixService.NeedsPolicyConfig(action.Kind) && !audio.CanChangeSettings ? "Windows doesn't let this app change that sound setting on this PC. Use Sound settings instead."
             : null;
         RemediationPlan P(string title, string what, string happens, string? warning, bool valid) =>
@@ -465,6 +467,17 @@ public sealed class RemediationService(
                 return P($"Turn on {thing.ToLowerInvariant()} access?", $"Windows privacy settings stop apps from using the {thing.ToLowerInvariant()}.",
                     $"Turns on the {thing.ToLowerInvariant()} switches that are off: the per-account ones here, the device-wide one through the Agent. Undo turns them off again.",
                     "Apps that are already open may need to be restarted.", Audio.CapturePrivacy.IsCapability(t));
+            case RemediationKind.StartAudioServices:
+                return P("Start Windows Audio?", "Windows Audio isn't running, so no sound can play or be recorded.",
+                    "Starts Windows Audio Endpoint Builder, then Windows Audio, through the Agent, and checks they're running.", AdminNote(), t.Length == 0);
+            case RemediationKind.RestartAudioServices:
+                return P("Restart Windows Audio?", "Windows Audio isn't answering, so sound devices can't be opened.",
+                    "Restarts Windows Audio through the Agent. If the sound devices still don't answer, restarts Windows Audio Endpoint Builder too.",
+                    AdminNote("Sound will stop for a few seconds, and apps playing audio (calls, music) may need to be restarted."), t.Length == 0);
+            case RemediationKind.SetAudioServicesAutomatic:
+                return P("Turn Windows Audio back on?", "A Windows Audio service is disabled, so no sound can play.",
+                    "Sets the disabled Windows Audio services to Automatic and starts them, through the Agent. Undo puts the start-up type back.",
+                    AdminNote(), t.Length == 0);
             case RemediationKind.CloseAudioHolder:
                 if (device && rest.Length == 0)
                     return P("Close the app holding the device?", $"An app has taken over {label}, so other apps can't use it.",
@@ -673,7 +686,8 @@ public sealed class RemediationService(
 
         RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint
             or RemediationKind.EnableAudioEndpoint or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements
-            or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy => await RunAudioAsync(action, ct).ConfigureAwait(false),
+            or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy
+            or RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic => await RunAudioAsync(action, ct).ConfigureAwait(false),
 
         _ => new(false, "Unsupported action."),
     };

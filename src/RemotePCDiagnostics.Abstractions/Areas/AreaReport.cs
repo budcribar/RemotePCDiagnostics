@@ -90,6 +90,14 @@ public enum RemediationKind
     /// <summary>A dialog fix (device busy): closes the app holding an audio device. Target before the choice = the endpoint id; after =
     /// "{endpointId}|{process name}". Runs the End task path (protected processes refused, the Agent for an elevated app). Not undoable.</summary>
     CloseAudioHolder,
+    /// <summary>Starts Windows Audio Endpoint Builder, then Windows Audio, through the Agent (the services card). Target = "". Leaves nothing to undo.</summary>
+    StartAudioServices,
+    /// <summary>Restarts Windows Audio through the Agent when it stopped answering; if the sound devices still don't answer, restarts the
+    /// Endpoint Builder too (which takes Windows Audio with it) and starts both. Target = "". Leaves nothing to undo.</summary>
+    RestartAudioServices,
+    /// <summary>Sets whichever of the two Windows Audio services is disabled back to Automatic (journaled), then starts them. Target = "".
+    /// Undo puts the start type back.</summary>
+    SetAudioServicesAutomatic,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>

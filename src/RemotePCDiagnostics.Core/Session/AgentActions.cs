@@ -38,6 +38,8 @@ public sealed record AnalyzeCrashDumpAction(string DumpPath) : AgentNativeAction
 
 /// <summary>Sets the device-wide (HKLM) ConsentStore <c>Value</c> of the microphone or camera: "Allow", "Deny", or null to delete it.</summary>
 public sealed record SetCapturePrivacyAction(string Capability, string? Value) : AgentNativeAction;
+/// <summary>Starts or restarts the two Windows Audio services (<see cref="Audio.AudioServices"/>).</summary>
+public sealed record AudioServicesAction(string Verb) : AgentNativeAction;
 
 /// <summary>What the Agent does for an <see cref="AdminPipeScript"/>: PowerShell it built (<see cref="Script"/>) or a change it makes itself (<see cref="Native"/>).</summary>
 public sealed record AgentPlan(string? Script, AgentNativeAction? Native);
@@ -179,6 +181,7 @@ public sealed partial class WindowsAgentNativeOps : IAgentNativeOps
                 SetTaskWakeToRunAction wake => Task.FromResult(SetTaskWakeToRun(wake)),
                 AnalyzeCrashDumpAction dump => AnalyzeCrashDumpAsync(dump, ct),
                 SetCapturePrivacyAction privacy => Task.FromResult(SetCapturePrivacy(privacy)),
+                AudioServicesAction audio => Task.Run(() => Audio.AudioServices.Run(audio.Verb, new Audio.AudioServices.WindowsHost()) is { } why ? Failed(why) : Ok(), ct),
                 _ => RunOtherAsync(action, ct),
             };
         }

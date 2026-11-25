@@ -193,7 +193,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
             case ChangeKind.ServiceStartType:
                 if (memory is null || !MemorySuggestionService.StartTypes.Contains(c.Previous)) return Fail("The original setting wasn't recorded.");
-                if (ServiceProtection.IsProtected(c.Target) || ServiceProtection.IsSelfComponent(c.Target))
+                if (ServiceProtection.ProtectsStartType(c.Target))
                     return Fail("That service is protected and cannot be changed.");
                 memory.SetServiceStartType(c.Target, c.Previous!);
                 ServiceDelayedStart.Restore(memory, c.Target, c.PreviousExtra, log);

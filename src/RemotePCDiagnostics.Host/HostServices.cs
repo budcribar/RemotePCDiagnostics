@@ -106,7 +106,7 @@ public static class HostServices
             sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(), sp.GetRequiredService<RetrimLog>(), sp.GetRequiredService<ISystemSettings>(),
             sp.GetService<IBiosUpdateService>(), openUri: sp.GetRequiredService<IMemorySystem>().OpenUri,
             registryTweaks: sp.GetService<RemotePCDiagnostics.Core.Optimizations.IRegistryTweaks>(),
-            audio: CreateAudioFixes(sp.GetRequiredService<SystemCommandRunner>(), L<RemotePCDiagnostics.Core.Audio.AudioFixService>())));
+            audio: CreateAudioFixes(sp.GetRequiredService<SystemCommandRunner>(), L<RemotePCDiagnostics.Core.Audio.AudioFixService>(), sp.GetRequiredService<IAdminSettingsBackend>())));
         services.AddSingleton(sp => CreateUndoService(sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(), sp.GetRequiredService<SystemCommandRunner>(),
             sp.GetRequiredService<IMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(), L<UndoService>(), logEvent));
         // Audio tests (speaker→mic, mic→speaker): on-demand only, own pages, not part of Run All or the stress run.
@@ -345,13 +345,15 @@ public static class HostServices
     public static UndoService CreateUndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem memory, IAdminSettingsBackend admin,
         ILogger? log, Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent) =>
         new(journal, commands, memory, new WindowsServiceControlBackend(admin), (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Undo, level, text), log,
-            new WindowsSystemSettings(log, admin), audio: CreateAudioFixes(commands, log));
+            new WindowsSystemSettings(log, admin), audio: CreateAudioFixes(commands, log, admin));
 
     /// <summary>The Sound fixes: Core Audio and IPolicyConfig in this (the user's) session, the per-account privacy switches here, the
     /// device-wide one through the Agent.</summary>
-    public static RemotePCDiagnostics.Core.Audio.AudioFixService CreateAudioFixes(SystemCommandRunner commands, ILogger? log) =>
+    public static RemotePCDiagnostics.Core.Audio.AudioFixService CreateAudioFixes(SystemCommandRunner commands, ILogger? log, IAdminSettingsBackend? admin = null) =>
         new(new WasapiAudioEndpointControl(log), new RemotePCDiagnostics.Core.Audio.WindowsCapturePrivacyStore(),
-            (script, ct) => commands.RunAgentScriptAsync(script, null, ct), log);
+            (script, ct) => commands.RunAgentScriptAsync(script, null, ct), log,
+            admin is null ? null : new WindowsAudioServiceSettings(admin),
+            new WasapiAudioStateSource(log).ReadAsync);
 }
 
 /// <summary>The app's services that answer host queries (<see cref="HostQueryServer"/>), bound once the container exists.</summary>

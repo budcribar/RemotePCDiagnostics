@@ -427,6 +427,7 @@ public static class HistorySummary
             or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements or RemediationKind.UnmuteAudioSession => "Sound",
         RemediationKind.AllowCapturePrivacy => "Privacy",
         RemediationKind.CloseAudioHolder => "Sound / app closed",
+        RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic => "Sound / Windows Audio",
         _ => "Automated fix",
     };
 
