@@ -445,7 +445,7 @@ else if (!running)
     private void ToggleCustomize() => _customizeOpen = !_customizeOpen;
 
     private void Toggle(BenchmarkKind k, bool on) =>
-        Bench.UpdateSettings(Bench.Settings with { Goal = null, Enabled = BenchmarkTestRules.WithEnabled(Bench.Settings, k, on, Bench.IsKindAvailable(k)) });
+        Bench.UpdateSettings(Bench.Settings with { Enabled = BenchmarkTestRules.WithEnabled(Bench.Settings, k, on, Bench.IsKindAvailable(k)), Goal = null });
 
     private void SetRuns(ChangeEventArgs e)
     {
