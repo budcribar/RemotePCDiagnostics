@@ -29,7 +29,7 @@ public static class Undoability
             or RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns or RemediationKind.ApplySecuritySetting
             or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer
             or RemediationKind.EnableStorageSense or RemediationKind.ResetMaxProcessorState
-            or RemediationKind.MovePackageCacheToDevDrive
+            or RemediationKind.MovePackageCacheToDevDrive or RemediationKind.CreatePersistentDevDrive
             or RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint
             or RemediationKind.EnableAudioEndpoint or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements
             or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy => UndoSupport.Full,
@@ -38,7 +38,7 @@ public static class Undoability
         RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles or RemediationKind.RepairComponentStoreFromImage
             or RemediationKind.CleanUpComponentStore => UndoSupport.None, // repaired or removed Windows files aren't put back
         RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.InstallUpdate
-            or RemediationKind.InstallBiosUpdate or RemediationKind.EnableDevice => UndoSupport.None,
+            or RemediationKind.InstallBiosUpdate or RemediationKind.EnableDevice or RemediationKind.InstallDotNetSdk => UndoSupport.None,
         _ => UndoSupport.NothingToUndo,
     };
 

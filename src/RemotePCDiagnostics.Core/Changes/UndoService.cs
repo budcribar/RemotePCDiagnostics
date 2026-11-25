@@ -43,6 +43,7 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
                 break;
             case ChangeKind.PowerSetting: return "maximum processor state";
             case ChangeKind.UserEnvironmentVariable: return $"{c.Target} cache path";
+            case ChangeKind.PersistentDevDrive: return "persistent Dev Drive";
         }
         var label = c.Label.Trim();
         var cut = label.IndexOf(" (", StringComparison.Ordinal);
@@ -56,7 +57,8 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
 /// </summary>
 public sealed class UndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem? memory = null, IServiceControlBackend? services = null,
     Action<LogLevel, string>? events = null, ILogger? log = null, ISystemSettings? settings = null,
-    IPowerSettingController? powerSettings = null, IUserEnvironmentStore? userEnv = null, Audio.AudioFixService? audio = null)
+    IPowerSettingController? powerSettings = null, IUserEnvironmentStore? userEnv = null, IMachineTweaks? machineTweaks = null,
+    string? persistentDevDriveFolder = null, Audio.AudioFixService? audio = null)
 {
     public const string NotUndoableNote = "Installed updates, uninstalled programs, removed apps without a Microsoft Store listing, and deleted temporary files, caches or Recycle Bin items can't be put back; undo lists them as left as is. "
         + "Removed Microsoft Store apps marked \"undo reinstalls from Store\" are reinstalled from the Store for the signed-in account (needs internet; their settings and data aren't restored).";
@@ -256,6 +258,16 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 envStore.Write(c.Target, c.Previous);
                 return Ok($"Restored {c.Target} to {c.Previous}.");
 
+            case ChangeKind.PersistentDevDrive:
+                if (!DevDriveRules.IsRpcdPersistentDevDriveVhdx(c.Target, persistentDevDriveFolder))
+                    return Fail("The persistent Dev Drive VHDX path isn't managed by RPCD, so it was left as is.");
+                var tweaks = machineTweaks ?? (commands.ElevatedBridge is { } b ? new AgentMachineTweaks(b, log) : null);
+                if (tweaks is null)
+                    return Fail("Administrator Agent is required to detach and remove the persistent Dev Drive.");
+                var devDriveRemoved = await tweaks.RemovePersistentDevDriveAsync(c.Target, ct).ConfigureAwait(false);
+                return devDriveRemoved
+                    ? Ok($"Detached and removed persistent Dev Drive ({c.Previous ?? c.Target}).")
+                    : Fail("Could not detach and remove the persistent Dev Drive.");
             case ChangeKind.AudioEndpoint or ChangeKind.AudioSession or ChangeKind.CapturePrivacy:
                 return audio is null ? Fail("Sound settings can't be changed in this session.") : await audio.UndoAsync(c, ct).ConfigureAwait(false);
 

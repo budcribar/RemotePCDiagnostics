@@ -79,6 +79,34 @@ public class BenchmarkUploadTests
     }
 
     [Fact]
+    public void Hardware_probe_parses_extended_buyable_specs()
+    {
+        var hw = HardwareIdentityProbe.Parse("""
+            {
+              "Manufacturer":"LENOVO","Model":"21ML0012US","SystemSku":"LENOVO_MT_21ML","SystemFamily":"ThinkPad T14 Gen 5",
+              "Chassis":10,"Motherboard":"LENOVO 21ML0012US","Processor":"AMD Ryzen 7 PRO 8840U","Cores":8,"Logical":16,
+              "MaxClockMhz":3300,"Arch":9,"Memory":34359738368,"MemType":34,"MemSpeedMhz":5600,"MemSlots":"2 x 16 GB",
+              "Storage":"Samsung PM9A1 NVMe (1 TB)","Gpu":"AMD Radeon 780M Graphics","GpuMemBytes":4294967296,
+              "Display":"2880x1800 @ 120 Hz","Os":"Microsoft Windows 11 Pro 10.0.26100"
+            }
+            """);
+
+        Assert.Equal("LENOVO_MT_21ML", hw.SystemSku);
+        Assert.Equal("ThinkPad T14 Gen 5", hw.SystemFamily);
+        Assert.Equal("Laptop", hw.FormFactor);
+        Assert.Equal("LENOVO 21ML0012US", hw.Motherboard);
+        Assert.Equal(3300, hw.MaxClockMhz);
+        Assert.Equal("x64", hw.Architecture);
+        Assert.Equal(32.0, hw.MemoryGb);
+        Assert.Equal("DDR5", hw.MemoryType);
+        Assert.Equal(5600, hw.MemorySpeedMhz);
+        Assert.Equal("2 x 16 GB", hw.MemorySlots);
+        Assert.Equal("Samsung PM9A1 NVMe (1 TB)", hw.Storage);
+        Assert.Equal(4.0, hw.GpuMemoryGb);
+        Assert.Equal("2880x1800 @ 120 Hz", hw.DisplayResolution);
+    }
+
+    [Fact]
     public void Machine_identity_uses_windows_machine_guid_else_the_name()
     {
         Assert.Equal("6f1c2a52-1111-4a3b-9c1d-0123456789ab", MachineIdentity.Read("PC", () => "6F1C2A52-1111-4A3B-9C1D-0123456789AB"));

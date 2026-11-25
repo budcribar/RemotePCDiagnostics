@@ -232,7 +232,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     }
 
     public BenchmarkBlock? BlockFor(BenchmarkPhase phase, bool restart) => BenchmarkStartRules.Block(
-        phase, restart, Running is not null || Settling is not null || RunningDeveloperAction, Before is not null,
+        phase, restart, Running is not null || Settling is not null || RunningDeveloperAction || ExperimentRunning, Before is not null,
         Settings.Enabled.Count > 0, BeforePendingRestart || AfterPendingRestart, remediation is not null, RestartImminent);
 
     /// <summary>Every benchmark kind, including kinds hidden on this PC, and the checkbox that toggles each available one.</summary>
@@ -602,6 +602,198 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             cts.Dispose();
             Raise();
         }
+    }
+
+    public bool ExperimentRunning { get; private set; }
+    public string? ExperimentStep { get; private set; }
+    public BenchmarkExperimentResult? LastExperiment { get; private set; }
+
+    /// <summary>Builds the current PC's improvement context for the Benchmark page goal checklist.</summary>
+    public BenchmarkImprovementContext GetImprovementContext(
+        string? existingDevDriveRoot = null,
+        IUserEnvironmentStore? userEnv = null,
+        int? acMaxProcessorStatePercent = null,
+        string? activePowerPlan = null,
+        bool? storageSenseEnabled = null)
+    {
+        var hasDev = IsKindAvailable(BenchmarkKind.DeveloperCSharp);
+        var devRoot = existingDevDriveRoot ?? TryFindExistingDevDriveRoot();
+        var toolchains = DetectedToolchains;
+        var caches = hasDev
+            ? DevDrivePackageCaches.CollectCaches(toolchains, devRoot, userEnv)
+            : [];
+        var latest = BenchmarkUpload.LatestRun(Before, After);
+        var dotnetMajor = toolchains.FirstOrDefault(t => t.Language == DeveloperLanguage.CSharp)?.MajorVersion;
+        return new BenchmarkImprovementContext(
+            HasDevEnvironment: hasDev,
+            ExistingDevDriveRoot: devRoot,
+            PackageCaches: caches,
+            AcMaxProcessorStatePercent: acMaxProcessorStatePercent ?? latest?.Conditions.AcMaxProcessorStatePercent,
+            ActivePowerPlan: activePowerPlan ?? latest?.Conditions.PowerPlan,
+            StorageSenseEnabled: storageSenseEnabled,
+            DotNetSdkMajorVersion: dotnetMajor);
+    }
+
+    private static string? TryFindExistingDevDriveRoot()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        try
+        {
+            foreach (var d in DriveInfo.GetDrives())
+            {
+                if (!d.IsReady || d.DriveType != DriveType.Fixed) continue;
+                if (string.Equals(d.DriveFormat, "ReFS", StringComparison.OrdinalIgnoreCase))
+                    return d.Name;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>
+    /// Runs a closed-loop experiment: Before benchmark → Apply checked improvements → After benchmark.
+    /// Each improvement is applied through <paramref name="applyImprovement"/> (or <see cref="RemediationService.ExecuteAsync"/>).
+    /// </summary>
+    public async Task<BenchmarkExperimentResult> RunExperimentAsync(
+        IReadOnlyList<BenchmarkImprovement> selectedImprovements,
+        Func<AreaAction, CancellationToken, Task<RemediationResult>>? applyImprovement = null,
+        CancellationToken ct = default)
+    {
+        if (Settings.Enabled.Count == 0)
+            return new(Settings.Goal, Before, After, [], false, "No benchmarks are selected.");
+
+        Func<AreaAction, CancellationToken, Task<RemediationResult>> apply = applyImprovement
+            ?? (remediation is not null
+                ? (a, token) => remediation.ExecuteAsync(a, token)
+                : (_, _) => Task.FromResult(new RemediationResult(false, "Remediation service is not available.")));
+
+        CancellationTokenSource cts;
+        BenchmarkSettings settings;
+        lock (_gate)
+        {
+            if (Running is not null || Settling is not null || RunningDeveloperAction || ExperimentRunning)
+                return new(Settings.Goal, Before, After, [], false, "A benchmark is already running.");
+            ExperimentRunning = true;
+            ExperimentStep = "Step 1/3: Running Before benchmark…";
+            Running = BenchmarkPhase.Before;
+            settings = _state.Settings;
+            _cts = cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        }
+        Blocked = null;
+        Message = null;
+        LastExperiment = null;
+        Raise();
+
+        BenchmarkRun? beforeRun = null;
+        BenchmarkRun? afterRun = null;
+        var outcomes = new List<BenchmarkImprovementOutcome>();
+        string? error = null;
+
+        try
+        {
+            var prog = new Progress<string>(m => { Progress = m; Raise(); });
+
+            // 1. Before benchmark
+            beforeRun = await runner.RunAsync(BenchmarkPhase.Before, settings, null, prog, cts.Token).ConfigureAwait(false);
+            Save(_state with { Before = beforeRun, After = null, RunBeforeOnStartup = false, RunAfterOnStartup = false });
+            WriteEvent(beforeRun);
+            if (!beforeRun.Completed || cts.IsCancellationRequested)
+            {
+                error = "Stopped during Before benchmark.";
+                return FinishExperiment(settings.Goal, beforeRun, null, outcomes, false, error);
+            }
+
+            // 2. Apply checked improvements
+            lock (_gate)
+            {
+                Running = null;
+                ExperimentStep = $"Step 2/3: Applying {selectedImprovements.Count} {(selectedImprovements.Count == 1 ? "improvement" : "improvements")}…";
+                Progress = ExperimentStep;
+            }
+            Raise();
+
+            var ordered = BenchmarkImprovements.OrderForExecution(selectedImprovements.Where(i => !i.AlreadyApplied));
+            string? createdDevDriveRoot = null;
+            var devDriveFailed = false;
+
+            foreach (var imp in ordered)
+            {
+                cts.Token.ThrowIfCancellationRequested();
+                if (imp.RequiresDevDrive && createdDevDriveRoot is null && imp.Action.Target.Contains(BenchmarkImprovements.NewDevDriveToken, StringComparison.Ordinal))
+                {
+                    var reason = devDriveFailed
+                        ? "Skipped because creating the persistent Dev Drive failed."
+                        : "Skipped because no Dev Drive is mounted.";
+                    outcomes.Add(new(imp.Id, imp.Title, Succeeded: false, Skipped: true, reason));
+                    continue;
+                }
+
+                Progress = $"Applying: {imp.Title}…";
+                Raise();
+                var resolved = BenchmarkImprovements.ResolveAction(imp.Action, createdDevDriveRoot);
+                var res = await apply(resolved, cts.Token).ConfigureAwait(false);
+                outcomes.Add(new(imp.Id, imp.Title, res.Success, Skipped: false, res.Message));
+                if (imp.Action.Kind == RemediationKind.CreatePersistentDevDrive)
+                {
+                    if (res.Success && !string.IsNullOrWhiteSpace(res.CreatedDriveRoot))
+                        createdDevDriveRoot = res.CreatedDriveRoot;
+                    else if (!res.Success)
+                        devDriveFailed = true;
+                }
+                else if (imp.Action.Kind == RemediationKind.InstallDotNetSdk && res.Success)
+                {
+                    try { await RefreshDeveloperEnvironmentAsync(cts.Token).ConfigureAwait(false); }
+                    catch { }
+                }
+            }
+
+            // 3. After benchmark
+            lock (_gate)
+            {
+                Running = BenchmarkPhase.After;
+                ExperimentStep = "Step 3/3: Running After benchmark…";
+                Progress = ExperimentStep;
+            }
+            Raise();
+
+            afterRun = await runner.RunAsync(BenchmarkPhase.After, settings, null, prog, cts.Token).ConfigureAwait(false);
+            Save(_state with { After = afterRun, RunAfterOnStartup = false });
+            WriteEvent(afterRun);
+
+            var completed = afterRun.Completed;
+            var appliedCount = outcomes.Count(o => o.Succeeded);
+            Message = completed
+                ? $"Experiment complete: applied {appliedCount} of {outcomes.Count} improvements and captured Before → After."
+                : "Stopped during After benchmark.";
+            return FinishExperiment(settings.Goal, beforeRun, afterRun, outcomes, completed, completed ? null : "Stopped during After benchmark.");
+        }
+        catch (OperationCanceledException)
+        {
+            Message = "Benchmark experiment cancelled.";
+            return FinishExperiment(settings.Goal, beforeRun, afterRun, outcomes, false, "Cancelled.");
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                ExperimentRunning = false;
+                ExperimentStep = null;
+                Running = null;
+                Progress = null;
+                if (ReferenceEquals(_cts, cts)) _cts = null;
+            }
+            cts.Dispose();
+            Raise();
+        }
+    }
+
+    private BenchmarkExperimentResult FinishExperiment(
+        string? goal, BenchmarkRun? before, BenchmarkRun? after,
+        IReadOnlyList<BenchmarkImprovementOutcome> outcomes, bool completed, string? error)
+    {
+        var result = new BenchmarkExperimentResult(goal, before, after, outcomes, completed, error);
+        LastExperiment = result;
+        return result;
     }
 
     private void WriteEvent(BenchmarkRun run)

@@ -198,6 +198,7 @@ public static class FixCatalog
                 RemediationKind.EnableStorageSense => Has(Changes.ChangeKind.RegistryValue, Changes.RegistryAllowlist.StorageSenseEnabled.Target),
                 RemediationKind.ResetMaxProcessorState => HasKind(Changes.ChangeKind.PowerSetting),
                 RemediationKind.MovePackageCacheToDevDrive => Has(Changes.ChangeKind.UserEnvironmentVariable, DevDrivePackageCaches.TargetEnvVar(a.Target)),
+                RemediationKind.CreatePersistentDevDrive => HasKind(Changes.ChangeKind.PersistentDevDrive),
                 RemediationKind.UnmuteAudioEndpoint => Has(Changes.ChangeKind.AudioEndpoint, $"{a.Target}|{Audio.AudioTargets.Mute}"),
                 RemediationKind.RaiseAudioVolume => Has(Changes.ChangeKind.AudioEndpoint, $"{a.Target}|{Audio.AudioTargets.Volume}"),
                 RemediationKind.EnableAudioEndpoint => Has(Changes.ChangeKind.AudioEndpoint, $"{a.Target}|{Audio.AudioTargets.State}"),

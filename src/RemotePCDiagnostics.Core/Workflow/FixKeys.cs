@@ -43,6 +43,8 @@ public static class FixKeys
         [RemediationKind.EnableStorageSense] = "enablestoragesense",
         [RemediationKind.ResetMaxProcessorState] = "resetmaxprocessorstate",
         [RemediationKind.MovePackageCacheToDevDrive] = "movepackagecachetodevdrive",
+        [RemediationKind.CreatePersistentDevDrive] = "createpersistentdevdrive",
+        [RemediationKind.InstallDotNetSdk] = "installdotnetsdk",
         [RemediationKind.UnmuteAudioEndpoint] = "unmuteaudioendpoint",
         [RemediationKind.RaiseAudioVolume] = "raiseaudiovolume",
         [RemediationKind.SetDefaultAudioEndpoint] = "setdefaultaudioendpoint",
