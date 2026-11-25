@@ -11,8 +11,10 @@ public sealed class NetworkTestPlugin : IModulePlugin
         services.AddModule(context, sp =>
         {
             var settings = NetworkTestSettings.FromEnvironment(Environment.GetEnvironmentVariable);
+            var commands = sp.GetRequiredService<SystemCommandRunner>();
             return new NetworkTestModule(new SystemPinger(), new SystemGatewayResolver(), new HttpSpeedTester(settings, log: sp.LoggerFor<HttpSpeedTester>()),
-                new SystemAdapterCounters(sp.GetRequiredService<SystemCommandRunner>()), sp.GetRequiredService<ISensorProvider>(), settings, sp.LoggerFor<NetworkTestModule>());
+                new SystemAdapterCounters(commands), sp.GetRequiredService<ISensorProvider>(), settings, sp.LoggerFor<NetworkTestModule>(),
+                connectionCost: new WindowsConnectionCostProvider(), wifiLinkRate: new NetshWifiLinkRateReader(commands));
         }, ModuleIds.NetworkTest, typeof(NetworkTestPage));
 }
 

@@ -19,6 +19,14 @@ public sealed record NetworkTestSettings
     public string SpeedServer { get; init; } = DefaultSpeedServer;
     public long DownloadBytes { get; init; } = 25_000_000;
     public long UploadBytes { get; init; } = 10_000_000;
+    /// <summary>Byte budget per direction on ordinary (unrestricted) connections.</summary>
+    public long OrdinaryDownloadBytes { get; init; } = 250_000_000;
+    public long OrdinaryUploadBytes { get; init; } = 100_000_000;
+    /// <summary>Maximum per-request chunk size (Cloudflare per-request caps).</summary>
+    public long MaxDownloadChunkBytes { get; init; } = 50_000_000;
+    public long MaxUploadChunkBytes { get; init; } = 25_000_000;
+    /// <summary>Time ceiling per direction (~5 seconds; bufferbloat appears within 2-3 s of saturation).</summary>
+    public TimeSpan DirectionTimeCeiling { get; init; } = TimeSpan.FromSeconds(5);
     public TimeSpan TransferTimeout { get; init; } = TimeSpan.FromSeconds(20);
 
     public string DownloadUrl(long bytes) => $"{SpeedServer.TrimEnd('/')}/__down?bytes={bytes}";
@@ -28,6 +36,83 @@ public sealed record NetworkTestSettings
     {
         var url = getEnv(SpeedServerEnvironmentVariable)?.Trim();
         return Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme is "https" or "http" ? new NetworkTestSettings { SpeedServer = u.ToString() } : new NetworkTestSettings();
+    }
+}
+
+public enum ConnectionCostKind { Unknown, Unrestricted, Metered }
+
+public interface IConnectionCostProvider
+{
+    ConnectionCostKind GetConnectionCost();
+}
+
+/// <summary>Reads Windows connection cost via COM <c>INetworkCostManager</c> when available; falls back to <see cref="ConnectionCostKind.Unknown"/> (conservative 25/10 MB caps).</summary>
+public sealed class WindowsConnectionCostProvider : IConnectionCostProvider
+{
+    public ConnectionCostKind GetConnectionCost()
+    {
+        if (!OperatingSystem.IsWindows()) return ConnectionCostKind.Unknown;
+        try
+        {
+            var t = Type.GetTypeFromCLSID(new Guid("DCB00C01-570F-4A9B-8D69-199FDBA5723B"));
+            if (t is null) return ConnectionCostKind.Unknown;
+            var obj = Activator.CreateInstance(t);
+            if (obj is null) return ConnectionCostKind.Unknown;
+            try
+            {
+                if (obj is INetworkCostManager mgr)
+                {
+                    mgr.GetCost(out var cost, IntPtr.Zero);
+                    // NLM_CONNECTION_COST_UNRESTRICTED = 0x1; FIXED = 0x2; VARIABLE = 0x4; OVERDATALIMIT = 0x10000; ROAMING = 0x40000
+                    if ((cost & 0x00000006u) != 0 || (cost & 0x00050000u) != 0)
+                        return ConnectionCostKind.Metered;
+                    if ((cost & 0x00000001u) != 0)
+                        return ConnectionCostKind.Unrestricted;
+                }
+            }
+            finally
+            {
+                if (System.Runtime.InteropServices.Marshal.IsComObject(obj))
+                    System.Runtime.InteropServices.Marshal.ReleaseComObject(obj);
+            }
+        }
+        catch { }
+        return ConnectionCostKind.Unknown;
+    }
+
+    [System.Runtime.InteropServices.ComImport]
+    [System.Runtime.InteropServices.Guid("DCB00008-570F-4A9B-8D69-199FDBA5723B")]
+    [System.Runtime.InteropServices.InterfaceType(System.Runtime.InteropServices.ComInterfaceType.InterfaceIsIUnknown)]
+    private interface INetworkCostManager
+    {
+        void GetCost(out uint pCost, IntPtr pDestIPAddr);
+    }
+}
+
+public interface IWifiLinkRateReader
+{
+    Task<string?> ReadLinkRateTextAsync(CancellationToken ct);
+}
+
+public sealed class NetshWifiLinkRateReader(SystemCommandRunner commands) : IWifiLinkRateReader
+{
+    public async Task<string?> ReadLinkRateTextAsync(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        try
+        {
+            var res = await commands.RunAsync(WifiConfigModule.Netsh, ["wlan", "show", "interfaces"], ct).ConfigureAwait(false);
+            if (res is not { ExitCode: 0 }) return null;
+            var wifi = WifiConfigModule.ParseNetshWlan(res.StdOut);
+            if (wifi is not { Connected: true }) return null;
+            var rx = wifi.ReceiveRateMbps?.Trim();
+            var tx = wifi.TransmitRateMbps?.Trim();
+            if (!string.IsNullOrEmpty(rx) && !string.IsNullOrEmpty(tx)) return $"{rx} / {tx} Mbps";
+            if (!string.IsNullOrEmpty(rx)) return $"{rx} Mbps";
+            if (!string.IsNullOrEmpty(tx)) return $"{tx} Mbps";
+            return null;
+        }
+        catch { return null; }
     }
 }
 
@@ -44,17 +129,24 @@ public interface IGatewayResolver
     string? GetDefaultGateway();
 }
 
-/// <summary>Measured transfer: bytes moved in the elapsed time (null bytes = failed).</summary>
-public sealed record TransferResult(long Bytes, TimeSpan Elapsed, string? Error = null)
+/// <summary>Measured transfer: bytes moved in the elapsed time (null bytes = failed). ClientObservedBytes tracks bytes sent/received even on timeout/error so budgets stay bounded.</summary>
+public sealed record TransferResult(
+    long Bytes,
+    TimeSpan Elapsed,
+    string? Error = null,
+    TimeSpan? FirstPayloadByteAt = null,
+    TimeSpan? LastPayloadByteAt = null,
+    long ClientObservedBytes = 0)
 {
     public double? Mbps => Error is null && Bytes > 0 && Elapsed > TimeSpan.Zero ? Bytes * 8 / 1e6 / Elapsed.TotalSeconds : null;
+    public long BudgetBytes => Math.Max(Bytes, ClientObservedBytes);
 }
 
 public interface ISpeedTester
 {
     /// <summary>Downloads at most <paramref name="maxBytes"/>; never transfers more.</summary>
     Task<TransferResult> DownloadAsync(long maxBytes, TimeSpan timeout, CancellationToken cancellationToken);
-    /// <summary>Uploads exactly <paramref name="bytes"/> (capped by the caller).</summary>
+    /// <summary>Uploads at most <paramref name="bytes"/> (capped by the caller).</summary>
     Task<TransferResult> UploadAsync(long bytes, TimeSpan timeout, CancellationToken cancellationToken);
 }
 
@@ -99,11 +191,12 @@ public sealed class SystemGatewayResolver : IGatewayResolver
     }
 }
 
-/// <summary>HTTPS download/upload against a Cloudflare-style speed endpoint, with hard byte caps.</summary>
-public sealed class HttpSpeedTester(NetworkTestSettings settings, HttpClient? client = null, ILogger? log = null) : ISpeedTester, IDisposable
+/// <summary>HTTPS download/upload against a Cloudflare-style speed endpoint, with hard byte caps and client-observed payload-window timestamps.</summary>
+public sealed class HttpSpeedTester(NetworkTestSettings settings, HttpClient? client = null, ILogger? log = null, IStressClock? clock = null) : ISpeedTester, IDisposable
 {
     private readonly bool _ownsClient = client is null;
     private readonly HttpClient _http = client ?? new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly IStressClock _clock = clock ?? new StopwatchStressClock();
 
     public void Dispose() { if (_ownsClient) _http.Dispose(); }
 
@@ -113,6 +206,8 @@ public sealed class HttpSpeedTester(NetworkTestSettings settings, HttpClient? cl
         cts.CancelAfter(timeout);
         var sw = Stopwatch.StartNew();
         long total = 0;
+        TimeSpan? firstByte = null;
+        TimeSpan? lastByte = null;
         try
         {
             using var resp = await _http.GetAsync(settings.DownloadUrl(maxBytes), HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
@@ -124,19 +219,22 @@ public sealed class HttpSpeedTester(NetworkTestSettings settings, HttpClient? cl
             {
                 var n = await s.ReadAsync(buf.AsMemory(0, (int)Math.Min(buf.Length, maxBytes - total)), cts.Token).ConfigureAwait(false);
                 if (n == 0) break;
+                var now = _clock.Elapsed;
+                firstByte ??= now;
+                lastByte = now;
                 total += n;
             }
-            return new TransferResult(total, sw.Elapsed);
+            return new TransferResult(total, sw.Elapsed, FirstPayloadByteAt: firstByte, LastPayloadByteAt: lastByte, ClientObservedBytes: total);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && total > 0)
         {
-            return new TransferResult(total, sw.Elapsed); // timed out part-way: still a valid measurement
+            return new TransferResult(total, sw.Elapsed, FirstPayloadByteAt: firstByte, LastPayloadByteAt: lastByte, ClientObservedBytes: total);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             log.Error($"Network test: download failed: {ex.GetType().Name}: {ex.Message}");
-            return new TransferResult(total, sw.Elapsed, ex.Message);
+            return new TransferResult(0, sw.Elapsed, ex.Message, firstByte, lastByte, total);
         }
     }
 
@@ -145,22 +243,55 @@ public sealed class HttpSpeedTester(NetworkTestSettings settings, HttpClient? cl
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(timeout);
         var sw = new Stopwatch();
+        using var content = new TrackedUploadContent(bytes, _clock);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
         try
         {
-            var payload = new byte[bytes];
-            Random.Shared.NextBytes(payload);
-            using var content = new ByteArrayContent(payload);
-            content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
             sw.Restart();
             using var resp = await _http.PostAsync(settings.UploadUrl, content, cts.Token).ConfigureAwait(false);
             resp.EnsureSuccessStatusCode();
-            return new TransferResult(bytes, sw.Elapsed);
+            return new TransferResult(bytes, sw.Elapsed, FirstPayloadByteAt: content.FirstByteAt, LastPayloadByteAt: content.LastByteAt, ClientObservedBytes: content.BytesWritten);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             log.Error($"Network test: upload failed: {ex.GetType().Name}: {ex.Message}");
-            return new TransferResult(0, sw.Elapsed, ex.Message);
+            // Partial upload timed out or failed: track client-observed bytes for budget accounting without implying server receipt.
+            return new TransferResult(0, sw.Elapsed, ex.Message, content.FirstByteAt, content.LastByteAt, content.BytesWritten);
+        }
+    }
+
+    private sealed class TrackedUploadContent(long totalBytes, IStressClock clock) : HttpContent
+    {
+        private const int BlockSize = 65536;
+        public long BytesWritten { get; private set; }
+        public TimeSpan? FirstByteAt { get; private set; }
+        public TimeSpan? LastByteAt { get; private set; }
+
+        protected override Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context) =>
+            SerializeToStreamAsync(stream, context, CancellationToken.None);
+
+        protected override async Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context, CancellationToken cancellationToken)
+        {
+            var block = new byte[(int)Math.Min(BlockSize, Math.Max(1, totalBytes))];
+            Random.Shared.NextBytes(block);
+            long remaining = totalBytes;
+            while (remaining > 0)
+            {
+                var n = (int)Math.Min(block.Length, remaining);
+                await stream.WriteAsync(block.AsMemory(0, n), cancellationToken).ConfigureAwait(false);
+                var now = clock.Elapsed;
+                FirstByteAt ??= now;
+                LastByteAt = now;
+                BytesWritten += n;
+                remaining -= n;
+            }
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = totalBytes;
+            return true;
         }
     }
 }

@@ -19,12 +19,17 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
     protected override string FailedMessage => "Couldn't read Wi-Fi and IP network configuration on this PC.";
 
     public static string Netsh => SystemCommandRunner.SystemTool("netsh.exe");
+    public const double SlowLinkRateMbps = 150;
+
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         progress?.Report("Checking Wi-Fi signal and IP configuration…");
         var wlanRes = await commands.RunAsync(Netsh, ["wlan", "show", "interfaces"], ct).ConfigureAwait(false);
         var wlanOk = wlanRes is { ExitCode: 0 };
         var wifi = wlanOk ? ParseNetshWlan(wlanRes!.StdOut) : null;
+        var bandContext = wifi is { Connected: true } && Is24Ghz(wifi)
+            ? await ReadBandContextAsync(commands, wifi.Ssid, ct).ConfigureAwait(false)
+            : null;
         IpConfigSnapshot? ipSnap = null;
         if (commands.IsScripted)
         {
@@ -40,19 +45,35 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         if (!wlanOk && (ipSnap is null || ipSnap.Adapters.Count == 0))
             return AreaReport.Failed(FailedMessage);
 
-        return Build(wifi, wlanOk, ipSnap);
+        return Build(wifi, wlanOk, ipSnap, bandContext: bandContext);
+    }
+
+    /// <summary>Reads <c>netsh wlan show networks mode=bssid</c> and <c>netsh wlan show drivers</c> when connected on 2.4 GHz.</summary>
+    public static async Task<WifiBandContext?> ReadBandContextAsync(SystemCommandRunner commands, string connectedSsid, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(connectedSsid)) return null;
+        var networksTask = commands.RunAsync(Netsh, ["wlan", "show", "networks", "mode=bssid"], ct);
+        var driversTask = commands.RunAsync(Netsh, ["wlan", "show", "drivers"], ct);
+        await Task.WhenAll(networksTask, driversTask).ConfigureAwait(false);
+        var networksRes = await networksTask.ConfigureAwait(false);
+        var driversRes = await driversTask.ConfigureAwait(false);
+        if (networksRes is not { ExitCode: 0 } || driversRes is not { ExitCode: 0 })
+            return null;
+        return new WifiBandContext(
+            HasSameSsidOn5Or6Ghz(networksRes.StdOut, connectedSsid),
+            ParseNetshDriversSupports5Or6Ghz(driversRes.StdOut));
     }
 
     /// <param name="connectedAdapters">
     /// How many adapters Windows' adapter list (osquery) reports as connected, when known. An empty IP snapshot alongside a
     /// connected adapter means the IP read failed or caught the stack mid-change, not that the PC is offline.
     /// </param>
-    public static AreaReport Build(WifiInterfaceInfo? wifi, bool wlanOk, IpConfigSnapshot? ipSnap, DnsComparison? dns = null, int connectedAdapters = 0)
+    public static AreaReport Build(WifiInterfaceInfo? wifi, bool wlanOk, IpConfigSnapshot? ipSnap, DnsComparison? dns = null, int connectedAdapters = 0, WifiBandContext? bandContext = null)
     {
         if (!wlanOk && ipSnap is null)
             return AreaReport.Failed("Couldn't read Wi-Fi and IP network configuration on this PC.");
 
-        var cards = new List<AreaCard> { BuildWifiCard(wifi, wlanOk), BuildIpDnsCard(ipSnap, dns, connectedAdapters) };
+        var cards = new List<AreaCard> { BuildWifiCard(wifi, wlanOk, bandContext), BuildIpDnsCard(ipSnap, dns, connectedAdapters) };
         string summary;
         if (wifi is { Connected: true })
         {
@@ -81,7 +102,7 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         return new(cards, summary, status);
     }
 
-    private static AreaCard BuildWifiCard(WifiInterfaceInfo? wifi, bool wlanOk)
+    private static AreaCard BuildWifiCard(WifiInterfaceInfo? wifi, bool wlanOk, WifiBandContext? bandContext)
     {
         if (!wlanOk && wifi is null)
             return AreaCard.Failed("wifi", "Wi-Fi signal & link", "Couldn't read wireless adapter status.");
@@ -106,7 +127,8 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         }
 
         var weak = wifi.SignalPercent is int sig && sig < WeakSignalPercent;
-        var level = weak ? AreaLevel.Warning : AreaLevel.Ok;
+        var warn24Ghz = Is24Ghz(wifi) && bandContext is { SameSsidOn5Or6Ghz: true, AdapterSupports5Or6Ghz: true };
+        var level = weak || warn24Ghz ? AreaLevel.Warning : AreaLevel.Ok;
         var headline = wifi.SignalPercent is int s
             ? $"{wifi.Ssid} · {s}% signal"
             : wifi.Ssid;
@@ -119,16 +141,25 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         var rows = new List<AreaRow>
         {
             new(AreaLevel.Ok, ["SSID (network)", string.IsNullOrWhiteSpace(wifi.Ssid) ? "—" : wifi.Ssid]),
-            new(level, ["Signal quality", wifi.SignalPercent is int sp ? $"{sp}%" : "—"]),
-            new(AreaLevel.Neutral, ["Band / channel", FormatBandChannel(wifi.Band, wifi.Channel)]),
+            new(weak ? AreaLevel.Warning : AreaLevel.Ok, ["Signal quality", wifi.SignalPercent is int sp ? $"{sp}%" : "—"]),
+            new(warn24Ghz ? AreaLevel.Warning : AreaLevel.Neutral, ["Band / channel", FormatBandChannel(wifi.Band, wifi.Channel)]),
             new(AreaLevel.Neutral, ["Wi-Fi standard", string.IsNullOrWhiteSpace(wifi.RadioType) ? "—" : wifi.RadioType]),
             new(AreaLevel.Neutral, ["Link speed (RX / TX)", linkSpeed]),
-            new(AreaLevel.Neutral, ["Adapter", string.IsNullOrWhiteSpace(wifi.Description) ? wifi.Name : wifi.Description]),
         };
+
+        var minLinkMbps = MinLinkRateMbps(wifi.ReceiveRateMbps, wifi.TransmitRateMbps);
+        if (minLinkMbps is > 0 and < SlowLinkRateMbps)
+            rows.Add(new(AreaLevel.Neutral, ["Link speed note", "Wi-Fi link is slower than most internet plans"]));
+
+        rows.Add(new(AreaLevel.Neutral, ["Adapter", string.IsNullOrWhiteSpace(wifi.Description) ? wifi.Name : wifi.Description]));
+
+        var notes = new List<string>();
+        if (weak) notes.Add("Signal below 50% can cause packet drops, high latency, and reduced throughput.");
+        if (warn24Ghz) notes.Add("Connected on 2.4 GHz, but the same network is visible on 5 or 6 GHz and this Wi-Fi adapter supports it.");
 
         return new("wifi", "Wi-Fi signal & link", level, headline, string.Join(" · ", metaParts),
             ["Detail", "Value"], rows,
-            Note: weak ? "Signal below 50% can cause packet drops, high latency, and reduced throughput." : null);
+            Note: notes.Count > 0 ? string.Join(" ", notes) : null);
     }
 
     /// <summary>The adapter whose DNS gets compared: the one with a gateway (normally the one in use).</summary>
@@ -377,9 +408,110 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         Str(el, "Dns"),
         el.TryGetProperty("DnsManual", out _) ? Str(el, "DnsManual").Length > 0 : null);
 
+    public static bool Is24Ghz(WifiInterfaceInfo? wifi)
+    {
+        if (wifi is null || !wifi.Connected) return false;
+        if (!string.IsNullOrWhiteSpace(wifi.Band))
+        {
+            if (wifi.Band.Contains("2.4", StringComparison.OrdinalIgnoreCase)) return true;
+            if (wifi.Band.Contains("5 GHz", StringComparison.OrdinalIgnoreCase) || wifi.Band.Contains("6 GHz", StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        return int.TryParse(wifi.Channel?.Trim(), out var ch) && ch is >= 1 and <= 14;
+    }
+
+    public static double? ParseLinkRateMbps(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        return double.TryParse(text.Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0
+            ? v
+            : null;
+    }
+
+    public static double? MinLinkRateMbps(string? rx, string? tx)
+    {
+        var r = ParseLinkRateMbps(rx);
+        var t = ParseLinkRateMbps(tx);
+        return (r, t) switch
+        {
+            (not null, not null) => Math.Min(r.Value, t.Value),
+            (not null, null) => r.Value,
+            (null, not null) => t.Value,
+            _ => null,
+        };
+    }
+
+    /// <summary>Parses <c>netsh wlan show networks mode=bssid</c> by line and key to see if <paramref name="connectedSsid"/> is also visible on 5 or 6 GHz.</summary>
+    public static bool HasSameSsidOn5Or6Ghz(string? stdout, string? connectedSsid)
+    {
+        if (string.IsNullOrWhiteSpace(stdout) || string.IsNullOrWhiteSpace(connectedSsid))
+            return false;
+
+        var target = connectedSsid.Trim();
+        var matchingSsid = false;
+        foreach (var rawLine in stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var colon = rawLine.IndexOf(':');
+            if (colon <= 0) continue;
+            var key = rawLine[..colon].Trim();
+            var val = rawLine[(colon + 1)..].Trim();
+
+            if (key.StartsWith("SSID ", StringComparison.OrdinalIgnoreCase))
+            {
+                matchingSsid = string.Equals(val, target, StringComparison.Ordinal);
+                continue;
+            }
+            if (!matchingSsid) continue;
+
+            if (string.Equals(key, "Band", StringComparison.OrdinalIgnoreCase))
+            {
+                if (val.Contains("5 GHz", StringComparison.OrdinalIgnoreCase) || val.Contains("6 GHz", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            else if (string.Equals(key, "Channel", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(val, out var ch) && ch >= 32)
+                    return true;
+            }
+            else if (string.Equals(key, "Radio type", StringComparison.OrdinalIgnoreCase))
+            {
+                if (val.Contains("802.11a", StringComparison.OrdinalIgnoreCase) && !val.Contains("802.11ax", StringComparison.OrdinalIgnoreCase))
+                    return true;
+                if (val.Contains("802.11ac", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Parses <c>netsh wlan show drivers</c> by line and key to check whether the adapter supports 5 or 6 GHz radio types.</summary>
+    public static bool ParseNetshDriversSupports5Or6Ghz(string? stdout)
+    {
+        if (string.IsNullOrWhiteSpace(stdout)) return false;
+        foreach (var rawLine in stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var colon = rawLine.IndexOf(':');
+            if (colon <= 0) continue;
+            var key = rawLine[..colon].Trim();
+            if (!string.Equals(key, "Radio types supported", StringComparison.OrdinalIgnoreCase)) continue;
+            var val = rawLine[(colon + 1)..].Trim();
+            foreach (var token in val.Split([' ', '\t', ','], StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (string.Equals(token, "802.11a", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(token, "802.11ac", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(token, "802.11ax", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(token, "802.11be", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        return false;
+    }
+
     private static string Str(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()?.Trim() ?? "" : "";
 }
+
+public sealed record WifiBandContext(bool SameSsidOn5Or6Ghz, bool AdapterSupports5Or6Ghz);
 
 public sealed record WifiInterfaceInfo(
     string Name,
