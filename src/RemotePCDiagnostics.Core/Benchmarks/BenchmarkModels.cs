@@ -162,7 +162,24 @@ public sealed record BenchmarkMeasurement(BenchmarkKind Kind, IReadOnlyList<doub
 }
 
 /// <summary>Conditions that change results a lot; compared between before and after.</summary>
-public sealed record BenchmarkConditions(bool? OnBattery, double? CpuTemperatureC, string? PowerPlan = null);
+public sealed record BenchmarkConditions(bool? OnBattery, double? CpuTemperatureC, string? PowerPlan = null, string? PowerMode = null);
+
+/// <summary>Maps Windows 10/11 power mode overlay GUIDs (from <c>PowerGetEffectiveOverlayScheme</c>) to readable labels.</summary>
+public static class PowerModeNames
+{
+    public static readonly Guid BestPowerEfficiencyGuid = new("961cc777-2547-4f9d-8174-7d86181b8a7a");
+    public static readonly Guid BalancedPlanGuid = new("381b4222-f694-41f0-9685-ff5bb260df2e");
+    public static readonly Guid BestPerformanceGuid = new("ded574b5-45a0-4f42-8737-46345c09c238");
+
+    public static string? FromOverlayGuid(Guid overlayGuid, bool energySaver = false)
+    {
+        if (energySaver) return "Energy Saver";
+        if (overlayGuid == BestPowerEfficiencyGuid) return "Best power efficiency";
+        if (overlayGuid == BestPerformanceGuid) return "Best performance";
+        if (overlayGuid == Guid.Empty || overlayGuid == BalancedPlanGuid) return "Balanced";
+        return null;
+    }
+}
 
 public sealed record BenchmarkRun(BenchmarkPhase Phase, DateTimeOffset TimeUtc, BenchmarkConditions Conditions, IReadOnlyList<BenchmarkMeasurement> Measurements, bool Completed = true)
 {
@@ -325,6 +342,8 @@ public sealed record BenchmarkComparison(IReadOnlyList<BenchmarkDelta> Deltas, d
                 warnings.Add($"The processor was {bt:0}°C before and {at:0}°C after; a hot processor slows itself down.");
             if (bc.PowerPlan is { Length: > 0 } bp && ac.PowerPlan is { Length: > 0 } ap && bp != ap)
                 warnings.Add($"Power plan changed from {bp} to {ap} (part of the fixes, or changed meanwhile).");
+            if (bc.PowerMode is { Length: > 0 } bm && ac.PowerMode is { Length: > 0 } am && !string.Equals(bm, am, StringComparison.OrdinalIgnoreCase))
+                warnings.Add($"Power mode changed from {bm} to {am}; that affects CPU speed.");
         }
         if (deltas.Any(d => d.Info.Kind == BenchmarkKind.ProgramStart && d.Verdict == BenchmarkVerdict.Better))
             warnings.Add("If apps were closed as part of the fixes, part of the faster program starts comes from that; reopening them gives some of it back.");

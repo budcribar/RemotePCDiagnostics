@@ -141,4 +141,23 @@ public class BenchmarkUploadTests
         Assert.IsType<ShopBenchmarkUploadResult.Unauthorized>(await client.UploadBenchmarkAsync(relay, "rpd_live_x", Sample()));
         Assert.Equal(1, calls);
     }
+
+    [Fact]
+    public void PowerMode_maps_windows_overlay_guids_and_travels_in_upload_conditions()
+    {
+        Assert.Equal("Best power efficiency", PowerModeNames.FromOverlayGuid(PowerModeNames.BestPowerEfficiencyGuid));
+        Assert.Equal("Best performance", PowerModeNames.FromOverlayGuid(PowerModeNames.BestPerformanceGuid));
+        Assert.Equal("Balanced", PowerModeNames.FromOverlayGuid(PowerModeNames.BalancedPlanGuid));
+        Assert.Equal("Balanced", PowerModeNames.FromOverlayGuid(Guid.Empty));
+        Assert.Equal("Energy Saver", PowerModeNames.FromOverlayGuid(PowerModeNames.BestPerformanceGuid, energySaver: true));
+
+        var run = new BenchmarkRun(
+            BenchmarkPhase.Before,
+            DateTimeOffset.UtcNow,
+            new BenchmarkConditions(false, 48, "Balanced", "Best performance"),
+            [new BenchmarkMeasurement(BenchmarkKind.CpuSingle, [500])]);
+        var req = BenchmarkUpload.Build(run, "id-1", "BENCH-PC", new BenchmarkHardware(Processor: "Ryzen"), "1.0.0")!;
+        Assert.Equal("Balanced", req.Conditions.PowerPlan);
+        Assert.Equal("Best performance", req.Conditions.PowerMode);
+    }
 }

@@ -25,11 +25,21 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
     [StructLayout(LayoutKind.Sequential)]
     private struct SYSTEM_POWER_STATUS { public byte ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag; public int BatteryLifeTime, BatteryFullLifeTime; }
     [DllImport("kernel32.dll")] private static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS s);
+    [DllImport("powrprof.dll")] private static extern uint PowerGetEffectiveOverlayScheme(out Guid effectiveOverlayGuid);
 
     public BenchmarkConditions ReadConditions()
     {
         bool? battery = null;
-        try { if (GetSystemPowerStatus(out var s)) battery = s.ACLineStatus switch { 0 => true, 1 => false, _ => null }; } catch (Exception ex) { Log("power status: " + ex.Message); }
+        var energySaver = false;
+        try
+        {
+            if (GetSystemPowerStatus(out var s))
+            {
+                battery = s.ACLineStatus switch { 0 => true, 1 => false, _ => null };
+                energySaver = s.SystemStatusFlag == 1;
+            }
+        }
+        catch (Exception ex) { Log("power status: " + ex.Message); }
         double? cpu = null;
         try
         {
@@ -38,7 +48,21 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
                 .Select(r => r.Value).DefaultIfEmpty().Max();
         }
         catch (Exception ex) { Log("cpu temp: " + ex.Message); }
-        return new(battery, cpu, ReadPowerPlan());
+        return new(battery, cpu, ReadPowerPlan(), ReadPowerMode(energySaver));
+    }
+
+    /// <summary>Active Windows 10/11 power mode ("Best power efficiency", "Balanced", "Best performance", or "Energy Saver").</summary>
+    private string? ReadPowerMode(bool energySaver)
+    {
+        if (energySaver) return "Energy Saver";
+        try
+        {
+            return PowerGetEffectiveOverlayScheme(out var overlay) == 0
+                ? PowerModeNames.FromOverlayGuid(overlay, energySaver: false)
+                : null;
+        }
+        catch (EntryPointNotFoundException) { return null; }
+        catch (Exception ex) { Log("power mode: " + ex.Message); return null; }
     }
 
     /// <summary>Active power plan name from "powercfg /getactivescheme" ("... (Balanced)").</summary>

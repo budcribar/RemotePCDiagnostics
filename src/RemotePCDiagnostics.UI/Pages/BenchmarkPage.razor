@@ -391,6 +391,11 @@ else if (!running)
     private static string RunLine(string label, BenchmarkRun r) =>
         $"{label}: {r.TimeUtc.ToLocalTime():g}{Conditions(r.Conditions)}{(r.Completed ? "" : " · stopped early")}";
 
-    private static string Conditions(BenchmarkConditions c) =>
-        (c.OnBattery is { } b ? (b ? " · on battery" : " · plugged in") : "") + (c.CpuTemperatureC is { } t ? $" · CPU {t:0}°C" : "") + (c.PowerPlan is { } p ? $" · {p} plan" : "");
+    private static string Conditions(BenchmarkConditions c)
+    {
+        var power = c.PowerMode is { Length: > 0 } m
+            ? (c.PowerPlan is { Length: > 0 } p && !string.Equals(m, p, StringComparison.OrdinalIgnoreCase) ? $" · {m} ({p} plan)" : $" · {m}")
+            : (c.PowerPlan is { Length: > 0 } p2 ? $" · {p2} plan" : "");
+        return (c.OnBattery is { } b ? (b ? " · on battery" : " · plugged in") : "") + (c.CpuTemperatureC is { } t ? $" · CPU {t:0}°C" : "") + power;
+    }
 }
