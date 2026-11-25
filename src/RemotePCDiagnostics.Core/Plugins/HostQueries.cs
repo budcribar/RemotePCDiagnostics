@@ -34,6 +34,10 @@ public interface IHostQueries
     /// <summary><c>packages.list</c>: the signed-in user's Store packages (<see cref="DataSources.IPackageSource"/>).</summary>
     Task<DataSources.WmiQueryResult> ListPackagesAsync(CancellationToken ct = default) =>
         Task.FromResult(DataSources.PackageList.Failed("This host can't list Store apps."));
+    /// <summary><c>audio.state</c>: the audio endpoints, defaults, mute, volume and app sessions, read with Core Audio in the app (the
+    /// signed-in user's session; no administrator rights needed).</summary>
+    Task<Audio.AudioState> ReadAudioStateAsync(CancellationToken ct = default) =>
+        Task.FromResult(Audio.AudioState.Unavailable("This host can't read audio devices."));
 }
 
 /// <summary>The capability names a module lists in module.json, and the limits the app holds every query to.</summary>
@@ -46,9 +50,10 @@ public static class HostCapabilities
     public const string EventReviews = "events.reviewed";
     public const string WmiQuery = "wmi.query";
     public const string PackagesList = "packages.list";
+    public const string AudioState = "audio.state";
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
-        { SensorsRead, StorageDrives, StorageRetrims, EventLogQuery, EventReviews, WmiQuery, PackagesList };
+        { SensorsRead, StorageDrives, StorageRetrims, EventLogQuery, EventReviews, WmiQuery, PackagesList, AudioState };
 
     /// <summary>The logs <c>eventlog.query</c> reads (never Security).</summary>
     public static readonly IReadOnlySet<string> AllowedLogs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "System", "Application" };
@@ -80,6 +85,8 @@ public sealed record HostQueryBackend
     public DataSources.IWmiSource? Wmi { get; init; }
     /// <summary>The signed-in user's Store packages (read in the app; no administrator rights needed).</summary>
     public DataSources.IPackageSource? Packages { get; init; }
+    /// <summary>Core Audio, read in the app (the signed-in user's session).</summary>
+    public Audio.IAudioStateSource? Audio { get; init; }
     public Func<IReadOnlyCollection<string>> EventReviews { get; init; } = Areas.EventReviews.Read;
 }
 
@@ -172,6 +179,9 @@ public sealed class HostQueryServer(Func<HostQueryBackend?> backend, ILogger? lo
             case HostCapabilities.PackagesList:
                 var pk = await Need(backend.Packages).ReadPackagesAsync(ct).ConfigureAwait(false);
                 value = new WmiAnswer(pk.Error, pk.Rows?.Select(row => row.Values.ToDictionary(p => p.Key, p => p.Value)).ToList());
+                break;
+            case HostCapabilities.AudioState:
+                value = await Need(backend.Audio).ReadAsync(ct).ConfigureAwait(false);
                 break;
             default:
                 throw new HostQueryException("badRequest", $"unknown capability {capability}");
@@ -272,6 +282,10 @@ public sealed class HostQueriesClient(Action<ModuleHostMessage> send) : IHostQue
 
     public async Task<IReadOnlyCollection<string>> ReadEventReviewsAsync(CancellationToken ct = default) =>
         await QueryAsync<List<string>?>(HostCapabilities.EventReviews, null, ct).ConfigureAwait(false) ?? [];
+
+    public async Task<Audio.AudioState> ReadAudioStateAsync(CancellationToken ct = default) =>
+        await QueryAsync<Audio.AudioState?>(HostCapabilities.AudioState, null, ct).ConfigureAwait(false)
+        ?? Audio.AudioState.Unavailable("The app didn't return the audio devices.");
 }
 
 /// <summary>Sensors through the app (<c>sensors.read</c>), for the Temperatures &amp; fans module in user mode.</summary>

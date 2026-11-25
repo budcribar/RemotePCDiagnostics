@@ -29,6 +29,8 @@ public static class BuiltInModules
         new(ModuleIds.DiskSpeed, ModuleSlugs.DiskSpeed, "Disk speed test", ModuleKind.StressTest, ModuleGroups.Storage, 200) { RunAfter = [ModuleIds.MemoryTest] },
         new(ModuleIds.GpuStress, ModuleSlugs.GpuStress, "Graphics (GPU) stress test", ModuleKind.StressTest, ModuleGroups.Graphics, 100) { RunAfter = [ModuleIds.DiskSpeed] },
         new(ModuleIds.NetworkTest, ModuleSlugs.NetworkTest, "Network stability test", ModuleKind.StressTest, ModuleGroups.Network, 200) { RunAfter = [ModuleIds.GpuStress] },
+        // Sound: the read-only checks (Run all), listed before the interactive audio tests in the same group.
+        new(ModuleIds.Sound, ModuleSlugs.Sound, "Sound", ModuleKind.Check, ModuleGroups.Audio, 50),
         new(ModuleIds.SpeakerToMic, ModuleSlugs.SpeakerToMic, "Speaker to microphone test", ModuleKind.OnDemand, ModuleGroups.Audio, 100) { Page = "interactive" },
         new(ModuleIds.MicToSpeaker, ModuleSlugs.MicToSpeaker, "Microphone to speaker test", ModuleKind.OnDemand, ModuleGroups.Audio, 200) { Page = "interactive" },
         new(ModuleIds.Webcam, ModuleSlugs.Webcam, "Webcam test", ModuleKind.OnDemand, ModuleGroups.Camera, 100) { Page = "interactive" },

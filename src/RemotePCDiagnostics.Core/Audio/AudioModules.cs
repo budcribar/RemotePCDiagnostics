@@ -32,7 +32,7 @@ public sealed record MicToSpeakerReport(string Output, string Input, double MicP
 }
 
 /// <summary>Shared plumbing for both audio modules (device lookup, cancel, error mapping).</summary>
-public abstract class AudioModuleBase(IAudioIo io, ILogger? log) : OnDemandModuleBase(log), IAudioTestModule
+public abstract class AudioModuleBase(IAudioIo io, ILogger? log, IAudioStateSource? state = null) : OnDemandModuleBase(log), IAudioTestModule
 {
     protected readonly IAudioIo Io = io;
     protected ILogger? LogSink => Logger;
@@ -51,6 +51,38 @@ public abstract class AudioModuleBase(IAudioIo io, ILogger? log) : OnDemandModul
     {
         var list = Devices(flow);
         return list.FirstOrDefault(d => id is not null && d.Id == id) ?? list.FirstOrDefault(d => d.IsDefault) ?? list.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Before playing: a specific reason the test can't work on these devices (the device is off, Windows Audio isn't answering, another app
+    /// holds the device in exclusive mode), read with the same reader as the Sound check; null when nothing stands in the way or it couldn't be read.
+    /// </summary>
+    protected async Task<string?> PreCheckAsync(AudioDevice? output, AudioDevice? input, CancellationToken ct)
+    {
+        if (state is null) return null;
+        try
+        {
+            var s = await state.ReadAsync(ct).ConfigureAwait(false);
+            return s.Available ? PreCheckMessage(s, output?.Id, input?.Id) : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"{Name}: audio pre-check failed: {ex.Message}"); return null; }
+    }
+
+    public static string? PreCheckMessage(AudioState s, string? outputId, string? inputId)
+    {
+        foreach (var (id, what) in new[] { (outputId, "speaker"), (inputId, "microphone") })
+        {
+            if (id is null || s.Endpoints.FirstOrDefault(e => e.Id == id) is not { } e) continue;
+            if (!e.IsActive) return $"The {what} \"{e.Name}\" is {e.FriendlyState.ToLowerInvariant()}, so the test can't use it.";
+            switch (e.Probe)
+            {
+                case AudioProbeOutcome.TimedOut or AudioProbeOutcome.ServiceNotRunning:
+                    return "Windows Audio isn't answering, so the test can't play or record. Run the Sound check to see the audio services.";
+                case AudioProbeOutcome.DeviceInUse:
+                    return $"The {what} \"{e.Name}\" is being used by another app in exclusive mode. Close music, recording or game apps and try again.";
+            }
+        }
+        return null;
     }
 
     protected static bool IsAccessDenied(Exception ex) => ex is AudioAccessDeniedException or UnauthorizedAccessException;

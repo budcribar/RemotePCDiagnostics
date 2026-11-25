@@ -35,6 +35,8 @@ var launcher = new RecordingProcessLauncher(new SystemProcessLauncher(), recorde
 var osquery = new OsqueryRunner(options: new OsqueryOptions { ExecutablePath = osqueryPath }, launcher: launcher);
 var commands = new SystemCommandRunner(launcher);
 var files = new FileRecorder(recorder);
+// Core Audio (endpoints, defaults, mute, volume, formats, app sessions), read as the app does in the signed-in user's session.
+var audio = new RecordingAudioStateSource(new RemotePCDiagnostics.Host.WasapiAudioStateSource(), recorder);
 if (!osquery.Exists) Console.WriteLine($"osqueryi.exe not found ({osqueryPath}); the old osquery path won't be recorded. Pass --osquery <path>.");
 
 var machine = await DescribeMachineAsync(liveWmi);
@@ -74,6 +76,8 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     // The battery report's own powercfg run isn't recorded (its file name changes every run); the report is, by name.
     ("Sleep, wake & standby drain (powercfg + wevtutil)", new SleepWakeModule(commands,
         batteryReport: new RecordedBatteryReport(files, new PowerCfgBatteryReport(new SystemCommandRunner())))),
+    ("Sound (Core Audio + WMI + registry)", new RemotePCDiagnostics.Modules.Sound.SoundModule(audio, new WmiServiceSource(wmi),
+        new WmiDeviceDriverSource(wmi), wmi, registry)),
 };
 foreach (var (label, module) in checks)
 {

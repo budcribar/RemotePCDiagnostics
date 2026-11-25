@@ -38,6 +38,20 @@ public sealed class RecordingScrubber
         "IPAddress", "DefaultIPGateway", "IPv4", "Gateway",
     };
 
+    /// <summary>Device instance paths of Bluetooth and USB devices hold the device's MAC address or serial (<c>BTHENUM\...\8&amp;..._A0B1C2D3E4F5</c>,
+    /// <c>USB\VID_...\SERIAL</c>): replaced by a placeholder, the same one wherever the same path appears, so joins still work.</summary>
+    public static readonly IReadOnlySet<string> DeviceIdNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "DeviceID", "InstanceId" };
+
+    private static bool IsPersonalDeviceId(string s) =>
+        s.StartsWith("BTH", StringComparison.OrdinalIgnoreCase) || s.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>One string value under property <paramref name="name"/>, scrubbed.</summary>
+    private string Scalar(string name, string s) =>
+        SensitiveNames.Contains(name) ? Placeholder("serial", s)
+        : AddressNames.Contains(name) ? Address(s)
+        : DeviceIdNames.Contains(name) && IsPersonalDeviceId(s) ? Placeholder("device", s)
+        : Text(s);
+
     private readonly byte[] _key = RandomNumberGenerator.GetBytes(32);
     private readonly List<(string Value, string Kind)> _names = [];
     private readonly Dictionary<string, int> _counts = new(StringComparer.Ordinal);
@@ -160,10 +174,13 @@ public sealed class RecordingScrubber
         switch (node)
         {
             case JsonObject o:
+                // An audio endpoint on Bluetooth is named after the headset, which people often name after themselves ("Bud's AirPods").
+                var bluetooth = o.Any(p => p.Key.Equals("bus", StringComparison.OrdinalIgnoreCase) && p.Value is JsonValue b
+                                           && b.TryGetValue<string>(out var bus) && bus == "Bluetooth");
                 foreach (var (name, child) in o.ToList())
                 {
                     if (child is JsonValue v && v.TryGetValue<string>(out var s))
-                        o[name] = SensitiveNames.Contains(name) ? Placeholder("serial", s) : AddressNames.Contains(name) ? Address(s) : Text(s);
+                        o[name] = bluetooth && name.Equals("name", StringComparison.OrdinalIgnoreCase) ? Placeholder("bluetooth", s) : Scalar(name, s);
                     else if (child is not null) ScrubNode(child);
                 }
                 break;
@@ -182,7 +199,7 @@ public sealed class RecordingScrubber
         if (value.ValueKind == JsonValueKind.String)
         {
             var s = value.GetString()!;
-            return JsonSerializer.SerializeToElement(SensitiveNames.Contains(name) ? Placeholder("serial", s) : AddressNames.Contains(name) ? Address(s) : Text(s));
+            return JsonSerializer.SerializeToElement(Scalar(name, s));
         }
         if (value.ValueKind == JsonValueKind.Array)
             return JsonSerializer.SerializeToElement(value.EnumerateArray().Select(e => Value(name, e)).ToList());

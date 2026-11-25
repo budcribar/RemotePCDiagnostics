@@ -1,0 +1,12 @@
+{
+  "id": "56dea360-0bd7-4230-b072-0d54d91e90e4",
+  "slug": "Sound",
+  "displayName": "Sound",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.Sound.SoundPlugin",
+  "needsAdmin": false,
+  // Out of process (the module host): audio devices are read by the app in the user's session (audio.state), WMI goes through the app
+  // to the Agent (wmi.query), as in process.
+  "capabilities": [ "audio.state", "wmi.query" ],
+  "hasUi": false
+}

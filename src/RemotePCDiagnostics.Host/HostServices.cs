@@ -110,6 +110,7 @@ public static class HostServices
             sp.GetRequiredService<IMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(), L<UndoService>(), logEvent));
         // Audio tests (speaker→mic, mic→speaker): on-demand only, own pages, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioIo>(_ => new WasapiAudioIo(L<WasapiAudioIo>()));
+        services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(_ => new WasapiAudioStateSource(L<WasapiAudioStateSource>()));
         // NPU test: on-demand only, own page, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(L<WindowsNpuIo>()));
         // GPU stress test: Direct3D 11 compute devices.
@@ -363,6 +364,7 @@ public sealed class HostQueryBackendSlot
             Retrims = sp.GetService<IRetrimHistory>(), Drives = sp.GetService<IDriveSource>(),
             Wmi = sp.GetService<RemotePCDiagnostics.Core.DataSources.IWmiSource>(),
             Packages = sp.GetService<RemotePCDiagnostics.Core.DataSources.IPackageSource>(),
+            Audio = sp.GetService<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(),
         };
     }
 }
