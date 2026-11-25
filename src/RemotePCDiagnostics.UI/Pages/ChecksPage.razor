@@ -11,6 +11,7 @@
 @inject NavigationManager Nav
 @inject AppServices App
 @inject ISessionContext Session
+@inject IServiceProvider Services
 @* Two pages share this screen: /checks (read-only system checks) and /stress (stress tests, audio, webcam, NPU). The list is on the left,
    the selected test's real page on the right. *@
 @{
@@ -79,11 +80,36 @@
                 <span class="chevron-icon @(_checksOpen ? "is-open" : "")" aria-hidden="true">▾</span>
             </summary>
             <div class="bench-customize-body">
-                <div class="bench-preset-group">
+                <div class="bench-preset-group" data-testid="checks-profiles">
                     @* checks-enable-all and checks-disable-all are what Admin's set_enabled_checks clicks (Checks contract 4). *@
                     <button type="button" class="btn-small" data-testid="checks-enable-all" disabled="@ChecksLocked" @onclick="() => SetAllChecks(true)">Enable all</button>
                     <button type="button" class="btn-small" data-testid="checks-disable-all" disabled="@ChecksLocked" @onclick="() => SetAllChecks(false)">Disable all</button>
+                    @foreach (var profile in CheckProfiles.All)
+                    {
+                        var p = profile;
+                        var active = _activeProfiles.Contains(p.Id);
+                        <button type="button"
+                                class="@(active ? "btn-small btn-primary" : "btn-small")"
+                                data-testid="@($"checks-profile-{p.Id}")"
+                                aria-pressed="@(active ? "true" : "false")"
+                                title="@p.Summary"
+                                disabled="@ChecksLocked"
+                                @onclick="() => ToggleProfile(p)">
+                            @p.DisplayName
+                        </button>
+                    }
                 </div>
+                @if (_activeProfiles.Count > 0)
+                {
+                    var activeList = CheckProfiles.All.Where(p => _activeProfiles.Contains(p.Id)).ToList();
+                    <p class="meta" data-testid="checks-profile-links" style="margin:6px 0 8px">
+                        Profiles are additive (@string.Join(" + ", activeList.Select(p => p.DisplayName))).
+                        @foreach (var p in activeList.Where(x => !string.IsNullOrEmpty(x.RelatedLinkHref) && (!x.RelatedLinkRequiresDevEnvironment || HasDevEnvironment)))
+                        {
+                            <span> · <a href="@p.RelatedLinkHref">@p.RelatedLinkLabel</a></span>
+                        }
+                    </p>
+                }
                 <div class="bench-kinds">
                     @foreach (var choice in availableChecks)
                     {
@@ -236,6 +262,30 @@
         try { await JS.InvokeVoidAsync("rpdCheckPrefs.save", App.CheckSettings.Settings.ToJson()); } catch { }
     }
 
+    private readonly HashSet<string> _activeProfiles = new(StringComparer.OrdinalIgnoreCase);
+
+    private bool HasDevEnvironment =>
+        (Services.GetService(typeof(RemotePCDiagnostics.Core.Benchmarks.BenchmarkService)) as RemotePCDiagnostics.Core.Benchmarks.BenchmarkService)
+            ?.IsKindAvailable(RemotePCDiagnostics.Core.Benchmarks.BenchmarkKind.DeveloperCSharp) == true;
+
+    private void ToggleProfile(CheckProfile profile)
+    {
+        if (ChecksLocked || App.CheckSettings is null) return;
+        if (!_activeProfiles.Add(profile.Id))
+            _activeProfiles.Remove(profile.Id);
+
+        if (_activeProfiles.Count == 0) return;
+        var avail = Diagnostics.CheckChoices().Where(c => c.Available).Select(c => c.Id).ToList();
+        var wanted = CheckProfiles.ResolveEnabledCheckIds(_activeProfiles, avail);
+        App.CheckSettings.SetAll(avail, false, persistToHost: false);
+        foreach (var id in wanted)
+            App.CheckSettings.SetEnabled(id, true, available: true, persistToHost: false);
+        // Persist once at the end.
+        if (PersistToHost)
+            App.CheckSettings.SetAll(wanted, true, persistToHost: true);
+        _ = SaveRemotePrefsIfNeededAsync();
+    }
+
     private void ToggleCheck(CheckChoice check)
     {
         if (ChecksLocked || App.CheckSettings is null) return;
@@ -246,6 +296,7 @@
     private void SetAllChecks(bool on)
     {
         if (ChecksLocked || App.CheckSettings is null) return;
+        _activeProfiles.Clear();
         App.CheckSettings.SetAll(Diagnostics.CheckChoices().Where(c => c.Available).Select(c => c.Id), on, persistToHost: PersistToHost);
         _ = SaveRemotePrefsIfNeededAsync();
     }

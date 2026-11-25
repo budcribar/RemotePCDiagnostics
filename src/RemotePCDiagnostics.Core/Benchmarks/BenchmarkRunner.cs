@@ -256,7 +256,7 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
         }
         catch (OperationCanceledException) { completed = false; Log($"{phase} stopped by user"); }
 
-        var run = new BenchmarkRun(phase, started, conditions, list, completed);
+        var run = new BenchmarkRun(phase, started, conditions, list, completed, BenchmarkGoals.Normalize(settings.Goal), settings.Enabled.ToList());
         Log($"{phase} done: " + string.Join(" ", list.Select(m => $"{m.Kind}={m.Median?.ToString("0.###", CultureInfo.InvariantCulture) ?? "n/a"}")));
         return run;
     }

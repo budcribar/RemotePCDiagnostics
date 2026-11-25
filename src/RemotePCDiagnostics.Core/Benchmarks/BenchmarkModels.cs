@@ -124,6 +124,60 @@ public sealed record BenchmarkSettings
         if (IsEnabled(BenchmarkKind.DeveloperCSharp)) s += 120;
         return (int)Math.Ceiling(s);
     }
+
+    /// <summary>Active goal preset (<c>"browsing"</c>, <c>"build"</c>, <c>"tuneup"</c>, or null for custom).</summary>
+    public string? Goal { get; init; }
+}
+
+/// <summary>Goal presets over the existing <see cref="BenchmarkSettings.Enabled"/> list (never a separate run path).</summary>
+public static class BenchmarkGoals
+{
+    public const string Browsing = "browsing";
+    public const string Build = "build";
+    public const string TuneUp = "tuneup";
+
+    public static string? Normalize(string? goal) => goal?.Trim().ToLowerInvariant() switch
+    {
+        Browsing => Browsing,
+        Build => Build,
+        TuneUp => TuneUp,
+        _ => null,
+    };
+
+    public static string DisplayName(string? goal) => Normalize(goal) switch
+    {
+        Browsing => "Web browsing",
+        Build => "Build speed",
+        TuneUp => "Full tune-up",
+        _ => "Custom",
+    };
+
+    /// <summary>True only when a supported developer build environment exists on this PC.</summary>
+    public static bool IsGoalAvailable(string goal, IEnumerable<BenchmarkKind> available)
+    {
+        var set = available.ToHashSet();
+        return Normalize(goal) switch
+        {
+            Build => set.Contains(BenchmarkKind.DeveloperCSharp),
+            Browsing => set.Contains(BenchmarkKind.DnsLookup) || set.Contains(BenchmarkKind.Speedometer),
+            TuneUp => set.Count > 0,
+            _ => false,
+        };
+    }
+
+    public static IReadOnlyList<BenchmarkKind> KindsFor(string goal, IEnumerable<BenchmarkKind> available)
+    {
+        var avail = available.ToList();
+        return Normalize(goal) switch
+        {
+            Browsing => avail.Where(k => k is BenchmarkKind.DnsLookup or BenchmarkKind.Speedometer).ToList(),
+            Build => avail.Contains(BenchmarkKind.DeveloperCSharp)
+                ? avail.Where(k => k is BenchmarkKind.DeveloperCSharp or BenchmarkKind.DiskLatency).ToList()
+                : [],
+            TuneUp => avail,
+            _ => avail,
+        };
+    }
 }
 
 /// <summary>A Windows program used for "program start time" (only programs that ship with Windows).</summary>
@@ -213,7 +267,14 @@ public static class PowerModeNames
     }
 }
 
-public sealed record BenchmarkRun(BenchmarkPhase Phase, DateTimeOffset TimeUtc, BenchmarkConditions Conditions, IReadOnlyList<BenchmarkMeasurement> Measurements, bool Completed = true)
+public sealed record BenchmarkRun(
+    BenchmarkPhase Phase,
+    DateTimeOffset TimeUtc,
+    BenchmarkConditions Conditions,
+    IReadOnlyList<BenchmarkMeasurement> Measurements,
+    bool Completed = true,
+    string? Goal = null,
+    IReadOnlyList<BenchmarkKind>? EnabledKinds = null)
 {
     public BenchmarkMeasurement? Get(BenchmarkKind k) => Measurements.FirstOrDefault(m => m.Kind == k);
 }
