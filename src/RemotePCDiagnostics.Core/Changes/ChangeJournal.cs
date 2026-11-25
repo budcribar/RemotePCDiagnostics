@@ -31,6 +31,8 @@ public enum ChangeKind
     SecuritySetting,     // Target = a SecurityFixes key ("pua", "network-protection", "asr", "llmnr", "autorun"); Previous = its value before (SecurityFixes.ParsePrevious validates it); undo runs AgentSecuritySettings.Restore in the Agent
     DeviceWake,          // Target = device name as powercfg /devicequery wake_armed listed it (DeviceWake.IsSafeName); Previous = "armed"; undo runs powercfg /deviceenablewake
     WakeTimer,           // Target = scheduled task full path (DeviceWake.IsSafeTaskPath); Previous = "true"; undo turns Settings.WakeToRun back on
+    PowerSetting,        // Target = "schemeGuid|subgroupGuid|settingGuid|AC" (allowlisted PROCTHROTTLEMAX only); Previous = old AC value (0..100); undo writes it back without switching plans
+    UserEnvironmentVariable, // Target = user env var name on DevDrivePackageCaches.Allowlist; Previous = old HKCU\Environment value or null (absent: undo deletes it)
 }
 
 /// <param name="Label">Friendly, e.g. "Spotify won't start with Windows".</param>

@@ -418,6 +418,9 @@ public static class HistorySummary
         RemediationKind.DisableWakeTimer => "Wake timer",
         RemediationKind.InstallBiosUpdate => "BIOS update",
         RemediationKind.OpenSettings => "Windows Settings",
+        RemediationKind.EnableStorageSense => "Storage Sense",
+        RemediationKind.ResetMaxProcessorState => "Maximum processor state",
+        RemediationKind.MovePackageCacheToDevDrive => "Dev Drive package cache",
         _ => "Automated fix",
     };
 

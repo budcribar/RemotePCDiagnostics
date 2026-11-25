@@ -72,8 +72,11 @@ public static class RegistryAllowlist
     /// <summary>#3 Narrator (per account): 0 = Win+Ctrl+Enter no longer starts Narrator by accident.</summary>
     public static readonly RegistrySetting NarratorWinEnterLaunch = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Narrator\NoRoam", "WinEnterLaunchEnabled");
 
+    /// <summary>Windows Storage Sense master toggle (per account): 1 = Storage Sense on (preserves existing cadence and cleanup choices).</summary>
+    public static readonly RegistrySetting StorageSenseEnabled = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy", "01");
+
     public static readonly IReadOnlyList<RegistrySetting> All =
-        [NarratorWinEnterLaunch, WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen, LegacyDefaultPrinterMode, OfficeOptionalConnectedExperiences, EdgeStartupBoostPolicy, SilentInstalledApps, OemPreInstalledApps, PreInstalledApps, SoftLanding, SystemPaneSuggestions, GameDvrEnabled, AppCaptureEnabled];
+        [NarratorWinEnterLaunch, StorageSenseEnabled, WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen, LegacyDefaultPrinterMode, OfficeOptionalConnectedExperiences, EdgeStartupBoostPolicy, SilentInstalledApps, OemPreInstalledApps, PreInstalledApps, SoftLanding, SystemPaneSuggestions, GameDvrEnabled, AppCaptureEnabled];
 
     /// <summary>The allowlisted setting with this target (case-insensitive), or null.</summary>
     public static RegistrySetting? Find(string? target) =>

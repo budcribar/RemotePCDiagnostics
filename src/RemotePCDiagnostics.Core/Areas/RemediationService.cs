@@ -84,7 +84,10 @@ public sealed class RemediationService(
     ISystemSettings? settings = null,
     Bios.IBiosUpdateService? bios = null,
     IRecycleBinDeleter? recycleBin = null,
-    Action<string>? openUri = null)
+    Action<string>? openUri = null,
+    Optimizations.IRegistryTweaks? registryTweaks = null,
+    IPowerSettingController? powerSettings = null,
+    IUserEnvironmentStore? userEnv = null)
 {
     /// <summary>This app's record of successful retrims (so Drive health stops offering it right away).</summary>
     public RetrimLog? RetrimLog => retrimLog;
@@ -356,6 +359,34 @@ public sealed class RemediationService(
                         : null,
                 openUri is not null && Optimizations.MemoryCommandAllowlist.IsAllowedSettingsUri(action.Target)),
 
+            RemediationKind.EnableStorageSense => new(
+                action,
+                "Turn on Windows Storage Sense?",
+                "Windows Storage Sense automatically cleans temporary files and old Recycle Bin items so the system drive doesn't silently fill up.",
+                string.IsNullOrWhiteSpace(action.Target)
+                    ? "Sets HKCU StoragePolicy\\01 = 1 while preserving your existing schedule and retention choices (Windows defaults apply to unset values). Undo restores the setting, but cannot recover files Windows has already deleted."
+                    : $"Sets HKCU StoragePolicy\\01 = 1. {action.Target}",
+                "Undo restores the Storage Sense setting, but cannot recover files Windows has already deleted.",
+                true),
+
+            RemediationKind.ResetMaxProcessorState => new(
+                action,
+                "Set maximum processor state on AC to 100%?",
+                "The active power scheme currently limits maximum processor state on AC below 100%.",
+                "Sets the active scheme's AC Maximum processor state (PROCTHROTTLEMAX) to 100% and reapplies it if still active. Undo puts the previous value back on that scheme without switching plans.",
+                null,
+                true),
+
+            RemediationKind.MovePackageCacheToDevDrive => DevDrivePackageCaches.TryParseActionTarget(action.Target, out var cacheSpec, out var cacheFolder)
+                ? new(
+                    action,
+                    $"Use Dev Drive for {cacheSpec.ToolName} cache?",
+                    $"Redirects {cacheSpec.EnvVar} to your Dev Drive ({cacheFolder}) so package restores benefit from Dev Drive performance mode.",
+                    $"Sets your user environment variable {cacheSpec.EnvVar} to {cacheFolder} and creates the folder. The existing cache stays on C: (use Storage cleanup to reclaim it if desired). Restart any open terminals and IDEs for the new path to take effect. Undo restores or removes the environment variable.",
+                    null,
+                    true)
+                : new(action, action.ButtonText, "", "This cache target isn't on the allowlist.", "This cache target isn't on the allowlist.", Allowed: false),
+
             _ => new(action, action.ButtonText, "", "", null, true),
         };
     }
@@ -541,8 +572,109 @@ public sealed class RemediationService(
 
         RemediationKind.OpenSettings => RunOpenSettings(action),
 
+        RemediationKind.EnableStorageSense => RunEnableStorageSense(action),
+
+        RemediationKind.ResetMaxProcessorState => await RunResetMaxProcessorStateAsync(action, ct).ConfigureAwait(false),
+
+        RemediationKind.MovePackageCacheToDevDrive => RunMovePackageCacheToDevDrive(action),
+
         _ => new(false, "Unsupported action."),
     };
+
+    private RemediationResult RunEnableStorageSense(AreaAction action)
+    {
+        if (registryTweaks is null)
+            return new(false, "Registry settings are not available in this session.");
+
+        var setting = Changes.RegistryAllowlist.StorageSenseEnabled;
+        try
+        {
+            var prev = registryTweaks.ReadDword(setting);
+            var createdKey = Changes.RegistryKeyCleanup.TopmostMissing(setting.Key, path => registryTweaks.RegistryKeyExists(setting.Root, path));
+            registryTweaks.WriteDword(setting, 1);
+            var verified = registryTweaks.ReadDword(setting);
+            if (verified != 1)
+                return new(false, "Windows Storage Sense setting did not verify after writing.");
+
+            journal?.Add(Changes.ChangeRecord.New(
+                Changes.ChangeKind.RegistryValue,
+                setting.Target,
+                Changes.RegistryAllowlist.Encode(prev),
+                "Turned on Windows Storage Sense",
+                Actor,
+                createdKey: createdKey));
+            return new(true, "Windows Storage Sense is now on (existing schedule and cleanup choices preserved).");
+        }
+        catch (Exception ex)
+        {
+            return new(false, $"Couldn't enable Storage Sense: {ex.Message}");
+        }
+    }
+
+    private async Task<RemediationResult> RunResetMaxProcessorStateAsync(AreaAction action, CancellationToken ct)
+    {
+        var ctrl = powerSettings ?? new WindowsPowerSettingController(commands.ElevatedBridge, log);
+        if (ctrl.IsAcMaxProcessorStateEditable() == false)
+            return new(false, "Maximum processor state is locked by Group Policy and cannot be changed.");
+
+        var scheme = ctrl.ReadActiveSchemeGuid();
+        if (scheme is null)
+            return new(false, "Couldn't determine the active Windows power scheme.");
+
+        var res = await ctrl.WriteAcMaxProcessorStateAsync(scheme.Value, 100, activateIfActive: true, ct).ConfigureAwait(false);
+        if (res.Success && res.Target is { } target && res.PreviousValue is { } prev)
+        {
+            journal?.Add(Changes.ChangeRecord.New(
+                Changes.ChangeKind.PowerSetting,
+                target.Encode(),
+                prev.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                $"Set AC maximum processor state to 100% (was {prev}%)",
+                Actor));
+            return new(true, res.Message);
+        }
+
+        // If activation failed and rollback also failed, journal the original value as a partial result so Undo can still restore it.
+        if (res.PartialChange && res.Target is { } partialTarget && res.PreviousValue is { } partialPrev)
+        {
+            journal?.Add(Changes.ChangeRecord.New(
+                Changes.ChangeKind.PowerSetting,
+                partialTarget.Encode(),
+                partialPrev.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                $"Partial AC maximum processor state change (was {partialPrev}%, observed {res.ObservedValueAfter?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"}%)",
+                Actor));
+        }
+
+        return new(false, res.Message);
+    }
+
+    private RemediationResult RunMovePackageCacheToDevDrive(AreaAction action)
+    {
+        if (!DevDrivePackageCaches.TryParseActionTarget(action.Target, out var spec, out var folder))
+            return new(false, "This package cache target isn't on the allowlist.");
+
+        var store = userEnv ?? new WindowsUserEnvironmentStore();
+        try
+        {
+            store.EnsureDirectory(folder);
+            var prev = store.Read(spec.EnvVar);
+            store.Write(spec.EnvVar, folder);
+            var verified = store.Read(spec.EnvVar);
+            if (!string.Equals(verified, folder, StringComparison.OrdinalIgnoreCase))
+                return new(false, $"Couldn't verify {spec.EnvVar} after writing.");
+
+            journal?.Add(Changes.ChangeRecord.New(
+                Changes.ChangeKind.UserEnvironmentVariable,
+                spec.EnvVar,
+                prev,
+                $"Set {spec.EnvVar} to {folder}",
+                Actor));
+            return new(true, $"Set {spec.EnvVar} to {folder}. Restart any open terminals and IDEs for the new cache path to take effect.");
+        }
+        catch (Exception ex)
+        {
+            return new(false, $"Couldn't update {spec.EnvVar}: {ex.Message}");
+        }
+    }
 
     private RemediationResult RunOpenSettings(AreaAction action)
     {

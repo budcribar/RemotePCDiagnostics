@@ -112,6 +112,12 @@ public interface IElevatedCommandBridge
         throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
 
     /// <summary>
+    /// Fallback for allowlisted power setting writes (<c>PROCTHROTTLEMAX</c> AC only, 0..100) when un-elevated write returns access denied.
+    /// </summary>
+    Task<(bool Success, string Message)> SetPowerSettingAsync(string target, int value, bool activateIfActive, CancellationToken ct = default) =>
+        Task.FromResult((false, "The Agent isn't connected. " + ElevationService.AdminRepairHint));
+
+    /// <summary>
     /// Runs one of the Agent's own scripts (<see cref="AgentScripts"/>): the app sends the name and arguments, never PowerShell. A script
     /// the Agent refuses comes back with <see cref="SystemCommandRunner.AgentFailedExitCode"/> and the reason in StdErr. Throws
     /// <see cref="AdminRequiredException"/> when the Agent isn't connected or is from before this existed.
@@ -542,7 +548,13 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("wql")] string? Wql = null,
     [property: JsonPropertyName("biosSystemDrive")] string? BiosSystemDrive = null,
     [property: JsonPropertyName("biosInstall")] BiosAgentInstallRequest? BiosInstall = null,
-    [property: JsonPropertyName("biosWuaUpdateId")] string? BiosWuaUpdateId = null);
+    [property: JsonPropertyName("biosWuaUpdateId")] string? BiosWuaUpdateId = null,
+    [property: JsonPropertyName("powerSetting")] AdminPipePowerSetting? PowerSetting = null);
+
+public sealed record AdminPipePowerSetting(
+    [property: JsonPropertyName("target")] string Target,
+    [property: JsonPropertyName("value")] int Value,
+    [property: JsonPropertyName("activateIfActive")] bool ActivateIfActive = true);
 
 /// <summary>
 /// The app removal requests' arguments: packages by name and publisher id, one uninstall command, or one task path. The Agent checks
@@ -641,6 +653,8 @@ public static class AdminPipeFraming
     public const string OpJournalRemove = "journal_remove";
     /// <summary>One <see cref="AdminPipeTweak"/> change (HKLM policy values, extension blocklists, page file, Defender exclusions).</summary>
     public const string OpMachineTweak = "machine_tweak";
+    /// <summary>Fallback for allowlisted AC processor power setting writes (<c>PROCTHROTTLEMAX</c> only, 0..100).</summary>
+    public const string OpPowerSetting = "power_setting";
     /// <summary>One <see cref="AdminPipeScript"/>: the Agent builds and runs that script (Security fixes, updates, clean-up, sign-in tasks).</summary>
     public const string OpAgentScript = "agent_script";
     /// <summary>Records a change the app just made in the undo journal.</summary>
@@ -1285,6 +1299,15 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         if (!r.Allowed)
             throw new AdminRequiredException("The Agent on this PC can't make this change yet. Update Remote PC Diagnostics, then try again.");
         return r;
+    }
+
+    public async Task<(bool Success, string Message)> SetPowerSettingAsync(string target, int value, bool activateIfActive, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpPowerSetting,
+            PowerSetting: new AdminPipePowerSetting(target, value, activateIfActive)), ct).ConfigureAwait(false);
+        if (!r.Allowed)
+            return (false, r.Error ?? "The Agent on this PC can't change this power setting yet. Update Remote PC Diagnostics, then try again.");
+        return (r.Ok, r.Ok ? (string.IsNullOrWhiteSpace(r.StdOut) ? $"Maximum processor state on AC set to {value}%." : r.StdOut) : (r.Error ?? "Power setting update failed."));
     }
 
     public async Task<ProcessResult> RunAgentScriptAsync(AdminPipeScript script, TimeSpan timeout, CancellationToken ct, Action<string>? outputLine = null)
@@ -2041,6 +2064,9 @@ public sealed class AdminPipeServer(
         if (string.Equals(request.Op, AdminPipeFraming.OpMachineTweak, StringComparison.OrdinalIgnoreCase))
             return await Task.Run(() => HandleMachineTweakAsync(request, ct), ct).ConfigureAwait(false);
 
+        if (string.Equals(request.Op, AdminPipeFraming.OpPowerSetting, StringComparison.OrdinalIgnoreCase))
+            return await Task.Run(() => HandlePowerSetting(request), ct).ConfigureAwait(false);
+
         if (string.Equals(request.Op, AdminPipeFraming.OpAgentScript, StringComparison.OrdinalIgnoreCase))
             return await HandleAgentScriptAsync(request, ct).ConfigureAwait(false);
 
@@ -2642,6 +2668,40 @@ public sealed class AdminPipeServer(
             log.Warn($"[admin-pipe-server] {request.Op} {request.StateName} failed: {ex.Message}");
             return Answer(false, ex.Message);
         }
+    }
+
+    private AdminPipeResponse HandlePowerSetting(AdminPipeRequest request)
+    {
+        AdminPipeResponse Res(bool ok, bool allowed, string? stdout = null, string? error = null) =>
+            new(ok, allowed, Environment.IsPrivilegedProcess, Environment.ProcessId, ok ? 0 : 1, stdout ?? "", "", false, error);
+
+        if (request.PowerSetting is not { } ps)
+            return Res(false, true, error: "Missing power setting payload.");
+        if (!Areas.PowerSettingTarget.TryParse(ps.Target, out var target))
+            return Res(false, true, error: "Power setting target is not on the allowlist.");
+        if (ps.Value is < 0 or > 100)
+            return Res(false, true, error: "Power setting value must be between 0 and 100.");
+        if (Areas.WindowsPowerPolicyReader.IsAcMaxProcessorStateEditable(log) == false)
+            return Res(false, true, error: "Maximum processor state is locked by Group Policy.");
+
+        var oldVal = Areas.WindowsPowerPolicyReader.ReadAcMaxProcessorStatePercent(target.SchemeGuid, log);
+        if (oldVal is null)
+            return Res(false, true, error: "Maximum processor state is not present on the requested power scheme.");
+
+        var writeErr = Areas.WindowsPowerPolicyReader.WriteAcMaxProcessorStatePercent(target.SchemeGuid, ps.Value, log);
+        if (writeErr != 0)
+            return Res(false, true, error: $"PowerWriteACValueIndex failed with error {writeErr}.");
+
+        if (ps.ActivateIfActive && Areas.WindowsPowerPolicyReader.ReadActiveSchemeGuid(log) == target.SchemeGuid)
+        {
+            var actErr = Areas.WindowsPowerPolicyReader.SetActiveScheme(target.SchemeGuid, log);
+            if (actErr != 0)
+            {
+                Areas.WindowsPowerPolicyReader.WriteAcMaxProcessorStatePercent(target.SchemeGuid, oldVal.Value, log);
+                return Res(false, true, error: $"PowerSetActiveScheme failed with error {actErr}.");
+            }
+        }
+        return Res(true, true, stdout: $"Configured maximum processor state on AC set to {ps.Value}%.");
     }
 
     private AdminPipeResponse HandleSystemSetting(AdminPipeRequest request)

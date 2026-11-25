@@ -30,4 +30,4 @@ public sealed record BatteryStatus(
 public sealed record ProcessorPerformanceSample(int? PerformanceLimitPercent, int? PercentOfMaxFrequency);
 
 /// <summary>Un-elevated Windows power policy snapshot (Power mode overlay and configured AC max processor state).</summary>
-public sealed record PowerPolicySnapshot(string? PowerMode, int? AcMaxProcessorStatePercent);
+public sealed record PowerPolicySnapshot(string? PowerMode, int? AcMaxProcessorStatePercent, bool? AcMaxProcessorStateEditable = null);
