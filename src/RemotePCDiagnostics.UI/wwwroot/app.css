@@ -567,6 +567,20 @@ tr.history-day.clickable:hover td { background: var(--surface-hover); }
 .undo-panel { margin: 12px 0; }
 .undo-panel .card-head { justify-content: space-between; }
 .undo-list { margin: 6px 0; padding-left: 18px; }
+.undo-tree { margin: 8px 0 12px; display: flex; flex-direction: column; gap: 8px; }
+.undo-tree-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); }
+.undo-tree-select-all { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; user-select: none; }
+.undo-tree-bar-actions { display: inline-flex; gap: 6px; }
+.undo-tree-group { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.undo-tree-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface-2); }
+.undo-tree-toggle { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px 4px; font-size: 13px; line-height: 1; border-radius: 4px; }
+.undo-tree-toggle:hover { background: var(--surface-hover); color: var(--text-strong); }
+.undo-tree-group-label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.undo-tree-desc { margin-left: auto; font-size: 12px; }
+.undo-tree-children { list-style: none; margin: 0 0 0 20px; padding: 6px 10px 8px 14px; border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.undo-tree-item { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 3px 0; }
+.undo-tree-item-label { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; flex: 1 1 auto; }
+.undo-tree-item-label input[type="checkbox"] { margin-top: 3px; flex: none; }
 
 /* Service workflow progressive pipeline */
 @keyframes wfPulseCyan {

@@ -67,13 +67,37 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
     public IReadOnlyList<ChangeRecord> Pending => journal.All;
 
-    public async Task<UndoAllResult> UndoAllAsync(string actor, CancellationToken ct = default)
+    public Task<UndoAllResult> UndoAllAsync(string actor, CancellationToken ct = default)
+    {
+        // Newest first; records from one click share a time, so the later-written goes first (the first write is the one that created any keys).
+        var ordered = journal.All.Select((x, i) => (x, i)).OrderByDescending(p => p.x.TimeUtc).ThenByDescending(p => p.i).Select(p => p.x).ToList();
+        return UndoRecordsAsync(ordered, "Undo all changes", actor, ct);
+    }
+
+    /// <summary>
+    /// Reverts only the selected journaled changes, newest first. Entries not in <paramref name="ids"/> are left untouched.
+    /// </summary>
+    public Task<UndoAllResult> UndoSelectedAsync(IReadOnlyCollection<Guid> ids, string actor, CancellationToken ct = default)
+    {
+        if (ids.Count == 0)
+            return Task.FromResult(new UndoAllResult([]));
+        var idSet = ids as HashSet<Guid> ?? new HashSet<Guid>(ids);
+        var ordered = journal.All
+            .Select((x, i) => (x, i))
+            .Where(p => idSet.Contains(p.x.Id))
+            .OrderByDescending(p => p.x.TimeUtc)
+            .ThenByDescending(p => p.i)
+            .Select(p => p.x)
+            .ToList();
+        return UndoRecordsAsync(ordered, $"Undo selected changes ({ordered.Count})", actor, ct);
+    }
+
+    private async Task<UndoAllResult> UndoRecordsAsync(IReadOnlyList<ChangeRecord> records, string actionTitle, string actor, CancellationToken ct)
     {
         // An RPCD update waits while this runs (see UpdateBusyLock).
         using var busy = RemotePCDiagnostics.Agent.Core.UpdateBusyHold.App.Enter();
         var results = new List<UndoItemResult>();
-        // Newest first; records from one click share a time, so the later-written goes first (the first write is the one that created any keys).
-        foreach (var c in journal.All.Select((x, i) => (x, i)).OrderByDescending(p => p.x.TimeUtc).ThenByDescending(p => p.i).Select(p => p.x).ToList())
+        foreach (var c in records)
         {
             ct.ThrowIfCancellationRequested();
             UndoItemResult r;
@@ -92,7 +116,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
         try
         {
             events?.Invoke(all.Failed > 0 ? LogLevel.Warning : LogLevel.Information,
-                $"Undo all changes\r\nActor: {actor}\r\nResult: {all.Summary}\r\n" + string.Join("\r\n", results.Select(i => $"  {(i.Success ? "OK" : i.Skipped ? "LEFT AS IS" : "FAILED")}: {i.Change.Label} — {i.Message}")));
+                $"{actionTitle}\r\nActor: {actor}\r\nResult: {all.Summary}\r\n" + string.Join("\r\n", results.Select(i => $"  {(i.Success ? "OK" : i.Skipped ? "LEFT AS IS" : "FAILED")}: {i.Change.Label} — {i.Message}")));
         }
         catch { }
         return all;
