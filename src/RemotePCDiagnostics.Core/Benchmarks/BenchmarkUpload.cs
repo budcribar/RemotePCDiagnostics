@@ -27,7 +27,7 @@ public sealed record BenchmarkUploadResult(
     IReadOnlyList<double> Samples,
     string? Detail = null);
 
-public sealed record BenchmarkUploadConditions(bool? OnBattery, double? CpuTemperatureC, string? PowerPlan);
+public sealed record BenchmarkUploadConditions(bool? OnBattery, double? CpuTemperatureC, string? PowerPlan, string? PowerMode = null);
 
 /// <summary>The body of <c>POST /api/benchmarks</c> on the Admin site.</summary>
 public sealed record BenchmarkUploadRequest(
@@ -68,7 +68,7 @@ public static class BenchmarkUpload
         }
         if (results.Count == 0) return null;
         return new BenchmarkUploadRequest(machineId, machineName, appVersion ?? AppBuildInfo.Release, hardware, run.Phase.ToString(), run.TimeUtc,
-            run.Completed, new BenchmarkUploadConditions(run.Conditions.OnBattery, run.Conditions.CpuTemperatureC, run.Conditions.PowerPlan), results);
+            run.Completed, new BenchmarkUploadConditions(run.Conditions.OnBattery, run.Conditions.CpuTemperatureC, run.Conditions.PowerPlan, run.Conditions.PowerMode), results);
     }
 
     /// <summary>Speedometer names the browser it ran in (scores from different browsers do not compare); other kinds keep their own breakdown.</summary>
