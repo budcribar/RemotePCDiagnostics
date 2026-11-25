@@ -18,6 +18,9 @@ public sealed record SystemResourceSnapshot(
     int? ActiveScheduledTasks = null,
     int? InstalledBloatwareApps = null);
 
+/// <summary>One reading of WMI <c>PercentPerformanceLimit</c> (1..100) paired with the power source ("ac", "battery", or "unknown").</summary>
+public sealed record PerformanceLimitSample(int? PerformanceLimitPercent, string PowerSource = "unknown");
+
 /// <summary>Windows-specific measurements (Host implementation; fakes in tests). Methods may throw; the runner records a note.</summary>
 public interface IBenchmarkProbes
 {
@@ -32,6 +35,8 @@ public interface IBenchmarkProbes
     /// <summary>Cheap; called <see cref="BenchmarkSettings.ResourceSamples"/> times per run.</summary>
     Task<IdleResourceSample?> ReadIdleResourcesAsync(CancellationToken ct) => Task.FromResult<IdleResourceSample?>(null);
     Task<SystemResourceSnapshot?> ReadResourceSnapshotAsync(CancellationToken ct) => Task.FromResult<SystemResourceSnapshot?>(null);
+    /// <summary>Reads <c>PercentPerformanceLimit</c> (1..100) and power source ("ac", "battery", "unknown") during timed CPU tests.</summary>
+    Task<PerformanceLimitSample?> ReadPerformanceLimitAsync(CancellationToken ct) => Task.FromResult<PerformanceLimitSample?>(null);
     /// <summary>Runs one full Speedometer 3 pass (10 internal iterations) in a clean Chromium profile.</summary>
     Task<SpeedometerResult?> RunSpeedometerAsync(TimeSpan timeout, string? preferredEngine, CancellationToken ct) => Task.FromResult<SpeedometerResult?>(null);
     /// <summary>Runs the pinned C# clean-build benchmark (cold + warm, restore timed separately).</summary>
@@ -143,13 +148,75 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
             if (settings.IsEnabled(BenchmarkKind.ProgramStart))
                 await Step("Timing how fast Windows programs start…", async () => list.Add(await ProgramsAsync(settings.Runs, ct).ConfigureAwait(false)));
 
+            int? minPerfLimit = null;
+            string? minPerfPowerSource = null;
+
+            async Task RunWithPerfLimitSamplerAsync(Func<Task> cpuWork)
+            {
+                using var sampleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                var windowClosed = 0;
+                var samplerGate = new object();
+
+                async Task SampleLoopAsync()
+                {
+                    while (!sampleCts.Token.IsCancellationRequested)
+                    {
+                        PerformanceLimitSample? sample = null;
+                        try { sample = await probes.ReadPerformanceLimitAsync(sampleCts.Token).ConfigureAwait(false); }
+                        catch (OperationCanceledException) { break; }
+                        catch (Exception ex) { Log("perf-limit sample: " + ex.Message); }
+
+                        // Exclude samples that complete after the CPU test window ended.
+                        if (Volatile.Read(ref windowClosed) != 0 || sampleCts.Token.IsCancellationRequested)
+                            break;
+
+                        if (sample?.PerformanceLimitPercent is >= 1 and <= 100 and var pct)
+                        {
+                            var normalizedSrc = NormalizePowerSource(sample.PowerSource);
+                            lock (samplerGate)
+                            {
+                                if (minPerfLimit is null || pct < minPerfLimit.Value)
+                                {
+                                    minPerfLimit = pct;
+                                    minPerfPowerSource = normalizedSrc;
+                                }
+                                else if (pct == minPerfLimit.Value && !string.Equals(minPerfPowerSource, normalizedSrc, StringComparison.Ordinal))
+                                {
+                                    minPerfPowerSource = "unknown";
+                                }
+                            }
+                        }
+
+                        try { await wait(TimeSpan.FromSeconds(1), sampleCts.Token).ConfigureAwait(false); }
+                        catch (OperationCanceledException) { break; }
+                    }
+                }
+
+                var samplerTask = Task.Run(SampleLoopAsync, CancellationToken.None);
+                try
+                {
+                    await cpuWork().ConfigureAwait(false);
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref windowClosed, 1);
+                    try { sampleCts.Cancel(); } catch (ObjectDisposedException) { }
+                    try { await samplerTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
+                }
+            }
+
             if (settings.IsEnabled(BenchmarkKind.CpuSingle))
                 await Step("Measuring processor speed (one core)…", async () =>
-                    list.Add(new(BenchmarkKind.CpuSingle, await RepeatAsync(settings.Runs, () => Stress.StressTaskScheduler.Run(() => (double?)CpuScore(1, settings.CpuSingleRun, ct), ct)).ConfigureAwait(false))));
+                    await RunWithPerfLimitSamplerAsync(async () =>
+                        list.Add(new(BenchmarkKind.CpuSingle, await RepeatAsync(settings.Runs, () => Stress.StressTaskScheduler.Run(() => (double?)CpuScore(1, settings.CpuSingleRun, ct), ct)).ConfigureAwait(false)))).ConfigureAwait(false));
 
             if (settings.IsEnabled(BenchmarkKind.CpuMulti))
                 await Step("Measuring processor speed (all cores)…", async () =>
-                    list.Add(new(BenchmarkKind.CpuMulti, await RepeatAsync(settings.Runs, () => Stress.StressTaskScheduler.Run(() => (double?)CpuScore(Environment.ProcessorCount, settings.CpuMultiRun, ct), ct)).ConfigureAwait(false))));
+                    await RunWithPerfLimitSamplerAsync(async () =>
+                        list.Add(new(BenchmarkKind.CpuMulti, await RepeatAsync(settings.Runs, () => Stress.StressTaskScheduler.Run(() => (double?)CpuScore(Environment.ProcessorCount, settings.CpuMultiRun, ct), ct)).ConfigureAwait(false)))).ConfigureAwait(false));
+
+            if (minPerfLimit is { } sampledLimit)
+                conditions = conditions with { PerformanceLimitPercent = sampledLimit, PerformanceLimitPowerSource = minPerfPowerSource };
 
             if (settings.IsEnabled(BenchmarkKind.DiskLatency))
                 await Step("Measuring disk response time…", async () =>
@@ -193,6 +260,13 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
         Log($"{phase} done: " + string.Join(" ", list.Select(m => $"{m.Kind}={m.Median?.ToString("0.###", CultureInfo.InvariantCulture) ?? "n/a"}")));
         return run;
     }
+
+    private static string NormalizePowerSource(string? source) => source?.Trim().ToLowerInvariant() switch
+    {
+        "ac" => "ac",
+        "battery" => "battery",
+        _ => "unknown",
+    };
 
     /// <summary>
     /// Several readings <see cref="BenchmarkSettings.ResourceSampleInterval"/> apart; every reading is kept so the comparison uses

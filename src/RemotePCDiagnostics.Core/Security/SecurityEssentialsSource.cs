@@ -25,8 +25,12 @@ public sealed record SecurityFacts(bool? SecureBoot, string? Firmware, string? E
     public int? CloudProtection { get; init; }
     /// <summary>Configured ASR rules (lower-case id → action: 0 off, 1 block, 2 audit, 6 warn). Null = couldn't read.</summary>
     public IReadOnlyDictionary<string, int>? AsrRules { get; init; }
-    /// <summary>Registered antivirus products (Security Center), e.g. ["Windows Defender"].</summary>
+    /// <summary>Registered antivirus product names (Security Center), e.g. ["Windows Defender"].</summary>
     public IReadOnlyList<string> Antivirus { get; init; } = [];
+    /// <summary>Per-product antivirus states from Windows Security Center COM (<c>IWscProduct</c>) or WMI fallback (state unknown).</summary>
+    public IReadOnlyList<AntivirusProductInfo> AntivirusProducts { get; init; } = [];
+    /// <summary>Outcome of the Windows Security Center COM antivirus enumeration (Ok, Incomplete, Unavailable, or null if not queried).</summary>
+    public AntivirusInventoryStatus? AntivirusInventoryStatus { get; init; }
     /// <summary>Windows Firewall profile → on. Empty = couldn't read.</summary>
     public IReadOnlyDictionary<string, bool> Firewall { get; init; } = new Dictionary<string, bool>();
     /// <summary>Policy EnableMulticast (0 = LLMNR off), null when not set (Windows default: on).</summary>
@@ -130,7 +134,11 @@ public static class TpmReader
 /// Agent, which has the rights the Defender and BitLocker classes need); Secure Boot, the firmware type, the edition and the policies from the
 /// registry (readable by a standard user, so the app reads it); the TPM from tpmtool. Each part that can't be read is left out (not reported).
 /// </summary>
-public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource registry, SystemCommandRunner commands) : ISecurityEssentialsSource
+public sealed class WmiSecurityEssentialsSource(
+    IWmiSource wmi,
+    IRegistrySource registry,
+    SystemCommandRunner commands,
+    IAntivirusProductSource? antivirusProducts = null) : ISecurityEssentialsSource
 {
     public const string Cimv2 = @"root\cimv2";
     public const string DefenderNamespace = @"root\Microsoft\Windows\Defender";
@@ -197,7 +205,20 @@ public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource 
         var volumes = await Wmi(BitLockerNamespace, EncryptionSql).ConfigureAwait(false);
         var status = (await Wmi(DefenderNamespace, DefenderStatusSql).ConfigureAwait(false))?.FirstOrDefault();
         var preference = (await Wmi(DefenderNamespace, DefenderPreferenceSql).ConfigureAwait(false))?.FirstOrDefault();
-        var antivirus = await Wmi(SecurityCenterNamespace, AntivirusSql).ConfigureAwait(false);
+
+        AntivirusInventoryResult? wscResult = null;
+        if (antivirusProducts is not null)
+        {
+            wscResult = await antivirusProducts.ReadAsync(ct).ConfigureAwait(false);
+            if (wscResult.Status != Security.AntivirusInventoryStatus.Unavailable) anyRead = true;
+        }
+
+        IReadOnlyList<WmiRow>? wmiAntivirus = null;
+        if (wscResult is null || wscResult.Status != Security.AntivirusInventoryStatus.Ok)
+            wmiAntivirus = await Wmi(SecurityCenterNamespace, AntivirusSql).ConfigureAwait(false);
+
+        var mergedProducts = MergeAntivirusProducts(wscResult, wmiAntivirus);
+        var mergedNames = mergedProducts.Select(p => p.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var firewall = await Wmi(FirewallNamespace, FirewallSql).ConfigureAwait(false);
 
         progress.ReportStep(2, 2, "Checking the security chip (TPM)…");
@@ -227,7 +248,9 @@ public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource 
             NetworkProtection = Int(preference, "EnableNetworkProtection"),
             CloudProtection = Int(preference, "MAPSReporting"),
             AsrRules = preference is null ? null : Asr(preference),
-            Antivirus = (antivirus ?? []).Select(r => r.Str("displayName")).Where(n => n.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            Antivirus = mergedNames,
+            AntivirusProducts = mergedProducts,
+            AntivirusInventoryStatus = wscResult?.Status,
             Firewall = Firewall(firewall),
             LlmnrPolicy = llmnr?.Long(SecurityFixes.LlmnrValue),
             AutoRunPolicy = autoRun?.Long(SecurityFixes.AutoRunValue),
@@ -237,6 +260,37 @@ public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource 
             InsecureGuest = guestPolicy?.Long(SecurityFixes.GuestValue) ?? guestParameter?.Long(SecurityFixes.GuestValue),
             SecureBootServicing = servicingFacts.HasAnyData ? servicingFacts : null,
         };
+    }
+
+    internal static IReadOnlyList<AntivirusProductInfo> MergeAntivirusProducts(
+        AntivirusInventoryResult? wscResult,
+        IReadOnlyList<WmiRow>? wmiRows)
+    {
+        var list = new List<AntivirusProductInfo>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (wscResult is not null)
+        {
+            foreach (var p in wscResult.Products)
+            {
+                if (string.IsNullOrWhiteSpace(p.Name)) continue;
+                var trimmed = p.Name.Trim();
+                if (seen.Add(trimmed))
+                    list.Add(p with { Name = trimmed });
+            }
+        }
+
+        if (wmiRows is not null)
+        {
+            foreach (var r in wmiRows)
+            {
+                var name = r.Str("displayName").Trim();
+                if (name.Length > 0 && seen.Add(name))
+                    list.Add(new AntivirusProductInfo(name, AntivirusProductState.Unknown, AntivirusSignatureStatus.Unknown, "wmi"));
+            }
+        }
+
+        return list;
     }
 
     /// <summary>A PowerShell registry path from <see cref="SecurityFixes"/> ("HKLM:\SOFTWARE\…") as a root and a path; null for any other root.</summary>

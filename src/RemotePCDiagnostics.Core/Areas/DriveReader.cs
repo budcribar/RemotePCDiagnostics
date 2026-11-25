@@ -12,7 +12,7 @@ public static class DriveReader
 {
     public const string StorageNamespace = @"root\Microsoft\Windows\Storage";
     public const string PartitionSql = "SELECT DiskNumber, DriveLetter FROM MSFT_Partition";
-    public const string DiskSql = "SELECT ObjectId, DeviceId, UniqueId, FriendlyName, SerialNumber, MediaType, BusType, HealthStatus, OperationalStatus, Size FROM MSFT_PhysicalDisk";
+    public const string DiskSql = "SELECT ObjectId, DeviceId, UniqueId, FriendlyName, SerialNumber, MediaType, SpindleSpeed, BusType, HealthStatus, OperationalStatus, Size FROM MSFT_PhysicalDisk";
 
     /// <summary>
     /// One drive's reliability counters. Windows only hands them out through the disk's link to them: a plain SELECT on
@@ -45,13 +45,15 @@ public static class DriveReader
                 counter = c.Rows is { Count: > 0 } rows ? rows[0] : null;
             }
             var diskLetters = long.TryParse(id, out var num) && letters.TryGetValue(num, out var ls) ? new string([.. ls]) : "";
+            var spindle = d.Long("SpindleSpeed") is > 0 and < 0xFFFFFFFF and <= int.MaxValue and var rpm ? (int)rpm : (int?)null;
             list.Add(new DriveHealth(
                 Name: d.Str("FriendlyName").Trim(), Serial: d.Str("SerialNumber").Trim(),
                 MediaType: MediaType(d.Long("MediaType")), BusType: BusType(d.Long("BusType")), Health: Health(d.Long("HealthStatus")),
                 Operational: Operational(d), SizeBytes: d.Long("Size") is > 0 and var size ? size : null,
                 TemperatureC: Range(counter?.Long("Temperature"), 1, 150), Wear: Range(counter?.Long("Wear"), 0, 100),
                 ReadErrors: NonNegative(counter?.Long("ReadErrorsUncorrected")), WriteErrors: NonNegative(counter?.Long("WriteErrorsUncorrected")),
-                PowerOnHours: NonNegative(counter?.Long("PowerOnHours")), Letters: diskLetters, UniqueId: d.Str("UniqueId").Trim()));
+                PowerOnHours: NonNegative(counter?.Long("PowerOnHours")), Letters: diskLetters, UniqueId: d.Str("UniqueId").Trim(),
+                SpindleSpeedRpm: spindle));
         }
         return list;
     }

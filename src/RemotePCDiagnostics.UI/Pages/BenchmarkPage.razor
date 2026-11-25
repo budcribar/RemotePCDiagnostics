@@ -210,6 +210,19 @@ else if (Bench.Settling is { } settlePhase && Bench.SettleFraction is { } sf && 
 }
 <AgentData TestId="bench-report-data" Json="@RemotePCDiagnostics.Core.Areas.AgentExports.Benchmark(Bench)" />
 @if (Bench.Message is { } msg) { <p class="notice" data-testid="bench-message">@msg</p> }
+@{
+    var condCautions = new List<string>();
+    if (before is not null)
+        foreach (var c in before.Conditions.FormatCautions())
+            condCautions.Add(after is not null ? $"Before: {c}" : c);
+    if (after is not null)
+        foreach (var c in after.Conditions.FormatCautions())
+            condCautions.Add($"After: {c}");
+}
+@if (condCautions.Count > 0)
+{
+    <p class="notice" data-testid="bench-conditions-warning">@string.Join(" · ", condCautions)</p>
+}
 
 @if (before is not null && after is not null)
 {

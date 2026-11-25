@@ -588,6 +588,11 @@ public static class AgentExports
         onBattery = run.Conditions.OnBattery,
         cpuTemperatureCelsius = run.Conditions.CpuTemperatureC,
         powerPlan = V(run.Conditions.PowerPlan),
+        powerMode = V(run.Conditions.PowerMode),
+        performanceLimitPercent = run.Conditions.PerformanceLimitPercent,
+        performanceLimitPowerSource = V(run.Conditions.PerformanceLimitPowerSource),
+        acMaxProcessorStatePercent = run.Conditions.AcMaxProcessorStatePercent,
+        dischargingOnAc = run.Conditions.DischargingOnAc,
         measurements = run.Measurements.Select(m =>
         {
             var info = Benchmarks.Benchmarks.All.FirstOrDefault(i => i.Kind == m.Kind);

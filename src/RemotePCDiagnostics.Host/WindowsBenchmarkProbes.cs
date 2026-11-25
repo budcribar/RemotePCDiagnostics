@@ -22,24 +22,13 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
             : devRunner.RunCSharpCleanBuildAsync(new DeveloperBuildOptions(IncludeAntivirusComparison: includeAntivirusComparison), progress, ct).ContinueWith(t => (DeveloperBuildResult?)t.Result, ct, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
     // ---- conditions ----
-    [StructLayout(LayoutKind.Sequential)]
-    private struct SYSTEM_POWER_STATUS { public byte ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag; public int BatteryLifeTime, BatteryFullLifeTime; }
-    [DllImport("kernel32.dll")] private static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS s);
-    [DllImport("powrprof.dll")] private static extern uint PowerGetEffectiveOverlayScheme(out Guid effectiveOverlayGuid);
-
     public BenchmarkConditions ReadConditions()
     {
-        bool? battery = null;
-        var energySaver = false;
-        try
-        {
-            if (GetSystemPowerStatus(out var s))
-            {
-                battery = s.ACLineStatus switch { 0 => true, 1 => false, _ => null };
-                energySaver = s.SystemStatusFlag == 1;
-            }
-        }
-        catch (Exception ex) { Log("power status: " + ex.Message); }
+        var (battery, energySaver) = WindowsPowerPolicyReader.ReadPowerLineStatus(log);
+        var powerMode = WindowsPowerPolicyReader.ReadPowerMode(energySaver, log);
+        var acMaxPct = WindowsPowerPolicyReader.ReadAcMaxProcessorStatePercent(log);
+        bool? dischargingOnAc = battery == false ? ReadDischargingOnAcSnapshot() : null;
+
         double? cpu = null;
         try
         {
@@ -48,21 +37,90 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
                 .Select(r => r.Value).DefaultIfEmpty().Max();
         }
         catch (Exception ex) { Log("cpu temp: " + ex.Message); }
-        return new(battery, cpu, ReadPowerPlan(), ReadPowerMode(energySaver));
+        return new(
+            battery,
+            cpu,
+            ReadPowerPlan(),
+            powerMode,
+            PerformanceLimitPercent: null,
+            PerformanceLimitPowerSource: null,
+            AcMaxProcessorStatePercent: acMaxPct,
+            DischargingOnAc: dischargingOnAc);
     }
 
-    /// <summary>Active Windows 10/11 power mode ("Best power efficiency", "Balanced", "Best performance", or "Energy Saver").</summary>
-    private string? ReadPowerMode(bool energySaver)
+    public Task<PerformanceLimitSample?> ReadPerformanceLimitAsync(CancellationToken ct)
     {
-        if (energySaver) return "Energy Saver";
+        ct.ThrowIfCancellationRequested();
+        if (!OperatingSystem.IsWindows())
+            return Task.FromResult<PerformanceLimitSample?>(null);
+
+        return Task.Run<PerformanceLimitSample?>(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            var (onBattery, _) = WindowsPowerPolicyReader.ReadPowerLineStatus(log);
+            var source = onBattery switch { false => "ac", true => "battery", _ => "unknown" };
+            var limit = ReadProcessorPerformanceLimitWindows();
+            return limit is { } pct ? new PerformanceLimitSample(pct, source) : null;
+        }, ct);
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private int? ReadProcessorPerformanceLimitWindows()
+    {
         try
         {
-            return PowerGetEffectiveOverlayScheme(out var overlay) == 0
-                ? PowerModeNames.FromOverlayGuid(overlay, energySaver: false)
-                : null;
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                BatteryReader.ProcessorPerformanceNamespace,
+                BatteryReader.ProcessorPerformanceSql);
+            using var results = searcher.Get();
+            foreach (System.Management.ManagementObject o in results)
+            {
+                using (o)
+                {
+                    if (o["PercentPerformanceLimit"] is { } raw)
+                    {
+                        var val = Convert.ToInt64(raw, System.Globalization.CultureInfo.InvariantCulture);
+                        if (val is >= 1 and <= 100) return (int)val;
+                    }
+                    break;
+                }
+            }
         }
-        catch (EntryPointNotFoundException) { return null; }
-        catch (Exception ex) { Log("power mode: " + ex.Message); return null; }
+        catch (Exception ex) { Log("perf limit: " + ex.Message); }
+        return null;
+    }
+
+    private bool? ReadDischargingOnAcSnapshot()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        return ReadDischargingOnAcWindows();
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private bool? ReadDischargingOnAcWindows()
+    {
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                BatteryReader.WmiNamespace,
+                BatteryReader.StatusSql);
+            using var results = searcher.Get();
+            var sawAny = false;
+            foreach (System.Management.ManagementObject o in results)
+            {
+                using (o)
+                {
+                    sawAny = true;
+                    var online = o["PowerOnline"] is bool po && po;
+                    var discharging = o["Discharging"] is bool d && d;
+                    long? rate = o["DischargeRate"] is { } r ? Convert.ToInt64(r, System.Globalization.CultureInfo.InvariantCulture) : null;
+                    if (online && (discharging || BatteryReader.RateMw(rate) is > 0))
+                        return true;
+                }
+            }
+            return sawAny ? false : null;
+        }
+        catch (Exception ex) { Log("battery discharging snapshot: " + ex.Message); return null; }
     }
 
     /// <summary>Active power plan name from "powercfg /getactivescheme" ("... (Balanced)").</summary>

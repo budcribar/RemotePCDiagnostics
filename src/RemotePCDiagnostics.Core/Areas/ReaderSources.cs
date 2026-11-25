@@ -14,6 +14,10 @@ public interface IBatteryPowerSource
     Task<IReadOnlyList<BatteryStatus>?> ReadBatteriesAsync(CancellationToken ct);
     /// <summary>The active power plan's name, or null.</summary>
     Task<string?> ReadActivePlanAsync(CancellationToken ct);
+    /// <summary>Processor performance limit counter (WMI), or null when unavailable.</summary>
+    Task<ProcessorPerformanceSample?> ReadProcessorPerformanceAsync(CancellationToken ct) => Task.FromResult<ProcessorPerformanceSample?>(null);
+    /// <summary>Windows Power mode overlay and configured AC max processor state, or null when unavailable.</summary>
+    Task<PowerPolicySnapshot?> ReadPowerPolicyAsync(CancellationToken ct) => Task.FromResult<PowerPolicySnapshot?>(null);
 }
 
 /// <summary>Where DriveHealth reads the drives from (see <see cref="IBatteryPowerSource"/> for which one the app uses).</summary>
@@ -26,7 +30,7 @@ public interface IDriveSource
 /// <param name="Notice">Shown above the report, for instance when only the drive list (no health) could be read.</param>
 public sealed record DriveList(IReadOnlyList<DriveHealth> Drives, string? Notice = null);
 
-public sealed class WmiBatteryPowerSource(IWmiSource wmi) : IBatteryPowerSource
+public sealed class WmiBatteryPowerSource(IWmiSource wmi, Func<PowerPolicySnapshot?>? readPowerPolicy = null, ILogger? log = null) : IBatteryPowerSource
 {
     public const string PowerPlanNamespace = @"root\cimv2\power";
     public const string ActivePlanSql = "SELECT ElementName FROM Win32_PowerPlan WHERE IsActive = TRUE";
@@ -38,6 +42,12 @@ public sealed class WmiBatteryPowerSource(IWmiSource wmi) : IBatteryPowerSource
         var q = await wmi.QueryAsync(PowerPlanNamespace, ActivePlanSql, ct).ConfigureAwait(false);
         return q.Rows?.Select(r => r.Str("ElementName").Trim()).FirstOrDefault(n => n.Length > 0);
     }
+
+    public Task<ProcessorPerformanceSample?> ReadProcessorPerformanceAsync(CancellationToken ct) =>
+        BatteryReader.ReadProcessorPerformanceWmiAsync(wmi, ct);
+
+    public Task<PowerPolicySnapshot?> ReadPowerPolicyAsync(CancellationToken ct) =>
+        Task.FromResult((readPowerPolicy ?? (() => WindowsPowerPolicyReader.ReadSnapshot(log)))());
 }
 
 public sealed class WmiDriveSource(IWmiSource wmi) : IDriveSource
@@ -59,6 +69,8 @@ public sealed class AgentOrFallbackBatteryPowerSource(Session.IElevatedCommandBr
     private IBatteryPowerSource Current => agent.IsConnected ? withAgent : fallback;
     public Task<IReadOnlyList<BatteryStatus>?> ReadBatteriesAsync(CancellationToken ct) => Current.ReadBatteriesAsync(ct);
     public Task<string?> ReadActivePlanAsync(CancellationToken ct) => Current.ReadActivePlanAsync(ct);
+    public Task<ProcessorPerformanceSample?> ReadProcessorPerformanceAsync(CancellationToken ct) => Current.ReadProcessorPerformanceAsync(ct);
+    public Task<PowerPolicySnapshot?> ReadPowerPolicyAsync(CancellationToken ct) => Current.ReadPowerPolicyAsync(ct);
 }
 
 /// <inheritdoc cref="AgentOrFallbackBatteryPowerSource"/>
@@ -117,7 +129,8 @@ public static class ReaderRegistration
         .AddSingleton<IProgramsSource>(sp => new WmiProgramsSource(sp.GetRequiredService<IWmiSource>(), sp.GetRequiredService<IRegistrySource>(),
             sp.GetRequiredService<IPackageSource>()))
         .AddSingleton<Security.ISecurityEssentialsSource>(sp => new Security.WmiSecurityEssentialsSource(sp.GetRequiredService<IWmiSource>(),
-            sp.GetRequiredService<IRegistrySource>(), sp.GetRequiredService<SystemCommandRunner>()))
+            sp.GetRequiredService<IRegistrySource>(), sp.GetRequiredService<SystemCommandRunner>(),
+            sp.GetService<Security.IAntivirusProductSource>()))
         .AddSingleton<IResourceHogsSource>(sp => new WmiResourceHogsSource(
             sp.GetRequiredService<IWmiSource>(),
             sp.GetRequiredService<IRegistrySource>(),
