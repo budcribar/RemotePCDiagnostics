@@ -46,6 +46,8 @@ public static class AgentScripts
     public const string AnalyzeCrashDump = "analyze_crash_dump";
     /// <summary>Args: "microphone" or "webcam", then "Allow", "Deny" or "" (delete). The device-wide (HKLM) ConsentStore switch only.</summary>
     public const string CapturePrivacySet = "capture_privacy_set";
+    /// <summary>Args: "start", "restart" (Windows Audio) or "restart_all" (the Endpoint Builder too). Only the two Windows Audio services.</summary>
+    public const string AudioServices = "audio_services";
 
     public const string RebootTask = "reboot";
     public const string WorkflowTask = "workflow";
@@ -142,6 +144,10 @@ public static class AgentScripts
                 if (a.Count != 2 || !Audio.CapturePrivacy.IsCapability(Arg(0)) || !Audio.CapturePrivacy.IsValue(Arg(1)))
                     return Refuse("That isn't a privacy switch this app changes.");
                 return Native(new SetCapturePrivacyAction(Arg(0)!, Arg(1) is { Length: > 0 } v ? v : null));
+
+            case AudioServices:
+                if (a.Count != 1 || !Audio.AudioServices.IsVerb(Arg(0))) return Refuse("That isn't something this app does to Windows Audio.");
+                return Native(new AudioServicesAction(Arg(0)!));
 
             default:
                 return Refuse($"Unknown script '{request.Name}'.");

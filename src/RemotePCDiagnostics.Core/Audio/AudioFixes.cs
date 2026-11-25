@@ -112,11 +112,23 @@ public sealed class WindowsCapturePrivacyStore : ICapturePrivacyStore
 }
 
 /// <summary>
+/// The Windows Audio services' start-up types, for <see cref="RemediationKind.SetAudioServicesAutomatic"/>: read in the app, written by
+/// the Agent (<see cref="IAdminSettingsBackend.SetServiceStartType"/>). Undo goes through the usual ServiceStartType path.
+/// </summary>
+public interface IAudioServiceSettings
+{
+    /// <summary>"Automatic", "Manual" or "Disabled"; null when the service isn't installed.</summary>
+    string? StartType(string service);
+    void SetStartType(string service, string startType);
+}
+
+/// <summary>
 /// Runs and undoes the Sound fixes. Every write is read back, and a value that didn't stick (an OEM control panel putting its own volume
 /// back) is a failure. The device-wide privacy switch goes through the Agent; everything else runs here, in the user's session.
 /// </summary>
 public sealed class AudioFixService(IAudioEndpointControl? control, ICapturePrivacyStore? privacy,
-    Func<AdminPipeScript, CancellationToken, Task<ProcessResult?>>? agent = null, ILogger? log = null)
+    Func<AdminPipeScript, CancellationToken, Task<ProcessResult?>>? agent = null, ILogger? log = null,
+    IAudioServiceSettings? services = null, Func<CancellationToken, Task<AudioState>>? readState = null)
 {
     /// <summary>The levels the fix raises a quiet device to (the interactive tests' levels).</summary>
     public const double OutputLevel = 0.5, InputLevel = 0.8;
@@ -141,9 +153,82 @@ public sealed class AudioFixService(IAudioEndpointControl? control, ICapturePriv
 
     private string NameOf(AreaAction a, string id) => a.TargetLabel is { Length: > 0 } l ? l : control?.Name(id) ?? "the sound device";
 
+    public static bool IsServiceFix(RemediationKind k) =>
+        k is RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic;
+
     public Task<Outcome> RunAsync(AreaAction a, string actor, CancellationToken ct) => a.Kind == RemediationKind.AllowCapturePrivacy
         ? AllowPrivacyAsync(a.Target, actor, ct)
+        : IsServiceFix(a.Kind) ? ServicesAsync(a.Kind, actor, ct)
         : Task.Run(() => Run(a, actor), ct);
+
+    /// <summary>A default device whose probe says Windows Audio isn't answering (or isn't running).</summary>
+    public static bool NotAnswering(AudioState s) =>
+        s.Endpoints.Any(e => e.IsDefault && e.Probe is AudioProbeOutcome.TimedOut or AudioProbeOutcome.ServiceNotRunning);
+
+    private const string AppsMayNeedRestart = " Apps that were playing or recording sound may need to be restarted.";
+
+    /// <summary>The Windows Audio service fixes: start and restart through the Agent's audio_services script, the start type through the Agent too.</summary>
+    private async Task<Outcome> ServicesAsync(RemediationKind kind, string actor, CancellationToken ct)
+    {
+        if (agent is null) return Outcome.Fail("Windows Audio can only be started by the Agent, which isn't connected. " + ElevationService.AdminRepairHint);
+        async Task<string?> Script(string verb)
+        {
+            var r = await agent(AgentScripts.Of(AgentScripts.AudioServices, verb), ct).ConfigureAwait(false);
+            return r switch
+            {
+                { ExitCode: 0 } => null,
+                null => "The Agent didn't answer in time. " + ElevationService.AdminRepairHint,
+                _ => SystemCommandRunner.AgentFailure(r) ?? (r.StdErr is { Length: > 0 } e ? e.Trim() : "The Agent couldn't change Windows Audio."),
+            };
+        }
+        async Task<bool?> StillNotAnswering()
+        {
+            if (readState is null) return null;
+            try { return NotAnswering(await readState(ct).ConfigureAwait(false)); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { log.Warn($"[audio-fix] re-probe: {ex.Message}"); return null; }
+        }
+
+        switch (kind)
+        {
+            case RemediationKind.StartAudioServices:
+                return await Script(AudioServices.Start).ConfigureAwait(false) is { } why ? Outcome.Fail(why) : new(true, "Windows Audio is running again.", []);
+
+            case RemediationKind.RestartAudioServices:
+                if (await Script(AudioServices.Restart).ConfigureAwait(false) is { } restartFailed) return Outcome.Fail(restartFailed);
+                if (await StillNotAnswering().ConfigureAwait(false) != true) return new(true, "Restarted Windows Audio." + AppsMayNeedRestart, []);
+                // Windows Audio came back but the devices still don't answer: the Endpoint Builder under it is hung too.
+                if (await Script(AudioServices.RestartAll).ConfigureAwait(false) is { } allFailed) return Outcome.Fail("Restarted Windows Audio, but the sound devices still didn't answer, and restarting the Endpoint Builder failed: " + allFailed);
+                return await StillNotAnswering().ConfigureAwait(false) == true
+                    ? Outcome.Fail("Restarted Windows Audio and its Endpoint Builder, but the sound devices still don't answer. Restart the PC.")
+                    : new(true, "Restarted Windows Audio and its Endpoint Builder." + AppsMayNeedRestart, []);
+
+            case RemediationKind.SetAudioServicesAutomatic:
+                if (services is null) return Outcome.Fail("Service start-up types can't be changed in this session.");
+                var records = new List<ChangeRecord>();
+                try
+                {
+                    foreach (var name in AudioServices.Names)
+                    {
+                        var was = services.StartType(name);
+                        if (was != "Disabled") continue;
+                        services.SetStartType(name, "Automatic");
+                        if (services.StartType(name) != "Automatic") return new(false, $"Windows didn't keep {AudioServices.Label(name)} on Automatic (a policy may set it).", records);
+                        records.Add(ChangeRecord.New(ChangeKind.ServiceStartType, name, was, $"{AudioServices.Label(name)} start-up type set to Automatic (was Disabled)", actor));
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    log.Warn($"[audio-fix] start type: {ex.Message}");
+                    return new(false, AdminRequiredException.MessageOr(ex, $"Windows refused the change: {ex.Message}"), records);
+                }
+                if (records.Count == 0 && services.StartType(AudioServices.AudioSrv) is null) return Outcome.Fail("Windows Audio isn't installed on this PC.");
+                var set = records.Count == 0 ? "Neither Windows Audio service was disabled." : $"Set {string.Join(" and ", records.Select(r => AudioServices.Label(r.Target)))} to Automatic.";
+                return await Script(AudioServices.Start).ConfigureAwait(false) is { } startFailed
+                    ? new(false, $"{set} Starting Windows Audio failed: {startFailed}", records)
+                    : new(true, $"{set} Windows Audio is running.", records);
+        }
+        return Outcome.Fail("That isn't a Windows Audio fix.");
+    }
 
     private Outcome Run(AreaAction a, string actor)
     {

@@ -53,6 +53,17 @@ public static class ServiceProtection
     public static readonly IReadOnlyList<string> SelfComponents = ["RemotePCDiagnostics", "RemoteWebView", "RemoteBlazor", "PeakSWC"];
 
     public static bool IsProtected(string name) => Protected.Contains(name);
+
+    /// <summary>
+    /// The two Windows Audio services: protected from being stopped, but the Sound check may set a disabled one back to Automatic (and
+    /// undo may put it back), since no sound plays while either is disabled. Starting and restarting them has its own Agent script.
+    /// </summary>
+    public static readonly IReadOnlySet<string> AudioStartTypeChangeable = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "Audiosrv", "AudioEndpointBuilder" };
+
+    /// <summary>True when the app must not change <paramref name="name"/>'s start-up type.</summary>
+    public static bool ProtectsStartType(string name) =>
+        (IsProtected(name) || IsSelfComponent(name)) && !AudioStartTypeChangeable.Contains(name);
     public static bool IsSelfComponent(string name) => SelfComponents.Any(f => name.Contains(f, StringComparison.OrdinalIgnoreCase));
 
     public static ServiceControlOptions For(ServiceInfo s, bool isDriver = false)

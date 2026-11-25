@@ -54,6 +54,9 @@ public static class FixKeys
         [RemediationKind.UnmuteAudioSession] = "unmuteaudiosession",
         [RemediationKind.AllowCapturePrivacy] = "allowcaptureprivacy",
         [RemediationKind.CloseAudioHolder] = "closeaudioholder",
+        [RemediationKind.StartAudioServices] = "startaudioservices",
+        [RemediationKind.RestartAudioServices] = "restartaudioservices",
+        [RemediationKind.SetAudioServicesAutomatic] = "setaudioservicesautomatic",
     };
 
     public static readonly IReadOnlyDictionary<MemoryActionType, string> Memory = new Dictionary<MemoryActionType, string>

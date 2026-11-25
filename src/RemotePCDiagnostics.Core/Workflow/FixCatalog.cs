@@ -14,7 +14,9 @@ public static class FixCatalog
         { RemediationKind.ScheduleCleanRestart, RemediationKind.CancelScheduledRestart, RemediationKind.EndProcessGroup, RemediationKind.DisableFastStartup,
           RemediationKind.AnalyzeComponentStore, RemediationKind.DeleteDuplicateFiles, RemediationKind.OpenSettings,
           // Need a person: a device to pick, consent for the privacy switches, an app to close (the restart closes it anyway).
-          RemediationKind.SetDefaultAudioEndpoint, RemediationKind.AllowCapturePrivacy, RemediationKind.CloseAudioHolder };
+          RemediationKind.SetDefaultAudioEndpoint, RemediationKind.AllowCapturePrivacy, RemediationKind.CloseAudioHolder,
+          // The workflow's own restart starts Windows Audio again; a disabled one (SetAudioServicesAutomatic) is listed.
+          RemediationKind.StartAudioServices, RemediationKind.RestartAudioServices };
 
     /// <summary>
     /// Offered on a check's own card but listed differently here: the repairs come from <see cref="RepairFixes"/> (with the scan's
@@ -64,7 +66,8 @@ public static class FixCatalog
     {
         RemediationKind.SetBalancedPowerPlan or RemediationKind.ResetMaxProcessorState or RemediationKind.DisableFastStartup or RemediationKind.DisableSystemProxy
             or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer => 10,
-        // Sound, in the order that makes a silent device play: turn it on, unmute, volume, format, enhancements.
+        // Sound, in the order that makes a silent device play: Windows Audio, turn the device on, unmute, volume, format, enhancements.
+        RemediationKind.SetAudioServicesAutomatic => 23,
         RemediationKind.EnableAudioEndpoint => 24,
         RemediationKind.UnmuteAudioEndpoint or RemediationKind.UnmuteAudioSession => 25,
         RemediationKind.RaiseAudioVolume => 26,
@@ -85,7 +88,8 @@ public static class FixCatalog
         RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.InstallUpdate
             or RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles or RemediationKind.SetPublicDns
             or RemediationKind.ResetDhcpDns or RemediationKind.DisableSystemProxy or RemediationKind.RestartDevice or RemediationKind.EnableDevice
-            or RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStoreFromImage or RemediationKind.InstallBiosUpdate => SuggestionRisk.Medium,
+            or RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStoreFromImage or RemediationKind.InstallBiosUpdate
+            or RemediationKind.RestartAudioServices => SuggestionRisk.Medium,
         _ => SuggestionRisk.Low,
     };
 
@@ -94,7 +98,8 @@ public static class FixCatalog
         or RemediationKind.RepairComponentStoreFromImage or RemediationKind.RepairSystemFiles or RemediationKind.AnalyzeComponentStore
         or RemediationKind.DisableFastStartup or RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns
         or RemediationKind.OptimizeSsd or RemediationKind.RestartDevice or RemediationKind.EnableDevice
-        or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer or RemediationKind.InstallBiosUpdate;
+        or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer or RemediationKind.InstallBiosUpdate
+        or RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic;
 
     /// <summary>Stable fix ids (remembered ticks use them): fixed type keys from <see cref="FixKeys"/>, never display text.</summary>
     public static string RemediationId(AreaAction a) => $"rem:{FixKeys.Of(a.Kind)}:{a.Target}".ToLowerInvariant();

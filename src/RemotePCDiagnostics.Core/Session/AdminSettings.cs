@@ -98,7 +98,8 @@ public static class AdminSettingsRules
                 return IsStartupApprovedValue(s.Bytes) ? null : "That isn't a startup setting.";
 
             case AdminPipeSetting.ServiceStartType:
-                if (ServiceRefusal(s.Target) is { } st) return st;
+                if (!IsServiceName(s.Target)) return "That isn't a service name.";
+                if (ServiceProtection.ProtectsStartType(s.Target!)) return "That service is protected and can't be changed.";
                 return MemorySuggestionService.StartTypes.Contains(s.Text) ? null : "That isn't a start-up type.";
 
             case AdminPipeSetting.ServiceValue:

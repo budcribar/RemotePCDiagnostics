@@ -440,6 +440,11 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
         if (facts.Services is null)
             return AreaCard.Failed("audio-services", "Windows Audio services", "Couldn't read the Windows services.");
         var rows = new List<AreaRow>();
+        // A disabled service can't start, so while either is disabled only "Turn Windows Audio back on" is offered.
+        var anyDisabled = new[] { AudioSrv, EndpointBuilder }.Any(name =>
+            (facts.ServicesAgain?.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+             ?? facts.Services.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))?.IsDisabled == true);
+        AreaAction[] Fix(RemediationKind kind, string button) => [new(kind, button, "", "Windows Audio")];
         foreach (var name in new[] { AudioSrv, EndpointBuilder })
         {
             var s = facts.Services.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
@@ -450,13 +455,18 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
             var now = later ?? s;
             AreaRow row;
             if (now.IsDisabled)
-                row = new(AreaLevel.Warning, [label, "Disabled", "It's turned off, so no sound can play."], Key: name);
+                row = new(AreaLevel.Warning, [label, "Disabled", "It's turned off, so no sound can play."], Key: name,
+                    Actions: Fix(RemediationKind.SetAudioServicesAutomatic, "Turn Windows Audio back on"));
             else if (stuck)
-                row = new(AreaLevel.Warning, [label, "Not responding", $"Stuck {now.FriendlyStatus.ToLowerInvariant()}."], Key: name);
+                row = new(AreaLevel.Warning, [label, "Not responding", $"Stuck {now.FriendlyStatus.ToLowerInvariant()}."], Key: name,
+                    Actions: anyDisabled ? null : Fix(RemediationKind.RestartAudioServices, "Restart Windows Audio"));
             else if (!now.IsRunning && !IsPending(now))
-                row = new(AreaLevel.Warning, [label, "Not running", name == AudioSrv ? "No sound can play until it's started." : "Windows Audio needs it to run."], Key: name);
+                row = new(AreaLevel.Warning, [label, "Not running", name == AudioSrv ? "No sound can play until it's started." : "Windows Audio needs it to run."], Key: name,
+                    Actions: anyDisabled ? null : Fix(RemediationKind.StartAudioServices, "Start Windows Audio"));
             else if (serviceHung && now.IsRunning)
-                row = new(AreaLevel.Warning, [label, "Not responding", "It's running but didn't answer when a sound device was opened."], Key: name);
+                row = new(AreaLevel.Warning, [label, "Not responding", "It's running but didn't answer when a sound device was opened."], Key: name,
+                    // One restart button: Windows Audio's row (the restart goes on to the Endpoint Builder only if that doesn't help).
+                    Actions: anyDisabled || name != AudioSrv ? null : Fix(RemediationKind.RestartAudioServices, "Restart Windows Audio"));
             else
                 row = new(AreaLevel.Ok, [label, now.FriendlyStatus, now.FriendlyStartType], Key: name);
             rows.Add(row);

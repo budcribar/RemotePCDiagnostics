@@ -154,7 +154,7 @@ the About page switches each one.
 | Windows error log (`EventLog`) | `eventlog.query`, `events.reviewed` | Application and System log events, the reviewed events |
 | Sleep, wake & standby drain (`SleepWake`) | `eventlog.query` | System log power events |
 | Programs & updates (`Programs`) | `wmi.query`, `packages.list` | WMI through the Agent, and the signed-in user's Store packages |
-| Sound (`Sound`) | `audio.state`, `wmi.query` | Core Audio read in the app (endpoints, defaults, mute, volume, formats, app sessions), WMI through the Agent (services, problem devices, sound drivers). Endpoint fixes (unmute, volume, default device, enable, format, enhancements, app unmute) run in the app through Core Audio and `IPolicyConfig`; the device-wide privacy switch goes through the Agent (`capture_privacy_set`) |
+| Sound (`Sound`) | `audio.state`, `wmi.query` | Core Audio read in the app (endpoints, defaults, mute, volume, formats, app sessions), WMI through the Agent (services, problem devices, sound drivers). Endpoint fixes (unmute, volume, default device, enable, format, enhancements, app unmute) run in the app through Core Audio and `IPolicyConfig`; the device-wide privacy switch goes through the Agent (`capture_privacy_set`), and starting or restarting Windows Audio through `audio_services` |
 | Hardware inventory, Services, Device Manager & drivers, Network, Resource hogs, Battery & power, Security essentials | `wmi.query` | WMI queries the app passes to the Agent (`WmiQueryPolicy`) |
 
 How it works:
