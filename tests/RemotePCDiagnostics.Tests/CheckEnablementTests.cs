@@ -236,14 +236,15 @@ public class CheckEnablementTests
         settings.SetEnabled(drivers.Name, on: false, available: true);
         var diag = new DiagnosticsService(new ResultStore(), [os, battery, drivers], checks: settings);
 
-        await AutoRun.StartEnabledChecksAsync(diag, settings, _ => null, log: null, maxConcurrency: 2);
+        await AutoRun.StartEnabledChecksAsync(diag, settings, k => k == AutoRun.EnvironmentVariable ? "1" : null, log: null, maxConcurrency: 2);
 
         Assert.Equal(1, os.Runs);
         Assert.Equal(1, battery.Runs);
         Assert.Equal(0, drivers.Runs);
 
-        // Respects REMOTEPC_AUTORUN=0
+        // Off unless REMOTEPC_AUTORUN turns it on
         await AutoRun.StartEnabledChecksAsync(diag, settings, k => k == AutoRun.EnvironmentVariable ? "0" : null, log: null);
+        await AutoRun.StartEnabledChecksAsync(diag, settings, _ => null, log: null);
         Assert.Equal(1, os.Runs);
     }
 

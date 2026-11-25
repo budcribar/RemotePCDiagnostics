@@ -7,9 +7,15 @@ public class AutoRunTests
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
+    /// <summary>The environment with auto-run turned on (it is off by default).</summary>
+    private static string? On(string key) => key == AutoRun.EnvironmentVariable ? "1" : null;
+
     [Theory]
-    [InlineData(null, true)]
+    [InlineData(null, false)]
+    [InlineData("", false)]
     [InlineData("1", true)]
+    [InlineData("true", true)]
+    [InlineData("ON", true)]
     [InlineData("0", false)]
     [InlineData("false", false)]
     [InlineData("OFF", false)]
@@ -23,7 +29,7 @@ public class AutoRunTests
         var m = new FakeModule("Osquery", async _ => { await gate.Task; return FakeModule.Ok("Osquery"); });
         var store = new ResultStore();
         var svc = new DiagnosticsService(store, [m]);
-        var tasks = AutoRun.Start(svc, _ => null, null, "Osquery");
+        var tasks = AutoRun.Start(svc, On, null, "Osquery");
         Assert.Equal(DiagnosticStatus.Running, store.Get("Osquery").Status);
         gate.SetResult();
         var r = await Assert.Single(tasks).WaitAsync(Wait);
@@ -60,7 +66,7 @@ public class AutoRunTests
         var presentStore = new ResultStore();
         var presentSvc = new DiagnosticsService(presentStore, [presentMod]);
         Assert.DoesNotContain(presentSvc.Modules, m => m.Name == "SlowPresent");
-        var presentTasks = AutoRun.Start(presentSvc, _ => null, null, "SlowPresent");
+        var presentTasks = AutoRun.Start(presentSvc, On, null, "SlowPresent");
         _ = Assert.Single(presentTasks);
         applicable.SetResult(ModuleDetection.For([new ModuleInstance("dev-1", "Device 1")]));
         var presentResults = await Task.WhenAll(presentTasks).WaitAsync(Wait);
@@ -76,7 +82,7 @@ public class AutoRunTests
         var absentStore = new ResultStore();
         var absentSvc = new DiagnosticsService(absentStore, [absentMod]);
         Assert.DoesNotContain(absentSvc.Modules, m => m.Name == "SlowDetect");
-        var absentTasks = AutoRun.Start(absentSvc, _ => null, null, "SlowDetect");
+        var absentTasks = AutoRun.Start(absentSvc, On, null, "SlowDetect");
         _ = Assert.Single(absentTasks);
         notApplicable.SetResult(ModuleDetection.NotApplicable("none here"));
         var absentResults = await Task.WhenAll(absentTasks).WaitAsync(Wait);
@@ -106,7 +112,7 @@ public class AutoRunTests
         var calls = 0;
         var m = new FakeModule("Osquery", async _ => { Interlocked.Increment(ref calls); await gate.Task; return FakeModule.Ok("Osquery"); });
         var svc = new DiagnosticsService(new ResultStore(), [m]);
-        var auto = AutoRun.Start(svc, _ => null, null, "Osquery")[0];
+        var auto = AutoRun.Start(svc, On, null, "Osquery")[0];
         var manual = svc.RunAsync("Osquery");
         var all = svc.RunAllAsync();
         Assert.True(svc.IsRunning("Osquery"));
@@ -124,7 +130,7 @@ public class AutoRunTests
         var gate = new TaskCompletionSource();
         var m = new FakeModule("Osquery", async _ => { await gate.Task; return FakeModule.Ok("Osquery"); });
         var svc = new DiagnosticsService(new ResultStore(), [m]);
-        var auto = AutoRun.Start(svc, _ => null, null, "Osquery")[0];
+        var auto = AutoRun.Start(svc, On, null, "Osquery")[0];
         Assert.True(svc.IsBackgroundAutoRun("Osquery"));
 
         // Joining the same in-flight run from a manual user action upgrades it to a blocking user check.
@@ -146,7 +152,7 @@ public class AutoRunTests
         var svc = new DiagnosticsService(new ResultStore(), [fast, slow]);
 
         using var cts = new CancellationTokenSource();
-        var run = AutoRun.StartEnabledChecksAsync(svc, null, _ => null, null, slowChecksDelay: TimeSpan.FromSeconds(5), ct: cts.Token);
+        var run = AutoRun.StartEnabledChecksAsync(svc, null, On, null, slowChecksDelay: TimeSpan.FromSeconds(5), ct: cts.Token);
 
         await fastDone.Task.WaitAsync(Wait);
         // Slow check must not have started yet during the delay window.
