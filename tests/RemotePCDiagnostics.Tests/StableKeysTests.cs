@@ -45,6 +45,7 @@ public class StableKeysTests
             "StartupApp", "ServiceStartType", "ServiceRunning", "BrowserSettings", "Transparency", "FastStartup", "PowerPlan", "SystemProxy",
             "AdapterDns", "PageFile", "TempFiles", "DefenderExclusion", "HiberFileType", "RegistryValue", "DefaultPrinter", "NotUndoable",
             "ExtensionBlock", "BrowserLocalStateValue", "ScheduledTask", "StoreReinstall", "SecuritySetting", "DeviceWake", "WakeTimer",
+            "PowerSetting", "UserEnvironmentVariable",
         ];
         var json = new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } };
         Assert.Equal(pinned.Length, pinned.Distinct().Count());
