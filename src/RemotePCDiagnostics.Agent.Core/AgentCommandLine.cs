@@ -1,6 +1,6 @@
 namespace RemotePCDiagnostics.Agent.Core;
 
-public enum AgentCommand { Help, Install, Uninstall, Status, Run, Consent, Launch, Helper }
+public enum AgentCommand { Help, Install, Uninstall, Status, Run, Consent, Launch, Helper, Idle }
 
 /// <summary>What the person who installed the agent allows (the relay and remote users can only be stricter).</summary>
 public enum ConsentCeiling { Ask, Unattended }
@@ -85,6 +85,8 @@ public static class AgentCommandLine
             case "status": command = AgentCommand.Status; break;
             case "run": command = AgentCommand.Run; break;
             case "consent": command = AgentCommand.Consent; break;
+            // Internal: started by the agent in the signed-in user's session; the exit code is the seconds since the last input.
+            case "idle": return new AgentArgs(AgentCommand.Idle);
             case "help" or "-h" or "--help" or "/?" or "-?": return new AgentArgs(AgentCommand.Help);
             default:
                 if (verb.StartsWith('-'))

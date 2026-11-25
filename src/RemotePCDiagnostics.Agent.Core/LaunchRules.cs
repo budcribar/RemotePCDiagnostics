@@ -107,6 +107,9 @@ public static class LaunchRules
         WindowsCommandLine.Join([agentExe, "consent", "--requester=" + AgentCommandLine.CleanRequester(requester),
             "--timeout=" + timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
 
+    /// <summary>The agent started in the signed-in user's session to read how long since the keyboard or mouse was last used.</summary>
+    public static string IdleProbeCommandLine(string agentExe) => WindowsCommandLine.Join([agentExe, "idle"]);
+
     /// <summary>"Windows 11 Pro 24H2 (26100)". The registry's ProductName still says "Windows 10" on Windows 11 (build 22000 and later).</summary>
     public static string OsVersionText(string? productName, string? displayVersion, string? build)
     {

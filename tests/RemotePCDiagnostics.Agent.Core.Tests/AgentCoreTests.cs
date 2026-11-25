@@ -558,6 +558,75 @@ public class AgentHubWorkerTests
         Assert.False(hostStarted);
     }
 
+    [Theory]
+    [InlineData(PowerReading.Battery, 3600, false, "on battery")]
+    [InlineData(PowerReading.Ac, 60, false, "Someone used this computer")]
+    [InlineData(PowerReading.Ac, 3600, true, null)]
+    public async Task A_hidden_launch_with_conditions_starts_only_when_they_hold(PowerReading power, int idleSeconds, bool expectStart, string? reason)
+    {
+        var config = AgentConfig.ForInstall(
+            existing: null,
+            new AgentArgs(AgentCommand.Install, Server: "https://relay.example:34544", Consent: ConsentCeiling.Unattended),
+            Guid.Parse("7e57c0de-0000-4000-8000-000000000060"));
+        var hostStarted = false;
+        var platform = new FakeAgentPlatform
+        {
+            Power = power,
+            IdleSeconds = idleSeconds,
+            ProcessFactory = (_, _) =>
+            {
+                hostStarted = true;
+                return (new FakeLaunchedProcess(), null);
+            },
+        };
+        var hub = new FakeAgentHubClient();
+        var worker = new AgentHubWorker(config, platform, new AgentSessionOptions { HeartbeatInterval = TimeSpan.FromMinutes(5), StatusPollInterval = TimeSpan.FromMilliseconds(10) });
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var runTask = worker.RunSingleConnectionAsync(hub, cts.Token);
+
+        var hello = await hub.ReadAgentMessageAsync(cts.Token);
+        Assert.Equal(-420, hello.Hello.UtcOffsetMinutes);
+        Assert.Equal(power == PowerReading.Ac ? PowerSource.PowerAc : PowerSource.PowerBattery, hello.Hello.PowerSource);
+
+        await hub.SendHubCommandAsync(new HubCommand
+        {
+            Launch = new LaunchCommand
+            {
+                RequestId = "req-cond",
+                SessionId = Guid.Parse("7e57c0de-0000-4000-8000-000000000061").ToString("D"),
+                ServerUrl = "https://relay.example:34544",
+                Requester = "AI",
+                Hidden = true,
+                // 10 PM to 6 AM; the fake PC's clock says 11:30 PM.
+                Conditions = new LaunchConditions { RequireAcPower = true, MinIdleMinutes = 15, WindowStartMinute = 1320, WindowEndMinute = 360 },
+            },
+        }, cts.Token);
+
+        LaunchProgress last;
+        while (true)
+        {
+            var msg = await hub.ReadAgentMessageAsync(cts.Token);
+            if (msg.BodyCase != AgentMessage.BodyOneofCase.Progress)
+                continue;
+            last = msg.Progress;
+            if (last.Stage is LaunchStage.StageConditionsNotMet or LaunchStage.StageStarting or LaunchStage.StageFailed)
+                break;
+        }
+        hub.CompleteServerStream();
+        try { await runTask; } catch (OperationCanceledException) { }
+
+        if (expectStart)
+        {
+            Assert.Equal(LaunchStage.StageStarting, last.Stage);
+        }
+        else
+        {
+            Assert.Equal(LaunchStage.StageConditionsNotMet, last.Stage);
+            Assert.Contains(reason!, last.Detail);
+            Assert.False(hostStarted);
+        }
+    }
+
     [Fact]
     public async Task Unanswered_consent_reports_StageConsentTimedOut_and_never_starts_host()
     {
@@ -948,6 +1017,19 @@ public class AgentHubWorkerTests
         public string GetCachedOrInstalledAppVersion() => "1.2.0";
         public DateTimeOffset? Booted { get; init; } = new DateTimeOffset(2026, 11, 19, 8, 0, 0, TimeSpan.Zero);
         public DateTimeOffset? GetBootTime() => Booted;
+        public PowerReading Power { get; init; } = PowerReading.Ac;
+        public PowerReading GetPowerSource() => Power;
+        public DateTimeOffset LocalNow { get; init; } = new DateTimeOffset(2026, 11, 25, 23, 30, 0, TimeSpan.FromHours(-7));
+        public DateTimeOffset GetLocalNow() => LocalNow;
+        public bool Locked { get; init; }
+        public bool IsSessionLocked() => Locked;
+        public int? IdleSeconds { get; init; } = 3600;
+        public int IdleReads { get; private set; }
+        public Task<int?> GetUserIdleSecondsAsync(CancellationToken ct)
+        {
+            IdleReads++;
+            return Task.FromResult(IdleSeconds);
+        }
 
         public Task<ConsentOutcome> RequestConsentAsync(string requester, int timeoutSeconds, CancellationToken ct) =>
             ConsentHandler is not null ? ConsentHandler(requester, timeoutSeconds, ct) : Task.FromResult(ConsentResult);
@@ -1111,4 +1193,40 @@ public class RestartedCopyTests
 
     [Fact]
     public void No_session_never_matches() => Assert.False(RestartedCopy.IsRestartOf($"-i={Id} --restarted", null));
+}
+
+public class LaunchConditionRulesTests
+{
+    private static readonly DateTimeOffset At2330 = new(2026, 11, 25, 23, 30, 0, TimeSpan.FromHours(-7));
+
+    [Theory]
+    [InlineData(1320, 360, 23 * 60, true)]
+    [InlineData(1320, 360, 2 * 60, true)]
+    [InlineData(1320, 360, 6 * 60, false)] // the end minute is outside
+    [InlineData(1320, 360, 12 * 60, false)]
+    [InlineData(60, 300, 120, true)]
+    [InlineData(60, 300, 400, false)]
+    [InlineData(0, 0, 777, true)] // start == end: any time
+    public void The_window_may_cross_midnight(int start, int end, int minute, bool inside) =>
+        Assert.Equal(inside, LaunchConditionRules.InWindow(start, end, minute));
+
+    [Fact]
+    public void Each_rule_says_why_it_failed()
+    {
+        Assert.Contains("allowed hours (1:00 AM to 5:00 AM)", LaunchConditionRules.Check(false, 0, 60, 300, At2330, PowerReading.Ac, false, null));
+        Assert.Contains("on battery", LaunchConditionRules.Check(true, 0, 0, 0, At2330, PowerReading.Battery, false, null));
+        Assert.Contains("plugged in", LaunchConditionRules.Check(true, 0, 0, 0, At2330, PowerReading.Unknown, false, null));
+        Assert.Contains("Couldn't tell whether someone", LaunchConditionRules.Check(false, 15, 0, 0, At2330, PowerReading.Ac, false, null));
+        Assert.Contains("4 minutes ago", LaunchConditionRules.Check(false, 15, 0, 0, At2330, PowerReading.Ac, false, 250));
+        Assert.Null(LaunchConditionRules.Check(true, 15, 1320, 360, At2330, PowerReading.Ac, false, 15 * 60));
+    }
+
+    [Fact]
+    public void A_locked_session_counts_as_idle_and_needs_no_idle_read()
+    {
+        Assert.False(LaunchConditionRules.NeedsIdle(15, sessionLocked: true));
+        Assert.True(LaunchConditionRules.NeedsIdle(15, sessionLocked: false));
+        Assert.False(LaunchConditionRules.NeedsIdle(0, sessionLocked: false));
+        Assert.Null(LaunchConditionRules.Check(false, 15, 0, 0, At2330, PowerReading.Ac, true, null));
+    }
 }

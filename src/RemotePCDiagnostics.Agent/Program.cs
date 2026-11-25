@@ -44,6 +44,9 @@ public static class Program
             case AgentCommand.Consent:
                 return Win32Session.ShowConsentMessageBox(parsed.Requester, parsed.TimeoutSeconds);
 
+            case AgentCommand.Idle:
+                return Win32Session.SecondsSinceLastInput() ?? -1;
+
             case AgentCommand.Run:
                 if (parsed.SelfCheck)
                     return RunSelfCheck();
