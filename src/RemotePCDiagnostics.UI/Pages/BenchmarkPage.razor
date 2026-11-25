@@ -243,70 +243,6 @@
     </div>
 </details>
 
-@if (Bench.IsKindAvailable(BenchmarkKind.DeveloperCSharp))
-{
-    <section class="card" data-testid="bench-dev-comparisons">
-        <div class="card-head"><strong>Developer comparisons (opt-in, one approval per run)</strong></div>
-        <p class="meta">@DeveloperScoring.BusyPcWarning</p>
-        <div class="bench-hero-actions">
-            <label class="bench-restart-toggle">
-                <input type="checkbox" data-testid="bench-dev-av-confirm" @bind="_confirmAvRun" disabled="@running" />
-                <span>Approve temporary Defender exclusion on the RPCD build temp folder for this run</span>
-            </label>
-            <button type="button" class="btn-small" data-testid="bench-dev-av-run" disabled="@(running || !_confirmAvRun)" @onclick="RunAvComparison">
-                Measure antivirus cost (C#)
-            </button>
-        </div>
-        @if (Bench.LastAntivirusComparison is { } avRes)
-        {
-            <p class="meta" data-testid="bench-dev-av-result">@avRes.FormatDetail()</p>
-        }
-        @if (Bench.DevDrivePrecheck is { Eligible: true })
-        {
-            <div class="bench-hero-actions">
-                <label class="bench-restart-toggle">
-                    <input type="checkbox" data-testid="bench-dev-devdrive-confirm" @bind="_confirmDevDriveRun" disabled="@running" />
-                    <span>Approve temporary ~50 GB Dev Drive VHDX (created &amp; removed by Agent) for this run</span>
-                </label>
-                <button type="button" class="btn-small" data-testid="bench-dev-devdrive-run" disabled="@(running || !_confirmDevDriveRun)" @onclick="RunDevDriveComparison">
-                    Compare NTFS vs Dev Drive (C#)
-                </button>
-                <button type="button" class="btn-small btn-primary" data-testid="bench-dev-combined-run" disabled="@(running || !_confirmAvRun || !_confirmDevDriveRun)" @onclick="RunCombinedComparison"
-                        title="@((!_confirmAvRun || !_confirmDevDriveRun) ? "Approve both Defender exclusion and temporary Dev Drive above to compare all four" : "Compare NTFS, NTFS + Defender exclusion, Dev Drive, and Dev Drive + Defender exclusion in one pass")">
-                    Compare all four (NTFS vs AV excl vs Dev Drive vs Dev Drive + AV excl)
-                </button>
-            </div>
-        }
-        else if (Bench.DevDrivePrecheck is { Reason: { Length: > 0 } ddReason })
-        {
-            <p class="meta" data-testid="bench-dev-devdrive-note">Dev Drive comparison unavailable: @ddReason</p>
-        }
-        @if (Bench.RunningDeveloperAction)
-        {
-            var devPct = Bench.DeveloperActionFraction is { } f ? Math.Clamp(f * 100.0, 0, 100) : (double?)null;
-            <div class="notice" data-testid="bench-dev-running" style="margin-top: 10px">
-                <span class="dash-spin" aria-hidden="true"><Icon Name="refresh" Size="14" /></span>
-                <span class="meta" data-testid="bench-dev-progress-text">@(Bench.Progress ?? "Running developer comparison…")@(devPct is { } p ? $" ({p:0}%)" : "")</span>
-                <button type="button" class="btn-small" data-testid="bench-dev-cancel" @onclick="Bench.Stop">Cancel</button>
-            </div>
-            @if (devPct is { } barPct)
-            {
-                <div class="progress wf-overall-progress" style="max-width:none;margin:6px 0 0" data-testid="bench-dev-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@((int)Math.Round(barPct))">
-                    <div style="width:@($"{barPct:0.#}%")"></div>
-                </div>
-            }
-            else
-            {
-                <div class="run-progress run-progress-indeterminate" data-testid="bench-dev-progress" aria-hidden="true"><div></div></div>
-            }
-        }
-        @if (Bench.LastDevDriveComparison is { } ddRes)
-        {
-            <p class="meta" data-testid="bench-dev-devdrive-result">@ddRes.FormatSummary()</p>
-        }
-    </section>
-}
-
 @if (before is not null && !running) { <UndoAllPanel /> }
 
 @if (Bench.Running is not null)
@@ -427,8 +363,6 @@ else if (!running)
     ];
 
     private bool _customizeOpen;
-    private bool _confirmAvRun;
-    private bool _confirmDevDriveRun;
     private bool _isRemoteDisplay;
 
     protected override void OnInitialized() { Bench.Changed += OnChanged; Uploader.Changed += OnChanged; }
@@ -507,28 +441,6 @@ else if (!running)
 
     private void ApplyQuickPreset() =>
         Bench.UpdateSettings(Bench.Settings with { Goal = null, Enabled = [.. QuickCoreKinds], Runs = 1 });
-
-    private void RunAvComparison()
-    {
-        if (!_confirmAvRun) return;
-        _confirmAvRun = false; // one explicit yes per run; never remembered
-        _ = Bench.RunAntivirusComparisonAsync(userConfirmed: true);
-    }
-
-    private void RunDevDriveComparison()
-    {
-        if (!_confirmDevDriveRun) return;
-        _confirmDevDriveRun = false; // one explicit yes per run; never remembered
-        _ = Bench.RunDevDriveComparisonAsync(userConfirmed: true);
-    }
-
-    private void RunCombinedComparison()
-    {
-        if (!_confirmAvRun || !_confirmDevDriveRun) return;
-        _confirmAvRun = false;
-        _confirmDevDriveRun = false; // one explicit yes per run; never remembered
-        _ = Bench.RunDevDriveComparisonAsync(userConfirmed: true, includeAntivirusComparison: true);
-    }
 
     private void ToggleCustomize() => _customizeOpen = !_customizeOpen;
 
