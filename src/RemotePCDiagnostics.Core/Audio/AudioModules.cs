@@ -73,7 +73,7 @@ public abstract class AudioModuleBase(IAudioIo io, ILogger? log, IAudioStateSour
         foreach (var (id, what) in new[] { (outputId, "speaker"), (inputId, "microphone") })
         {
             if (id is null || s.Endpoints.FirstOrDefault(e => e.Id == id) is not { } e) continue;
-            if (!e.IsActive) return $"The {what} \"{e.Name}\" is {e.FriendlyState.ToLowerInvariant()}, so the test can't use it.";
+            if (!e.IsActive) return $"The {what} \"{e.Name}\" {(e.State == AudioEndpointState.Disabled ? "is disabled" : "isn't connected")}, so the test can't use it.";
             switch (e.Probe)
             {
                 case AudioProbeOutcome.TimedOut or AudioProbeOutcome.ServiceNotRunning:

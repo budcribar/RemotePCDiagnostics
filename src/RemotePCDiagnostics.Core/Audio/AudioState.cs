@@ -47,9 +47,13 @@ public sealed record AudioEndpointInfo(
     {
         AudioEndpointState.Active => "Ready",
         AudioEndpointState.Disabled => "Disabled",
-        AudioEndpointState.Unplugged => "Unplugged",
+        AudioEndpointState.Unplugged => Bus == AudioBus.Bluetooth ? "Not connected" : "Nothing plugged in",
         _ => "Not connected",
     };
+
+    /// <summary>What to do about a device that is turned off or not connected.</summary>
+    public string Reconnect => State == AudioEndpointState.Disabled ? "Turn the device back on."
+        : Bus == AudioBus.Bluetooth ? "Turn on or pair the headset." : "Plug the device in, or check the jack.";
 }
 
 /// <summary>An app with an audio session on a default device (the Volume mixer).</summary>

@@ -45,9 +45,22 @@ public class SoundTests
         var r = Build([Speaker(), Mic()]);
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
         Assert.Equal("No sound problems found", r.Summary);
-        Assert.Equal(["audio-output", "audio-input", "audio-services"], r.Cards.Select(c => c.Id));
+        Assert.Equal(["audio-output", "audio-input", "audio-services", "audio-drivers"], r.Cards.Select(c => c.Id));
         Assert.Equal("Speakers (Realtek(R) Audio)", RowOf(Card(r, "audio-output"), "Default device").Values[1]);
         Assert.All(r.Cards, c => Assert.Equal(AreaLevel.Ok, c.Level));
+    }
+
+    [Fact]
+    public void Healthy_services_card_says_no_issues_not_running()
+    {
+        var card = Card(Build([Speaker(), Mic()]), "audio-services");
+        Assert.Equal("No issues found", card.Headline);
+        Assert.Equal("All audio services running", card.Meta);
+        Assert.Equal("Running", card.Rows.First(r => r.Key == SoundModule.AudioSrv).Values[1]);
+
+        var stopped = Card(Build([Speaker(), Mic()], Facts([Svc(SoundModule.AudioSrv, "STOPPED"), Svc(SoundModule.EndpointBuilder)])), "audio-services");
+        Assert.Equal("1 problem", stopped.Headline);
+        Assert.Equal("Windows Audio and Endpoint Builder", stopped.Meta);
     }
 
     [Theory]
@@ -91,10 +104,38 @@ public class SoundTests
     public void Only_a_disabled_speaker_is_a_warning_but_an_extra_unplugged_jack_is_info()
     {
         var disabled = Speaker() with { State = AudioEndpointState.Disabled, DefaultFor = [] };
-        Assert.Equal(AreaLevel.Warning, RowOf(Card(Build([disabled, Mic()]), "audio-output"), "Disabled or unplugged").Level);
+        Assert.Equal(AreaLevel.Warning, RowOf(Card(Build([disabled, Mic()]), "audio-output"), "Disabled or not connected").Level);
 
         var jack = new AudioEndpointInfo(HdmiId, "Headphones", AudioFlow.Output, AudioEndpointState.Unplugged, AudioBus.Internal, "Headphones", "", []);
-        Assert.Equal(AreaLevel.Neutral, RowOf(Card(Build([Speaker(), jack, Mic()]), "audio-output"), "Disabled or unplugged").Level);
+        var row = RowOf(Card(Build([Speaker(), jack, Mic()]), "audio-output"), "Disabled or not connected");
+        Assert.Equal(AreaLevel.Ok, row.Level);
+        Assert.Equal("Headphones (nothing plugged in)", row.Values[2]);
+    }
+
+    [Fact]
+    public void Paired_bluetooth_headset_that_is_off_says_not_connected_and_is_no_issue()
+    {
+        var bt = Mic() with { Id = "{bt}", Name = "Headset (WH-1000XM4 Hands-Free)", State = AudioEndpointState.Unplugged, Bus = AudioBus.Bluetooth, FormFactor = "Headset", DefaultFor = [] };
+        var jack = Mic() with { Id = "{jack}", Name = "Headset Microphone", State = AudioEndpointState.Unplugged, Bus = AudioBus.Internal, FormFactor = "Headset", DefaultFor = [] };
+        var card = Card(Build([Speaker(), Mic(), bt, jack]), "audio-input");
+        var row = RowOf(card, "Disabled or not connected");
+        Assert.Equal(AreaLevel.Ok, row.Level);
+        Assert.Equal("No issues found", row.Values[1]);
+        Assert.Equal("Headset (WH-1000XM4 Hands-Free) (not connected), Headset Microphone (nothing plugged in)", row.Values[2]);
+        Assert.Equal("Not connected", bt.FriendlyState);
+        Assert.Equal("Turn on or pair the headset.", bt.Reconnect);
+
+        var picker = SoundModule.Picker(new AudioState([Mic(), bt], []), AudioFlow.Input);
+        Assert.Equal("Not connected: Turn on or pair the headset.", picker.Choices!.Single(c => c.Id == "{bt}").DisabledReason);
+
+        // Still the default for calls: worth a warning.
+        var defaultBt = bt with { DefaultFor = [AudioEndpointInfo.Communications] };
+        Assert.Equal(AreaLevel.Warning, RowOf(Card(Build([Speaker(), Mic(), defaultBt]), "audio-input"), "Disabled or not connected").Level);
+
+        // The only microphone: a warning with the Bluetooth guidance.
+        var only = RowOf(Card(Build([Speaker(), bt]), "audio-input"), "Disabled or not connected");
+        Assert.Equal(AreaLevel.Warning, only.Level);
+        Assert.Equal("Turn on or pair the headset.", only.Values[2]);
     }
 
     [Fact]
@@ -146,10 +187,22 @@ public class SoundTests
     public void Oem_audio_services_and_drivers_are_listed_as_info()
     {
         var drivers = new[] { new AudioDriver("Realtek(R) Audio", @"HDAUDIO\FUNC_01&VEN_10EC&DEV_0257\4&1", @"HDAUDIO\FUNC_01&VEN_10EC&DEV_0257", "oem12.inf", "Realtek", "6.0.9549.1") };
-        var card = Card(Build([Speaker(), Mic()], Facts([.. HealthyServices, Svc("RtkAudioUniversalService", "STOPPED", "DEMAND_START")], drivers: drivers)), "audio-services");
-        Assert.Contains(card.Rows, r => r.Key == "RtkAudioUniversalService" && r.Level == AreaLevel.Neutral);
-        Assert.Contains(card.Rows, r => r.Values[0] == "Driver: Realtek(R) Audio" && r.Values[1] == "6.0.9549.1");
+        var report = Build([Speaker(), Mic()], Facts([.. HealthyServices, Svc("RtkAudioUniversalService", "STOPPED", "DEMAND_START"),
+            Svc("QWAVE", "STOPPED", "DEMAND_START"), Svc("RtkAudioDisabled", "STOPPED", "DISABLED")], drivers: drivers));
+        var card = Card(report, "audio-services");
+        // Stopped Manual helpers are trigger-start: normal, and said so.
+        var helper = card.Rows.Single(r => r.Key == "RtkAudioUniversalService");
+        Assert.Equal(AreaLevel.Neutral, helper.Level);
+        Assert.Equal("Stopped (starts when needed)", helper.Values[1]);
+        Assert.Equal("Stopped", card.Rows.Single(r => r.Key == "RtkAudioDisabled").Values[1]);
+        Assert.Equal("No issues found", card.Headline);
         Assert.Equal(AreaLevel.Ok, card.Level);
+        // Drivers have their own card.
+        Assert.DoesNotContain(card.Rows, r => r.Values[0].Contains("Realtek(R) Audio"));
+        var driversCard = Card(report, "audio-drivers");
+        Assert.Equal(AreaLevel.Ok, driversCard.Level);
+        Assert.Equal("1 driver", driversCard.Headline);
+        Assert.Contains(driversCard.Rows, r => r.Values[0] == "Realtek(R) Audio" && r.Values[1] == "6.0.9549.1" && r.Values[2] == "Realtek · oem12.inf");
     }
 
     [Fact]
@@ -349,7 +402,7 @@ public class SoundTests
         var report = Assert.IsType<AreaReport>(result.Payload);
         Assert.Equal(2, reads);
         Assert.Equal(AreaLevel.Ok, Card(report, "audio-services").Rows.First(r => r.Key == SoundModule.AudioSrv).Level);
-        Assert.Contains(Card(report, "audio-services").Rows, r => r.Values[0] == "Driver: Realtek(R) Audio");
+        Assert.Contains(Card(report, "audio-drivers").Rows, r => r.Values[0] == "Realtek(R) Audio");
         Assert.Equal(AreaLevel.Warning, RowOf(Card(report, "audio-input"), "Microphone privacy").Level);
         Assert.Equal(DiagnosticStatus.Warning, result.Status);
     }
