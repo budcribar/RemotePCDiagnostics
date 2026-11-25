@@ -1122,8 +1122,8 @@ public sealed class AgentHubWorker(
                 return;
             }
 
-            var appCmdLine = LaunchRules.AppCommandLine(hostExePath, serverUrl, sessionGuid, launch.Group);
-            await ReportProgressSafeAsync(writeAsync, launch.RequestId, sessionIdStr, LaunchStage.StageStarting, "Starting Remote PC Diagnostics...", 0, launchCt).ConfigureAwait(false);
+            var appCmdLine = LaunchRules.AppCommandLine(hostExePath, serverUrl, sessionGuid, launch.Group, launch.Hidden);
+            await ReportProgressSafeAsync(writeAsync, launch.RequestId, sessionIdStr, LaunchStage.StageStarting, launch.Hidden ? "Starting Remote PC Diagnostics with no window..." : "Starting Remote PC Diagnostics...", 0, launchCt).ConfigureAwait(false);
 
             var (proc, startError) = platform.StartHostProcess(hostExePath, appCmdLine);
             if (proc is null || startError is not null)

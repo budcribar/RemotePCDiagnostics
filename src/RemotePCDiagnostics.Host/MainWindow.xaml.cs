@@ -771,6 +771,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         base.OnClosed(e); // raise Closed first so handlers (EC fan release) run before the provider is disposed
+        _tray?.Dispose();
         try { _awake.Dispose(); } catch { }
         ActiveSessionInfo.TryDelete(expectedProcessId: Environment.ProcessId);
         _readyTimer?.Stop();
@@ -843,6 +844,7 @@ public partial class MainWindow : Window
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     private bool _hideWhenReady;
+    private NoWindowTrayIcon? _tray;
 
     /// <summary>True when this copy started with <c>--no-window</c> in a remote session (see <see cref="NoWindowStart"/>).</summary>
     public bool StartsHidden { get; private set; }
@@ -866,6 +868,8 @@ public partial class MainWindow : Window
         Left = -32000;
         Top = -32000;
         Show();
+        try { _tray = new NoWindowTrayIcon(BringToFront); }
+        catch (Exception ex) { App.Log($"No-window start: the tray icon could not be shown ({ex.Message})."); }
         var deadline = new DispatcherTimer { Interval = NoWindowHideDeadline };
         deadline.Tick += (_, _) => { deadline.Stop(); HideForNoWindow(); };
         deadline.Start();
@@ -879,10 +883,12 @@ public partial class MainWindow : Window
         App.Log("No-window start: window hidden.");
     }
 
-    /// <summary>The person opened the app while it ran hidden: it becomes an ordinary window, and later restarts show it too.</summary>
+    /// <summary>The person opened the app while it ran hidden (a second launch, or the tray icon): it becomes an ordinary window, and later restarts show it too.</summary>
     private void ShowAfterNoWindow()
     {
         StartsHidden = false;
+        _tray?.Dispose();
+        _tray = null;
         _hideWhenReady = false;
         Environment.SetEnvironmentVariable(NoWindowStart.Variable, null);
         ShowInTaskbar = true;
