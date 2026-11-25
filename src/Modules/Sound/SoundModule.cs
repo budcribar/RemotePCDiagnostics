@@ -19,7 +19,7 @@ public sealed record SoundFacts(
 
 /// <summary>
 /// Sound: the checks HP's Audio Check runs for the speaker and the microphone (service, disabled, muted, low volume, default device,
-/// unplugged, device problem, enhancements, format, generic driver), plus mic privacy, a device held in exclusive mode, an app muted in the
+/// not connected, device problem, enhancements, format, generic driver), plus mic privacy, a device held in exclusive mode, an app muted in the
 /// Volume mixer, a Bluetooth headset in call mode, sound to a monitor and mono audio. The fixes run in the app (Core Audio and IPolicyConfig
 /// in the user's session); the ones that need a choice open a dialog: the device picker, microphone access (with consent) and device busy.
 /// Core Audio is read by the app in the user's session (<see cref="IAudioStateSource"/>); services, devices and drivers come from WMI
@@ -184,18 +184,25 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
             rows.Add(Row(AreaLevel.Ok, "Default device", def.Name, detail));
         }
 
-        // Disabled or unplugged
+        // Disabled or not connected. A paired Bluetooth headset that is off, or an empty headphone jack, is normal: only listed, unless
+        // nothing else works or Windows still has it as a default.
+        const string offCheck = "Disabled or not connected";
         var off = mine.Where(e => e.State is AudioEndpointState.Disabled or AudioEndpointState.Unplugged).ToList();
-        IReadOnlyList<AreaAction>? enable = policy && off.Any(e => e.State == AudioEndpointState.Disabled)
-            ? off.Where(e => e.State == AudioEndpointState.Disabled).Select(e => new AreaAction(RemediationKind.EnableAudioEndpoint, $"Turn on {e.Name}", e.Id, e.Name)).ToList()
+        var disabled = off.Where(e => e.State == AudioEndpointState.Disabled).ToList();
+        var awayDefault = off.FirstOrDefault(e => e.State == AudioEndpointState.Unplugged && e.DefaultFor.Count > 0);
+        IReadOnlyList<AreaAction>? enable = policy && disabled.Count > 0
+            ? disabled.Select(e => new AreaAction(RemediationKind.EnableAudioEndpoint, $"Turn on {e.Name}", e.Id, e.Name)).ToList()
             : null;
+        string List() => string.Join(", ", off.Select(e => $"{e.Name} ({e.FriendlyState.ToLowerInvariant()})"));
         if (active.Count == 0 && off.Count > 0)
-            rows.Add(Row(AreaLevel.Warning, "Disabled or unplugged", string.Join(", ", off.Select(e => $"{e.Name}: {e.FriendlyState.ToLowerInvariant()}")),
-                off.Any(e => e.State == AudioEndpointState.Disabled) ? "Turn the device back on." : "Plug the device in, or check the jack.", "off", enable));
-        else if (off.Count > 0)
-            rows.Add(Row(AreaLevel.Neutral, "Disabled or unplugged", AreaModuleBase.Plural(off.Count, "other device"),
-                string.Join(", ", off.Select(e => $"{e.Name} ({e.FriendlyState.ToLowerInvariant()})")), "off", enable));
-        else rows.Add(Row(AreaLevel.Ok, "Disabled or unplugged", NoIssues));
+            rows.Add(Row(AreaLevel.Warning, offCheck, string.Join(", ", off.Select(e => $"{e.Name}: {e.FriendlyState.ToLowerInvariant()}")),
+                string.Join(" ", off.Select(e => e.Reconnect).Distinct()), "off", enable));
+        else if (disabled.Count > 0)
+            rows.Add(Row(AreaLevel.Neutral, offCheck, AreaModuleBase.Plural(disabled.Count, "device") + " turned off", List(), "off", enable));
+        else if (awayDefault is not null)
+            rows.Add(Row(AreaLevel.Warning, offCheck, $"{awayDefault.Name} is a default device but isn't connected",
+                $"{awayDefault.Reconnect} Or pick another device.", "off", Pick()));
+        else rows.Add(Row(AreaLevel.Ok, offCheck, NoIssues, List()));
 
         // Muted and volume (the default device)
         if (def is not null)
@@ -329,7 +336,7 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
             .Select(e => new AreaChoice(e.Id, e.Name, ChoiceDetail(e), e.State switch
             {
                 AudioEndpointState.Disabled => "Turned off: turn it on first.",
-                AudioEndpointState.Unplugged => "Unplugged: plug it in first.",
+                AudioEndpointState.Unplugged => $"{e.FriendlyState}: {e.Reconnect}",
                 _ => null,
             })).ToList();
         return new AreaAction(RemediationKind.SetDefaultAudioEndpoint, output ? "Change output device" : "Change microphone",

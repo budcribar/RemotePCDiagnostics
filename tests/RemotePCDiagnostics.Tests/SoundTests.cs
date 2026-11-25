@@ -104,10 +104,38 @@ public class SoundTests
     public void Only_a_disabled_speaker_is_a_warning_but_an_extra_unplugged_jack_is_info()
     {
         var disabled = Speaker() with { State = AudioEndpointState.Disabled, DefaultFor = [] };
-        Assert.Equal(AreaLevel.Warning, RowOf(Card(Build([disabled, Mic()]), "audio-output"), "Disabled or unplugged").Level);
+        Assert.Equal(AreaLevel.Warning, RowOf(Card(Build([disabled, Mic()]), "audio-output"), "Disabled or not connected").Level);
 
         var jack = new AudioEndpointInfo(HdmiId, "Headphones", AudioFlow.Output, AudioEndpointState.Unplugged, AudioBus.Internal, "Headphones", "", []);
-        Assert.Equal(AreaLevel.Neutral, RowOf(Card(Build([Speaker(), jack, Mic()]), "audio-output"), "Disabled or unplugged").Level);
+        var row = RowOf(Card(Build([Speaker(), jack, Mic()]), "audio-output"), "Disabled or not connected");
+        Assert.Equal(AreaLevel.Ok, row.Level);
+        Assert.Equal("Headphones (nothing plugged in)", row.Values[2]);
+    }
+
+    [Fact]
+    public void Paired_bluetooth_headset_that_is_off_says_not_connected_and_is_no_issue()
+    {
+        var bt = Mic() with { Id = "{bt}", Name = "Headset (WH-1000XM4 Hands-Free)", State = AudioEndpointState.Unplugged, Bus = AudioBus.Bluetooth, FormFactor = "Headset", DefaultFor = [] };
+        var jack = Mic() with { Id = "{jack}", Name = "Headset Microphone", State = AudioEndpointState.Unplugged, Bus = AudioBus.Internal, FormFactor = "Headset", DefaultFor = [] };
+        var card = Card(Build([Speaker(), Mic(), bt, jack]), "audio-input");
+        var row = RowOf(card, "Disabled or not connected");
+        Assert.Equal(AreaLevel.Ok, row.Level);
+        Assert.Equal("No issues found", row.Values[1]);
+        Assert.Equal("Headset (WH-1000XM4 Hands-Free) (not connected), Headset Microphone (nothing plugged in)", row.Values[2]);
+        Assert.Equal("Not connected", bt.FriendlyState);
+        Assert.Equal("Turn on or pair the headset.", bt.Reconnect);
+
+        var picker = SoundModule.Picker(new AudioState([Mic(), bt], []), AudioFlow.Input);
+        Assert.Equal("Not connected: Turn on or pair the headset.", picker.Choices!.Single(c => c.Id == "{bt}").DisabledReason);
+
+        // Still the default for calls: worth a warning.
+        var defaultBt = bt with { DefaultFor = [AudioEndpointInfo.Communications] };
+        Assert.Equal(AreaLevel.Warning, RowOf(Card(Build([Speaker(), Mic(), defaultBt]), "audio-input"), "Disabled or not connected").Level);
+
+        // The only microphone: a warning with the Bluetooth guidance.
+        var only = RowOf(Card(Build([Speaker(), bt]), "audio-input"), "Disabled or not connected");
+        Assert.Equal(AreaLevel.Warning, only.Level);
+        Assert.Equal("Turn on or pair the headset.", only.Values[2]);
     }
 
     [Fact]

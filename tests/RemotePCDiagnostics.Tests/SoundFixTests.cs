@@ -534,7 +534,7 @@ public class SoundFixTests
 
         Assert.Equal((RemediationKind.UnmuteAudioEndpoint, Spk), Act(Row(r, "audio-output", "Muted")));
         Assert.Equal((RemediationKind.RaiseAudioVolume, Spk), Act(Row(r, "audio-output", "Low volume")));
-        Assert.Equal((RemediationKind.EnableAudioEndpoint, Off), Act(Row(r, "audio-output", "Disabled or unplugged")));
+        Assert.Equal((RemediationKind.EnableAudioEndpoint, Off), Act(Row(r, "audio-output", "Disabled or not connected")));
         Assert.Equal((RemediationKind.RaiseAudioVolume, Mic), Act(Row(r, "audio-input", "Low microphone level")));
         static (RemediationKind, string) Act(AreaRow row) => (row.Actions![0].Kind, row.Actions[0].Target);
     }
