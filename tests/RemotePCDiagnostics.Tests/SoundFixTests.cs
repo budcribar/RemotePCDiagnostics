@@ -651,4 +651,24 @@ public class SoundFixTests
         Assert.Equal(Spk + "|calls", a.TargetFor(a.Choices![0], true));
         Assert.Equal(Spk, a.TargetFor(a.Choices![0], false));
     }
+
+    [Fact]
+    public void The_report_copy_carries_the_dialog_for_Admin()
+    {
+        var r = Build([Ep(Spk, "Speakers", roles: AllRoles), Ep(Hdmi, "Monitor"), Ep(Mic, "Mic", form: "Microphone", roles: AllRoles)],
+            mic: new CapturePrivacy.Switches(false, true, false, true));
+        var json = AreaReportExport.ToJson(r);
+        // Admin reads the copy with a depth limit of 10: a row action's choice sits at depth 9.
+        using var doc = System.Text.Json.JsonDocument.Parse(json, new System.Text.Json.JsonDocumentOptions { MaxDepth = 10 });
+        var actions = doc.RootElement.GetProperty("cards").EnumerateArray()
+            .SelectMany(c => (c.TryGetProperty("actions", out var a) ? a.EnumerateArray() : default(System.Text.Json.JsonElement.ArrayEnumerator))
+                .Concat(c.GetProperty("rows").EnumerateArray().SelectMany(row => row.TryGetProperty("actions", out var ra) ? ra.EnumerateArray() : default(System.Text.Json.JsonElement.ArrayEnumerator))))
+            .ToList();
+        var picker = actions.First(a => a.GetProperty("kind").GetString() == nameof(RemediationKind.SetDefaultAudioEndpoint));
+        Assert.Contains(picker.GetProperty("choices").EnumerateArray(), c => c.GetProperty("id").GetString() == Hdmi);
+        Assert.Equal("|calls", picker.GetProperty("option").GetProperty("suffix").GetString());
+        var privacy = actions.First(a => a.GetProperty("kind").GetString() == nameof(RemediationKind.AllowCapturePrivacy));
+        Assert.False(string.IsNullOrEmpty(privacy.GetProperty("consent").GetString()));
+        Assert.False(privacy.TryGetProperty("choices", out _));
+    }
 }

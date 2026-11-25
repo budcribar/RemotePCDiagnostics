@@ -50,7 +50,7 @@
                 </div>
                 @if (_plan.Action.Option is { } opt)
                 {
-                    <label class="fix-option" data-testid="remediation-option" data-checked="@(_option ? "true" : "false")">
+                    <label class="fix-option" data-testid="remediation-option" data-action="fix-option" data-checked="@(_option ? "true" : "false")">
                         <input type="checkbox" checked="@_option" @onchange="e => _option = e.Value is true" /> @opt.Label
                     </label>
                 }
