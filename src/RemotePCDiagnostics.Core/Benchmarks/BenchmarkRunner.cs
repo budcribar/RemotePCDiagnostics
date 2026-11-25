@@ -231,7 +231,7 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
                 });
 
             if (settings.IsEnabled(BenchmarkKind.Speedometer))
-                await Step("Measuring web browsing speed (Speedometer 3)…", async () =>
+                await Step("Measuring web browsing speed…", async () =>
                 {
                     SpeedometerResult? res = null; string? note = null;
                     try { res = await probes.RunSpeedometerAsync(settings.SpeedometerTimeout, preferredSpeedometerEngine, ct).ConfigureAwait(false); }

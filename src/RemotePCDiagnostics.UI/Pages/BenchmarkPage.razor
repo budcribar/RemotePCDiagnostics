@@ -114,7 +114,7 @@
         <span class="meta" data-testid="bench-goal-context">
             @if (activeGoal == BenchmarkGoals.Browsing)
             {
-                <span>DNS lookup &amp; Speedometer@(currentPowerMode is { Length: > 0 } pm ? $" · {pm}" : "") · <a href="/checks">Network &amp; Wi-Fi →</a> · <a href="/stress">Bufferbloat test →</a></span>
+                <span>DNS lookup &amp; web browsing speed@(currentPowerMode is { Length: > 0 } pm ? $" · {pm}" : "") · <a href="/checks">Network &amp; Wi-Fi →</a> · <a href="/stress">Bufferbloat test →</a></span>
             }
             else if (activeGoal == BenchmarkGoals.Build && hasDevEnv)
             {

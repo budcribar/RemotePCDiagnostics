@@ -44,7 +44,7 @@ public static class Benchmarks
         new(BenchmarkKind.CpuMulti, "Processor speed (all cores)", "Speed of heavy work that uses every core", "points", false, 0.05, 0, 1.5, "0"),
         new(BenchmarkKind.DiskLatency, "Disk response time", "How fast the drive answers small reads (opening files, searching)", "ms", true, 0.10, 0.02, 1.5, "0.00"),
         new(BenchmarkKind.DnsLookup, "Website lookup time", "How long it takes to find a website before it starts loading", "ms", true, 0.15, 5, 0.5, "0"),
-        new(BenchmarkKind.Speedometer, "Web browsing speed (Speedometer 3)", "How responsive real web apps feel in a clean browser profile (higher is better)", "score", false, 0.05, 0.3, 1.5, "0.0"),
+        new(BenchmarkKind.Speedometer, "Web browsing speed", "How responsive real web apps feel in a clean browser profile (higher is better)", "score", false, 0.05, 0.3, 1.5, "0.0"),
         new(BenchmarkKind.EnabledStartupApps, "Enabled start-up apps", "Apps and tasks set to launch automatically when you sign in", "apps", true, 0.01, 1, 0.0, "0", "fewer", "more"),
         new(BenchmarkKind.AutoVendorServices, "Automatic background services", "Non-Windows background services set to start automatically", "services", true, 0.01, 1, 0.0, "0", "fewer", "more"),
         new(BenchmarkKind.ActiveScheduledTasks, "Active background tasks", "Non-Windows scheduled tasks enabled to run in the background", "tasks", true, 0.01, 1, 0.0, "0", "fewer", "more"),
