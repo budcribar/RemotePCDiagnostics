@@ -132,9 +132,12 @@
     var impCtx = Bench.GetImprovementContext();
     var allImprovements = BenchmarkImprovements.ForGoal(activeGoal, impCtx);
     var actionableImprovements = allImprovements.Where(i => !i.AlreadyApplied).ToList();
+    var existingDevDriveRoot = activeGoal == BenchmarkGoals.Build && !string.IsNullOrWhiteSpace(impCtx.ExistingDevDriveRoot)
+        ? impCtx.ExistingDevDriveRoot
+        : null;
     var alreadyNotes = new List<string>();
-    if (activeGoal == BenchmarkGoals.Build && !string.IsNullOrWhiteSpace(impCtx.ExistingDevDriveRoot))
-        alreadyNotes.Add($"Dev Drive on {impCtx.ExistingDevDriveRoot}");
+    if (existingDevDriveRoot is not null)
+        alreadyNotes.Add($"Dev Drive on {existingDevDriveRoot}");
     foreach (var applied in allImprovements.Where(i => i.AlreadyApplied))
         alreadyNotes.Add(string.IsNullOrWhiteSpace(applied.AlreadyAppliedNote) ? applied.Title : $"{applied.Title} ({applied.AlreadyAppliedNote})");
     var showSdkChoice = activeGoal == BenchmarkGoals.Build && hasDevEnv;
@@ -142,10 +145,13 @@
     var hasSdk10 = installedSdks.Contains(10);
     var hasSdk11 = installedSdks.Contains(11);
     var selectedImprovements = actionableImprovements.Where(i => _selectedImprovements.Contains(i.Id)).ToList();
+    var selectedDevDriveRoot = existingDevDriveRoot is not null && _useExistingDevDrive ? existingDevDriveRoot : null;
     var selectedSdkTarget = showSdkChoice && _targetDotNetSdkMajor is 10 or 11 ? _targetDotNetSdkMajor : null;
-    var totalSelected = selectedImprovements.Count + (selectedSdkTarget is not null ? 1 : 0);
+    var totalSelected = selectedImprovements.Count
+        + (selectedDevDriveRoot is not null ? 1 : 0)
+        + (selectedSdkTarget is not null ? 1 : 0);
 }
-@if (actionableImprovements.Count > 0 || showSdkChoice || alreadyNotes.Count > 0)
+@if (actionableImprovements.Count > 0 || existingDevDriveRoot is not null || showSdkChoice || alreadyNotes.Count > 0)
 {
     <section class="card" data-testid="bench-improvements" style="margin-bottom:12px">
         <div class="card-head">
@@ -156,9 +162,23 @@
         {
             <p class="meta" data-testid="bench-already-applied" style="margin:6px 0 0">Already in place: @string.Join(" · ", alreadyNotes)</p>
         }
-        @if (actionableImprovements.Count > 0)
+        @if (existingDevDriveRoot is not null || actionableImprovements.Count > 0)
         {
             <div class="bench-kinds" style="margin-top:8px">
+                @if (existingDevDriveRoot is not null)
+                {
+                    <label class="bench-kind" title="Runs the Before build on the standard drive and the After build on your existing Dev Drive (@existingDevDriveRoot) without creating a new drive.">
+                        <input type="checkbox"
+                               data-testid="bench-use-devdrive"
+                               checked="@_useExistingDevDrive"
+                               disabled="@running"
+                               @onchange="() => _useExistingDevDrive = !_useExistingDevDrive" />
+                        <span>
+                            Use existing Dev Drive (@existingDevDriveRoot) for the After build
+                            <span class="meta"> · no new drive created</span>
+                        </span>
+                    </label>
+                }
                 @foreach (var imp in actionableImprovements)
                 {
                     var isChecked = _selectedImprovements.Contains(imp.Id);
@@ -219,7 +239,7 @@
                     class="btn btn-primary"
                     data-testid="bench-run-experiment"
                     disabled="@(running || totalSelected == 0 || s.Enabled.Count == 0)"
-                    @onclick="() => RunExperimentAsync(selectedImprovements, selectedSdkTarget)">
+                    @onclick="() => RunExperimentAsync(selectedImprovements, selectedSdkTarget, selectedDevDriveRoot)">
                 <Icon Name="play" Size="12" />
                 @(totalSelected == 0
                     ? "Select improvements above to run Before → Apply → After"
@@ -454,6 +474,7 @@ else if (!running)
 
     private readonly HashSet<string> _selectedImprovements = new(StringComparer.OrdinalIgnoreCase);
     private int? _targetDotNetSdkMajor;
+    private bool _useExistingDevDrive;
 
     private void ApplyGoalPreset(string goal)
     {
@@ -462,6 +483,7 @@ else if (!running)
         var kinds = BenchmarkGoals.KindsFor(goal, avail);
         _selectedImprovements.Clear();
         _targetDotNetSdkMajor = null;
+        _useExistingDevDrive = false;
         Bench.UpdateSettings(Bench.Settings with { Goal = BenchmarkGoals.Normalize(goal), Enabled = [.. kinds] });
     }
 
@@ -486,10 +508,10 @@ else if (!running)
         }
     }
 
-    private Task RunExperimentAsync(IReadOnlyList<BenchmarkImprovement> selected, int? targetDotNetSdkMajor) =>
-        selected.Count == 0 && targetDotNetSdkMajor is null
+    private Task RunExperimentAsync(IReadOnlyList<BenchmarkImprovement> selected, int? targetDotNetSdkMajor, string? afterBuildWorkRoot) =>
+        selected.Count == 0 && targetDotNetSdkMajor is null && string.IsNullOrWhiteSpace(afterBuildWorkRoot)
             ? Task.CompletedTask
-            : Bench.RunExperimentAsync(selected, targetDotNetSdkMajor: targetDotNetSdkMajor);
+            : Bench.RunExperimentAsync(selected, targetDotNetSdkMajor: targetDotNetSdkMajor, afterBuildWorkRoot: afterBuildWorkRoot);
 
     private void ApplyStandardPreset() =>
         Bench.UpdateSettings(Bench.Settings with { Goal = BenchmarkGoals.TuneUp, Enabled = [.. Benchmarks.DefaultEnabled], Runs = 3 });

@@ -729,26 +729,33 @@ public sealed class RemediationService(
         if (!IsAllowedDotNetSdkPackage(action.Target))
             return new(false, "Only Microsoft.DotNet.SDK.10 and Microsoft.DotNet.SDK.11 are allowed.");
 
-        var pkgId = string.Equals(action.Target.Trim(), DotNet11SdkPackageId, StringComparison.OrdinalIgnoreCase)
-            ? DotNet11SdkPackageId
-            : DotNet10SdkPackageId;
+        var is11 = string.Equals(action.Target.Trim(), DotNet11SdkPackageId, StringComparison.OrdinalIgnoreCase);
+        var pkgId = is11 ? DotNet11SdkPackageId : DotNet10SdkPackageId;
+        var majorStr = is11 ? "11" : "10";
 
-        var res = await commands.RunAdminToolAsync(
-            "winget",
-            ["install", "--id", pkgId, "--exact", "--accept-package-agreements", "--accept-source-agreements", "--silent", "--disable-interactivity"],
+        var pr = await commands.RunAgentScriptAsync(
+            AgentScripts.Of(AgentScripts.InstallDotNetSdk, majorStr),
+            OptimizeTimeout,
             ct).ConfigureAwait(false);
 
-        if (res is null)
-            return new(false, "Could not run winget (App Installer may not be available).");
+        if (pr is { ExitCode: 0 })
+        {
+            string? installedVer = null;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(pr.StdOut))
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(pr.StdOut);
+                    if (doc.RootElement.TryGetProperty("SdkVersion", out var sv))
+                        installedVer = sv.GetString();
+                }
+            }
+            catch { }
+            var verNote = string.IsNullOrWhiteSpace(installedVer) ? pkgId : installedVer;
+            return new(true, $"{DotNetSdkDisplayName(pkgId)} installed silently side-by-side ({verNote}).");
+        }
 
-        // 0 = installed, -1978335189 (0x8A15002B) = already installed and up to date
-        if (res.ExitCode == 0 || res.ExitCode == unchecked((int)0x8A15002B))
-            return new(true, $"{DotNetSdkDisplayName(pkgId)} is installed side-by-side ({pkgId}).");
-
-        var err = string.IsNullOrWhiteSpace(res.StdErr) ? res.StdOut?.Trim() : res.StdErr.Trim();
-        return new(false, string.IsNullOrWhiteSpace(err)
-            ? $"winget install {pkgId} failed (exit {res.ExitCode})."
-            : $"winget install {pkgId} failed: {err}");
+        return new(false, Failure(pr, $"Could not install {DotNetSdkDisplayName(pkgId)} silently via the Agent."));
     }
 
     private async Task<RemediationResult> RunCreatePersistentDevDriveAsync(AreaAction action, CancellationToken ct)

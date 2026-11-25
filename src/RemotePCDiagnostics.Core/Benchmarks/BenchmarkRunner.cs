@@ -40,7 +40,7 @@ public interface IBenchmarkProbes
     /// <summary>Runs one full Speedometer 3 pass (10 internal iterations) in a clean Chromium profile.</summary>
     Task<SpeedometerResult?> RunSpeedometerAsync(TimeSpan timeout, string? preferredEngine, CancellationToken ct) => Task.FromResult<SpeedometerResult?>(null);
     /// <summary>Runs the pinned C# clean-build benchmark (cold + warm, restore timed separately).</summary>
-    Task<DeveloperBuildResult?> RunDeveloperCSharpAsync(bool includeAntivirusComparison, IProgress<string>? progress, CancellationToken ct, int? targetDotNetSdkMajor = null) => Task.FromResult<DeveloperBuildResult?>(null);
+    Task<DeveloperBuildResult?> RunDeveloperCSharpAsync(bool includeAntivirusComparison, IProgress<string>? progress, CancellationToken ct, int? targetDotNetSdkMajor = null, string? buildWorkRoot = null) => Task.FromResult<DeveloperBuildResult?>(null);
 }
 
 /// <summary>
@@ -246,7 +246,7 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
                 await Step("Running C# clean build benchmark (cold & warm)…", async () =>
                 {
                     DeveloperBuildResult? res = null; string? note = null;
-                    try { res = await probes.RunDeveloperCSharpAsync(includeAntivirusComparison: false, progress, ct, settings.TargetDotNetSdkMajor).ConfigureAwait(false); }
+                    try { res = await probes.RunDeveloperCSharpAsync(includeAntivirusComparison: false, progress, ct, settings.TargetDotNetSdkMajor, settings.BuildWorkRoot).ConfigureAwait(false); }
                     catch (Exception ex) when (ex is not OperationCanceledException) { Log("dev-csharp: " + ex.Message); note = "C# clean build couldn't run. " + ex.Message; }
                     if (res is { Succeeded: true })
                         list.Add(new(BenchmarkKind.DeveloperCSharp, res.WarmSamples, null, res.FormatDetail(), DeveloperBuild: res));

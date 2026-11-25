@@ -237,7 +237,8 @@ public class Batch6BenchmarkExperimentsTests
         var result = await svc.RunExperimentAsync(selected, (action, _) =>
             Task.FromResult(new RemediationResult(false, "Not enough free disk space.")));
 
-        Assert.True(result.Completed);
+        Assert.False(result.Completed);
+        Assert.Null(result.After);
         Assert.Equal(2, result.Outcomes.Count);
         Assert.False(result.Outcomes[0].Succeeded);
         Assert.False(result.Outcomes[0].Skipped);
@@ -246,19 +247,78 @@ public class Batch6BenchmarkExperimentsTests
         Assert.Contains("Dev Drive failed", result.Outcomes[1].Message);
     }
 
+    [Fact]
+    public void AgentDotNetSdkInstaller_parses_official_metadata_and_blocks_untrusted_hosts()
+    {
+        const string sampleJson = """
+        {
+          "releases": [
+            {
+              "sdks": [
+                {
+                  "version": "10.0.404",
+                  "files": [
+                    { "name": "dotnet-sdk-win-x64.exe", "rid": "win-x64", "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.404/dotnet-sdk-10.0.404-win-x64.exe", "hash": "AAA" },
+                    { "name": "dotnet-sdk-win-x64.zip", "rid": "win-x64", "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.404/dotnet-sdk-10.0.404-win-x64.zip", "hash": "DEADBEEF" },
+                    { "name": "dotnet-sdk-win-arm64.zip", "rid": "win-arm64", "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.404/dotnet-sdk-10.0.404-win-arm64.zip", "hash": "CAFEBABE" }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        """;
+
+        var x64 = AgentDotNetSdkInstaller.TryParseReleaseZipFromMetadata(sampleJson, "win-x64");
+        Assert.NotNull(x64);
+        Assert.Equal("10.0.404", x64!.SdkVersion);
+        Assert.Equal("DEADBEEF", x64.Sha512);
+
+        var arm64 = AgentDotNetSdkInstaller.TryParseReleaseZipFromMetadata(sampleJson, "win-arm64");
+        Assert.NotNull(arm64);
+        Assert.Equal("CAFEBABE", arm64!.Sha512);
+
+        const string untrustedJson = """
+        { "releases": [ { "sdk": { "version": "10.0.404", "files": [ { "name": "sdk.zip", "rid": "win-x64", "url": "https://evil.example.com/sdk.zip", "hash": "1234" } ] } } ] }
+        """;
+        Assert.Null(AgentDotNetSdkInstaller.TryParseReleaseZipFromMetadata(untrustedJson, "win-x64"));
+
+        // AgentScripts allowlists only 10 and 11.
+        var plan10 = AgentScripts.Plan(AgentScripts.Of(AgentScripts.InstallDotNetSdk, "10"), null, out var refusal10);
+        Assert.Null(refusal10);
+        Assert.Equal(new InstallDotNetSdkAction(10), plan10!.Native);
+        Assert.Null(AgentScripts.Plan(AgentScripts.Of(AgentScripts.InstallDotNetSdk, "8"), null, out _));
+    }
+
+    [Fact]
+    public void DeveloperBuildResult_logs_toolchain_version_and_Spread_trims_single_outlier_for_five_runs()
+    {
+        var csharp = new DeveloperBuildResult(DeveloperLanguage.CSharp, "pin", "sha", "10.0.404", 10, 0.7, 2.5, [2.5], 2.2, [2.1, 2.2, 2.2, 2.3, 3.4]);
+        Assert.StartsWith(".NET SDK 10.0.404 · ", csharp.FormatDetail());
+
+        var rust = new DeveloperBuildResult(DeveloperLanguage.Rust, "pin", "sha", "1.88.0", 1, 0.5, 4.0, [4.0], 3.0, [3.0]);
+        Assert.StartsWith("Rust 1.88.0 · ", rust.FormatDetail());
+
+        // 5 samples with one big spike (3.4): trimmed spread uses [2.2 .. 2.3] / 2.2 ≈ 4.5% instead of 59%!
+        var m = new BenchmarkMeasurement(BenchmarkKind.DeveloperCSharp, [2.1, 2.2, 2.2, 2.3, 3.4]);
+        Assert.True(m.Spread < 0.10, $"Expected trimmed spread < 10%, got {m.Spread:P1}");
+    }
+
     private sealed class SdkCapturingProbes : IBenchmarkProbes
     {
         public List<int?> SeenSdkMajors { get; } = [];
+        public List<string?> SeenBuildWorkRoots { get; } = [];
         public BenchmarkConditions ReadConditions() => new(false, 48, "Balanced", "Best performance");
         public Task<IdleSample?> SampleIdleAsync(TimeSpan d, CancellationToken ct) => Task.FromResult<IdleSample?>(new(2.0, 10));
         public Task<double?> StartProgramAsync(BuiltInProgram p, CancellationToken ct) => Task.FromResult<double?>(100);
         public Task<double?> DiskRandomReadIopsAsync(TimeSpan d, CancellationToken ct) => Task.FromResult<double?>(8000);
         public Task<IReadOnlyList<WinEvent>> ReadBootEventsAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<WinEvent>>([]);
         public Task<DeveloperBuildResult?> RunDeveloperCSharpAsync(
-            bool includeAntivirusComparison, IProgress<string>? progress, CancellationToken ct, int? targetDotNetSdkMajor = null)
+            bool includeAntivirusComparison, IProgress<string>? progress, CancellationToken ct, int? targetDotNetSdkMajor = null, string? buildWorkRoot = null)
         {
             SeenSdkMajors.Add(targetDotNetSdkMajor);
-            var secs = targetDotNetSdkMajor is null ? 5.0 : 4.2;
+            SeenBuildWorkRoots.Add(buildWorkRoot);
+            var secs = targetDotNetSdkMajor is null && buildWorkRoot is null ? 5.0 : 4.2;
             var major = targetDotNetSdkMajor ?? 10;
             return Task.FromResult<DeveloperBuildResult?>(new DeveloperBuildResult(
                 DeveloperLanguage.CSharp, "csharp-v2", "sha", $"{major}.0.100", major, 0.5, secs, [secs], secs, [secs]));
@@ -332,5 +392,25 @@ public class Batch6BenchmarkExperimentsTests
         Assert.True(resAlready.Outcomes[0].Succeeded);
         Assert.Contains("Already installed", resAlready.Outcomes[0].Message);
         Assert.Equal(new int?[] { null, 10 }, probes.SeenSdkMajors);
+
+        // Using an existing Dev Drive D:\ runs Before on standard drive and After on D:\ without creating a drive.
+        probes.SeenSdkMajors.Clear();
+        probes.SeenBuildWorkRoots.Clear();
+        executed.Clear();
+        var resDevDrive = await svc.RunExperimentAsync(
+            [],
+            (action, _) =>
+            {
+                executed.Add(action);
+                return Task.FromResult(new RemediationResult(true, "Should not create drive"));
+            },
+            afterBuildWorkRoot: @"D:\");
+
+        Assert.True(resDevDrive.Completed);
+        Assert.Empty(executed);
+        Assert.Equal(new string?[] { null, @"D:\" }, probes.SeenBuildWorkRoots);
+        var outcome = Assert.Single(resDevDrive.Outcomes);
+        Assert.True(outcome.Succeeded);
+        Assert.Contains(@"D:\", outcome.Message);
     }
 }

@@ -502,6 +502,10 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
 
     private async Task<string?> DetectExistingDevDriveRootAsync(CancellationToken ct)
     {
+        // Fast non-admin check first: a Dev Drive is formatted as ReFS; per-drive try/catch ensures one offline/locked drive never hides it.
+        if (TryFindExistingDevDriveRoot() is { } refsRoot)
+            return refsRoot;
+
         if (devEnv is not null)
         {
             try
@@ -514,17 +518,21 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
                 {
                     foreach (var d in DriveInfo.GetDrives())
                     {
-                        if (!d.IsReady) continue;
-                        var root = DevDrivePackageCaches.NormalizeDriveRoot(d.Name);
-                        if (string.IsNullOrEmpty(root)) continue;
-                        var q = await devEnv.QueryDevDriveAsync(root, ct).ConfigureAwait(false);
-                        if (q.IsDevDrive) return root;
+                        try
+                        {
+                            if (!d.IsReady) continue;
+                            var root = DevDrivePackageCaches.NormalizeDriveRoot(d.Name);
+                            if (string.IsNullOrEmpty(root)) continue;
+                            var q = await devEnv.QueryDevDriveAsync(root, ct).ConfigureAwait(false);
+                            if (q.IsDevDrive) return root;
+                        }
+                        catch { }
                     }
                 }
             }
             catch { }
         }
-        return TryFindExistingDevDriveRoot();
+        return null;
     }
 
     /// <summary>
@@ -676,21 +684,25 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     private static string? TryFindExistingDevDriveRoot()
     {
         if (!OperatingSystem.IsWindows()) return null;
-        try
+        DriveInfo[] drives;
+        try { drives = DriveInfo.GetDrives(); }
+        catch { return null; }
+
+        foreach (var d in drives)
         {
-            foreach (var d in DriveInfo.GetDrives())
+            try
             {
                 if (!d.IsReady) continue;
-                if (string.Equals(d.DriveFormat, "ReFS", StringComparison.OrdinalIgnoreCase))
+                if (d.DriveFormat.Contains("ReFS", StringComparison.OrdinalIgnoreCase))
                     return DevDrivePackageCaches.NormalizeDriveRoot(d.Name);
             }
+            catch { }
         }
-        catch { }
         return null;
     }
 
     /// <summary>
-    /// Runs a closed-loop experiment: Before benchmark → Apply checked improvements (+ optional mutually exclusive .NET 10 or .NET 11 SDK) → After benchmark.
+    /// Runs a closed-loop experiment: Before benchmark → Apply checked improvements (+ optional existing Dev Drive / mutually exclusive .NET 10 or .NET 11 SDK) → After benchmark.
     /// If <paramref name="targetDotNetSdkMajor"/> (10 or 11) is requested and not yet installed, it is installed automatically side-by-side before the After pass.
     /// </summary>
     public async Task<BenchmarkExperimentResult> RunExperimentAsync(
@@ -698,7 +710,8 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         Func<AreaAction, CancellationToken, Task<RemediationResult>>? applyImprovement = null,
         CancellationToken ct = default,
         int? targetDotNetSdkMajor = null,
-        IReadOnlyList<int>? installedDotNetSdkMajorsOverride = null)
+        IReadOnlyList<int>? installedDotNetSdkMajorsOverride = null,
+        string? afterBuildWorkRoot = null)
     {
         if (Settings.Enabled.Count == 0)
             return new(Settings.Goal, Before, After, [], false, "No benchmarks are selected.");
@@ -717,7 +730,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             ExperimentRunning = true;
             ExperimentStep = "Step 1/3: Running Before benchmark…";
             Running = BenchmarkPhase.Before;
-            settings = _state.Settings with { TargetDotNetSdkMajor = null };
+            settings = _state.Settings with { TargetDotNetSdkMajor = null, BuildWorkRoot = null };
             _cts = cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         }
         Blocked = null;
@@ -734,7 +747,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         {
             var prog = new Progress<string>(m => { Progress = m; Raise(); });
 
-            // 1. Before benchmark (runs on current SDK/setup)
+            // 1. Before benchmark (runs on current SDK/standard drive)
             beforeRun = await runner.RunAsync(BenchmarkPhase.Before, settings, null, prog, cts.Token).ConfigureAwait(false);
             Save(_state with { Before = beforeRun, After = null, RunBeforeOnStartup = false, RunAfterOnStartup = false });
             WriteEvent(beforeRun);
@@ -744,9 +757,12 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
                 return FinishExperiment(settings.Goal, beforeRun, null, outcomes, false, error);
             }
 
-            // 2. Apply checked improvements + optional mutually exclusive .NET 10/11 SDK target
+            // 2. Apply checked improvements + optional existing Dev Drive / mutually exclusive .NET 10/11 SDK target
             var ordered = BenchmarkImprovements.OrderForExecution(selectedImprovements.Where(i => !i.AlreadyApplied));
-            var totalActions = ordered.Count + (targetDotNetSdkMajor is 10 or 11 ? 1 : 0);
+            var useExistingDevDrive = !string.IsNullOrWhiteSpace(afterBuildWorkRoot);
+            var totalActions = ordered.Count
+                + (useExistingDevDrive ? 1 : 0)
+                + (targetDotNetSdkMajor is 10 or 11 ? 1 : 0);
             lock (_gate)
             {
                 Running = null;
@@ -784,6 +800,18 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
                 }
             }
 
+            string? effectiveAfterBuildWorkRoot = null;
+            if (useExistingDevDrive)
+            {
+                effectiveAfterBuildWorkRoot = DevDrivePackageCaches.NormalizeDriveRoot(afterBuildWorkRoot!);
+                outcomes.Add(new("devdrive:use-existing", $"Use Dev Drive ({effectiveAfterBuildWorkRoot}) for After build",
+                    Succeeded: true, Skipped: false, $"Running After build on existing Dev Drive {effectiveAfterBuildWorkRoot}."));
+            }
+            else if (!string.IsNullOrWhiteSpace(createdDevDriveRoot))
+            {
+                effectiveAfterBuildWorkRoot = DevDrivePackageCaches.NormalizeDriveRoot(createdDevDriveRoot);
+            }
+
             int? effectiveAfterSdkMajor = null;
             if (targetDotNetSdkMajor is 10 or 11)
             {
@@ -813,18 +841,31 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
                 }
             }
 
-            // 3. After benchmark (pinned to chosen SDK major when selected)
+            if (outcomes.Count > 0 && outcomes.All(o => !o.Succeeded))
+            {
+                Message = "Stopped before After pass: none of the selected improvements succeeded.";
+                return FinishExperiment(settings.Goal, beforeRun, null, outcomes, completed: false, error: Message);
+            }
+
+            // 3. After benchmark (pinned to chosen SDK major / Dev Drive when selected)
             lock (_gate)
             {
                 Running = BenchmarkPhase.After;
-                ExperimentStep = effectiveAfterSdkMajor is { } m
-                    ? $"Step 3/3: Running After benchmark on .NET {m} SDK…"
+                var parts = new List<string>();
+                if (effectiveAfterBuildWorkRoot is not null) parts.Add($"Dev Drive {effectiveAfterBuildWorkRoot}");
+                if (effectiveAfterSdkMajor is { } m) parts.Add($".NET {m} SDK");
+                ExperimentStep = parts.Count > 0
+                    ? $"Step 3/3: Running After benchmark on {string.Join(" + ", parts)}…"
                     : "Step 3/3: Running After benchmark…";
                 Progress = ExperimentStep;
             }
             Raise();
 
-            var afterSettings = settings with { TargetDotNetSdkMajor = effectiveAfterSdkMajor };
+            var afterSettings = settings with
+            {
+                TargetDotNetSdkMajor = effectiveAfterSdkMajor,
+                BuildWorkRoot = effectiveAfterBuildWorkRoot,
+            };
             afterRun = await runner.RunAsync(BenchmarkPhase.After, afterSettings, null, prog, cts.Token).ConfigureAwait(false);
             Save(_state with { After = afterRun, RunAfterOnStartup = false });
             WriteEvent(afterRun);
@@ -870,7 +911,12 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         try
         {
             var actor = ServiceActor.From(session);
-            var lines = run.Measurements.Select(m => $"  {m.Kind}={m.Median?.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) ?? "n/a"}");
+            var lines = run.Measurements.Select(m =>
+            {
+                var val = m.Median?.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) ?? "n/a";
+                var tc = m.DeveloperBuild?.FormatToolchainVersion();
+                return tc is { Length: > 0 } ? $"  {m.Kind}={val} ({tc})" : $"  {m.Kind}={val}";
+            });
             var text = $"Performance benchmark ({run.Phase})\r\nActor: {actor}\r\nCompleted: {(run.Completed ? "yes" : "no")}\r\nOn battery: {run.Conditions.OnBattery?.ToString() ?? "unknown"}\r\nResults:\r\n{string.Join("\r\n", lines)}";
             if (run.Phase == BenchmarkPhase.After && Before is not null) text += "\r\n" + Comparison.OverallText;
             events?.Invoke(LogLevel.Information, text);

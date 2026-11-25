@@ -188,12 +188,13 @@ public static class DeveloperCSharpPin
 /// <summary>Options controlling repeat counts and timeouts for developer clean builds.</summary>
 public sealed record DeveloperBuildOptions(
     int ColdRepeats = 3,
-    int WarmWarmups = 1,
+    int WarmWarmups = 2,
     int WarmRepeats = 5,
     TimeSpan? PerCommandTimeout = null,
     bool IncludeAntivirusComparison = false,
     bool AllowHyperfine = true,
-    int? TargetDotNetSdkMajor = null)
+    int? TargetDotNetSdkMajor = null,
+    string? WorkRootOverride = null)
 {
     public TimeSpan EffectiveTimeout => PerCommandTimeout ?? TimeSpan.FromMinutes(5);
 }
@@ -262,7 +263,9 @@ public sealed class DeveloperBuildRunner(
             return Failed(DeveloperLanguage.CSharp, string.Create(CultureInfo.InvariantCulture,
                 $"Could not run: only {freeGb.Value:0.0} GB free on the temp volume (needs at least {DeveloperScoring.MinFreeDiskGb:0} GB)."), dotnet);
 
-        var tempRoot = tempRootOverride ?? Path.GetTempPath();
+        var tempRoot = !string.IsNullOrWhiteSpace(options.WorkRootOverride)
+            ? options.WorkRootOverride
+            : (tempRootOverride ?? Path.GetTempPath());
         var workDir = Path.Combine(tempRoot, $"{DevDriveRules.BuildTempPrefix}{Guid.NewGuid():N}");
         var tempExclusionAdded = false;
 
@@ -271,12 +274,27 @@ public sealed class DeveloperBuildRunner(
             progress?.Report("Preparing pinned C# benchmark sources…");
             var effectiveMajor = options.TargetDotNetSdkMajor ?? dotnet.MajorVersion!.Value;
             var (projectPath, sha256) = DeveloperCSharpPin.Materialize(workDir, effectiveMajor);
+            var actualSdkVersion = dotnet.Version;
+            int? actualSdkMajor = dotnet.MajorVersion;
             if (options.TargetDotNetSdkMajor is { } pinMajor)
             {
                 File.WriteAllText(
                     Path.Combine(workDir, "global.json"),
                     $$$"""{"sdk":{"version":"{{{pinMajor}}}.0.100","rollForward":"latestFeature"}}""");
+                var verRes = await _launcher.RunAsync(dotnet.ExecutablePath, ["--version"], TimeSpan.FromSeconds(15), ct, workDir).ConfigureAwait(false);
+                if (verRes is { ExitCode: 0, TimedOut: false } && !string.IsNullOrWhiteSpace(verRes.StdOut))
+                {
+                    var v = verRes.StdOut.Trim().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+                    actualSdkVersion = v;
+                    if (int.TryParse(v.Split('.')[0], out var parsedMaj))
+                        actualSdkMajor = parsedMaj;
+                }
+                else
+                {
+                    actualSdkMajor = pinMajor;
+                }
             }
+            Log($"C# clean build benchmark running on .NET SDK {actualSdkVersion} in {workDir}");
 
             var conditions = env.ReadConditions();
             var (comparable, condNotes) = DeveloperScoring.CheckComparability(conditions.OnBattery, conditions.PowerPlan, thermallyThrottling: false);
@@ -296,16 +314,17 @@ public sealed class DeveloperBuildRunner(
             var hyperfine = options.AllowHyperfine ? env.FindHyperfine() : null;
             var usedHyperfine = false;
 
-            // 2. Cold clean builds
+            // 2. Cold clean builds (shut down build servers & disable node reuse / shared compilation so Before and After start equally cold)
             progress.ReportStep(++step, totalSteps, $"Running cold C# clean builds ({options.ColdRepeats} repeats)…");
-            var (coldSamples, coldFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.ColdRepeats, warmups: 0, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            await ShutdownBuildServersAsync(dotnet.ExecutablePath, workDir, ct).ConfigureAwait(false);
+            var (coldSamples, coldFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.ColdRepeats, warmups: 0, hyperfine, options.EffectiveTimeout, ct, isolateBuildServer: true).ConfigureAwait(false);
             if (coldFail is not null || coldSamples.Count == 0)
                 return FailCommand(DeveloperLanguage.CSharp, "cold dotnet build", coldFail, dotnet, sha256, restoreSecs);
             if (hyperfine is not null) usedHyperfine = true;
 
-            // 3. Warm clean builds (1 warmup discarded, compiler outputs deleted before EVERY repeat so the compiler does full work)
+            // 3. Warm clean builds (2 warmups discarded by default so VBCSCompiler/MSBuild nodes reach steady state; compiler outputs deleted before EVERY repeat)
             progress.ReportStep(++step, totalSteps, $"Running warm C# clean builds ({options.WarmRepeats} repeats)…");
-            var (warmSamples, warmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            var (warmSamples, warmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct, isolateBuildServer: false).ConfigureAwait(false);
             if (warmFail is not null || warmSamples.Count == 0)
                 return FailCommand(DeveloperLanguage.CSharp, "warm dotnet build", warmFail, dotnet, sha256, restoreSecs);
 
@@ -334,7 +353,7 @@ public sealed class DeveloperBuildRunner(
             var warmMedian = DeveloperScoring.Median(warmSamples);
             var (cpuName, coreCount) = env.ReadCpuInfo();
             var cpuClass = DeveloperScoring.ClassifyCpu(cpuName, coreCount);
-            var baseline = _baselines.FindUsable(cpuClass, DeveloperLanguage.CSharp, DeveloperCSharpPin.PinId, dotnet.MajorVersion);
+            var baseline = _baselines.FindUsable(cpuClass, DeveloperLanguage.CSharp, DeveloperCSharpPin.PinId, actualSdkMajor);
             var score = comparable ? DeveloperScoring.ComputeScore(warmMedian, baseline) : null;
             var band = DeveloperScoring.EvaluateBand(warmMedian, baseline, comparable);
 
@@ -342,8 +361,8 @@ public sealed class DeveloperBuildRunner(
                 DeveloperLanguage.CSharp,
                 DeveloperCSharpPin.PinId,
                 sha256,
-                dotnet.Version,
-                dotnet.MajorVersion,
+                actualSdkVersion,
+                actualSdkMajor,
                 restoreSecs,
                 coldMedian,
                 coldSamples,
@@ -364,8 +383,8 @@ public sealed class DeveloperBuildRunner(
                 DeveloperLanguage.CSharp,
                 DeveloperCSharpPin.PinId,
                 sha256,
-                dotnet.Version,
-                dotnet.MajorVersion,
+                actualSdkVersion,
+                actualSdkMajor,
                 cpuClass,
                 cpuName,
                 coreCount,
@@ -440,9 +459,10 @@ public sealed class DeveloperBuildRunner(
 
             var hyperfine = options.AllowHyperfine ? env.FindHyperfine() : null;
             progress.ReportStep(++step, totalSteps, $"Timing cold C# clean builds on NTFS ({options.ColdRepeats} repeats)…");
-            var (ntfsColdSamples, ntfsColdFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ntfsProj, ntfsDir, options.ColdRepeats, 0, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            await ShutdownBuildServersAsync(dotnet.ExecutablePath, ntfsDir, ct).ConfigureAwait(false);
+            var (ntfsColdSamples, ntfsColdFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ntfsProj, ntfsDir, options.ColdRepeats, 0, hyperfine, options.EffectiveTimeout, ct, isolateBuildServer: true).ConfigureAwait(false);
             progress.ReportStep(++step, totalSteps, $"Timing warm C# clean builds on NTFS ({options.WarmRepeats} repeats)…");
-            var (ntfsWarmSamples, ntfsWarmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ntfsProj, ntfsDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            var (ntfsWarmSamples, ntfsWarmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ntfsProj, ntfsDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct, isolateBuildServer: false).ConfigureAwait(false);
             var ntfsCold = DeveloperScoring.Median(ntfsColdSamples);
             var ntfsWarm = DeveloperScoring.Median(ntfsWarmSamples);
             if (ntfsColdFail is not null || ntfsWarmFail is not null || ntfsCold is null || ntfsWarm is null)
@@ -494,9 +514,10 @@ public sealed class DeveloperBuildRunner(
                 return new(false, DeveloperCSharpPin.PinId, sha256, Note: (ddRestoreFail ?? CommandFailure.Empty).Format("Dev Drive dotnet restore"));
 
             progress.ReportStep(++step, totalSteps, $"Timing cold C# clean builds on Dev Drive ({options.ColdRepeats} repeats)…");
-            var (ddColdSamples, ddColdFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ddProj, devDriveBuildDir, options.ColdRepeats, 0, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            await ShutdownBuildServersAsync(dotnet.ExecutablePath, devDriveBuildDir, ct).ConfigureAwait(false);
+            var (ddColdSamples, ddColdFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ddProj, devDriveBuildDir, options.ColdRepeats, 0, hyperfine, options.EffectiveTimeout, ct, isolateBuildServer: true).ConfigureAwait(false);
             progress.ReportStep(++step, totalSteps, $"Timing warm C# clean builds on Dev Drive ({options.WarmRepeats} repeats)…");
-            var (ddWarmSamples, ddWarmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ddProj, devDriveBuildDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            var (ddWarmSamples, ddWarmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ddProj, devDriveBuildDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct, isolateBuildServer: false).ConfigureAwait(false);
             var ddCold = DeveloperScoring.Median(ddColdSamples);
             var ddWarm = DeveloperScoring.Median(ddWarmSamples);
             if (ddColdFail is not null || ddWarmFail is not null || ddCold is null || ddWarm is null)
@@ -564,6 +585,18 @@ public sealed class DeveloperBuildRunner(
         }
     }
 
+    private async Task ShutdownBuildServersAsync(string dotnetExe, string workDir, CancellationToken ct)
+    {
+        try
+        {
+            await _launcher.RunAsync(dotnetExe, ["build-server", "shutdown"], TimeSpan.FromSeconds(10), ct, workDir).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log("build-server shutdown skipped: " + ex.Message);
+        }
+    }
+
     private async Task<(IReadOnlyList<double> Samples, CommandFailure? Failure)> MeasureCleanBuildsAsync(
         string dotnetExe,
         string projectPath,
@@ -572,23 +605,28 @@ public sealed class DeveloperBuildRunner(
         int warmups,
         string? hyperfineExe,
         TimeSpan timeout,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool isolateBuildServer = false)
     {
         if (hyperfineExe is not null)
         {
-            var hfSamples = await TryMeasureWithHyperfineAsync(hyperfineExe, dotnetExe, projectPath, workDir, repeats, warmups, timeout, ct).ConfigureAwait(false);
+            var hfSamples = await TryMeasureWithHyperfineAsync(hyperfineExe, dotnetExe, projectPath, workDir, repeats, warmups, timeout, ct, isolateBuildServer).ConfigureAwait(false);
             if (hfSamples is { Count: > 0 }) return (hfSamples, null);
         }
 
         // In-app loop matching hyperfine's protocol: delete compiler outputs before every repeat so the compiler
         // does full work, but keep the NuGet restore assets. `dotnet build --no-restore` fails with NETSDK1004
         // when project.assets.json (written by the separately timed restore) has been deleted.
+        string[] buildArgs = isolateBuildServer
+            ? ["build", projectPath, "-c", "Release", "--no-restore", "-nr:false", "-p:UseSharedCompilation=false", "-v", "q"]
+            : ["build", projectPath, "-c", "Release", "--no-restore", "-v", "q"];
+
         var samples = new List<double>();
         for (var i = 0; i < warmups + Math.Max(1, repeats); i++)
         {
             ct.ThrowIfCancellationRequested();
             CleanBuildOutputs(workDir);
-            var (ok, seconds, failure) = await TimedCommandAsync(dotnetExe, ["build", projectPath, "-c", "Release", "--no-restore", "-v", "q"], timeout, ct, workDir).ConfigureAwait(false);
+            var (ok, seconds, failure) = await TimedCommandAsync(dotnetExe, buildArgs, timeout, ct, workDir).ConfigureAwait(false);
             if (!ok) return ([], failure ?? CommandFailure.Empty);
             if (i >= warmups)
                 samples.Add(Math.Round(seconds, 3));
@@ -604,13 +642,15 @@ public sealed class DeveloperBuildRunner(
         int repeats,
         int warmups,
         TimeSpan timeout,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool isolateBuildServer = false)
     {
         var jsonOut = Path.Combine(workDir, $"hf-{Guid.NewGuid():N}.json");
         try
         {
             var prepare = CleanPrepareCommand(workDir);
-            var cmd = $"\"{dotnetExe}\" build \"{projectPath}\" -c Release --no-restore -v q";
+            var extraFlags = isolateBuildServer ? " -nr:false -p:UseSharedCompilation=false" : "";
+            var cmd = $"\"{dotnetExe}\" build \"{projectPath}\" -c Release --no-restore{extraFlags} -v q";
             var args = new List<string>
             {
                 "--runs", Math.Max(1, repeats).ToString(CultureInfo.InvariantCulture),
