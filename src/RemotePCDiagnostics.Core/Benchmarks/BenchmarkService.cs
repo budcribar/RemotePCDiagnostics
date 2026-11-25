@@ -623,13 +623,15 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             ? DevDrivePackageCaches.CollectCaches(toolchains, devRoot, userEnv)
             : [];
         var latest = BenchmarkUpload.LatestRun(Before, After);
+        var dotnetMajor = toolchains.FirstOrDefault(t => t.Language == DeveloperLanguage.CSharp)?.MajorVersion;
         return new BenchmarkImprovementContext(
             HasDevEnvironment: hasDev,
             ExistingDevDriveRoot: devRoot,
             PackageCaches: caches,
             AcMaxProcessorStatePercent: acMaxProcessorStatePercent ?? latest?.Conditions.AcMaxProcessorStatePercent,
             ActivePowerPlan: activePowerPlan ?? latest?.Conditions.PowerPlan,
-            StorageSenseEnabled: storageSenseEnabled);
+            StorageSenseEnabled: storageSenseEnabled,
+            DotNetSdkMajorVersion: dotnetMajor);
     }
 
     private static string? TryFindExistingDevDriveRoot()
@@ -737,6 +739,11 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
                         createdDevDriveRoot = res.CreatedDriveRoot;
                     else if (!res.Success)
                         devDriveFailed = true;
+                }
+                else if (imp.Action.Kind == RemediationKind.InstallDotNetSdk && res.Success)
+                {
+                    try { await RefreshDeveloperEnvironmentAsync(cts.Token).ConfigureAwait(false); }
+                    catch { }
                 }
             }
 

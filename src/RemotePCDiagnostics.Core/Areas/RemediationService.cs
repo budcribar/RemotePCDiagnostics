@@ -397,6 +397,16 @@ public sealed class RemediationService(
                 AdminNote("Requires Windows 11 with Dev Drive support and at least 50 GB free on the system drive."),
                 true),
 
+            RemediationKind.InstallDotNetSdk => IsAllowedDotNetSdkPackage(action.Target)
+                ? new(
+                    action,
+                    $"Install {DotNetSdkDisplayName(action.Target)} (side-by-side)?",
+                    $"Installs {DotNetSdkDisplayName(action.Target)} alongside your existing SDKs via winget ({action.Target}).",
+                    "Runs winget install silently for the official Microsoft package. Existing SDKs remain installed and global.json-pinned repos stay on their pinned version.",
+                    "Requires internet access and winget (App Installer). Can be uninstalled later from Windows Installed Apps.",
+                    true)
+                : new(action, action.ButtonText, "", "This .NET SDK package isn't on the allowlist.", "This .NET SDK package isn't on the allowlist.", Allowed: false),
+
             _ => new(action, action.ButtonText, "", "", null, true),
         };
     }
@@ -590,8 +600,49 @@ public sealed class RemediationService(
 
         RemediationKind.CreatePersistentDevDrive => await RunCreatePersistentDevDriveAsync(action, ct).ConfigureAwait(false),
 
+        RemediationKind.InstallDotNetSdk => await RunInstallDotNetSdkAsync(action, ct).ConfigureAwait(false),
+
         _ => new(false, "Unsupported action."),
     };
+
+    public const string DotNet10SdkPackageId = "Microsoft.DotNet.SDK.10";
+    public const string DotNet11SdkPackageId = "Microsoft.DotNet.SDK.11";
+
+    public static bool IsAllowedDotNetSdkPackage(string? id) =>
+        string.Equals(id?.Trim(), DotNet10SdkPackageId, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(id?.Trim(), DotNet11SdkPackageId, StringComparison.OrdinalIgnoreCase);
+
+    private static string DotNetSdkDisplayName(string? id) =>
+        string.Equals(id?.Trim(), DotNet11SdkPackageId, StringComparison.OrdinalIgnoreCase)
+            ? ".NET 11 SDK"
+            : ".NET 10 LTS SDK";
+
+    private async Task<RemediationResult> RunInstallDotNetSdkAsync(AreaAction action, CancellationToken ct)
+    {
+        if (!IsAllowedDotNetSdkPackage(action.Target))
+            return new(false, "Only Microsoft.DotNet.SDK.10 and Microsoft.DotNet.SDK.11 are allowed.");
+
+        var pkgId = string.Equals(action.Target.Trim(), DotNet11SdkPackageId, StringComparison.OrdinalIgnoreCase)
+            ? DotNet11SdkPackageId
+            : DotNet10SdkPackageId;
+
+        var res = await commands.RunAdminToolAsync(
+            "winget",
+            ["install", "--id", pkgId, "--exact", "--accept-package-agreements", "--accept-source-agreements", "--silent", "--disable-interactivity"],
+            ct).ConfigureAwait(false);
+
+        if (res is null)
+            return new(false, "Could not run winget (App Installer may not be available).");
+
+        // 0 = installed, -1978335189 (0x8A15002B) = already installed and up to date
+        if (res.ExitCode == 0 || res.ExitCode == unchecked((int)0x8A15002B))
+            return new(true, $"{DotNetSdkDisplayName(pkgId)} is installed side-by-side ({pkgId}).");
+
+        var err = string.IsNullOrWhiteSpace(res.StdErr) ? res.StdOut?.Trim() : res.StdErr.Trim();
+        return new(false, string.IsNullOrWhiteSpace(err)
+            ? $"winget install {pkgId} failed (exit {res.ExitCode})."
+            : $"winget install {pkgId} failed: {err}");
+    }
 
     private async Task<RemediationResult> RunCreatePersistentDevDriveAsync(AreaAction action, CancellationToken ct)
     {

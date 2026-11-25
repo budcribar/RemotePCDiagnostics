@@ -44,6 +44,7 @@ public static class FixKeys
         [RemediationKind.ResetMaxProcessorState] = "resetmaxprocessorstate",
         [RemediationKind.MovePackageCacheToDevDrive] = "movepackagecachetodevdrive",
         [RemediationKind.CreatePersistentDevDrive] = "createpersistentdevdrive",
+        [RemediationKind.InstallDotNetSdk] = "installdotnetsdk",
     };
 
     public static readonly IReadOnlyDictionary<MemoryActionType, string> Memory = new Dictionary<MemoryActionType, string>

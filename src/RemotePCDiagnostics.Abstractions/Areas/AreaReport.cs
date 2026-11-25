@@ -65,6 +65,8 @@ public enum RemediationKind
     MovePackageCacheToDevDrive,
     /// <summary>Creates and mounts a persistent dynamically expanding ReFS Dev Drive VHDX (~50 GB) via the Agent. Undo detaches and deletes it.</summary>
     CreatePersistentDevDrive,
+    /// <summary>Installs an allowlisted .NET SDK side-by-side via winget (<c>Microsoft.DotNet.SDK.10</c> or <c>Microsoft.DotNet.SDK.11</c>).</summary>
+    InstallDotNetSdk,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>

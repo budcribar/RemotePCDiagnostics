@@ -41,7 +41,8 @@ public sealed record BenchmarkImprovementContext(
     IReadOnlyList<PackageCacheInfo>? PackageCaches = null,
     int? AcMaxProcessorStatePercent = null,
     string? ActivePowerPlan = null,
-    bool? StorageSenseEnabled = null);
+    bool? StorageSenseEnabled = null,
+    int? DotNetSdkMajorVersion = null);
 
 /// <summary>
 /// Builds the goal-specific list of improvements that can be checked before clicking Start
@@ -50,6 +51,8 @@ public sealed record BenchmarkImprovementContext(
 public static class BenchmarkImprovements
 {
     public const string CreateDevDriveId = "devdrive:create";
+    public const string InstallDotNet10SdkId = "sdk:dotnet10";
+    public const string InstallDotNet11SdkId = "sdk:dotnet11";
     public const string NewDevDriveToken = "<NEW_DEVDRIVE>";
 
     public static IReadOnlyList<BenchmarkImprovement> ForGoal(string? goal, BenchmarkImprovementContext ctx)
@@ -91,6 +94,32 @@ public static class BenchmarkImprovements
                     AlreadyAppliedNote: c.OnDevDrive ? $"Already on Dev Drive ({c.CurrentPath})" : null,
                     RequiresDevDrive: !hasDevDrive));
             }
+
+            // Side-by-side .NET SDK upgrades: .NET 8 and .NET 9 reached End of Support on Nov 10, 2026;
+            // newer SDKs build net9.0 projects faster while keeping existing SDKs and global.json pins intact.
+            var hasDotNet10OrNewer = ctx.DotNetSdkMajorVersion is >= 10;
+            var hasDotNet11OrNewer = ctx.DotNetSdkMajorVersion is >= 11;
+            var eolNote = ctx.DotNetSdkMajorVersion is > 0 and < 10
+                ? $"Your newest installed SDK (.NET {ctx.DotNetSdkMajorVersion}) reached end of support on Nov 10, 2026. "
+                : "";
+
+            list.Add(new BenchmarkImprovement(
+                InstallDotNet10SdkId,
+                BenchmarkGoals.Build,
+                "Install .NET 10 LTS SDK (side-by-side)",
+                $"{eolNote}Installs supported .NET 10 LTS SDK alongside existing SDKs for faster MSBuild/Roslyn builds while still targeting net9.0.",
+                new AreaAction(RemediationKind.InstallDotNetSdk, "Install .NET 10 LTS SDK", RemediationService.DotNet10SdkPackageId, ".NET 10 LTS SDK"),
+                AlreadyApplied: hasDotNet10OrNewer,
+                AlreadyAppliedNote: hasDotNet10OrNewer ? $"Already on .NET {ctx.DotNetSdkMajorVersion} SDK" : null));
+
+            list.Add(new BenchmarkImprovement(
+                InstallDotNet11SdkId,
+                BenchmarkGoals.Build,
+                "Install .NET 11 SDK (side-by-side)",
+                "Installs .NET 11 SDK (Native AOT CLI startup + MSBuild -mt multithreaded builds) alongside existing SDKs to test maximum build speed.",
+                new AreaAction(RemediationKind.InstallDotNetSdk, "Install .NET 11 SDK", RemediationService.DotNet11SdkPackageId, ".NET 11 SDK"),
+                AlreadyApplied: hasDotNet11OrNewer,
+                AlreadyAppliedNote: hasDotNet11OrNewer ? $"Already on .NET {ctx.DotNetSdkMajorVersion} SDK" : null));
 
             AddCommonPerformanceImprovements(list, BenchmarkGoals.Build, ctx, includeStorageAndDisk: true, includeDns: false);
             return list;

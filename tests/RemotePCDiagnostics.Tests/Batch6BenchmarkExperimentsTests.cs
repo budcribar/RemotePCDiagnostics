@@ -247,4 +247,39 @@ public class Batch6BenchmarkExperimentsTests
         Assert.True(result.Outcomes[1].Skipped);
         Assert.Contains("Dev Drive failed", result.Outcomes[1].Message);
     }
+
+    [Fact]
+    public void DotNetSdk_improvements_and_allowlist_reflect_installed_sdk_version()
+    {
+        Assert.True(RemediationService.IsAllowedDotNetSdkPackage("Microsoft.DotNet.SDK.10"));
+        Assert.True(RemediationService.IsAllowedDotNetSdkPackage("Microsoft.DotNet.SDK.11"));
+        Assert.False(RemediationService.IsAllowedDotNetSdkPackage("Microsoft.DotNet.SDK.8"));
+        Assert.False(RemediationService.IsAllowedDotNetSdkPackage("Some.Random.Package"));
+
+        // On .NET 9 SDK (EOL Nov 10, 2026): both .NET 10 LTS and .NET 11 are checkable, with EOL note on .NET 10.
+        var onNet9 = BenchmarkImprovements.ForGoal(BenchmarkGoals.Build, new BenchmarkImprovementContext(
+            HasDevEnvironment: true,
+            DotNetSdkMajorVersion: 9));
+        var sdk10 = Assert.Single(onNet9, i => i.Id == BenchmarkImprovements.InstallDotNet10SdkId);
+        var sdk11 = Assert.Single(onNet9, i => i.Id == BenchmarkImprovements.InstallDotNet11SdkId);
+        Assert.False(sdk10.AlreadyApplied);
+        Assert.False(sdk11.AlreadyApplied);
+        Assert.Contains("Nov 10, 2026", sdk10.Description);
+        Assert.Equal("Microsoft.DotNet.SDK.10", sdk10.Action.Target);
+        Assert.Equal("Microsoft.DotNet.SDK.11", sdk11.Action.Target);
+
+        // On .NET 10 SDK: .NET 10 is AlreadyApplied, .NET 11 is still checkable.
+        var onNet10 = BenchmarkImprovements.ForGoal(BenchmarkGoals.Build, new BenchmarkImprovementContext(
+            HasDevEnvironment: true,
+            DotNetSdkMajorVersion: 10));
+        Assert.True(Assert.Single(onNet10, i => i.Id == BenchmarkImprovements.InstallDotNet10SdkId).AlreadyApplied);
+        Assert.False(Assert.Single(onNet10, i => i.Id == BenchmarkImprovements.InstallDotNet11SdkId).AlreadyApplied);
+
+        // On .NET 11 SDK: both are AlreadyApplied.
+        var onNet11 = BenchmarkImprovements.ForGoal(BenchmarkGoals.Build, new BenchmarkImprovementContext(
+            HasDevEnvironment: true,
+            DotNetSdkMajorVersion: 11));
+        Assert.True(Assert.Single(onNet11, i => i.Id == BenchmarkImprovements.InstallDotNet10SdkId).AlreadyApplied);
+        Assert.True(Assert.Single(onNet11, i => i.Id == BenchmarkImprovements.InstallDotNet11SdkId).AlreadyApplied);
+    }
 }

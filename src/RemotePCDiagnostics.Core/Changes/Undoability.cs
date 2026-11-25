@@ -34,7 +34,7 @@ public static class Undoability
         RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles or RemediationKind.RepairComponentStoreFromImage
             or RemediationKind.CleanUpComponentStore => UndoSupport.None, // repaired or removed Windows files aren't put back
         RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.InstallUpdate
-            or RemediationKind.InstallBiosUpdate or RemediationKind.EnableDevice => UndoSupport.None,
+            or RemediationKind.InstallBiosUpdate or RemediationKind.EnableDevice or RemediationKind.InstallDotNetSdk => UndoSupport.None,
         _ => UndoSupport.NothingToUndo,
     };
 

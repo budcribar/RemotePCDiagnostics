@@ -422,6 +422,7 @@ public static class HistorySummary
         RemediationKind.ResetMaxProcessorState => "Maximum processor state",
         RemediationKind.MovePackageCacheToDevDrive => "Dev Drive package cache",
         RemediationKind.CreatePersistentDevDrive => "Persistent Dev Drive",
+        RemediationKind.InstallDotNetSdk => ".NET SDK",
         _ => "Automated fix",
     };
 
