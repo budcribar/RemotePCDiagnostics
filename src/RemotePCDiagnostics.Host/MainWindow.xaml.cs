@@ -44,6 +44,14 @@ public partial class MainWindow : Window
         var launch = SessionLaunchOptions.Resolve(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable, pendingReboot);
         var mode = launch.Mode;
         _group = launch.Group;
+        // --no-window: a remote session that runs with its window hidden (copies started again under the session inherit it).
+        StartsHidden = NoWindowStart.Applies(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable, mode);
+        if (StartsHidden) Environment.SetEnvironmentVariable(NoWindowStart.Variable, "1");
+        else if (NoWindowStart.Requested(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable))
+        {
+            Logger.Info("No-window start ignored: only a remote session can run without a window.");
+            Environment.SetEnvironmentVariable(NoWindowStart.Variable, null);
+        }
         // A copy started to reconnect carries on from the previous one (when it began, how many tries). Read it once and take it
         // out of this process's environment, so other copies this one starts (a restart from a browser, Local Mode) begin afresh.
         if (mode == SessionMode.Remote)
@@ -160,8 +168,8 @@ public partial class MainWindow : Window
             if (rec.Actor == ServiceActor.Remote && !RebootResumeCoordinator.IsPostRebootComparison(rec)) App.Log($"Remote user ran an automated fix: {rec.Message.TrimEnd('.')}.");
         };
 
-        // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).
-        // Results flow through ResultStore to the Dashboard / Hardware inventory page. Disable with REMOTEPC_AUTORUN=0.
+        // Checks don't run by themselves on launch: they run when the person, a remote user or an AI agent asks. REMOTEPC_AUTORUN=1
+        // brings back the old launch-time run (development and demos); StartEnabledChecksAsync returns at once when it is off.
         if (StartupOptimizations.DeferAutoRun)
         {
             _ = Task.Run(async () =>
@@ -227,6 +235,7 @@ public partial class MainWindow : Window
         RemoteBlazorWebView.BlazorWebViewInitialized += (_, e) =>
         {
             StartupProfiler.Mark("BlazorWebViewInitialized");
+            if (_hideWhenReady) Dispatcher.BeginInvoke(HideForNoWindow);
             Logger.Info($"BlazorWebViewInitialized browserVersion={e.WebView.CoreWebView2?.Environment.BrowserVersionString}");
             // Remote: this window shows the relay's page for the session. Reloading it (F5, Ctrl+R) makes the relay treat the
             // session as refreshed, which restarts the app. Nothing here needs a reload, so ignore it; find, zoom and the
@@ -817,6 +826,7 @@ public partial class MainWindow : Window
     public void BringToFront()
     {
         App.Log($"Second launch: bringing the window to the front (state={WindowState}, visible={IsVisible})");
+        if (StartsHidden) ShowAfterNoWindow();
         if (!IsVisible) Show();
         if (!_isFullscreen) WindowState = WindowState.Maximized;
         Activate();
@@ -831,6 +841,57 @@ public partial class MainWindow : Window
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    private bool _hideWhenReady;
+
+    /// <summary>True when this copy started with <c>--no-window</c> in a remote session (see <see cref="NoWindowStart"/>).</summary>
+    public bool StartsHidden { get; private set; }
+
+    /// <summary>The longest the window stays off-screen before it is hidden, if the WebView never reports that it started.</summary>
+    private static readonly TimeSpan NoWindowHideDeadline = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Starts the window without showing it to the person: off-screen, without focus or a taskbar button, then hidden once the
+    /// WebView has started. WPF builds the BlazorWebView (which opens the remote session) only for a window that has been shown,
+    /// so a window that is never shown would never connect. The remote user's page doesn't need this window to be visible.
+    /// </summary>
+    public void ShowHidden()
+    {
+        App.Log("No-window start: the session runs with its window hidden.");
+        _hideWhenReady = true;
+        ShowInTaskbar = false;
+        ShowActivated = false;
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        WindowState = WindowState.Normal;
+        Left = -32000;
+        Top = -32000;
+        Show();
+        var deadline = new DispatcherTimer { Interval = NoWindowHideDeadline };
+        deadline.Tick += (_, _) => { deadline.Stop(); HideForNoWindow(); };
+        deadline.Start();
+    }
+
+    private void HideForNoWindow()
+    {
+        if (!_hideWhenReady) return;
+        _hideWhenReady = false;
+        Hide();
+        App.Log("No-window start: window hidden.");
+    }
+
+    /// <summary>The person opened the app while it ran hidden: it becomes an ordinary window, and later restarts show it too.</summary>
+    private void ShowAfterNoWindow()
+    {
+        StartsHidden = false;
+        _hideWhenReady = false;
+        Environment.SetEnvironmentVariable(NoWindowStart.Variable, null);
+        ShowInTaskbar = true;
+        ShowActivated = true;
+        var area = SystemParameters.WorkArea;
+        Left = area.Left + Math.Max(0, (area.Width - Width) / 2);
+        Top = area.Top + Math.Max(0, (area.Height - Height) / 2);
+        App.Log("No-window start: the person opened the app, so the window is shown.");
+    }
 
     private WindowStyle _savedStyle = WindowStyle.SingleBorderWindow;
     private WindowState _savedState = WindowState.Normal;

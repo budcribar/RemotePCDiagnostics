@@ -164,9 +164,11 @@ public partial class App : Application
 
         // A later launch (desktop icon, Start menu) exits at once; it signals this copy to come to the front instead.
         InstanceActivation.Listen(() => Dispatcher.BeginInvoke(() => (MainWindow as RemotePCDiagnostics.Host.MainWindow)?.BringToFront()));
-        MainWindow = new RemotePCDiagnostics.Host.MainWindow();
+        var window = new RemotePCDiagnostics.Host.MainWindow();
+        MainWindow = window;
         StartupProfiler.Mark("MainWindowCreated");
-        MainWindow.Show();
+        if (window.StartsHidden) window.ShowHidden();
+        else window.Show();
         StartupProfiler.Mark("MainWindowShown");
     }
 

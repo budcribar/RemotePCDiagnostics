@@ -1,6 +1,10 @@
 namespace RemotePCDiagnostics.Core;
 
-/// <summary>Launch-time background run of selected modules (host side). Disable with REMOTEPC_AUTORUN=0.</summary>
+/// <summary>
+/// Launch-time background run of checks (host side). Off by default: the app runs no checks until someone (the person, a remote
+/// user or an AI agent) asks, so opening it, or a session starting at a quiet time, doesn't load the PC with scans nobody asked for.
+/// Turn it on with REMOTEPC_AUTORUN=1 (development and demos).
+/// </summary>
 public static class AutoRun
 {
     public const string EnvironmentVariable = "REMOTEPC_AUTORUN";
@@ -8,13 +12,13 @@ public static class AutoRun
     public static bool IsEnabled(Func<string, string?> getEnv)
     {
         var v = getEnv(EnvironmentVariable)?.Trim();
-        return !(v is "0" || string.Equals(v, "false", StringComparison.OrdinalIgnoreCase) || string.Equals(v, "off", StringComparison.OrdinalIgnoreCase));
+        return v is "1" || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase) || string.Equals(v, "on", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Starts the named modules in the background if enabled; returns the started tasks (empty when disabled). Never throws.</summary>
     public static IReadOnlyList<Task<DiagnosticResult>> Start(DiagnosticsService service, Func<string, string?> getEnv, ILogger? log, params string[] moduleNames)
     {
-        if (!IsEnabled(getEnv)) { log.Info("Auto-run disabled via " + EnvironmentVariable); return []; }
+        if (!IsEnabled(getEnv)) { log.Info("Auto-run is off (" + EnvironmentVariable + "=1 turns it on)"); return []; }
         var tasks = new List<Task<DiagnosticResult>>();
         foreach (var name in moduleNames)
         {
@@ -46,7 +50,7 @@ public static class AutoRun
     {
         if (!IsEnabled(getEnv))
         {
-            log.Info("Auto-run disabled via " + EnvironmentVariable);
+            log.Info("Auto-run is off (" + EnvironmentVariable + "=1 turns it on)");
             return Task.CompletedTask;
         }
 
