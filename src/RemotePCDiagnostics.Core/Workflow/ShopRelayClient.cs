@@ -309,6 +309,55 @@ public sealed partial class ShopRelayClient(HttpClient? httpClient = null, ILogg
         }
     }
 
+    private sealed record HardwareUploadBody(string MachineId, string MachineName, Benchmarks.BenchmarkHardware Hardware);
+
+    /// <summary>
+    /// Uploads this PC's hardware specification snapshot to <c>POST {shopApiBase}/api/hardware</c> with the shop's
+    /// <c>Bearer rpd_live_...</c> key (called by the Agent on first connect and whenever hardware changes).
+    /// </summary>
+    public async Task<bool> UploadHardwareAsync(Uri relayServerUri, string apiKey, string machineId, string machineName,
+        Benchmarks.BenchmarkHardware hardware, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(relayServerUri);
+        ArgumentNullException.ThrowIfNull(hardware);
+        var trimmedKey = apiKey?.Trim() ?? "";
+        if (!trimmedKey.StartsWith(ApiKeyPrefix, StringComparison.Ordinal) || trimmedKey.Length <= ApiKeyPrefix.Length)
+            return false;
+        if (string.IsNullOrWhiteSpace(machineId))
+            return false;
+
+        var shopBase = ShopApiBaseUrl(relayServerUri);
+        var endpoint = new Uri($"{shopBase}/api/hardware", UriKind.Absolute);
+        try
+        {
+            var payload = new HardwareUploadBody(machineId.Trim(), string.IsNullOrWhiteSpace(machineName) ? machineId.Trim() : machineName.Trim(), hardware);
+            using var req = new HttpRequestMessage(HttpMethod.Post, endpoint)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload, WriteJsonOptions), Encoding.UTF8, "application/json"),
+            };
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", trimmedKey);
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+            using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if (resp.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created)
+            {
+                LogInfo($"Uploaded hardware snapshot for {machineId} to {shopBase}");
+                return true;
+            }
+            LogWarn($"UploadHardwareAsync returned HTTP {(int)resp.StatusCode} ({resp.ReasonPhrase}).");
+            return false;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LogWarn("UploadHardwareAsync failed: " + ex.Message);
+            return false;
+        }
+    }
+
     /// <summary>
     /// Uploads this PC's benchmark results and hardware to <c>POST {shopApiBase}/api/benchmarks</c> with the shop's <c>Bearer rpd_live_...</c>
     /// key, the same authenticated Admin API hosted reports use. Admin keeps the latest upload per computer and ranks the shop's computers.
