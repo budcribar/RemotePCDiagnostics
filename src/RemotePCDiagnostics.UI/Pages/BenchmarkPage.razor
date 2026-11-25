@@ -129,50 +129,101 @@
 </section>
 
 @{
-    var improvements = BenchmarkImprovements.ForGoal(activeGoal, Bench.GetImprovementContext());
-    var selectedImprovements = improvements.Where(i => !i.AlreadyApplied && _selectedImprovements.Contains(i.Id)).ToList();
+    var impCtx = Bench.GetImprovementContext();
+    var allImprovements = BenchmarkImprovements.ForGoal(activeGoal, impCtx);
+    var actionableImprovements = allImprovements.Where(i => !i.AlreadyApplied).ToList();
+    var alreadyNotes = new List<string>();
+    if (activeGoal == BenchmarkGoals.Build && !string.IsNullOrWhiteSpace(impCtx.ExistingDevDriveRoot))
+        alreadyNotes.Add($"Dev Drive on {impCtx.ExistingDevDriveRoot}");
+    foreach (var applied in allImprovements.Where(i => i.AlreadyApplied))
+        alreadyNotes.Add(string.IsNullOrWhiteSpace(applied.AlreadyAppliedNote) ? applied.Title : $"{applied.Title} ({applied.AlreadyAppliedNote})");
+    var showSdkChoice = activeGoal == BenchmarkGoals.Build && hasDevEnv;
+    var installedSdks = impCtx.InstalledDotNetSdkMajors ?? [];
+    var hasSdk10 = installedSdks.Contains(10);
+    var hasSdk11 = installedSdks.Contains(11);
+    var selectedImprovements = actionableImprovements.Where(i => _selectedImprovements.Contains(i.Id)).ToList();
+    var selectedSdkTarget = showSdkChoice && _targetDotNetSdkMajor is 10 or 11 ? _targetDotNetSdkMajor : null;
+    var totalSelected = selectedImprovements.Count + (selectedSdkTarget is not null ? 1 : 0);
 }
-@if (improvements.Count > 0)
+@if (actionableImprovements.Count > 0 || showSdkChoice || alreadyNotes.Count > 0)
 {
     <section class="card" data-testid="bench-improvements" style="margin-bottom:12px">
         <div class="card-head">
             <strong>Improvements to test &amp; apply for the After pass</strong>
-            <span class="meta">Check the improvements you want to measure, then click Start to run Before → Apply → After automatically.</span>
+            <span class="meta">Choose the improvements you want to measure, then click Start to run Before → Apply → After automatically.</span>
         </div>
-        <div class="bench-kinds" style="margin-top:8px">
-            @foreach (var imp in improvements)
-            {
-                var isChecked = imp.AlreadyApplied || _selectedImprovements.Contains(imp.Id);
-                <label class="bench-kind" title="@imp.Description">
-                    <input type="checkbox"
-                           data-testid="bench-imp-@imp.Id"
-                           checked="@isChecked"
-                           disabled="@(running || imp.AlreadyApplied)"
-                           @onchange="() => ToggleImprovement(imp, improvements)" />
-                    <span>
-                        @imp.Title
-                        @if (imp.AlreadyApplied && !string.IsNullOrWhiteSpace(imp.AlreadyAppliedNote))
-                        {
-                            <span class="meta"> (@imp.AlreadyAppliedNote)</span>
-                        }
-                        else if (imp.Reversible)
-                        {
-                            <span class="meta"> · reversible</span>
-                        }
-                    </span>
-                </label>
-            }
-        </div>
+        @if (alreadyNotes.Count > 0)
+        {
+            <p class="meta" data-testid="bench-already-applied" style="margin:6px 0 0">Already in place: @string.Join(" · ", alreadyNotes)</p>
+        }
+        @if (actionableImprovements.Count > 0)
+        {
+            <div class="bench-kinds" style="margin-top:8px">
+                @foreach (var imp in actionableImprovements)
+                {
+                    var isChecked = _selectedImprovements.Contains(imp.Id);
+                    <label class="bench-kind" title="@imp.Description">
+                        <input type="checkbox"
+                               data-testid="bench-imp-@imp.Id"
+                               checked="@isChecked"
+                               disabled="@running"
+                               @onchange="() => ToggleImprovement(imp, actionableImprovements)" />
+                        <span>
+                            @imp.Title
+                            @if (imp.Reversible)
+                            {
+                                <span class="meta"> · reversible</span>
+                            }
+                        </span>
+                    </label>
+                }
+            </div>
+        }
+        @if (showSdkChoice)
+        {
+            <div data-testid="bench-sdk-choice" style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border, #e5e7eb)">
+                <div class="meta" style="margin-bottom:6px"><strong>.NET SDK for the After pass</strong> (mutually exclusive — installs automatically if not yet on this PC):</div>
+                <div class="bench-kinds" role="radiogroup" aria-label=".NET SDK for the After pass">
+                    <label class="bench-kind">
+                        <input type="radio"
+                               name="bench-sdk-target"
+                               data-testid="bench-sdk-keep"
+                               checked="@(selectedSdkTarget is null)"
+                               disabled="@running"
+                               @onchange="() => _targetDotNetSdkMajor = null" />
+                        <span>Keep current@(impCtx.DotNetSdkMajorVersion is int cur ? $" (.NET {cur})" : "")</span>
+                    </label>
+                    <label class="bench-kind" title="@(impCtx.DotNetSdkMajorVersion == 9 ? ".NET 9 SDK reaches end-of-support on Nov 10, 2026. Runs the After build on .NET 10 LTS." : "Runs the After build on .NET 10 LTS SDK (installed side-by-side if missing).")">
+                        <input type="radio"
+                               name="bench-sdk-target"
+                               data-testid="bench-sdk-10"
+                               checked="@(selectedSdkTarget == 10)"
+                               disabled="@running"
+                               @onchange="() => _targetDotNetSdkMajor = 10" />
+                        <span>.NET 10 LTS SDK <span class="meta">@(hasSdk10 ? "(installed)" : "(will install side-by-side)")</span></span>
+                    </label>
+                    <label class="bench-kind" title="Runs the After build on .NET 11 SDK (installed side-by-side if missing).">
+                        <input type="radio"
+                               name="bench-sdk-target"
+                               data-testid="bench-sdk-11"
+                               checked="@(selectedSdkTarget == 11)"
+                               disabled="@running"
+                               @onchange="() => _targetDotNetSdkMajor = 11" />
+                        <span>.NET 11 SDK <span class="meta">@(hasSdk11 ? "(installed)" : "(will install side-by-side)")</span></span>
+                    </label>
+                </div>
+            </div>
+        }
         <div class="bench-hero-actions" style="margin-top:10px">
             <button type="button"
                     class="btn btn-primary"
                     data-testid="bench-run-experiment"
-                    disabled="@(running || selectedImprovements.Count == 0 || s.Enabled.Count == 0)"
-                    @onclick="() => RunExperimentAsync(selectedImprovements)">
+                    disabled="@(running || totalSelected == 0 || s.Enabled.Count == 0)"
+                    @onclick="() => RunExperimentAsync(selectedImprovements, selectedSdkTarget)">
                 <Icon Name="play" Size="12" />
-                @(selectedImprovements.Count == 0
+                @(totalSelected == 0
                     ? "Select improvements above to run Before → Apply → After"
-                    : $"Start: Before → Apply {selectedImprovements.Count} {(selectedImprovements.Count == 1 ? "improvement" : "improvements")} → After")
+                    : $"Start: Before → Apply {totalSelected} {(totalSelected == 1 ? "improvement" : "improvements")} → After")
             </button>
             @if (Bench.ExperimentRunning)
             {
@@ -402,6 +453,7 @@ else if (!running)
     }
 
     private readonly HashSet<string> _selectedImprovements = new(StringComparer.OrdinalIgnoreCase);
+    private int? _targetDotNetSdkMajor;
 
     private void ApplyGoalPreset(string goal)
     {
@@ -409,6 +461,7 @@ else if (!running)
         if (!BenchmarkGoals.IsGoalAvailable(goal, avail)) return;
         var kinds = BenchmarkGoals.KindsFor(goal, avail);
         _selectedImprovements.Clear();
+        _targetDotNetSdkMajor = null;
         Bench.UpdateSettings(Bench.Settings with { Goal = BenchmarkGoals.Normalize(goal), Enabled = [.. kinds] });
     }
 
@@ -433,8 +486,10 @@ else if (!running)
         }
     }
 
-    private Task RunExperimentAsync(IReadOnlyList<BenchmarkImprovement> selected) =>
-        selected.Count == 0 ? Task.CompletedTask : Bench.RunExperimentAsync(selected);
+    private Task RunExperimentAsync(IReadOnlyList<BenchmarkImprovement> selected, int? targetDotNetSdkMajor) =>
+        selected.Count == 0 && targetDotNetSdkMajor is null
+            ? Task.CompletedTask
+            : Bench.RunExperimentAsync(selected, targetDotNetSdkMajor: targetDotNetSdkMajor);
 
     private void ApplyStandardPreset() =>
         Bench.UpdateSettings(Bench.Settings with { Goal = BenchmarkGoals.TuneUp, Enabled = [.. Benchmarks.DefaultEnabled], Runs = 3 });

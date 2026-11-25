@@ -57,6 +57,39 @@ public sealed class DeveloperToolchainDetector(
         return new(DeveloperLanguage.CSharp, ".NET SDK (C#)", exe, ver, DeveloperScoring.ParseMajorVersion(ver));
     }
 
+    /// <summary>Returns distinct installed .NET SDK major versions from <c>dotnet --list-sdks</c> (sorted ascending).</summary>
+    public async Task<IReadOnlyList<int>> DetectInstalledDotNetSdkMajorsAsync(CancellationToken ct = default)
+    {
+        var exe = ResolveExecutable(_isWindows ? "dotnet.exe" : "dotnet", _isWindows
+            ? [@"C:\Program Files\dotnet\dotnet.exe", @"C:\Program Files (x86)\dotnet\dotnet.exe"]
+            : ["/usr/bin/dotnet", "/usr/local/bin/dotnet"]);
+        if (exe is null) return [];
+        try
+        {
+            var r = await _launcher.RunAsync(exe, ["--list-sdks"], ProbeTimeout, ct).ConfigureAwait(false);
+            return r.ExitCode == 0 ? ParseInstalledDotNetSdkMajors(r.StdOut) : [];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return [];
+        }
+    }
+
+    public static IReadOnlyList<int> ParseInstalledDotNetSdkMajors(string? listSdksOutput)
+    {
+        if (string.IsNullOrWhiteSpace(listSdksOutput)) return [];
+        var majors = new SortedSet<int>();
+        foreach (var line in listSdksOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = line.Trim();
+            var space = trimmed.IndexOf(' ');
+            var ver = space > 0 ? trimmed[..space] : trimmed;
+            if (DeveloperScoring.ParseMajorVersion(ver) is > 0 and var m)
+                majors.Add(m);
+        }
+        return majors.ToList();
+    }
+
     public async Task<DetectedToolchain?> TryDetectRustAsync(CancellationToken ct = default)
     {
         var profile = _getEnv("USERPROFILE") ?? _getEnv("HOME") ?? "";
