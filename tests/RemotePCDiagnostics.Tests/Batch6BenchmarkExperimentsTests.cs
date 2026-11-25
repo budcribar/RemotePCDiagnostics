@@ -140,15 +140,13 @@ public class Batch6BenchmarkExperimentsTests
         Assert.Contains(noDrive, i => i.Id == "power:ac-max-cpu");
         Assert.Contains(noDrive, i => i.Id == "disk:storage-sense");
 
-        // Existing Dev Drive D:\: Create is AlreadyApplied, NuGet targets D:\ directly without RequiresDevDrive.
+        // Existing Dev Drive D:\: Create is omitted completely, NuGet targets D:\ directly without RequiresDevDrive.
         var withDrive = BenchmarkImprovements.ForGoal(BenchmarkGoals.Build, new BenchmarkImprovementContext(
             HasDevEnvironment: true,
             ExistingDevDriveRoot: @"D:\",
             PackageCaches: [nugetNotOnDev]));
 
-        var createExisting = Assert.Single(withDrive, i => i.Id == BenchmarkImprovements.CreateDevDriveId);
-        Assert.True(createExisting.AlreadyApplied);
-        Assert.Contains(@"D:\", createExisting.AlreadyAppliedNote);
+        Assert.DoesNotContain(withDrive, i => i.Id == BenchmarkImprovements.CreateDevDriveId);
         var nugetDirect = Assert.Single(withDrive, i => i.Id == "devcache:NUGET_PACKAGES");
         Assert.False(nugetDirect.RequiresDevDrive);
         Assert.Equal(@"NUGET_PACKAGES|D:\", nugetDirect.Action.Target);
@@ -248,38 +246,91 @@ public class Batch6BenchmarkExperimentsTests
         Assert.Contains("Dev Drive failed", result.Outcomes[1].Message);
     }
 
+    private sealed class SdkCapturingProbes : IBenchmarkProbes
+    {
+        public List<int?> SeenSdkMajors { get; } = [];
+        public BenchmarkConditions ReadConditions() => new(false, 48, "Balanced", "Best performance");
+        public Task<IdleSample?> SampleIdleAsync(TimeSpan d, CancellationToken ct) => Task.FromResult<IdleSample?>(new(2.0, 10));
+        public Task<double?> StartProgramAsync(BuiltInProgram p, CancellationToken ct) => Task.FromResult<double?>(100);
+        public Task<double?> DiskRandomReadIopsAsync(TimeSpan d, CancellationToken ct) => Task.FromResult<double?>(8000);
+        public Task<IReadOnlyList<WinEvent>> ReadBootEventsAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<WinEvent>>([]);
+        public Task<DeveloperBuildResult?> RunDeveloperCSharpAsync(
+            bool includeAntivirusComparison, IProgress<string>? progress, CancellationToken ct, int? targetDotNetSdkMajor = null)
+        {
+            SeenSdkMajors.Add(targetDotNetSdkMajor);
+            var secs = targetDotNetSdkMajor is null ? 5.0 : 4.2;
+            var major = targetDotNetSdkMajor ?? 10;
+            return Task.FromResult<DeveloperBuildResult?>(new DeveloperBuildResult(
+                DeveloperLanguage.CSharp, "csharp-v2", "sha", $"{major}.0.100", major, 0.5, secs, [secs], secs, [secs]));
+        }
+    }
+
     [Fact]
-    public void DotNetSdk_improvements_and_allowlist_reflect_installed_sdk_version()
+    public async Task DotNetSdk_choice_auto_installs_when_missing_and_pins_after_pass()
     {
         Assert.True(RemediationService.IsAllowedDotNetSdkPackage("Microsoft.DotNet.SDK.10"));
         Assert.True(RemediationService.IsAllowedDotNetSdkPackage("Microsoft.DotNet.SDK.11"));
         Assert.False(RemediationService.IsAllowedDotNetSdkPackage("Microsoft.DotNet.SDK.8"));
         Assert.False(RemediationService.IsAllowedDotNetSdkPackage("Some.Random.Package"));
 
-        // On .NET 9 SDK (EOL Nov 10, 2026): both .NET 10 LTS and .NET 11 are checkable, with EOL note on .NET 10.
-        var onNet9 = BenchmarkImprovements.ForGoal(BenchmarkGoals.Build, new BenchmarkImprovementContext(
-            HasDevEnvironment: true,
-            DotNetSdkMajorVersion: 9));
-        var sdk10 = Assert.Single(onNet9, i => i.Id == BenchmarkImprovements.InstallDotNet10SdkId);
-        var sdk11 = Assert.Single(onNet9, i => i.Id == BenchmarkImprovements.InstallDotNet11SdkId);
-        Assert.False(sdk10.AlreadyApplied);
-        Assert.False(sdk11.AlreadyApplied);
-        Assert.Contains("Nov 10, 2026", sdk10.Description);
-        Assert.Equal("Microsoft.DotNet.SDK.10", sdk10.Action.Target);
-        Assert.Equal("Microsoft.DotNet.SDK.11", sdk11.Action.Target);
+        var parsed = DeveloperToolchainDetector.ParseInstalledDotNetSdkMajors(
+            "9.0.304 [C:\\Program Files\\dotnet\\sdk]\n10.0.404 [C:\\Program Files\\dotnet\\sdk]\n11.0.100-preview.1 [C:\\Program Files\\dotnet\\sdk]\n");
+        Assert.Equal(new[] { 9, 10, 11 }, parsed);
 
-        // On .NET 10 SDK: .NET 10 is AlreadyApplied, .NET 11 is still checkable.
-        var onNet10 = BenchmarkImprovements.ForGoal(BenchmarkGoals.Build, new BenchmarkImprovementContext(
-            HasDevEnvironment: true,
-            DotNetSdkMajorVersion: 10));
-        Assert.True(Assert.Single(onNet10, i => i.Id == BenchmarkImprovements.InstallDotNet10SdkId).AlreadyApplied);
-        Assert.False(Assert.Single(onNet10, i => i.Id == BenchmarkImprovements.InstallDotNet11SdkId).AlreadyApplied);
+        // .NET 10/11 are handled by the mutually exclusive SDK selector, not as checkboxes in ForGoal.
+        var buildList = BenchmarkImprovements.ForGoal(BenchmarkGoals.Build, new BenchmarkImprovementContext(
+            HasDevEnvironment: true, DotNetSdkMajorVersion: 9));
+        Assert.DoesNotContain(buildList, i => i.Id == BenchmarkImprovements.InstallDotNet10SdkId);
+        Assert.DoesNotContain(buildList, i => i.Id == BenchmarkImprovements.InstallDotNet11SdkId);
 
-        // On .NET 11 SDK: both are AlreadyApplied.
-        var onNet11 = BenchmarkImprovements.ForGoal(BenchmarkGoals.Build, new BenchmarkImprovementContext(
-            HasDevEnvironment: true,
-            DotNetSdkMajorVersion: 11));
-        Assert.True(Assert.Single(onNet11, i => i.Id == BenchmarkImprovements.InstallDotNet10SdkId).AlreadyApplied);
-        Assert.True(Assert.Single(onNet11, i => i.Id == BenchmarkImprovements.InstallDotNet11SdkId).AlreadyApplied);
+        // Missing .NET 11 -> auto-installs via InstallDotNetSdk and pins After pass to 11.
+        var probes = new SdkCapturingProbes();
+        var store = new MemBenchStore
+        {
+            State = new BenchmarkState(new BenchmarkSettings
+            {
+                Goal = BenchmarkGoals.Build,
+                Enabled = [BenchmarkKind.DeveloperCSharp],
+                Runs = 1,
+                DiskRun = TimeSpan.Zero,
+            }),
+        };
+        var svc = new BenchmarkService(new BenchmarkRunner(probes, resolve: (_, _) => Task.CompletedTask), store);
+        var executed = new List<AreaAction>();
+        var resInstall = await svc.RunExperimentAsync(
+            [],
+            (action, _) =>
+            {
+                executed.Add(action);
+                return Task.FromResult(new RemediationResult(true, "Installed .NET 11 SDK"));
+            },
+            targetDotNetSdkMajor: 11,
+            installedDotNetSdkMajorsOverride: [10]);
+
+        Assert.True(resInstall.Completed);
+        var installAction = Assert.Single(executed);
+        Assert.Equal(RemediationKind.InstallDotNetSdk, installAction.Kind);
+        Assert.Equal("Microsoft.DotNet.SDK.11", installAction.Target);
+        Assert.Equal(new int?[] { null, 11 }, probes.SeenSdkMajors);
+
+        // Already installed .NET 10 -> skips installation and pins After pass to 10.
+        probes.SeenSdkMajors.Clear();
+        executed.Clear();
+        var resAlready = await svc.RunExperimentAsync(
+            [],
+            (action, _) =>
+            {
+                executed.Add(action);
+                return Task.FromResult(new RemediationResult(true, "Should not run"));
+            },
+            targetDotNetSdkMajor: 10,
+            installedDotNetSdkMajorsOverride: [10, 11]);
+
+        Assert.True(resAlready.Completed);
+        Assert.Empty(executed);
+        Assert.Single(resAlready.Outcomes);
+        Assert.True(resAlready.Outcomes[0].Succeeded);
+        Assert.Contains("Already installed", resAlready.Outcomes[0].Message);
+        Assert.Equal(new int?[] { null, 10 }, probes.SeenSdkMajors);
     }
 }

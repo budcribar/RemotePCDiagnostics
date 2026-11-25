@@ -192,7 +192,8 @@ public sealed record DeveloperBuildOptions(
     int WarmRepeats = 5,
     TimeSpan? PerCommandTimeout = null,
     bool IncludeAntivirusComparison = false,
-    bool AllowHyperfine = true)
+    bool AllowHyperfine = true,
+    int? TargetDotNetSdkMajor = null)
 {
     public TimeSpan EffectiveTimeout => PerCommandTimeout ?? TimeSpan.FromMinutes(5);
 }
@@ -268,7 +269,14 @@ public sealed class DeveloperBuildRunner(
         try
         {
             progress?.Report("Preparing pinned C# benchmark sources…");
-            var (projectPath, sha256) = DeveloperCSharpPin.Materialize(workDir, dotnet.MajorVersion!.Value);
+            var effectiveMajor = options.TargetDotNetSdkMajor ?? dotnet.MajorVersion!.Value;
+            var (projectPath, sha256) = DeveloperCSharpPin.Materialize(workDir, effectiveMajor);
+            if (options.TargetDotNetSdkMajor is { } pinMajor)
+            {
+                File.WriteAllText(
+                    Path.Combine(workDir, "global.json"),
+                    $$$"""{"sdk":{"version":"{{{pinMajor}}}.0.100","rollForward":"latestFeature"}}""");
+            }
 
             var conditions = env.ReadConditions();
             var (comparable, condNotes) = DeveloperScoring.CheckComparability(conditions.OnBattery, conditions.PowerPlan, thermallyThrottling: false);

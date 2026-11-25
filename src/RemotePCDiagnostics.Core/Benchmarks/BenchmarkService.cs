@@ -475,6 +475,9 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         await RunAsync(phase, ct, since).ConfigureAwait(false);
     }
 
+    public string? ExistingDevDriveRoot { get; private set; }
+    public IReadOnlyList<int> InstalledDotNetSdkMajors { get; private set; } = [];
+
     /// <summary>Read-only probe of installed toolchains and Dev Drive comparison eligibility. Never builds anything.</summary>
     public async Task RefreshDeveloperEnvironmentAsync(CancellationToken ct = default)
     {
@@ -482,6 +485,11 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         try
         {
             DetectedToolchains = await devEnv.DetectToolchainsAsync(ct).ConfigureAwait(false);
+            ExistingDevDriveRoot = await DetectExistingDevDriveRootAsync(ct).ConfigureAwait(false);
+            var majors = await new DeveloperToolchainDetector().DetectInstalledDotNetSdkMajorsAsync(ct).ConfigureAwait(false);
+            if (majors.Count == 0 && DetectedToolchains.FirstOrDefault(t => t.Language == DeveloperLanguage.CSharp)?.MajorVersion is { } fallbackMajor)
+                majors = [fallbackMajor];
+            InstalledDotNetSdkMajors = majors;
             if (devRunner is not null)
                 DevDrivePrecheck = await devRunner.EvaluateDevDrivePrecheckAsync(ct).ConfigureAwait(false);
             Raise();
@@ -490,6 +498,33 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         {
             LogWarn("developer environment refresh failed: " + ex.Message);
         }
+    }
+
+    private async Task<string?> DetectExistingDevDriveRootAsync(CancellationToken ct)
+    {
+        if (devEnv is not null)
+        {
+            try
+            {
+                var tempStatus = await devEnv.QueryDevDriveAsync(null, ct).ConfigureAwait(false);
+                if (tempStatus.IsDevDrive)
+                    return DevDrivePackageCaches.NormalizeDriveRoot(Path.GetPathRoot(Path.GetTempPath()));
+
+                if (OperatingSystem.IsWindows())
+                {
+                    foreach (var d in DriveInfo.GetDrives())
+                    {
+                        if (!d.IsReady) continue;
+                        var root = DevDrivePackageCaches.NormalizeDriveRoot(d.Name);
+                        if (string.IsNullOrEmpty(root)) continue;
+                        var q = await devEnv.QueryDevDriveAsync(root, ct).ConfigureAwait(false);
+                        if (q.IsDevDrive) return root;
+                    }
+                }
+            }
+            catch { }
+        }
+        return TryFindExistingDevDriveRoot();
     }
 
     /// <summary>
@@ -617,13 +652,16 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         bool? storageSenseEnabled = null)
     {
         var hasDev = IsKindAvailable(BenchmarkKind.DeveloperCSharp);
-        var devRoot = existingDevDriveRoot ?? TryFindExistingDevDriveRoot();
+        var devRoot = existingDevDriveRoot ?? ExistingDevDriveRoot ?? TryFindExistingDevDriveRoot();
         var toolchains = DetectedToolchains;
         var caches = hasDev
             ? DevDrivePackageCaches.CollectCaches(toolchains, devRoot, userEnv)
             : [];
         var latest = BenchmarkUpload.LatestRun(Before, After);
         var dotnetMajor = toolchains.FirstOrDefault(t => t.Language == DeveloperLanguage.CSharp)?.MajorVersion;
+        var installedMajors = InstalledDotNetSdkMajors.Count > 0
+            ? InstalledDotNetSdkMajors
+            : dotnetMajor is { } dm ? [dm] : Array.Empty<int>();
         return new BenchmarkImprovementContext(
             HasDevEnvironment: hasDev,
             ExistingDevDriveRoot: devRoot,
@@ -631,7 +669,8 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             AcMaxProcessorStatePercent: acMaxProcessorStatePercent ?? latest?.Conditions.AcMaxProcessorStatePercent,
             ActivePowerPlan: activePowerPlan ?? latest?.Conditions.PowerPlan,
             StorageSenseEnabled: storageSenseEnabled,
-            DotNetSdkMajorVersion: dotnetMajor);
+            DotNetSdkMajorVersion: dotnetMajor,
+            InstalledDotNetSdkMajors: installedMajors);
     }
 
     private static string? TryFindExistingDevDriveRoot()
@@ -641,9 +680,9 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         {
             foreach (var d in DriveInfo.GetDrives())
             {
-                if (!d.IsReady || d.DriveType != DriveType.Fixed) continue;
+                if (!d.IsReady) continue;
                 if (string.Equals(d.DriveFormat, "ReFS", StringComparison.OrdinalIgnoreCase))
-                    return d.Name;
+                    return DevDrivePackageCaches.NormalizeDriveRoot(d.Name);
             }
         }
         catch { }
@@ -651,13 +690,15 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     }
 
     /// <summary>
-    /// Runs a closed-loop experiment: Before benchmark → Apply checked improvements → After benchmark.
-    /// Each improvement is applied through <paramref name="applyImprovement"/> (or <see cref="RemediationService.ExecuteAsync"/>).
+    /// Runs a closed-loop experiment: Before benchmark → Apply checked improvements (+ optional mutually exclusive .NET 10 or .NET 11 SDK) → After benchmark.
+    /// If <paramref name="targetDotNetSdkMajor"/> (10 or 11) is requested and not yet installed, it is installed automatically side-by-side before the After pass.
     /// </summary>
     public async Task<BenchmarkExperimentResult> RunExperimentAsync(
         IReadOnlyList<BenchmarkImprovement> selectedImprovements,
         Func<AreaAction, CancellationToken, Task<RemediationResult>>? applyImprovement = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        int? targetDotNetSdkMajor = null,
+        IReadOnlyList<int>? installedDotNetSdkMajorsOverride = null)
     {
         if (Settings.Enabled.Count == 0)
             return new(Settings.Goal, Before, After, [], false, "No benchmarks are selected.");
@@ -676,7 +717,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             ExperimentRunning = true;
             ExperimentStep = "Step 1/3: Running Before benchmark…";
             Running = BenchmarkPhase.Before;
-            settings = _state.Settings;
+            settings = _state.Settings with { TargetDotNetSdkMajor = null };
             _cts = cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         }
         Blocked = null;
@@ -693,7 +734,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         {
             var prog = new Progress<string>(m => { Progress = m; Raise(); });
 
-            // 1. Before benchmark
+            // 1. Before benchmark (runs on current SDK/setup)
             beforeRun = await runner.RunAsync(BenchmarkPhase.Before, settings, null, prog, cts.Token).ConfigureAwait(false);
             Save(_state with { Before = beforeRun, After = null, RunBeforeOnStartup = false, RunAfterOnStartup = false });
             WriteEvent(beforeRun);
@@ -703,16 +744,17 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
                 return FinishExperiment(settings.Goal, beforeRun, null, outcomes, false, error);
             }
 
-            // 2. Apply checked improvements
+            // 2. Apply checked improvements + optional mutually exclusive .NET 10/11 SDK target
+            var ordered = BenchmarkImprovements.OrderForExecution(selectedImprovements.Where(i => !i.AlreadyApplied));
+            var totalActions = ordered.Count + (targetDotNetSdkMajor is 10 or 11 ? 1 : 0);
             lock (_gate)
             {
                 Running = null;
-                ExperimentStep = $"Step 2/3: Applying {selectedImprovements.Count} {(selectedImprovements.Count == 1 ? "improvement" : "improvements")}…";
+                ExperimentStep = $"Step 2/3: Applying {totalActions} {(totalActions == 1 ? "improvement" : "improvements")}…";
                 Progress = ExperimentStep;
             }
             Raise();
 
-            var ordered = BenchmarkImprovements.OrderForExecution(selectedImprovements.Where(i => !i.AlreadyApplied));
             string? createdDevDriveRoot = null;
             var devDriveFailed = false;
 
@@ -740,23 +782,50 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
                     else if (!res.Success)
                         devDriveFailed = true;
                 }
-                else if (imp.Action.Kind == RemediationKind.InstallDotNetSdk && res.Success)
+            }
+
+            int? effectiveAfterSdkMajor = null;
+            if (targetDotNetSdkMajor is 10 or 11)
+            {
+                cts.Token.ThrowIfCancellationRequested();
+                var installedMajors = installedDotNetSdkMajorsOverride ?? InstalledDotNetSdkMajors;
+                var sdkName = targetDotNetSdkMajor == 11 ? ".NET 11 SDK" : ".NET 10 LTS SDK";
+                var sdkId = targetDotNetSdkMajor == 11 ? BenchmarkImprovements.InstallDotNet11SdkId : BenchmarkImprovements.InstallDotNet10SdkId;
+                if (installedMajors.Contains(targetDotNetSdkMajor.Value))
                 {
-                    try { await RefreshDeveloperEnvironmentAsync(cts.Token).ConfigureAwait(false); }
-                    catch { }
+                    effectiveAfterSdkMajor = targetDotNetSdkMajor.Value;
+                    outcomes.Add(new(sdkId, $"Run After on {sdkName}", Succeeded: true, Skipped: false, $"Already installed — pinning After pass to {sdkName}."));
+                }
+                else
+                {
+                    var pkgId = targetDotNetSdkMajor == 11 ? RemediationService.DotNet11SdkPackageId : RemediationService.DotNet10SdkPackageId;
+                    Progress = $"Installing {sdkName} side-by-side…";
+                    Raise();
+                    var installAction = new AreaAction(RemediationKind.InstallDotNetSdk, $"Install {sdkName}", pkgId, sdkName);
+                    var res = await apply(installAction, cts.Token).ConfigureAwait(false);
+                    outcomes.Add(new(sdkId, $"Install & run After on {sdkName}", res.Success, Skipped: false, res.Message));
+                    if (res.Success)
+                    {
+                        effectiveAfterSdkMajor = targetDotNetSdkMajor.Value;
+                        try { await RefreshDeveloperEnvironmentAsync(cts.Token).ConfigureAwait(false); }
+                        catch { }
+                    }
                 }
             }
 
-            // 3. After benchmark
+            // 3. After benchmark (pinned to chosen SDK major when selected)
             lock (_gate)
             {
                 Running = BenchmarkPhase.After;
-                ExperimentStep = "Step 3/3: Running After benchmark…";
+                ExperimentStep = effectiveAfterSdkMajor is { } m
+                    ? $"Step 3/3: Running After benchmark on .NET {m} SDK…"
+                    : "Step 3/3: Running After benchmark…";
                 Progress = ExperimentStep;
             }
             Raise();
 
-            afterRun = await runner.RunAsync(BenchmarkPhase.After, settings, null, prog, cts.Token).ConfigureAwait(false);
+            var afterSettings = settings with { TargetDotNetSdkMajor = effectiveAfterSdkMajor };
+            afterRun = await runner.RunAsync(BenchmarkPhase.After, afterSettings, null, prog, cts.Token).ConfigureAwait(false);
             Save(_state with { After = afterRun, RunAfterOnStartup = false });
             WriteEvent(afterRun);
 

@@ -4,12 +4,18 @@
 @inject UndoService Undo
 @inject IChangeJournal Journal
 @inject ISessionContext Session
-@* "Undo all changes": puts back every reversible change this app made (also available as --undo-all on the command line). *@
+@* "Undo changes": organized tree by category (removed apps, Defender exclusions, startup/services, etc.) with group select-all and selective or full undo. *@
 @{
     var all = Journal.All.OrderByDescending(c => c.TimeUtc).ToList();
     // Permanent changes (installed updates, removed apps, deleted temp files) are listed apart: undo reports them as left as is.
     var pending = all.Where(c => Undoability.Of(c) != UndoSupport.None).ToList();
     var permanent = all.Where(c => Undoability.Of(c) == UndoSupport.None).ToList();
+    var pendingGroups = UndoChangeGroups.Group(pending);
+    var pendingIdSet = pending.Select(c => c.Id).ToHashSet();
+    var selectedIds = _selected.Where(pendingIdSet.Contains).ToList();
+    var allSelected = pending.Count > 0 && selectedIds.Count == pending.Count;
+    var someSelected = selectedIds.Count > 0 && !allSelected;
+    var anyBusy = _busy || _busyId is not null;
 }
 <details class="card undo-panel bench-customize" data-testid="undo-panel" open="@_open">
     <summary class="bench-customize-summary" data-testid="undo-panel-toggle" aria-expanded="@(_open ? "true" : "false")"
@@ -17,11 +23,11 @@
         <span class="bench-customize-title">
             <span class="bench-customize-caret" aria-hidden="true">▸</span>
             <span>Undo changes</span>
-            <span class="meta" data-testid="undo-count">(@(pending.Count == 0 ? (Journal.IsLoaded ? "Nothing to undo" : "Saved changes not read yet") : $"{pending.Count} change{(pending.Count == 1 ? "" : "s")} can be undone"))</span>
+            <span class="meta" data-testid="undo-count">(@(pending.Count == 0 ? (Journal.IsLoaded ? "Nothing to undo" : "Saved changes not read yet") : $"{pending.Count} change{(pending.Count == 1 ? "" : "s")} in {pendingGroups.Count} {(pendingGroups.Count == 1 ? "category" : "categories")}"))</span>
         </span>
     </summary>
     <div class="bench-customize-body">
-        <AgentData TestId="undo-data" Json="@AgentExports.Undo(Journal.IsLoaded, pending, permanent, _busyId is not null || _busy, _resultSeq, _result, _one)" />
+        <AgentData TestId="undo-data" Json="@AgentExports.Undo(Journal.IsLoaded, pending, permanent, anyBusy, _resultSeq, _result, _one)" />
         @if (!Journal.IsLoaded)
         {
             @* The Agent keeps the undo list (only administrators can open it); without it only this run's changes show, and they're saved once it connects. *@
@@ -40,24 +46,108 @@
             {
             <details data-testid="undo-details" open>
                 <summary class="meta" data-testid="undo-list-toggle">Show what will be put back</summary>
-                <ul class="undo-list" data-testid="undo-list">
-                    @foreach (var c in pending)
+                <div class="undo-tree" data-testid="undo-list" role="tree" aria-label="Undoable changes by category">
+                    <div class="undo-tree-bar">
+                        <label class="undo-tree-select-all">
+                            <input type="checkbox"
+                                   data-testid="undo-select-all"
+                                   checked="@allSelected"
+                                   aria-checked="@(allSelected ? "true" : someSelected ? "mixed" : "false")"
+                                   disabled="@anyBusy"
+                                   @onchange="() => ToggleAll(pending, !allSelected)" />
+                            <span>@(selectedIds.Count == 0 ? $"Select all ({pending.Count})" : $"{selectedIds.Count} of {pending.Count} selected")</span>
+                        </label>
+                        @if (pendingGroups.Count > 1)
+                        {
+                            <div class="undo-tree-bar-actions">
+                                <button type="button" class="btn-small" data-testid="undo-expand-all" @onclick="ExpandAll">Expand all</button>
+                                <button type="button" class="btn-small" data-testid="undo-collapse-all" @onclick="() => CollapseAll(pendingGroups)">Collapse all</button>
+                            </div>
+                        }
+                    </div>
+                    @foreach (var grp in pendingGroups)
                     {
-                        var change = c;
-                        <li data-change-id="@c.Id">@c.Label <span class="meta">· @c.TimeUtc.ToLocalTime().ToString("g") · @c.Actor@(c.NeedsRestart ? " · needs a restart" : "")@(c.Kind == ChangeKind.StoreReinstall ? " · reinstalls from the Microsoft Store (needs internet)" : "")</span>
-                            <button class="btn-small" data-testid="undo-one-@c.Id" disabled="@(_busy || _busyId is not null)" @onclick="() => UndoOne(change)">@(_busyId == c.Id ? "Undoing…" : c.Kind == ChangeKind.StoreReinstall ? "Reinstall" : "Undo")</button></li>
+                        var group = grp;
+                        var groupKey = group.Key;
+                        var isCollapsed = _collapsedGroups.Contains(groupKey);
+                        var groupSelectedCount = group.Items.Count(c => _selected.Contains(c.Id));
+                        var groupAllSelected = groupSelectedCount == group.Items.Count;
+                        var groupSomeSelected = groupSelectedCount > 0 && !groupAllSelected;
+                        <div class="undo-tree-group" data-testid="undo-group-@groupKey" role="treeitem" aria-expanded="@(!isCollapsed ? "true" : "false")">
+                            <div class="undo-tree-header">
+                                <button type="button"
+                                        class="undo-tree-toggle"
+                                        data-testid="undo-group-toggle-@groupKey"
+                                        aria-label="@(isCollapsed ? $"Expand {group.Title}" : $"Collapse {group.Title}")"
+                                        @onclick="() => ToggleGroupCollapsed(groupKey)">
+                                    @(isCollapsed ? "▸" : "▾")
+                                </button>
+                                <label class="undo-tree-group-label">
+                                    <input type="checkbox"
+                                           data-testid="undo-group-check-@groupKey"
+                                           checked="@groupAllSelected"
+                                           aria-checked="@(groupAllSelected ? "true" : groupSomeSelected ? "mixed" : "false")"
+                                           disabled="@anyBusy"
+                                           @onchange="() => ToggleGroupSelection(group.Items, !groupAllSelected)" />
+                                    <strong>@group.Title</strong>
+                                    <span class="chip chip-na">@group.Items.Count</span>
+                                    @if (groupSomeSelected)
+                                    {
+                                        <span class="meta">(@groupSelectedCount of @group.Items.Count selected)</span>
+                                    }
+                                </label>
+                                <span class="meta undo-tree-desc">@group.Description</span>
+                            </div>
+                            @if (!isCollapsed)
+                            {
+                                <ul class="undo-tree-children" role="group">
+                                    @foreach (var c in group.Items)
+                                    {
+                                        var change = c;
+                                        var isChecked = _selected.Contains(c.Id);
+                                        <li class="undo-tree-item" data-change-id="@c.Id" role="treeitem">
+                                            <label class="undo-tree-item-label">
+                                                <input type="checkbox"
+                                                       data-testid="undo-item-check-@c.Id"
+                                                       checked="@isChecked"
+                                                       disabled="@anyBusy"
+                                                       @onchange="() => ToggleItem(change.Id)" />
+                                                <span>
+                                                    @c.Label
+                                                    <span class="meta">· @c.TimeUtc.ToLocalTime().ToString("g") · @c.Actor@(c.NeedsRestart ? " · needs a restart" : "")@(c.Kind == ChangeKind.StoreReinstall ? " · reinstalls from the Microsoft Store (needs internet)" : "")</span>
+                                                </span>
+                                            </label>
+                                            <button class="btn-small" data-testid="undo-one-@c.Id" disabled="@anyBusy" @onclick="() => UndoOne(change)">@(_busyId == c.Id ? "Undoing…" : c.Kind == ChangeKind.StoreReinstall ? "Reinstall" : "Undo")</button>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </div>
                     }
-                </ul>
+                </div>
             </details>
             }
             <div class="svc-actions">
+                @if (pending.Count > 0)
+                {
+                    <button type="button"
+                            class="btn btn-primary"
+                            data-testid="undo-selected"
+                            disabled="@(anyBusy || selectedIds.Count == 0)"
+                            @onclick="() => UndoSelected(selectedIds)">
+                        @(_busy && _busySelected ? "Undoing…" : selectedIds.Count == 0 ? "Undo selected" : $"Undo selected ({selectedIds.Count})")
+                    </button>
+                }
                 @if (_confirm)
                 {
                     <span>@(pending.Count == 0 ? "Nothing can be undone. Clear the list?" : $"Undo all {pending.Count} change{(pending.Count == 1 ? "" : "s")}?")@(permanent.Count > 0 ? $" The {permanent.Count} permanent one{(permanent.Count == 1 ? "" : "s")} will be left as is." : "")</span>
-                    <button class="btn btn-stop" data-testid="undo-confirm" disabled="@_busy" @onclick="UndoAll">@(_busy ? "Undoing…" : "Yes, undo all")</button>
-                    <button class="btn-small" disabled="@_busy" @onclick="() => _confirm = false">Cancel</button>
+                    <button class="btn btn-stop" data-testid="undo-confirm" disabled="@anyBusy" @onclick="UndoAll">@(_busy && !_busySelected ? "Undoing…" : "Yes, undo all")</button>
+                    <button class="btn-small" disabled="@anyBusy" @onclick="() => _confirm = false">Cancel</button>
                 }
-                else { <button class="btn btn-outline" data-testid="undo-all" @onclick="() => _confirm = true">@(pending.Count == 0 ? "Clear this list" : "Undo all changes")</button> }
+                else
+                {
+                    <button class="btn btn-outline" data-testid="undo-all" disabled="@anyBusy" @onclick="() => _confirm = true">@(pending.Count == 0 ? "Clear this list" : "Undo all changes")</button>
+                }
             </div>
         }
         @if (_one is { } one)
@@ -75,22 +165,94 @@
 </details>
 
 @code {
-    private bool _open = true, _confirm, _busy;
+    private bool _open = true, _confirm, _busy, _busySelected;
     private Guid? _busyId;
     private UndoAllResult? _result;
     private UndoItemResult? _one;
+    private readonly HashSet<Guid> _selected = [];
+    private readonly HashSet<string> _collapsedGroups = new(StringComparer.Ordinal);
     /// <summary>Goes up with every finished undo, so an agent can tell a new result from the one it saw before clicking.</summary>
     private int _resultSeq;
+
     protected override void OnInitialized() => Journal.Changed += OnChanged;
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
     public void Dispose() => Journal.Changed -= OnChanged;
 
     private void ToggleOpen() => _open = !_open;
 
+    private void ToggleGroupCollapsed(string groupKey)
+    {
+        if (!_collapsedGroups.Add(groupKey))
+            _collapsedGroups.Remove(groupKey);
+    }
+
+    private void ExpandAll() => _collapsedGroups.Clear();
+
+    private void CollapseAll(IReadOnlyList<UndoChangeGroup> groups)
+    {
+        foreach (var g in groups)
+            _collapsedGroups.Add(g.Key);
+    }
+
+    private void ToggleAll(IReadOnlyList<ChangeRecord> pending, bool select)
+    {
+        if (select)
+        {
+            foreach (var c in pending)
+                _selected.Add(c.Id);
+        }
+        else
+        {
+            _selected.Clear();
+        }
+    }
+
+    private void ToggleGroupSelection(IReadOnlyList<ChangeRecord> items, bool select)
+    {
+        if (select)
+        {
+            foreach (var c in items)
+                _selected.Add(c.Id);
+        }
+        else
+        {
+            foreach (var c in items)
+                _selected.Remove(c.Id);
+        }
+    }
+
+    private void ToggleItem(Guid id)
+    {
+        if (!_selected.Add(id))
+            _selected.Remove(id);
+    }
+
+    private async Task UndoSelected(IReadOnlyList<Guid> ids)
+    {
+        if (ids.Count == 0) return;
+        _busy = true;
+        _busySelected = true;
+        _confirm = false;
+        try
+        {
+            _result = await Undo.UndoSelectedAsync(ids, ServiceActor.From(Session));
+            _one = null;
+            foreach (var item in _result.Items.Where(i => i.Success || i.Skipped))
+                _selected.Remove(item.Change.Id);
+        }
+        finally { _busy = false; _busySelected = false; _resultSeq++; }
+    }
+
     private async Task UndoAll()
     {
         _busy = true;
-        try { _result = await Undo.UndoAllAsync(ServiceActor.From(Session)); _one = null; }
+        _busySelected = false;
+        try
+        {
+            _result = await Undo.UndoAllAsync(ServiceActor.From(Session));
+            _one = null;
+            _selected.Clear();
+        }
         finally { _busy = false; _confirm = false; _resultSeq++; }
     }
 
@@ -101,6 +263,8 @@
         {
             _one = await Undo.UndoChangeAsync(change.Id, ServiceActor.From(Session))
                 ?? new UndoItemResult(change, false, "Already undone, or no longer listed.");
+            if (_one.Success || _one.Skipped)
+                _selected.Remove(change.Id);
             _result = null;
         }
         finally { _busyId = null; _resultSeq++; }
