@@ -50,7 +50,8 @@ public sealed record RemediationResult(
     int RemovedFiles = 0,
     long FreedMemoryBytes = 0,
     int UpdatesInstalled = 0,
-    bool RestartNeeded = false);
+    bool RestartNeeded = false,
+    string? CreatedDriveRoot = null);
 
 /// <summary>A fix that is running now (started from a page or by a remote agent). It keeps running when its page is left.</summary>
 public sealed record FixRun(AreaAction Action, string Title, string Origin, DateTimeOffset StartedUtc, string? Progress = null);
@@ -87,7 +88,8 @@ public sealed class RemediationService(
     Action<string>? openUri = null,
     Optimizations.IRegistryTweaks? registryTweaks = null,
     IPowerSettingController? powerSettings = null,
-    IUserEnvironmentStore? userEnv = null)
+    IUserEnvironmentStore? userEnv = null,
+    IMachineTweaks? machineTweaks = null)
 {
     /// <summary>This app's record of successful retrims (so Drive health stops offering it right away).</summary>
     public RetrimLog? RetrimLog => retrimLog;
@@ -387,6 +389,24 @@ public sealed class RemediationService(
                     true)
                 : new(action, action.ButtonText, "", "This cache target isn't on the allowlist.", "This cache target isn't on the allowlist.", Allowed: false),
 
+            RemediationKind.CreatePersistentDevDrive => new(
+                action,
+                "Create persistent Dev Drive (50 GB ReFS)?",
+                "Creates a dynamically expanding 50 GB ReFS Dev Drive VHDX with Defender Performance Mode so builds and package caches run faster.",
+                "Mounts a persistent Dev Drive via the elevated Agent and grants your account modify permissions. Undo detaches and removes the VHDX.",
+                AdminNote("Requires Windows 11 with Dev Drive support and at least 50 GB free on the system drive."),
+                true),
+
+            RemediationKind.InstallDotNetSdk => IsAllowedDotNetSdkPackage(action.Target)
+                ? new(
+                    action,
+                    $"Install {DotNetSdkDisplayName(action.Target)} (side-by-side)?",
+                    $"Installs {DotNetSdkDisplayName(action.Target)} alongside your existing SDKs via winget ({action.Target}).",
+                    "Runs winget install silently for the official Microsoft package. Existing SDKs remain installed and global.json-pinned repos stay on their pinned version.",
+                    "Requires internet access and winget (App Installer). Can be uninstalled later from Windows Installed Apps.",
+                    true)
+                : new(action, action.ButtonText, "", "This .NET SDK package isn't on the allowlist.", "This .NET SDK package isn't on the allowlist.", Allowed: false),
+
             _ => new(action, action.ButtonText, "", "", null, true),
         };
     }
@@ -578,8 +598,83 @@ public sealed class RemediationService(
 
         RemediationKind.MovePackageCacheToDevDrive => RunMovePackageCacheToDevDrive(action),
 
+        RemediationKind.CreatePersistentDevDrive => await RunCreatePersistentDevDriveAsync(action, ct).ConfigureAwait(false),
+
+        RemediationKind.InstallDotNetSdk => await RunInstallDotNetSdkAsync(action, ct).ConfigureAwait(false),
+
         _ => new(false, "Unsupported action."),
     };
+
+    public const string DotNet10SdkPackageId = "Microsoft.DotNet.SDK.10";
+    public const string DotNet11SdkPackageId = "Microsoft.DotNet.SDK.11";
+
+    public static bool IsAllowedDotNetSdkPackage(string? id) =>
+        string.Equals(id?.Trim(), DotNet10SdkPackageId, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(id?.Trim(), DotNet11SdkPackageId, StringComparison.OrdinalIgnoreCase);
+
+    private static string DotNetSdkDisplayName(string? id) =>
+        string.Equals(id?.Trim(), DotNet11SdkPackageId, StringComparison.OrdinalIgnoreCase)
+            ? ".NET 11 SDK"
+            : ".NET 10 LTS SDK";
+
+    private async Task<RemediationResult> RunInstallDotNetSdkAsync(AreaAction action, CancellationToken ct)
+    {
+        if (!IsAllowedDotNetSdkPackage(action.Target))
+            return new(false, "Only Microsoft.DotNet.SDK.10 and Microsoft.DotNet.SDK.11 are allowed.");
+
+        var pkgId = string.Equals(action.Target.Trim(), DotNet11SdkPackageId, StringComparison.OrdinalIgnoreCase)
+            ? DotNet11SdkPackageId
+            : DotNet10SdkPackageId;
+
+        var res = await commands.RunAdminToolAsync(
+            "winget",
+            ["install", "--id", pkgId, "--exact", "--accept-package-agreements", "--accept-source-agreements", "--silent", "--disable-interactivity"],
+            ct).ConfigureAwait(false);
+
+        if (res is null)
+            return new(false, "Could not run winget (App Installer may not be available).");
+
+        // 0 = installed, -1978335189 (0x8A15002B) = already installed and up to date
+        if (res.ExitCode == 0 || res.ExitCode == unchecked((int)0x8A15002B))
+            return new(true, $"{DotNetSdkDisplayName(pkgId)} is installed side-by-side ({pkgId}).");
+
+        var err = string.IsNullOrWhiteSpace(res.StdErr) ? res.StdOut?.Trim() : res.StdErr.Trim();
+        return new(false, string.IsNullOrWhiteSpace(err)
+            ? $"winget install {pkgId} failed (exit {res.ExitCode})."
+            : $"winget install {pkgId} failed: {err}");
+    }
+
+    private async Task<RemediationResult> RunCreatePersistentDevDriveAsync(AreaAction action, CancellationToken ct)
+    {
+        var tweaks = machineTweaks ?? (commands.ElevatedBridge is { } b ? new AgentMachineTweaks(b, log) : null);
+        if (tweaks is null)
+            return new(false, "Administrator Agent is required to create a persistent Dev Drive.");
+
+        var sizeGb = int.TryParse(action.Target, out var parsed) && parsed >= DevDriveRules.MinSizeGb && parsed <= DevDriveRules.MaxSizeGb
+            ? parsed
+            : DevDriveRules.DefaultSizeGb;
+
+        string? userSid = null;
+        if (OperatingSystem.IsWindows())
+        {
+            try { userSid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value; }
+            catch { }
+        }
+
+        var mounted = await tweaks.CreatePersistentDevDriveAsync(sizeGb, userSid, ct).ConfigureAwait(false);
+        if (!mounted.Ok || string.IsNullOrWhiteSpace(mounted.VhdxPath) || string.IsNullOrWhiteSpace(mounted.DriveLetter))
+            return new(false, mounted.Error ?? "Could not create persistent Dev Drive.");
+
+        var driveRoot = $"{mounted.DriveLetter.TrimEnd(':', '\\').ToUpperInvariant()}:\\";
+        journal?.Add(Changes.ChangeRecord.New(
+            Changes.ChangeKind.PersistentDevDrive,
+            mounted.VhdxPath,
+            driveRoot,
+            $"Created persistent Dev Drive ({driveRoot})",
+            Actor));
+
+        return new(true, $"Created and mounted persistent Dev Drive on {driveRoot} ({sizeGb} GB expandable ReFS).", CreatedDriveRoot: driveRoot);
+    }
 
     private RemediationResult RunEnableStorageSense(AreaAction action)
     {

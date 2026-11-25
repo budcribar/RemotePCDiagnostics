@@ -32,7 +32,9 @@ public sealed record DevDriveMountResult(
 public static class DevDriveRules
 {
     public const string VolumeLabel = "RPCD-DevDrive";
+    public const string PersistentVolumeLabel = "DevDrive";
     public const string VhdxPrefix = "rpcd-devdrive-";
+    public const string PersistentVhdxPrefix = "rpcd-persistent-devdrive-";
     public const string BuildTempPrefix = "rpcd-devbench-";
     public const string DevDriveBuildRootName = "rpcd-devbench";
     public const int DefaultSizeGb = 50;
@@ -41,6 +43,9 @@ public static class DevDriveRules
 
     /// <summary>%ProgramData%\RemotePCDiagnostics\devdrive-temp — owned by the Agent.</summary>
     public static string DefaultVhdxFolder() => Path.Combine(ProtectedState.AppDataFolder(), "devdrive-temp");
+
+    /// <summary>%ProgramData%\RemotePCDiagnostics\devdrive — persistent user Dev Drives owned by the Agent (never swept on startup).</summary>
+    public static string DefaultPersistentVhdxFolder() => Path.Combine(ProtectedState.AppDataFolder(), "devdrive");
 
     /// <summary>
     /// True only for an RPCD temporary build folder directly inside a user Temp directory
@@ -137,6 +142,28 @@ public static class DevDriveRules
         return suffix.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
     }
 
+    /// <summary>
+    /// True only for a persistent RPCD Dev Drive VHDX directly inside <c>devdrive</c> with name <c>rpcd-persistent-devdrive-&lt;id&gt;.vhdx</c>.
+    /// </summary>
+    public static bool IsRpcdPersistentDevDriveVhdx(string? path, string? allowedFolder = null)
+    {
+        if (!DefenderPaths.IsLocalPath(path)) return false;
+        var root = (allowedFolder ?? DefaultPersistentVhdxFolder()).TrimEnd('\\');
+        if (!DefenderPaths.IsLocalPath(root)) return false;
+        var trimmed = path!.TrimEnd('\\');
+        var sep = trimmed.LastIndexOf('\\');
+        if (sep <= 0) return false;
+        var dir = trimmed[..sep];
+        var file = trimmed[(sep + 1)..];
+        if (!dir.Equals(root, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!file.StartsWith(PersistentVhdxPrefix, StringComparison.OrdinalIgnoreCase)
+            || !file.EndsWith(".vhdx", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var suffix = file[PersistentVhdxPrefix.Length..^".vhdx".Length];
+        if (suffix.Length is < 8 or > 40) return false;
+        return suffix.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
+    }
+
     /// <summary>Validates a Windows SID like <c>S-1-5-21-...</c> before passing it to icacls.</summary>
     public static bool IsValidUserSid(string? sid)
     {
@@ -158,10 +185,10 @@ public static class DevDriveRules
         $"select vdisk file=\"{vhdxPath}\"\r\ndetach vdisk\r\n";
 
     /// <summary>Builds the Agent's Storage PowerShell script to initialize, partition, and format the attached VHDX as a Dev Drive.</summary>
-    public static string BuildFormatDevDriveScript(string vhdxPath)
+    public static string BuildFormatDevDriveScript(string vhdxPath, string? volumeLabel = null)
     {
         var q = "'" + vhdxPath.Replace("'", "''") + "'";
-        var label = "'" + VolumeLabel + "'";
+        var label = "'" + (volumeLabel ?? VolumeLabel).Replace("'", "''") + "'";
         return "$ErrorActionPreference='Stop';"
             + $"$d = Get-Disk | Where-Object {{ $_.Location -eq {q} }} | Select-Object -First 1;"
             + "if (-not $d) { throw 'Attached VHDX disk not found.' };"
@@ -253,6 +280,74 @@ public sealed class WindowsDevDriveManager(ILogger? log = null, IProcessLauncher
 
         var deleted = TryDeleteFile(vhdxPath);
         Log($"Removed temporary Dev Drive VHDX {vhdxPath} (deleted={deleted})");
+        return deleted;
+    }
+
+    /// <summary>Creates, attaches, and formats a persistent dynamically expanding Dev Drive VHDX (kept across runs until undone).</summary>
+    public async Task<DevDriveMountResult> CreatePersistentAsync(int sizeGb, string? grantUserSid, CancellationToken ct)
+    {
+        var clampedGb = Math.Clamp(sizeGb <= 0 ? DevDriveRules.DefaultSizeGb : sizeGb, DevDriveRules.MinSizeGb, DevDriveRules.MaxSizeGb);
+        if (grantUserSid is not null && !DevDriveRules.IsValidUserSid(grantUserSid))
+            return new(false, Error: "Invalid user SID.");
+
+        var persistentFolder = DevDriveRules.DefaultPersistentVhdxFolder();
+        Directory.CreateDirectory(persistentFolder);
+        var vhdxPath = Path.Combine(persistentFolder, $"{DevDriveRules.PersistentVhdxPrefix}{Guid.NewGuid():N}.vhdx");
+
+        try
+        {
+            if (!await RunDiskpartAsync(DevDriveRules.BuildDiskpartCreateScript(vhdxPath, clampedGb), ct).ConfigureAwait(false))
+            {
+                await RemovePersistentAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false);
+                return new(false, Error: "diskpart could not create the persistent Dev Drive VHDX.");
+            }
+
+            var fmt = await _launcher.RunAsync(
+                SystemCommandRunner.PowerShell,
+                SystemCommandRunner.PowerShellArgs(DevDriveRules.BuildFormatDevDriveScript(vhdxPath, DevDriveRules.PersistentVolumeLabel)),
+                TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+
+            var driveLetter = fmt.StdOut?.Trim();
+            if (fmt.ExitCode != 0 || string.IsNullOrWhiteSpace(driveLetter) || driveLetter.Length != 1 || !char.IsAsciiLetter(driveLetter[0]))
+            {
+                await RemovePersistentAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false);
+                var err = string.IsNullOrWhiteSpace(fmt.StdErr) ? "Format-Volume -DevDrive failed." : fmt.StdErr.Trim();
+                return new(false, Error: err);
+            }
+
+            var driveRoot = $"{char.ToUpperInvariant(driveLetter[0])}:\\";
+            if (!string.IsNullOrWhiteSpace(grantUserSid))
+            {
+                var icacls = Path.Combine(Environment.SystemDirectory, "icacls.exe");
+                var acl = await _launcher.RunAsync(
+                    File.Exists(icacls) ? icacls : "icacls.exe",
+                    [driveRoot, "/grant", $"*{grantUserSid}:(OI)(CI)M", "/Q"],
+                    TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+                if (acl.ExitCode != 0)
+                    Log($"icacls grant warning on persistent Dev Drive (exit {acl.ExitCode}): {acl.StdErr.Trim()}");
+            }
+
+            Log($"Mounted persistent Dev Drive {driveRoot} ({vhdxPath})");
+            return new(true, vhdxPath, driveLetter.ToUpperInvariant(), driveRoot);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await RemovePersistentAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false);
+            Log("CreatePersistent failed: " + ex.Message);
+            return new(false, Error: ex.Message);
+        }
+    }
+
+    public async Task<bool> RemovePersistentAsync(string vhdxPath, CancellationToken ct)
+    {
+        if (!DevDriveRules.IsRpcdPersistentDevDriveVhdx(vhdxPath))
+            return false;
+
+        if (File.Exists(vhdxPath))
+            await RunDiskpartAsync(DevDriveRules.BuildDiskpartDetachScript(vhdxPath), ct).ConfigureAwait(false);
+
+        var deleted = TryDeleteFile(vhdxPath);
+        Log($"Removed persistent Dev Drive VHDX {vhdxPath} (deleted={deleted})");
         return deleted;
     }
 
