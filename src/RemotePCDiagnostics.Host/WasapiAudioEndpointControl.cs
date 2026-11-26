@@ -127,6 +127,24 @@ public sealed class WasapiAudioEndpointControl(ILogger? log = null) : IAudioEndp
     public double? GetVolume(string id) => With<double?>(id, d => Math.Round(d.AudioEndpointVolume.MasterVolumeLevelScalar, 3));
     public void SetVolume(string id, double level) => Change(id, d => d.AudioEndpointVolume.MasterVolumeLevelScalar = (float)Math.Clamp(level, 0, 1));
 
+    /// <summary>Each channel's level (0 to 1, left first); null for a one-channel device.</summary>
+    internal static IReadOnlyList<double>? ChannelLevels(AudioEndpointVolume vol)
+    {
+        var n = vol.Channels.Count;
+        if (n < 2) return null;
+        var list = new double[n];
+        for (var i = 0; i < n; i++) list[i] = Math.Round(vol.Channels[i].VolumeLevelScalar, 3);
+        return list;
+    }
+
+    public IReadOnlyList<double>? GetChannelLevels(string id) => With(id, d => ChannelLevels(d.AudioEndpointVolume));
+    public void SetChannelLevels(string id, IReadOnlyList<double> levels) => Change(id, d =>
+    {
+        var ch = d.AudioEndpointVolume.Channels;
+        if (ch.Count != levels.Count) throw new InvalidOperationException("The device's channels changed.");
+        for (var i = 0; i < levels.Count; i++) ch[i].VolumeLevelScalar = (float)Math.Clamp(levels[i], 0, 1);
+    });
+
     private static Role RoleOf(string role) => role switch
     {
         AudioEndpointInfo.Console => Role.Console,

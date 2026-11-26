@@ -434,6 +434,147 @@ public class SoundTests
     private static WmiRow Row(params (string Key, string Value)[] values) =>
         new(values.ToDictionary(v => v.Key, v => JsonSerializer.SerializeToElement(v.Value)));
 
+    // ---------------------------------------------------------------- Batch 4: balance, the interactive Sound check, Can't hear sound
+
+    [Fact]
+    public void Balance_more_than_20_points_off_is_a_warning_with_the_even_out_fix()
+    {
+        var off = RowOf(Card(Build([Speaker() with { ChannelLevels = [1.0, 0.12] }, Mic()]), "audio-output"), "Balance");
+        Assert.Equal(AreaLevel.Warning, off.Level);
+        Assert.Equal("Left 100%, right 12%", off.Values[1]);
+        var fix = Assert.Single(off.Actions!);
+        Assert.Equal((RemediationKind.EvenAudioBalance, SpkId), (fix.Kind, fix.Target));
+
+        Assert.Equal(AreaLevel.Ok, RowOf(Card(Build([Speaker() with { ChannelLevels = [0.5, 0.35] }, Mic()]), "audio-output"), "Balance").Level);
+        Assert.DoesNotContain(Card(Build([Speaker(), Mic()]), "audio-output").Rows, r => r.Values[0] == "Balance"); // one channel or unread
+        Assert.DoesNotContain(Card(Build([Speaker(), Mic() with { ChannelLevels = [1.0, 0.1] }]), "audio-input").Rows, r => r.Values[0] == "Balance");
+    }
+
+    [Fact]
+    public void Speakers_card_links_to_cant_hear_sound()
+    {
+        var link = Card(Build([Speaker(), Mic()]), "audio-output").OpenPage;
+        Assert.Equal(new AreaPageLink(SoundModule.CantHearPath, "Can't hear sound"), link);
+        Assert.Null(Card(Build([Speaker(), Mic()]), "audio-input").OpenPage);
+    }
+
+    [Theory]
+    [InlineData(SoundCheckAnswer.Both, DiagnosticStatus.Ok)]
+    [InlineData(SoundCheckAnswer.OnlyLeft, DiagnosticStatus.Error)]
+    [InlineData(SoundCheckAnswer.OnlyRight, DiagnosticStatus.Error)]
+    [InlineData(SoundCheckAnswer.Nothing, DiagnosticStatus.Error)]
+    public void Sound_check_answer_is_the_result(SoundCheckAnswer answer, DiagnosticStatus expected)
+    {
+        var played = SoundCheck.ToResult(new SoundCheckReport("Speakers", 2, null));
+        Assert.Equal(DiagnosticStatus.Warning, played.Status);
+        Assert.Equal(SoundCheck.WaitingMessage, played.Message);
+        var answered = SoundCheck.Answer(played, answer)!;
+        Assert.Equal(expected, answered.Status);
+        Assert.Equal(answer, ((SoundCheckReport)answered.Payload!).Answer);
+        Assert.Null(SoundCheck.Answer(DiagnosticResult.NotRun(ModuleSlugs.SoundCheck), answer)); // nothing played yet
+    }
+
+    [Fact]
+    public void Cant_hear_lists_services_first_then_the_speaker_problems_in_card_order()
+    {
+        var monitor = new AudioEndpointInfo(HdmiId, "LG ULTRAFINE", AudioFlow.Output, AudioEndpointState.Active, AudioBus.Unknown, "DigitalAudioDisplayDevice", "", AllRoles, false, 0.5);
+        var spk = Speaker(volume: 0.04, muted: true, roles: []);
+        var r = Build([monitor, spk, Mic()], Facts(services: [Svc(SoundModule.AudioSrv, "STOPPED", "AUTO_START"), Svc(SoundModule.EndpointBuilder)]));
+
+        var steps = SoundCheck.CantHearSteps(r);
+
+        Assert.Equal(SoundCheck.ServicesCard, steps[0].CardId);
+        Assert.False(SoundCheck.ServicesOk(r));
+        var output = steps.Where(s => s.CardId == SoundCheck.OutputCard).ToList();
+        Assert.NotEmpty(output);
+        // Every listed row is a problem or comes with a fix, in the card's own order.
+        Assert.All(steps, s => Assert.True(s.Row.Level >= AreaLevel.Warning || s.Row.Actions is { Count: > 0 }));
+        var card = Card(r, SoundCheck.OutputCard).Rows.ToList();
+        Assert.Equal(output.Select(s => card.IndexOf(s.Row)).Order(), output.Select(s => card.IndexOf(s.Row)));
+    }
+
+    [Fact]
+    public void Cant_hear_on_a_healthy_pc_lists_nothing_and_the_services_are_ok()
+    {
+        var r = Build([Speaker(), Mic()]);
+        Assert.Empty(SoundCheck.CantHearSteps(r));
+        Assert.True(SoundCheck.ServicesOk(r));
+    }
+
+    [Fact]
+    public void One_side_lists_the_balance_and_mono_rows()
+    {
+        var r = Build([Speaker() with { ChannelLevels = [1.0, 0.12] }, Mic()], Facts(mono: true));
+        Assert.Equal(["Balance", "Mono audio"], SoundCheck.OneSideSteps(r).Select(s => s.Title));
+        Assert.Equal("Left 100%, right 12% · One side is much quieter than the other, so it may sound like a speaker is dead.", SoundCheck.OneSideSteps(r)[0].Text);
+    }
+
+    [Theory]
+    [InlineData(AudioVerdict.NoOutput, true)]
+    [InlineData(AudioVerdict.MicDidNotHear, true)]
+    [InlineData(AudioVerdict.NotHeardUnknownOutput, true)]
+    [InlineData(AudioVerdict.Pass, false)]
+    [InlineData(AudioVerdict.Feedback, false)]
+    [InlineData(AudioVerdict.NoDevice, false)]
+    public void Speaker_to_mic_links_to_cant_hear_only_for_no_sound_verdicts(AudioVerdict v, bool expected) =>
+        Assert.Equal(expected, SoundCheck.SuggestFor(v));
+
+    [Fact]
+    public async Task Sound_check_plays_left_then_right_and_waits_for_the_answer()
+    {
+        var io = new ChannelIo(2);
+        var r = await new SoundCheckModule(io).RefreshAsync(null);
+        Assert.Equal([AudioChannel.Left, AudioChannel.Right], io.Played.Select(p => p.Channel));
+        Assert.All(io.Played, p => Assert.True(AudioMath.Peak(p.Tone) <= AudioMath.MaxToneAmplitude + 1e-6));
+        Assert.Equal(DiagnosticStatus.Warning, r.Status);
+        var rep = Assert.IsType<SoundCheckReport>(r.Payload);
+        Assert.Equal(("Speakers", 2, (SoundCheckAnswer?)null, (string?)null), (rep.Output, rep.Channels, rep.Answer, rep.Notice));
+    }
+
+    [Fact]
+    public async Task Sound_check_on_a_one_channel_speaker_says_both_plays_sound_the_same()
+    {
+        var r = await new SoundCheckModule(new ChannelIo(1)).RefreshAsync(null);
+        Assert.Contains("one channel", ((SoundCheckReport)r.Payload!).Notice);
+    }
+
+    [Fact]
+    public async Task Sound_check_without_a_speaker_is_an_error()
+    {
+        var r = await new SoundCheckModule(new ChannelIo(2, devices: false)).RefreshAsync(null);
+        Assert.Equal(DiagnosticStatus.Error, r.Status);
+        Assert.Contains("No speaker", r.Message);
+    }
+
+    [Fact]
+    public void Interactive_export_has_the_sound_check_answer_and_its_list()
+    {
+        var page = new InteractiveExport.PageState("soundcheck", ["soundcheck"], false, false, false, false);
+        var notRun = new InteractiveExport.ModuleState(DiagnosticResult.NotRun("x"), false);
+        var answered = SoundCheck.Answer(SoundCheck.ToResult(new SoundCheckReport("Speakers", 2, null)), SoundCheckAnswer.Nothing)!;
+        var sound = Build([Speaker(muted: true), Mic()]);
+        var help = new InteractiveExport.SoundCheckHelp("cant-hear", false, SoundCheck.CantHearSteps(sound), SoundCheck.ServicesOk(sound));
+        var json = JsonDocument.Parse(InteractiveExport.ToJson(page, new Core.Workflow.PhysicalBenchQaSnapshot(), notRun, notRun, notRun,
+            new InteractiveExport.ModuleState(answered, false), help));
+        var test = json.RootElement.GetProperty("tests").EnumerateArray().Single(t => t.GetProperty("id").GetString() == "soundcheck");
+        Assert.Equal("done", test.GetProperty("state").GetString());
+        Assert.Equal("nothing", test.GetProperty("heard").GetString());
+        Assert.Equal("failed", test.GetProperty("personOutcome").GetString());
+        var step = test.GetProperty("help").GetProperty("steps").EnumerateArray().Single();
+        Assert.Equal("Muted", step.GetProperty("title").GetString());
+        Assert.Equal("UnmuteAudioEndpoint", step.GetProperty("fixes")[0].GetProperty("kind").GetString());
+    }
+
+    private sealed class ChannelIo(int channels, bool devices = true) : IAudioIo
+    {
+        public List<PlayChannelRequest> Played { get; } = [];
+        public IReadOnlyList<AudioDevice> ListDevices() => devices ? [new("out1", "Speakers", AudioFlow.Output, AudioBus.Internal, true)] : [];
+        public bool IsMicrophoneBlockedByPrivacy() => false;
+        public Task<PlayCaptureResult> PlayAndCaptureAsync(PlayCaptureRequest r, CancellationToken ct) => throw new NotSupportedException();
+        public Task<MonitorResult> MonitorAsync(MonitorRequest r, CancellationToken ct) => throw new NotSupportedException();
+        public Task<int> PlayOnChannelAsync(PlayChannelRequest r, CancellationToken ct) { Played.Add(r); return Task.FromResult(channels); }
+    }
+
     private sealed class FakeAudio(AudioState state) : IAudioStateSource
     {
         public Task<AudioState> ReadAsync(CancellationToken ct = default) => Task.FromResult(state);

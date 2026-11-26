@@ -93,18 +93,19 @@ public sealed class WasapiAudioStateSource(ILogger? log = null, TimeSpan? probeT
         var info = new AudioEndpointInfo(id, name, flow, state, AudioDevice.GuessBus(enumerator, name, instanceId), formFactor, instanceId, roles);
         if (state != AudioEndpointState.Active) return info;
 
-        bool? muted = null; double? volume = null;
+        bool? muted = null; double? volume = null; IReadOnlyList<double>? channels = null;
         try
         {
             var vol = dev.AudioEndpointVolume;
             muted = vol.Mute;
             volume = Math.Round(vol.MasterVolumeLevelScalar, 3);
+            channels = WasapiAudioEndpointControl.ChannelLevels(vol);
         }
         catch (Exception ex) { Warn($"volume of '{name}': {ex.Message}"); }
         var sysFx = Prop<uint?>(dev, DisableSysFxKey);
         info = info with
         {
-            Muted = muted, Volume = volume,
+            Muted = muted, Volume = volume, ChannelLevels = channels,
             DeviceFormat = AudioFormatText.FromWaveFormatEx(Prop<byte[]>(dev, DeviceFormatKey)),
             OemFormat = AudioFormatText.FromWaveFormatEx(Prop<byte[]>(dev, OemFormatKey)),
             EnhancementsDisabled = sysFx is null ? null : sysFx == 1,

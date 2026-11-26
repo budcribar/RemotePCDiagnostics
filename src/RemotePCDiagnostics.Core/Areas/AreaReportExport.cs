@@ -119,6 +119,7 @@ public static class AreaReportExport
         {
             Actions = Actions(card.Actions),
             RunCheck = card.RunCheck is { } link ? new ExportedCheckLink(link.CheckId, link.ButtonText) : null,
+            OpenPage = card.OpenPage is { } page ? new ExportedPageLink(page.Path, page.ButtonText) : null,
             ListedRowCount = attention.Count,
             ReviewedRows = reviewed?.Rows.Where(row => ReviewId(row) is not null).Take(MaxReviewedRows).Select(Row).ToList() is { Count: > 0 } done
                 ? done : null,
@@ -188,6 +189,9 @@ public static class AreaReportExport
         /// <summary>The check the card suggests running next (its button is <c>[data-action="run-check"][data-check-id]</c>).</summary>
         public ExportedCheckLink? RunCheck { get; init; }
 
+        /// <summary>A page the card points to (its button is <c>[data-action="open-page"][data-path]</c>).</summary>
+        public ExportedPageLink? OpenPage { get; init; }
+
         /// <summary>How many rows qualify for <c>Rows</c> (every row that is not ok, and any row with a fix) before the cap.</summary>
         public int ListedRowCount { get; init; }
 
@@ -206,6 +210,7 @@ public static class AreaReportExport
 
     /// <summary>A one-click fix as the page offers it. Kind is a <see cref="RemediationKind"/> name.</summary>
     public sealed record ExportedCheckLink(string CheckId, string ButtonText);
+    public sealed record ExportedPageLink(string Path, string ButtonText);
 
     public sealed record ExportedAction(string Kind, string Target, string? TargetLabel, string ButtonText, string? CurrentSetting)
     {

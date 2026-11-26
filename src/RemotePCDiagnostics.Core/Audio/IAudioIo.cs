@@ -67,6 +67,11 @@ public sealed record PlayCaptureResult(float[] Mic, int MicSampleRate, float[]? 
 public sealed record MonitorRequest(string? OutputId, string? InputId, TimeSpan Duration, bool HalfDuplex, bool RequestRawMic,
     Func<float[], int, float> ProcessBlock);
 
+public enum AudioChannel { Left, Right }
+
+/// <summary>Plays mono <paramref name="Tone"/> on one channel of the output only (the other channels stay silent). A one-channel device plays it on that channel.</summary>
+public sealed record PlayChannelRequest(string? OutputId, float[] Tone, int SampleRate, AudioChannel Channel);
+
 public sealed record MonitorResult(int SampleRate, bool RawMicApplied, bool StoppedEarly, string? Note = null);
 
 /// <summary>Audio hardware access (Host: NAudio/WASAPI). Implementations never show OS dialogs and honour cancellation.</summary>
@@ -79,6 +84,8 @@ public interface IAudioIo
     Task<PlayCaptureResult> PlayAndCaptureAsync(PlayCaptureRequest request, CancellationToken ct);
     /// <summary>Plays the mic back through the output (live, or record-then-play when half-duplex).</summary>
     Task<MonitorResult> MonitorAsync(MonitorRequest request, CancellationToken ct);
+    /// <summary>Plays the tone on the left or right channel only, without changing mute or volume; returns the device's channel count.</summary>
+    Task<int> PlayOnChannelAsync(PlayChannelRequest request, CancellationToken ct) => throw new AudioDeviceException("Playing a test sound isn't supported here.");
 }
 
 /// <summary>No audio hardware (CI, non-Windows): every test reports "no device".</summary>

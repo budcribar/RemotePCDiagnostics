@@ -20,7 +20,7 @@ public static class AudioTargets
     public const string Off = "off", On = "on";
 
     /// <summary>Journal target suffixes for <see cref="ChangeKind.AudioEndpoint"/>.</summary>
-    public const string Mute = "mute", Volume = "volume", State = "state", Format = "format", SysFx = "sysfx", DefaultPrefix = "default:";
+    public const string Mute = "mute", Volume = "volume", Balance = "balance", State = "state", Format = "format", SysFx = "sysfx", DefaultPrefix = "default:";
 
     /// <summary><c>{0.0.0.00000000}.{guid}</c> (an output) or <c>{0.0.1.00000000}.{guid}</c> (an input).</summary>
     public static bool IsEndpointId(string? id)
@@ -61,6 +61,10 @@ public interface IAudioEndpointControl
     void SetMute(string id, bool mute);
     double? GetVolume(string id);
     void SetVolume(string id, double level);
+    /// <summary>Each channel's level (0 to 1, left first); null for a one-channel device or when unknown.</summary>
+    IReadOnlyList<double>? GetChannelLevels(string id);
+    /// <summary>Sets every channel's level; <paramref name="levels"/> has one entry per channel.</summary>
+    void SetChannelLevels(string id, IReadOnlyList<double> levels);
     /// <summary>The default endpoint's id for a flow and role (Console, Multimedia, Communications); null when there is none.</summary>
     string? GetDefault(AudioFlow flow, string role);
     void SetDefault(string id, string role);
@@ -152,6 +156,27 @@ public sealed class AudioFixService(IAudioEndpointControl? control, ICapturePriv
         or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements;
 
     private string NameOf(AreaAction a, string id) => a.TargetLabel is { Length: > 0 } l ? l : control?.Name(id) ?? "the sound device";
+
+    /// <summary>Every channel at the loudest one's level (left and right even, the level you hear stays the same).</summary>
+    public static IReadOnlyList<double> EvenLevels(IReadOnlyList<double> levels)
+    {
+        var max = levels.Count == 0 ? 0 : levels.Max();
+        return levels.Select(_ => max).ToArray();
+    }
+
+    /// <summary>Channel levels in the journal: "0.500,0.120".</summary>
+    public static string LevelsText(IReadOnlyList<double> levels) => string.Join(",", levels.Select(l => l.ToString("0.000", CultureInfo.InvariantCulture)));
+
+    public static IReadOnlyList<double>? ParseLevels(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return null;
+        var parts = text.Split(',');
+        if (parts.Length is < 2 or > 16) return null;
+        var list = new double[parts.Length];
+        for (var i = 0; i < parts.Length; i++)
+            if (!double.TryParse(parts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out list[i]) || list[i] is < 0 or > 1) return null;
+        return list;
+    }
 
     public static bool IsServiceFix(RemediationKind k) =>
         k is RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic;
@@ -263,6 +288,20 @@ public sealed class AudioFixService(IAudioEndpointControl? control, ICapturePriv
                         return Outcome.Fail($"The volume of {name} didn't stay at {Pct(to)}: the sound driver's own app may be setting it.");
                     return new(true, $"Raised {name} from {Pct(was.Value)} to {Pct(to)}.",
                         [Rec(ChangeKind.AudioEndpoint, $"{a.Target}|{AudioTargets.Volume}", was.Value.ToString("0.000", CultureInfo.InvariantCulture), $"{name} volume raised to {Pct(to)} (was {Pct(was.Value)})")]);
+                }
+                case RemediationKind.EvenAudioBalance:
+                {
+                    if (!AudioTargets.IsEndpointId(a.Target)) return Outcome.Fail("That isn't a sound device.");
+                    var name = NameOf(a, a.Target);
+                    var was = control.GetChannelLevels(a.Target);
+                    if (was is null) return Outcome.Fail($"Couldn't read the left and right levels of {name}.");
+                    var even = EvenLevels(was);
+                    if (even.SequenceEqual(was)) return new(true, $"Left and right are already even on {name}.", []);
+                    control.SetChannelLevels(a.Target, even);
+                    if (control.GetChannelLevels(a.Target) is not { } now || now.Zip(even).Any(p => Math.Abs(p.First - p.Second) > 0.02))
+                        return Outcome.Fail($"The balance of {name} didn't stay even: the sound driver's own app may be setting it.");
+                    return new(true, $"Evened out the balance of {name} (left {Pct(was[0])}, right {Pct(was[1])} before).",
+                        [Rec(ChangeKind.AudioEndpoint, $"{a.Target}|{AudioTargets.Balance}", LevelsText(was), $"{name} balance evened out (was left {Pct(was[0])}, right {Pct(was[1])})")]);
                 }
                 case RemediationKind.SetDefaultAudioEndpoint:
                 {
@@ -424,6 +463,11 @@ public sealed class AudioFixService(IAudioEndpointControl? control, ICapturePriv
                     if (!double.TryParse(c.Previous, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) || v is < 0 or > 1) return Fail("The old volume wasn't recorded.");
                     control.SetVolume(id, v);
                     return Ok($"{name} back at {Pct(v)}.");
+                case AudioTargets.Balance:
+                    if (ParseLevels(c.Previous) is not { } old) return Fail("The old balance wasn't recorded.");
+                    if (control.GetChannelLevels(id) is not { } cur || cur.Count != old.Count) return Gone($"{name} has different channels now, so its balance was left as is.");
+                    control.SetChannelLevels(id, old);
+                    return Ok($"{name} balance put back.");
                 case AudioTargets.State:
                     if (!control.CanChangeSettings) return Fail("Windows doesn't let this app change that sound setting on this PC.");
                     control.SetEnabled(id, false);

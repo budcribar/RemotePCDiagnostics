@@ -32,10 +32,17 @@ public static class InteractiveExport
     private static string? V(string? v) => AreaReportExport.Text(v, AreaReportExport.MaxValueLength);
     private static string? T(string? v) => AreaReportExport.Text(v, AreaReportExport.MaxTextLength);
 
-    public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker), Json);
+    public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help), Json);
 
-    public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker) => new
+    /// <summary>The Sound check pane's helper lists: what it shows and why (Can't hear sound, or only one side heard).</summary>
+    /// <param name="Mode">"cant-hear", "one-side" or null when no list shows.</param>
+    /// <param name="Steps">The Sound check rows listed, in order (title, text, level, and their fix kinds).</param>
+    public sealed record SoundCheckHelp(string? Mode, bool Reading, IReadOnlyList<SoundCheckStep> Steps, bool ServicesOk);
+
+    public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -52,6 +59,7 @@ public static class InteractiveExport
             Webcam(page, webcam),
             SpeakerToMic(page, speakerToMic),
             MicToSpeaker(page, micToSpeaker),
+            SoundCheckTest(page, soundCheck ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.SoundCheck), false), help),
         },
     };
 
@@ -204,6 +212,50 @@ public static class InteractiveExport
         };
     }
 
+    private static object SoundCheckTest(PageState page, ModuleState m, SoundCheckHelp? help)
+    {
+        var r = m.Result;
+        var rep = r.Payload as SoundCheckReport;
+        return new
+        {
+            id = "soundcheck",
+            name = "Sound check (left and right)",
+            @checked = page.CheckedTestIds.Contains("soundcheck"),
+            open = page.SelectedTestId == "soundcheck",
+            state = r.Status == DiagnosticStatus.Running ? "running" : rep?.Answer is not null || m.PersonEntered ? "done"
+                : rep is not null ? "waiting-for-person-verdict" : "waiting-for-person",
+            runId = r.RunId,
+            output = V(rep?.Output),
+            measured = rep is null ? null : new { channels = rep.Channels, notice = T(rep.Notice) },
+            heard = rep?.Answer switch
+            {
+                SoundCheckAnswer.Both => "both", SoundCheckAnswer.OnlyLeft => "only-left", SoundCheckAnswer.OnlyRight => "only-right",
+                SoundCheckAnswer.Nothing => "nothing", _ => null,
+            },
+            personOutcome = rep?.Answer is not null || m.PersonEntered ? Person(r.Status) : null,
+            message = T(r.Message),
+            help = help is null || help.Mode is null ? null : new
+            {
+                mode = help.Mode,
+                reading = help.Reading,
+                servicesOk = help.ServicesOk,
+                steps = help.Steps.Select(s => new
+                {
+                    card = s.CardId,
+                    key = s.Row.Key,
+                    title = V(s.Title),
+                    text = V(s.Text),
+                    level = s.Row.Level.ToString().ToLowerInvariant(),
+                    fixes = s.Row.Actions?.Select(a => new { kind = a.Kind.ToString(), button = V(a.ButtonText), target = a.Target }).ToList(),
+                }).ToList(),
+            },
+            instructions = "Choose the speaker, then Play test sound: a chime plays on the left, then the right. The person says what they "
+                + "heard (Heard both, Only left, Only right, Nothing). Only one side lists the balance and mono audio; Nothing, or Can't hear "
+                + "sound, lists the Sound check problems in the order to fix them, with their fix buttons.",
+            reportIf = ReportIf.SoundCheck,
+        };
+    }
+
     /// <summary>
     /// When an agent coaching a test should report a learning (Admin's report_learning tool): the test's instructions or screen did not
     /// match what the person has. One line each, written for the agent, not the person.
@@ -218,6 +270,8 @@ public static class InteractiveExport
             + "with what the person sees.";
         public const string SpeakerToMic = "The person's speaker or microphone is not listed, they hear the tone but it is not detected, or "
             + "the test cannot start.";
+        public const string SoundCheck = "The person hears the chime on the wrong side, hears nothing although the Can't hear sound list is "
+            + "empty, or the list shows a problem the person doesn't have.";
         public const string MicToSpeaker = "The person's microphone or speaker is not listed, there is no playback, or feedback makes the test "
             + "unusable.";
     }
