@@ -654,6 +654,8 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public string? ExperimentStep { get; private set; }
     public BenchmarkExperimentResult? LastExperiment { get; private set; }
 
+    public bool HasUnmountedDevDrive { get; private set; }
+
     /// <summary>Builds the current PC's improvement context for the Benchmark page goal checklist.</summary>
     public BenchmarkImprovementContext GetImprovementContext(
         string? existingDevDriveRoot = null,
@@ -663,7 +665,9 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         bool? storageSenseEnabled = null)
     {
         var hasDev = IsKindAvailable(BenchmarkKind.DeveloperCSharp);
-        var devRoot = existingDevDriveRoot ?? ExistingDevDriveRoot ?? TryFindExistingDevDriveRoot();
+        var (detectedRoot, unmounted) = TryFindExistingDevDrive();
+        var devRoot = existingDevDriveRoot ?? ExistingDevDriveRoot ?? detectedRoot;
+        var hasUnmounted = string.IsNullOrWhiteSpace(devRoot) && (HasUnmountedDevDrive || unmounted);
         var toolchains = DetectedToolchains;
         var caches = hasDev
             ? DevDrivePackageCaches.CollectCaches(toolchains, devRoot, userEnv)
@@ -681,27 +685,67 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             ActivePowerPlan: activePowerPlan ?? latest?.Conditions.PowerPlan,
             StorageSenseEnabled: storageSenseEnabled,
             DotNetSdkMajorVersion: dotnetMajor,
-            InstalledDotNetSdkMajors: installedMajors);
+            InstalledDotNetSdkMajors: installedMajors,
+            HasUnmountedDevDrive: hasUnmounted);
     }
 
-    private static string? TryFindExistingDevDriveRoot()
-    {
-        if (!OperatingSystem.IsWindows()) return null;
-        DriveInfo[] drives;
-        try { drives = DriveInfo.GetDrives(); }
-        catch { return null; }
+    private static string? TryFindExistingDevDriveRoot() => TryFindExistingDevDrive().Root;
 
-        foreach (var d in drives)
+    /// <summary>
+    /// Detects an existing ReFS Dev Drive via <see cref="DriveInfo"/> (drive letters) and WMI <c>Win32_Volume</c>
+    /// (which also discovers folder-mounted Dev Drives like <c>C:\DevDrive\</c> and unlettered Dev Drive volumes).
+    /// </summary>
+    private static (string? Root, bool HasUnmounted) TryFindExistingDevDrive()
+    {
+        if (!OperatingSystem.IsWindows()) return (null, false);
+        try
         {
-            try
+            foreach (var d in DriveInfo.GetDrives())
             {
-                if (!d.IsReady) continue;
-                if (d.DriveFormat.Contains("ReFS", StringComparison.OrdinalIgnoreCase))
-                    return DevDrivePackageCaches.NormalizeDriveRoot(d.Name);
+                try
+                {
+                    if (!d.IsReady) continue;
+                    if (d.DriveFormat.Contains("ReFS", StringComparison.OrdinalIgnoreCase))
+                        return (DevDrivePackageCaches.NormalizeDriveRoot(d.Name), false);
+                }
+                catch { }
             }
-            catch { }
         }
-        return null;
+        catch { }
+
+        return TryFindExistingDevDriveWmi();
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static (string? Root, bool HasUnmounted) TryFindExistingDevDriveWmi()
+    {
+        var sawUnmountedRefs = false;
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                "SELECT Name, DriveLetter, FileSystem, Label FROM Win32_Volume WHERE FileSystem = 'ReFS'");
+            using var results = searcher.Get();
+            foreach (System.Management.ManagementObject vol in results)
+            {
+                using (vol)
+                {
+                    var letter = vol["DriveLetter"] as string;
+                    if (!string.IsNullOrWhiteSpace(letter))
+                    {
+                        var norm = DevDrivePackageCaches.NormalizeDriveRoot(letter);
+                        if (norm.Length > 0) return (norm, false);
+                    }
+                    var name = (vol["Name"] as string)?.Trim();
+                    if (!string.IsNullOrWhiteSpace(name) && !name.StartsWith(@"\\?\", StringComparison.Ordinal) && name.Length >= 3 && name[1] == ':')
+                    {
+                        return (name.TrimEnd('\\') + "\\", false);
+                    }
+                    sawUnmountedRefs = true;
+                }
+            }
+        }
+        catch { }
+        return (null, sawUnmountedRefs);
     }
 
     public IReadOnlyList<SavedBenchmarkBaseline> SavedBaselines => _state.Baselines;

@@ -43,7 +43,8 @@ public sealed record BenchmarkImprovementContext(
     string? ActivePowerPlan = null,
     bool? StorageSenseEnabled = null,
     int? DotNetSdkMajorVersion = null,
-    IReadOnlyList<int>? InstalledDotNetSdkMajors = null);
+    IReadOnlyList<int>? InstalledDotNetSdkMajors = null,
+    bool HasUnmountedDevDrive = false);
 
 /// <summary>
 /// Builds the goal-specific list of improvements that can be checked before clicking Start
@@ -68,9 +69,11 @@ public static class BenchmarkImprovements
 
             var hasDevDrive = !string.IsNullOrWhiteSpace(ctx.ExistingDevDriveRoot);
             var devRoot = hasDevDrive ? DevDrivePackageCaches.NormalizeDriveRoot(ctx.ExistingDevDriveRoot!) : null;
+            if (hasDevDrive && string.IsNullOrEmpty(devRoot))
+                devRoot = ctx.ExistingDevDriveRoot!.Trim().TrimEnd('\\') + "\\";
 
-            // Only offer to create a persistent Dev Drive when the PC doesn't already have one.
-            if (!hasDevDrive)
+            // Only offer to create a persistent Dev Drive when the PC doesn't already have one (mounted or unlettered).
+            if (!hasDevDrive && !ctx.HasUnmountedDevDrive)
             {
                 list.Add(new BenchmarkImprovement(
                     CreateDevDriveId,

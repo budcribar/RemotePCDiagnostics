@@ -360,6 +360,12 @@ else if (stage == "modify" && before is not null)
                 {
                     <div class="meta" data-testid="bench-already-applied">Already in place: @string.Join(" · ", alreadyNotes)</div>
                 }
+                @if (activeGoal == BenchmarkGoals.Build && impCtx.HasUnmountedDevDrive && existingDevDriveRoot is null)
+                {
+                    <div class="notice" data-testid="bench-unmounted-devdrive" style="margin-top:6px">
+                        Dev Drive detected, but it has no drive letter assigned. Assign a drive letter (e.g. D:) in Windows Settings → System → Storage → Disks &amp; volumes → Properties to use it for builds and package caches.
+                    </div>
+                }
             </div>
             <label class="bench-kind meta">
                 <input type="checkbox" data-testid="bench-manual-mode" checked="@_manualChangesMode" @onchange="() => _manualChangesMode = !_manualChangesMode" />
