@@ -359,7 +359,8 @@ public sealed class ChecksScreenState
         Raise();
     }
 
-    /// <summary>Runs the selected modules of a group sequentially. Stress tests use the stress suite (mode, overheat/error stop);
+    /// <summary>Runs the selected modules of a group: checks up to <see cref="MaxConcurrentChecks"/> at once (dependencies first), stress
+    /// tests one after another. Stress tests use the stress suite (mode, overheat/error stop);
     /// the audio, webcam and NPU tests run on their own afterwards when ticked. No-op when anything is already running.</summary>
     public Task RunAllChecksAsync() => RunGroupAsync(CheckGroup.Checks, allModules: true);
 
@@ -404,24 +405,43 @@ public sealed class ChecksScreenState
         {
             if (g == CheckGroup.Checks)
             {
-                for (var i = 0; i < selected.Count && !cts.IsCancellationRequested; i++)
+                var running = new List<IDiagnosticModule>();
+                var startedCount = 0;
+                void Started(IDiagnosticModule mod)
                 {
-
-                    var mod = selected[i];
                     UpdateCheckItem(mod.Name, item => item with { Status = DiagnosticStatus.Running, Message = "Running…" });
-                    SetProgress(g, i + 1, selected.Count, mod);
-                    var progress = CheckProgressExtensions.Create(cp =>
-                    {
-                        UpdateCheckItem(mod.Name, item => item with { Status = DiagnosticStatus.Running, Message = cp.Message, Step = cp.Step, Total = cp.Total });
-                        Raise();
-                    });
-                    try
-                    {
-                        var r = await _diag.RunAsync(mod.Name, progress, cts.Token).ConfigureAwait(false);
-                        UpdateCheckItem(mod.Name, item => item with { Status = r.Status, Message = r.Message, Step = item.Total > 0 ? item.Total : 1, Total = item.Total > 0 ? item.Total : 1 });
-                    }
-                    catch (Exception ex) { Failed(mod, ex); }
+                    lock (_gate) { running.Add(mod); startedCount++; }
+                    ShowRunning(g, selected.Count, running, startedCount, mod);
                 }
+                IProgress<string> ProgressFor(IDiagnosticModule mod) => CheckProgressExtensions.Create(cp =>
+                {
+                    UpdateCheckItem(mod.Name, item => item with { Status = DiagnosticStatus.Running, Message = cp.Message, Step = cp.Step, Total = cp.Total });
+                    Raise();
+                });
+                async Task RunBatchAsync(IReadOnlyList<IDiagnosticModule> batch, int limit)
+                {
+                    if (batch.Count == 0 || cts.IsCancellationRequested) return;
+                    var runs = _diag.StartChecks(batch, limit, Started, ProgressFor, cts.Token);
+                    await Task.WhenAll(batch.Select(async mod =>
+                    {
+                        try
+                        {
+                            var r = await runs[mod.Name].ConfigureAwait(false);
+                            UpdateCheckItem(mod.Name, item => item with { Status = r.Status, Message = r.Message, Step = item.Total > 0 ? item.Total : 1, Total = item.Total > 0 ? item.Total : 1 });
+                        }
+                        catch (Exception ex) { Failed(mod, ex); }
+                        finally
+                        {
+                            bool wasRunning;
+                            lock (_gate) wasRunning = running.Remove(mod);
+                            if (wasRunning && !cts.IsCancellationRequested) ShowRunning(g, selected.Count, running, startedCount, null);
+                        }
+                    })).ConfigureAwait(false);
+                }
+                // Hardware inventory first, on its own, so the Dashboard's hardware cards fill in right away; then the rest side by side.
+                var first = selected.Where(IsRunFirst).ToList();
+                await RunBatchAsync(first, 1).ConfigureAwait(false);
+                await RunBatchAsync(selected.Where(m => !IsRunFirst(m)).ToList(), MaxConcurrentChecks).ConfigureAwait(false);
                 if (selected.Count > 0 && !cts.IsCancellationRequested)
                     await RunMemoryAndStorageScansAsync(cts.Token, errors).ConfigureAwait(false);
             }
@@ -546,6 +566,25 @@ public sealed class ChecksScreenState
     public const string UnavailableTooltip = "Unavailable while other checks are running";
 
     public Task RunSingleAsync(IDiagnosticModule m) => CanRunSingle(m) ? _diag.RunAsync(m.Name, null, CancellationToken.None) : Task.CompletedTask;
+
+    /// <summary>Run all and Run selected start this many checks at once (the launch run used the same limit), so an older PC stays
+    /// responsive while the run still finishes in a fraction of the one-at-a-time time.</summary>
+    public const int MaxConcurrentChecks = 3;
+
+    /// <summary>Checks a group run starts on their own before the others: hardware inventory (Osquery).</summary>
+    private static bool IsRunFirst(IDiagnosticModule m) => string.Equals(m.Name, ModuleSlugs.Osquery, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Banner while checks run side by side: how many have started, and the ones running now ("Network, Services").</summary>
+    private void ShowRunning(CheckGroup g, int total, List<IDiagnosticModule> running, int startedCount, IDiagnosticModule? justStarted)
+    {
+        lock (_gate)
+        {
+            if (running.Count == 0) return;
+            Progress = new GroupRunProgress(g, startedCount, total, string.Join(", ", running.Select(m => m.DisplayName)));
+        }
+        if (justStarted is not null) SelectedModule = justStarted.Name;
+        Raise();
+    }
 
     private void SetProgress(CheckGroup g, int i, int n, IDiagnosticModule m)
     {
