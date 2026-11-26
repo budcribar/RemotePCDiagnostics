@@ -74,31 +74,96 @@ internal static class WindowsMlNpuRunner
             }
 
             double firstMs = firstSw.Elapsed.TotalMilliseconds;
-            int iterations = 1;
-            var loopSw = Stopwatch.StartNew();
-            while (iterations < req.MaxIterations && deadline.Elapsed < req.Budget)
-            {
-                ct.ThrowIfCancellationRequested();
-                using var results = session.Run(runOptions, inputs, session.OutputNames);
-                iterations++;
-            }
-            loopSw.Stop();
+            long equivalentIterations = 1;
+            double totalComputeMs = firstMs;
 
-            double avgMs = iterations == 1
-                ? firstMs
-                : (firstMs + loopSw.Elapsed.TotalMilliseconds) / iterations;
+            // Step 2: Sustained high-load stress loop using a chained 4x 1024x1024 MatMul graph (256x more FLOPs per
+            // dispatch than 256x256, ~4 MB per tensor) with a pre-allocated output buffer to keep NPU utilization near 90%+.
+            const int stressN = 1024;
+            const int stressChain = 4;
+            if (deadline.Elapsed < req.Budget && !ct.IsCancellationRequested)
+            {
+                bool ranHeavyStress = false;
+                try
+                {
+                    var stressModel = OnnxMatMulBuilder.BuildFloat32MatMul(stressN, stressChain);
+                    using var stressOpts = new SessionOptions();
+                    stressOpts.AddSessionConfigEntry("session.disable_cpu_ep_fallback", "1");
+                    stressOpts.AppendExecutionProvider(env, [selected], new Dictionary<string, string>());
+                    using var stressSession = new InferenceSession(stressModel, stressOpts);
+
+                    var stressA = new float[stressN * stressN];
+                    var stressB = new float[stressN * stressN];
+                    var stressOut = new float[stressN * stressN];
+                    // Small normalized values keep chained products well-conditioned (no Inf/NaN traps).
+                    float scale = 1f / stressN;
+                    for (int i = 0; i < stressA.Length; i++)
+                    {
+                        stressA[i] = ((i % 97) - 48) * scale;
+                        stressB[i] = (((i * 7) % 89) - 44) * scale;
+                    }
+
+                    long[] stressShape = [stressN, stressN];
+                    using var sOrtA = OrtValue.CreateTensorValueFromMemory(stressA, stressShape);
+                    using var sOrtB = OrtValue.CreateTensorValueFromMemory(stressB, stressShape);
+                    using var sOrtC = OrtValue.CreateTensorValueFromMemory(stressOut, stressShape);
+                    string[] inNames = ["A", "B"];
+                    OrtValue[] inVals = [sOrtA, sOrtB];
+                    string[] outNames = ["C"];
+                    OrtValue[] outVals = [sOrtC];
+
+                    long opsPerCall = stressChain * (long)(stressN / n) * (stressN / n) * (stressN / n);
+                    var loopSw = Stopwatch.StartNew();
+                    int heavyCalls = 0;
+                    while (heavyCalls < req.MaxIterations && deadline.Elapsed < req.Budget)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        stressSession.Run(runOptions, inNames, inVals, outNames, outVals);
+                        heavyCalls++;
+                        equivalentIterations += opsPerCall;
+                    }
+                    loopSw.Stop();
+                    if (heavyCalls > 0)
+                    {
+                        totalComputeMs += loopSw.Elapsed.TotalMilliseconds;
+                        ranHeavyStress = true;
+                        log($"NpuTest/WinML: heavy stress ({stressChain}x {stressN}x{stressN}) ran {heavyCalls} batches ({equivalentIterations} eq. {n}x{n} ops) in {loopSw.Elapsed.TotalSeconds:0.0}s");
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception ex)
+                {
+                    logWarn($"NpuTest/WinML: heavy {stressN}x{stressN} stress graph unavailable ({ex.Message}); falling back to {n}x{n} loop.");
+                }
+
+                if (!ranHeavyStress)
+                {
+                    var loopSw = Stopwatch.StartNew();
+                    while (equivalentIterations < req.MaxIterations && deadline.Elapsed < req.Budget)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        using var results = session.Run(runOptions, inputs, session.OutputNames);
+                        equivalentIterations++;
+                    }
+                    loopSw.Stop();
+                    totalComputeMs += loopSw.Elapsed.TotalMilliseconds;
+                }
+            }
+
+            int reportedIterations = (int)Math.Min(int.MaxValue, equivalentIterations);
+            double avgMs = totalComputeMs / Math.Max(1, equivalentIterations);
 
             var adapterLabel = string.IsNullOrWhiteSpace(selected.HardwareDevice.Vendor)
                 ? $"Windows ML · {selected.EpName}"
                 : $"Windows ML · {selected.EpName} ({selected.HardwareDevice.Vendor})";
 
-            log($"NpuTest/WinML: {selected.EpName} completed {iterations} runs (first {firstMs:0.0} ms, avg {avgMs:0.0} ms)");
+            log($"NpuTest/WinML: {selected.EpName} completed {reportedIterations} eq. runs (first {firstMs:0.0} ms, avg {avgMs:0.000} ms)");
             return new NpuWorkloadResult(
                 NpuWorkloadKind.MatMulComputeShader,
                 output,
                 firstMs,
                 avgMs,
-                iterations,
+                reportedIterations,
                 adapterLabel,
                 Note: $"Windows ML ({selected.EpName})");
         }

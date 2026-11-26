@@ -147,6 +147,12 @@ public class NpuTests
         // Field 1 varint = IR version 8 (tag 0x08, value 0x08).
         Assert.Equal(0x08, bytes[0]);
         Assert.Equal(0x08, bytes[1]);
+
+        var chained = OnnxMatMulBuilder.BuildFloat32MatMul(1024, chainDepth: 4);
+        var chainedAscii = System.Text.Encoding.ASCII.GetString(chained);
+        Assert.Contains("T1", chainedAscii);
+        Assert.Contains("T3", chainedAscii);
+        Assert.True(chained.Length > bytes.Length);
     }
 
     [Fact]
