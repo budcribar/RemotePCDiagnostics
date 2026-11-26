@@ -15,9 +15,10 @@
 @* Two pages share this screen: /checks (read-only system checks) and /stress (stress tests, audio, webcam, NPU). The list is on the left,
    the selected test's real page on the right. *@
 @{
-    var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled, CheckEnableRules.IsTurnedOff(r)); }), Diagnostics.LastStressSuiteProgress);
+    var pageModules = Screen.Modules(_group);
+    var summary = DashboardSummary.Build(pageModules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled, CheckEnableRules.IsTurnedOff(r)); }), Diagnostics.LastStressSuiteProgress);
     // Only this page's tests count: the auto-run sensor and inventory checks alone don't make the Stress tests page say "healthy".
-    var anyResult = Screen.Modules(_group).Any(m => { var r = Store.Get(m.Name); return r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running) && !CheckEnableRules.IsTurnedOff(r); });
+    var anyResult = pageModules.Any(m => { var r = Store.Get(m.Name); return r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running) && !CheckEnableRules.IsTurnedOff(r); });
     var banner = ChecksBanner.Build(summary, Screen.Progress, anyResult, _group == CheckGroup.Stress ? "No tests run in this session" : "Not checked yet");
     var selected = Screen.SelectedIn(_group);
     var checkChoices = _group == CheckGroup.Checks ? Diagnostics.CheckChoices() : [];
@@ -45,7 +46,7 @@
             <button class="btn-small" data-testid="checks-collapse-all" @onclick="() => Screen.SetAllCollapsed(true)">Collapse all</button>
         </span>
     </div>
-    @if (_group == CheckGroup.Stress || Screen.Progress is not null)
+    @if ((_group == CheckGroup.Stress && anyResult) || Screen.Progress is not null)
     {
     <section class="banner banner-@banner.Kind ct-banner" data-testid="checks-banner">
         <span class="banner-icon"><Icon Name="@(banner.Kind is "warn" or "err" ? "crash" : "sec")" Size="22" /></span>
