@@ -262,6 +262,14 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
                 headline = "Antivirus state could not be confirmed";
                 note = $"Registered antivirus ({string.Join(", ", unconfirmed.Select(p => p.Name))}) was found, but Windows Security Center did not confirm whether real-time protection is on.";
             }
+            else if (f.DefenderMode is null && products.Any(p => p.IsDefender && p.State == AntivirusProductState.On))
+            {
+                // Windows Security Center says Defender is on, but Defender's own status couldn't be read (its WMI namespace isn't
+                // there): trust Security Center rather than report no antivirus.
+                level = AreaLevel.Ok;
+                headline = "Microsoft Defender is protecting this PC";
+                note = "Windows Security reports Microsoft Defender on. Its settings couldn't be read on this PC.";
+            }
             else if (f.AntivirusInventoryStatus == AntivirusInventoryStatus.Ok || f.DefenderMode is not null)
             {
                 level = AreaLevel.Error;

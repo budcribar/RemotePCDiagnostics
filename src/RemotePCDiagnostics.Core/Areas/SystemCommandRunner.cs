@@ -10,11 +10,16 @@ public sealed class SystemCommandRunner(
     TimeSpan? timeout = null,
     IElevatedCommandBridge? elevatedBridge = null,
     Func<bool>? isProcessElevated = null,
-    IAgentNativeOps? nativeOps = null)
+    IAgentNativeOps? nativeOps = null,
+    bool? scripted = null)
 {
     private readonly IProcessLauncher _launcher = launcher ?? new SystemProcessLauncher();
     public IProcessLauncher Launcher => _launcher;
-    public bool IsScripted => _launcher is not SystemProcessLauncher;
+    /// <summary>Whether the tools' answers are scripted (tests, a replayed recording) rather than this PC's. A recording launcher around the
+    /// real one passes <c>scripted: false</c>, so checks behave as they do without it.</summary>
+    public bool IsScripted => scripted ?? _launcher is not SystemProcessLauncher;
+    public Func<bool> IsProcessElevatedCheck => _isProcessElevated;
+    public IAgentNativeOps? NativeOps => nativeOps;
     private readonly Func<bool> _isProcessElevated = isProcessElevated ?? ElevationService.DetectProcessElevated;
     public TimeSpan Timeout { get; } = timeout ?? TimeSpan.FromSeconds(60);
     public ILogger? Log { get; } = log;
