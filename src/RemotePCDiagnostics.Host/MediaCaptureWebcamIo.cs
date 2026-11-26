@@ -50,7 +50,7 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
         return Deny(Registry.LocalMachine, ConsentKey) || Deny(Registry.CurrentUser, ConsentKey) || Deny(Registry.CurrentUser, ConsentKey + @"\NonPackaged");
     }
 
-    public async Task<WebcamCaptureResult> CaptureAsync(WebcamCaptureRequest req, CancellationToken ct)
+    public async Task<WebcamCaptureResult> CaptureAsync(WebcamCaptureRequest request, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         string? note = null;
@@ -60,8 +60,8 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
         try
         {
             MediaFrameSource? source;
-            (capture, source) = await OpenAsync(req.DeviceId, MediaCaptureSharingMode.ExclusiveControl, ct).ConfigureAwait(false);
-            var format = source is null ? null : PickFormat(source, req);
+            (capture, source) = await OpenAsync(request.DeviceId, MediaCaptureSharingMode.ExclusiveControl, ct).ConfigureAwait(false);
+            var format = source is null ? null : PickFormat(source, request);
             if (source is not null && format is not null)
             {
                 try { await source.SetFormatAsync(format).AsTask(ct).ConfigureAwait(false); }
@@ -74,7 +74,7 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
                 // Another app holds the camera: try read-only sharing (no format change) before calling it busy.
                 Log($"start {status}, retrying shared read-only");
                 DisposeCapture(ref reader, ref capture);
-                (capture, source) = await OpenAsync(req.DeviceId, MediaCaptureSharingMode.SharedReadOnly, ct).ConfigureAwait(false);
+                (capture, source) = await OpenAsync(request.DeviceId, MediaCaptureSharingMode.SharedReadOnly, ct).ConfigureAwait(false);
                 reader = source is null ? null : await capture.CreateFrameReaderAsync(source, MediaEncodingSubtypes.Bgra8).AsTask(ct).ConfigureAwait(false);
                 status = reader is null ? MediaFrameReaderStartStatus.UnknownFailure : await reader.StartAsync().AsTask(ct).ConfigureAwait(false);
                 if (status != MediaFrameReaderStartStatus.Success) throw new WebcamBusyException($"Frame reader start: {status}");
@@ -123,14 +123,14 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
                             if (luma is null || luma.Length != tw * th) luma = new byte[tw * th];
                             WebcamMath.LumaFromBgra(bgra, bw, bh, bw * 4, luma);
                             preview?.ShowFrame(bgra, bw, bh, sw.Elapsed);
-                            req.OnFrame(new WebcamFrame(tw, th, luma, sw.Elapsed));
+                            request.OnFrame(new WebcamFrame(tw, th, luma, sw.Elapsed));
                         }
                         finally { conv?.Dispose(); bmp.Dispose(); }
                     }
                     catch (Exception ex) { failure ??= ex; }
                 }
             };
-            try { await Task.Delay(req.Duration, ct).ConfigureAwait(false); }
+            try { await Task.Delay(request.Duration, ct).ConfigureAwait(false); }
             finally
             {
                 lock (gate) stopped = true;

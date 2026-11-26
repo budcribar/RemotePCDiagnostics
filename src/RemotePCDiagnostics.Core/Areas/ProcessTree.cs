@@ -65,6 +65,26 @@ public static class ProcessTree
         var byPid = new Dictionary<int, ProcessResourceRow>();
         foreach (var p in list) byPid.TryAdd(p.Pid, p);
 
+        var groups = GroupProcessesByRoot(list, byPid);
+        var apps = new List<AppTreeUsage>(groups.Count);
+        foreach (var (root, members) in groups.Values)
+        {
+            var (cpu, disk) = SumMemberRates(members, rates);
+            var helpers = members.Where(m => !m.Name.Equals(root.Name, StringComparison.OrdinalIgnoreCase))
+                .GroupBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(h => (h.First().Name, h.Count()))
+                .OrderByDescending(h => h.Item2).ThenBy(h => h.Item1, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            apps.Add(new(root.Name, root.Pid, members.Count,
+                members.Sum(m => m.ResidentBytes), members.Sum(m => Math.Max(0, m.PrivateBytes)),
+                members.Sum(m => m.CpuTimeMs), members.Sum(m => m.DiskBytes), cpu, disk, helpers));
+        }
+        return apps;
+    }
+
+    private static Dictionary<string, (ProcessResourceRow Root, List<ProcessResourceRow> Members)> GroupProcessesByRoot(
+        List<ProcessResourceRow> list, Dictionary<int, ProcessResourceRow> byPid)
+    {
         var groups = new Dictionary<string, (ProcessResourceRow Root, List<ProcessResourceRow> Members)>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in list)
         {
@@ -77,33 +97,22 @@ public static class ProcessTree
                 g = groups[root.Name] = (root, g.Members);
             g.Members.Add(p);
         }
+        return groups;
+    }
 
-        var apps = new List<AppTreeUsage>(groups.Count);
-        foreach (var (root, members) in groups.Values)
+    private static (double? Cpu, long? Disk) SumMemberRates(
+        List<ProcessResourceRow> members, IReadOnlyDictionary<int, ProcessRate>? rates)
+    {
+        if (rates is null) return (null, null);
+        double cpu = 0;
+        long disk = 0;
+        foreach (var m in members)
         {
-            double? cpu = null;
-            long? disk = null;
-            if (rates is not null)
-            {
-                cpu = 0;
-                disk = 0;
-                foreach (var m in members)
-                {
-                    if (!rates.TryGetValue(m.Pid, out var r)) continue;
-                    cpu += r.CpuPercent;
-                    disk += r.DiskBytesPerSecond;
-                }
-            }
-            var helpers = members.Where(m => !m.Name.Equals(root.Name, StringComparison.OrdinalIgnoreCase))
-                .GroupBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
-                .Select(h => (h.First().Name, h.Count()))
-                .OrderByDescending(h => h.Item2).ThenBy(h => h.Item1, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            apps.Add(new(root.Name, root.Pid, members.Count,
-                members.Sum(m => m.ResidentBytes), members.Sum(m => Math.Max(0, m.PrivateBytes)),
-                members.Sum(m => m.CpuTimeMs), members.Sum(m => m.DiskBytes), cpu, disk, helpers));
+            if (!rates.TryGetValue(m.Pid, out var r)) continue;
+            cpu += r.CpuPercent;
+            disk += r.DiskBytesPerSecond;
         }
-        return apps;
+        return (cpu, disk);
     }
 
     /// <summary>

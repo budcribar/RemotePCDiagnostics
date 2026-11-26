@@ -170,7 +170,9 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         return true;
     }
 
-    public IReadOnlyList<BenchmarkInfo> AvailableBenchmarks =>
+    public IReadOnlyList<BenchmarkInfo> AvailableBenchmarks => GetAvailableBenchmarks();
+
+    private IReadOnlyList<BenchmarkInfo> GetAvailableBenchmarks() =>
         Benchmarks.All.Where(i => IsKindAvailable(i.Kind)).ToList();
 
     public static string FormatCountdown(TimeSpan remaining)
@@ -725,7 +727,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             using var searcher = new System.Management.ManagementObjectSearcher(
                 "SELECT Name, DriveLetter, FileSystem, Label FROM Win32_Volume WHERE FileSystem = 'ReFS'");
             using var results = searcher.Get();
-            foreach (System.Management.ManagementObject vol in results)
+            foreach (System.Management.ManagementBaseObject vol in results)
             {
                 using (vol)
                 {

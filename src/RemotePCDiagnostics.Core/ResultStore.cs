@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 
 namespace RemotePCDiagnostics.Core;
 
@@ -7,6 +8,7 @@ public sealed class ResultStore
 {
     private readonly ConcurrentDictionary<string, DiagnosticResult> _results = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DiagnosticResult> _instances = new(StringComparer.OrdinalIgnoreCase);
+    private ImmutableDictionary<string, DiagnosticResult> _snapshot = ImmutableDictionary.Create<string, DiagnosticResult>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>A module's result changed (never an instance result: pages keyed on the module name stay as they are).</summary>
     public event EventHandler<DiagnosticResult>? Changed;
@@ -22,7 +24,7 @@ public sealed class ResultStore
 
     public DiagnosticResult? GetInstance(string moduleName, string instanceKey) => _instances.GetValueOrDefault(Key(moduleName, instanceKey));
 
-    public IReadOnlyDictionary<string, DiagnosticResult> Snapshot => new Dictionary<string, DiagnosticResult>(_results);
+    public IReadOnlyDictionary<string, DiagnosticResult> Snapshot => _snapshot;
 
     public DiagnosticResult Get(string moduleName) =>
         _results.TryGetValue(moduleName, out var r) ? r : DiagnosticResult.NotRun(moduleName);
@@ -40,6 +42,7 @@ public sealed class ResultStore
             return;
         }
         _results[result.ModuleName] = result;
+        ImmutableInterlocked.Update(ref _snapshot, static (d, r) => d.SetItem(r.ModuleName, r), result);
         Changed?.Invoke(this, result);
     }
 }

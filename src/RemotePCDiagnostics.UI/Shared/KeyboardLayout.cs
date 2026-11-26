@@ -198,13 +198,15 @@ internal sealed record KeyboardLayout(string Id, string Name, int Width, IReadOn
                 ["1", "2", "3", "Enter"], ["0", "", "."],
             ];
             for (var row = 0; row < codes.Length; row++)
-            for (var col = 0; col < codes[row].Length; col++)
             {
-                var code = codes[row][col];
-                if (code.Length == 0)
-                    continue;
-                caps.Add(Key(code, labels[row][col], 650 + col * 42, 44 + row * 42,
-                    code == "Numpad0" ? 84 : 42, code is "NumpadAdd" or "NumpadEnter" ? 80 : 38));
+                for (var col = 0; col < codes[row].Length; col++)
+                {
+                    var code = codes[row][col];
+                    if (code.Length == 0)
+                        continue;
+                    caps.Add(Key(code, labels[row][col], 650 + col * 42, 44 + row * 42,
+                        code == "Numpad0" ? 84 : 42, code is "NumpadAdd" or "NumpadEnter" ? 80 : 38));
+                }
             }
         }
 

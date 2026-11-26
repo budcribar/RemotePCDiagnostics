@@ -32,7 +32,7 @@ public class SoundServiceFixTests
 
         public ServiceState State(string name) => States.TryGetValue(name, out var s) ? s : ServiceState.NotFound;
         public bool IsDisabled(string name) => Disabled.Contains(name);
-        public void Start(string name) { Calls.Add("start " + name); if (!Hangs.Contains(name)) States[name] = ServiceState.Running; }
+        public void StartService(string name) { Calls.Add("start " + name); if (!Hangs.Contains(name)) States[name] = ServiceState.Running; }
         public void Stop(string name)
         {
             Calls.Add("stop " + name);

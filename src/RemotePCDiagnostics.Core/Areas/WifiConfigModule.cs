@@ -74,76 +74,92 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
             return AreaReport.Failed("Couldn't read Wi-Fi and IP network configuration on this PC.");
 
         var cards = new List<AreaCard> { BuildWifiCard(wifi, wlanOk, bandContext), BuildIpDnsCard(ipSnap, dns, connectedAdapters) };
-        string summary;
+        var summary = BuildNetworkSummary(wifi, ipSnap, connectedAdapters);
+        var status = AreaReport.Worst(cards.Select(c => c.ErrorText is not null ? AreaLevel.Warning : c.Level));
+        return new(cards, summary, status);
+    }
+
+    private static string BuildNetworkSummary(WifiInterfaceInfo? wifi, IpConfigSnapshot? ipSnap, int connectedAdapters)
+    {
+        var summary = FormatBaseNetworkSummary(wifi, ipSnap, connectedAdapters);
+        if (ipSnap is { ProxyEnabled: true })
+            summary += $" · Proxy on ({(string.IsNullOrWhiteSpace(ipSnap.ProxyServer) ? "configured" : ipSnap.ProxyServer)})";
+        return summary;
+    }
+
+    private static string FormatBaseNetworkSummary(WifiInterfaceInfo? wifi, IpConfigSnapshot? ipSnap, int connectedAdapters)
+    {
         if (wifi is { Connected: true })
         {
             var sigText = wifi.SignalPercent is int s ? $"{s}% signal" : "connected";
             var bandText = !string.IsNullOrWhiteSpace(wifi.Band) ? $", {wifi.Band}" : "";
-            summary = $"Wi-Fi: {wifi.Ssid} ({sigText}{bandText})";
+            return $"Wi-Fi: {wifi.Ssid} ({sigText}{bandText})";
         }
-        else if (ipSnap is { Adapters.Count: > 0 })
+        if (ipSnap is { Adapters.Count: > 0 })
         {
             var primary = ipSnap.Adapters.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.Gateway)) ?? ipSnap.Adapters[0];
-            summary = $"Active: {primary.Alias} ({(string.IsNullOrWhiteSpace(primary.IPv4) ? "no IPv4" : primary.IPv4)})";
+            return $"Active: {primary.Alias} ({(string.IsNullOrWhiteSpace(primary.IPv4) ? "no IPv4" : primary.IPv4)})";
         }
-        else if (connectedAdapters > 0)
-        {
-            summary = "Connected, but IP details couldn't be read";
-        }
-        else
-        {
-            summary = "No active network connection";
-        }
-
-        if (ipSnap is { ProxyEnabled: true })
-            summary += $" · Proxy on ({(string.IsNullOrWhiteSpace(ipSnap.ProxyServer) ? "configured" : ipSnap.ProxyServer)})";
-
-        var status = AreaReport.Worst(cards.Select(c => c.ErrorText is not null ? AreaLevel.Warning : c.Level));
-        return new(cards, summary, status);
+        return connectedAdapters > 0 ? "Connected, but IP details couldn't be read" : "No active network connection";
     }
 
     private static AreaCard BuildWifiCard(WifiInterfaceInfo? wifi, bool wlanOk, WifiBandContext? bandContext)
     {
         if (!wlanOk && wifi is null)
             return AreaCard.Failed("wifi", "Wi-Fi signal & link", "Couldn't read wireless adapter status.");
-
         if (wifi is null)
-        {
-            return new("wifi", "Wi-Fi signal & link", AreaLevel.Neutral, "No Wi-Fi adapter",
-                "Desktop / Ethernet-only or wireless service stopped",
-                ["Detail", "Value"],
-                [new(AreaLevel.Neutral, ["Wi-Fi status", "No wireless interface reported by Windows"])]);
-        }
-
+            return BuildNoWifiCard();
         if (!wifi.Connected)
-        {
-            return new("wifi", "Wi-Fi signal & link", AreaLevel.Neutral, "Not connected",
-                string.IsNullOrWhiteSpace(wifi.Description) ? wifi.Name : wifi.Description,
-                ["Detail", "Value"],
-                [
-                    new(AreaLevel.Neutral, ["Adapter", string.IsNullOrWhiteSpace(wifi.Description) ? wifi.Name : wifi.Description]),
-                    new(AreaLevel.Neutral, ["State", string.IsNullOrWhiteSpace(wifi.State) ? "Disconnected" : wifi.State]),
-                ]);
-        }
+            return BuildDisconnectedWifiCard(wifi);
 
         var weak = wifi.SignalPercent is int sig && sig < WeakSignalPercent;
         var warn24Ghz = Is24Ghz(wifi) && bandContext is { SameSsidOn5Or6Ghz: true, AdapterSupports5Or6Ghz: true };
         var level = weak || warn24Ghz ? AreaLevel.Warning : AreaLevel.Ok;
-        var headline = wifi.SignalPercent is int s
-            ? $"{wifi.Ssid} · {s}% signal"
-            : wifi.Ssid;
+        var headline = wifi.SignalPercent is int s ? $"{wifi.Ssid} · {s}% signal" : wifi.Ssid;
+        var linkSpeed = FormatLinkSpeed(wifi.ReceiveRateMbps, wifi.TransmitRateMbps);
+
+        return new("wifi", "Wi-Fi signal & link", level, headline,
+            BuildWifiMeta(wifi, linkSpeed),
+            ["Detail", "Value"],
+            BuildConnectedWifiRows(wifi, weak, warn24Ghz, linkSpeed),
+            Note: BuildWifiNote(weak, warn24Ghz));
+    }
+
+    private static AreaCard BuildNoWifiCard() =>
+        new("wifi", "Wi-Fi signal & link", AreaLevel.Neutral, "No Wi-Fi adapter",
+            "Desktop / Ethernet-only or wireless service stopped",
+            ["Detail", "Value"],
+            [new(AreaLevel.Neutral, ["Wi-Fi status", "No wireless interface reported by Windows"])]);
+
+    private static AreaCard BuildDisconnectedWifiCard(WifiInterfaceInfo wifi)
+    {
+        var adapterLabel = string.IsNullOrWhiteSpace(wifi.Description) ? wifi.Name : wifi.Description;
+        return new("wifi", "Wi-Fi signal & link", AreaLevel.Neutral, "Not connected",
+            adapterLabel,
+            ["Detail", "Value"],
+            [
+                new(AreaLevel.Neutral, ["Adapter", adapterLabel]),
+                new(AreaLevel.Neutral, ["State", string.IsNullOrWhiteSpace(wifi.State) ? "Disconnected" : wifi.State]),
+            ]);
+    }
+
+    private static string BuildWifiMeta(WifiInterfaceInfo wifi, string linkSpeed)
+    {
         var metaParts = new List<string>();
         if (!string.IsNullOrWhiteSpace(wifi.Band)) metaParts.Add(wifi.Band);
         if (!string.IsNullOrWhiteSpace(wifi.RadioType)) metaParts.Add(wifi.RadioType);
-        var linkSpeed = FormatLinkSpeed(wifi.ReceiveRateMbps, wifi.TransmitRateMbps);
         if (linkSpeed != "—") metaParts.Add(linkSpeed);
+        return string.Join(" · ", metaParts);
+    }
 
+    private static List<AreaRow> BuildConnectedWifiRows(WifiInterfaceInfo wifi, bool weak, bool warn24Ghz, string linkSpeed)
+    {
         var rows = new List<AreaRow>
         {
-            new(AreaLevel.Ok, ["SSID (network)", string.IsNullOrWhiteSpace(wifi.Ssid) ? "—" : wifi.Ssid]),
+            new(AreaLevel.Ok, ["SSID (network)", NonEmptyOrDash(wifi.Ssid)]),
             new(weak ? AreaLevel.Warning : AreaLevel.Ok, ["Signal quality", wifi.SignalPercent is int sp ? $"{sp}%" : "—"]),
             new(warn24Ghz ? AreaLevel.Warning : AreaLevel.Neutral, ["Band / channel", FormatBandChannel(wifi.Band, wifi.Channel)]),
-            new(AreaLevel.Neutral, ["Wi-Fi standard", string.IsNullOrWhiteSpace(wifi.RadioType) ? "—" : wifi.RadioType]),
+            new(AreaLevel.Neutral, ["Wi-Fi standard", NonEmptyOrDash(wifi.RadioType)]),
             new(AreaLevel.Neutral, ["Link speed (RX / TX)", linkSpeed]),
         };
 
@@ -152,14 +168,17 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
             rows.Add(new(AreaLevel.Neutral, ["Link speed note", "Wi-Fi link is slower than most internet plans"]));
 
         rows.Add(new(AreaLevel.Neutral, ["Adapter", string.IsNullOrWhiteSpace(wifi.Description) ? wifi.Name : wifi.Description]));
+        return rows;
+    }
 
+    private static string NonEmptyOrDash(string value) => string.IsNullOrWhiteSpace(value) ? "—" : value;
+
+    private static string? BuildWifiNote(bool weak, bool warn24Ghz)
+    {
         var notes = new List<string>();
         if (weak) notes.Add("Signal below 50% can cause packet drops, high latency, and reduced throughput.");
         if (warn24Ghz) notes.Add("Connected on 2.4 GHz, but the same network is visible on 5 or 6 GHz and this Wi-Fi adapter supports it.");
-
-        return new("wifi", "Wi-Fi signal & link", level, headline, string.Join(" · ", metaParts),
-            ["Detail", "Value"], rows,
-            Note: notes.Count > 0 ? string.Join(" ", notes) : null);
+        return notes.Count > 0 ? string.Join(" ", notes) : null;
     }
 
     /// <summary>The adapter whose DNS gets compared: the one with a gateway (normally the one in use).</summary>
@@ -171,84 +190,72 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         if (snap is null)
             return AreaCard.Failed("ipdns", "IP, gateway, DNS & proxy", "Couldn't read IP and DNS configuration.");
 
-        var primary = snap.Adapters.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.Gateway))
-                      ?? snap.Adapters.FirstOrDefault();
-
-        var hasGateway = snap.Adapters.Any(a => !string.IsNullOrWhiteSpace(a.Gateway));
-        var hasDns = snap.Adapters.Any(a => !string.IsNullOrWhiteSpace(a.Dns));
-        var vpnAdapter = snap.Adapters.FirstOrDefault(IsLikelyVpn);
-
-        var level = AreaLevel.Ok;
-        string headline;
-        string meta;
-        if (snap.Adapters.Count == 0 && connectedAdapters > 0)
-        {
-            level = AreaLevel.Warning;
-            headline = "IP details couldn't be read";
-            meta = $"Windows reports {Plural(connectedAdapters, "adapter")} connected but returned no IP configuration. Run the check again.";
-        }
-        else if (snap.Adapters.Count == 0)
-        {
-            level = AreaLevel.Warning;
-            headline = "No active IP configuration";
-            meta = "No network adapters are currently up";
-        }
-        else if (!hasGateway)
-        {
-            level = AreaLevel.Warning;
-            headline = "No default gateway";
-            meta = primary is not null ? $"{primary.Alias} ({primary.IPv4})" : "";
-        }
-        else if (!hasDns)
-        {
-            level = AreaLevel.Warning;
-            headline = "No DNS servers configured";
-            meta = primary is not null ? $"Gateway {primary.Gateway}" : "";
-        }
-        else if (snap.ProxyEnabled)
-        {
-            level = AreaLevel.Warning;
-            headline = "System proxy enabled";
-            meta = string.IsNullOrWhiteSpace(snap.ProxyServer) ? "Proxy active in Windows settings" : $"Proxy: {snap.ProxyServer}";
-        }
-        else
-        {
-            headline = primary is not null ? $"{primary.IPv4} ({primary.Alias})" : $"{Plural(snap.Adapters.Count, "active adapter")}";
-            meta = primary is not null ? $"Gateway {primary.Gateway} · DNS {DnsSpeedTest.FormatServers(primary.Dns)}" : "";
-        }
-
-        var rows = new List<AreaRow>();
-        foreach (var a in snap.Adapters)
-        {
-            var adpLevel = string.IsNullOrWhiteSpace(a.IPv4) ? AreaLevel.Warning : AreaLevel.Neutral;
-            rows.Add(new(adpLevel, [
-                a.Alias,
-                string.IsNullOrWhiteSpace(a.IPv4) ? "None" : a.IPv4,
-                string.IsNullOrWhiteSpace(a.Gateway) ? "None" : a.Gateway,
-                string.IsNullOrWhiteSpace(a.Dns) ? "None" : DnsSpeedTest.FormatServers(a.Dns),
-                a.Description
-            ],
-            Key: a.Alias,
-            Actions: a.Alias.Length > 0 && DnsActions(a, a == primary ? dns : null) is { Count: > 0 } acts ? acts : null));
-        }
+        var primary = PrimaryAdapter(snap);
+        var (level, headline, meta) = EvaluateIpDnsHeader(snap, primary, connectedAdapters);
+        var rows = snap.Adapters.Select(a => BuildAdapterRow(a, a == primary ? dns : null)).ToList();
 
         var cardActions = new List<AreaAction>();
         if (snap.ProxyEnabled)
             cardActions.Add(new(RemediationKind.DisableSystemProxy, "Disable system proxy"));
         cardActions.Add(new(RemediationKind.FlushDnsAndRenewIp, "Flush DNS & renew IP"));
 
+        var emptyText = snap.Adapters.Count == 0
+            ? (connectedAdapters > 0 ? "Windows returned no IP configuration for the connected adapter." : "No active IP configurations.")
+            : null;
+
+        return new("ipdns", "IP, gateway, DNS & proxy", level, headline, meta,
+            ["Interface", "IPv4 address", "Gateway", "DNS servers", "Adapter"], rows,
+            EmptyText: emptyText,
+            Note: BuildIpDnsNote(snap, dns),
+            Actions: cardActions);
+    }
+
+    private static (AreaLevel Level, string Headline, string Meta) EvaluateIpDnsHeader(
+        IpConfigSnapshot snap, ActiveAdapterIp? primary, int connectedAdapters)
+    {
+        if (snap.Adapters.Count == 0)
+        {
+            return connectedAdapters > 0
+                ? (AreaLevel.Warning, "IP details couldn't be read",
+                    $"Windows reports {Plural(connectedAdapters, "adapter")} connected but returned no IP configuration. Run the check again.")
+                : (AreaLevel.Warning, "No active IP configuration", "No network adapters are currently up");
+        }
+        if (!snap.Adapters.Any(a => !string.IsNullOrWhiteSpace(a.Gateway)))
+            return (AreaLevel.Warning, "No default gateway", primary is not null ? $"{primary.Alias} ({primary.IPv4})" : "");
+        if (!snap.Adapters.Any(a => !string.IsNullOrWhiteSpace(a.Dns)))
+            return (AreaLevel.Warning, "No DNS servers configured", primary is not null ? $"Gateway {primary.Gateway}" : "");
+        if (snap.ProxyEnabled)
+            return (AreaLevel.Warning, "System proxy enabled",
+                string.IsNullOrWhiteSpace(snap.ProxyServer) ? "Proxy active in Windows settings" : $"Proxy: {snap.ProxyServer}");
+
+        var headline = primary is not null ? $"{primary.IPv4} ({primary.Alias})" : $"{Plural(snap.Adapters.Count, "active adapter")}";
+        var meta = primary is not null ? $"Gateway {primary.Gateway} · DNS {DnsSpeedTest.FormatServers(primary.Dns)}" : "";
+        return (AreaLevel.Ok, headline, meta);
+    }
+
+    private static AreaRow BuildAdapterRow(ActiveAdapterIp a, DnsComparison? dns)
+    {
+        var adpLevel = string.IsNullOrWhiteSpace(a.IPv4) ? AreaLevel.Warning : AreaLevel.Neutral;
+        var actions = a.Alias.Length > 0 && DnsActions(a, dns) is { Count: > 0 } acts ? acts : null;
+        return new(adpLevel, [
+            a.Alias,
+            string.IsNullOrWhiteSpace(a.IPv4) ? "None" : a.IPv4,
+            string.IsNullOrWhiteSpace(a.Gateway) ? "None" : a.Gateway,
+            string.IsNullOrWhiteSpace(a.Dns) ? "None" : DnsSpeedTest.FormatServers(a.Dns),
+            a.Description
+        ], Key: a.Alias, Actions: actions);
+    }
+
+    private static string? BuildIpDnsNote(IpConfigSnapshot snap, DnsComparison? dns)
+    {
         var noteParts = new List<string>();
         if (dns is not null) noteParts.Add(dns.Text);
         if (snap.ProxyEnabled)
             noteParts.Add($"System HTTP proxy is ON ({(string.IsNullOrWhiteSpace(snap.ProxyServer) ? "no address set" : snap.ProxyServer)}) — can block internet access if unexpected.");
+        var vpnAdapter = snap.Adapters.FirstOrDefault(IsLikelyVpn);
         if (vpnAdapter is not null)
             noteParts.Add($"VPN / tunnel adapter active: {vpnAdapter.Alias} ({vpnAdapter.Description}).");
-
-        return new("ipdns", "IP, gateway, DNS & proxy", level, headline, meta,
-            ["Interface", "IPv4 address", "Gateway", "DNS servers", "Adapter"], rows,
-            EmptyText: snap.Adapters.Count == 0 ? (connectedAdapters > 0 ? "Windows returned no IP configuration for the connected adapter." : "No active IP configurations.") : null,
-            Note: noteParts.Count > 0 ? string.Join(" ", noteParts) : null,
-            Actions: cardActions);
+        return noteParts.Count > 0 ? string.Join(" ", noteParts) : null;
     }
 
     /// <summary>
@@ -461,26 +468,21 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
                 matchingSsid = string.Equals(val, target, StringComparison.Ordinal);
                 continue;
             }
-            if (!matchingSsid) continue;
-
-            if (string.Equals(key, "Band", StringComparison.OrdinalIgnoreCase))
-            {
-                if (val.Contains("5 GHz", StringComparison.OrdinalIgnoreCase) || val.Contains("6 GHz", StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-            else if (string.Equals(key, "Channel", StringComparison.OrdinalIgnoreCase))
-            {
-                if (int.TryParse(val, out var ch) && ch >= 32)
-                    return true;
-            }
-            else if (string.Equals(key, "Radio type", StringComparison.OrdinalIgnoreCase))
-            {
-                if (val.Contains("802.11a", StringComparison.OrdinalIgnoreCase) && !val.Contains("802.11ax", StringComparison.OrdinalIgnoreCase))
-                    return true;
-                if (val.Contains("802.11ac", StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
+            if (matchingSsid && IsHighBandNetshProperty(key, val))
+                return true;
         }
+        return false;
+    }
+
+    private static bool IsHighBandNetshProperty(string key, string val)
+    {
+        if (string.Equals(key, "Band", StringComparison.OrdinalIgnoreCase))
+            return val.Contains("5 GHz", StringComparison.OrdinalIgnoreCase) || val.Contains("6 GHz", StringComparison.OrdinalIgnoreCase);
+        if (string.Equals(key, "Channel", StringComparison.OrdinalIgnoreCase))
+            return int.TryParse(val, out var ch) && ch >= 32;
+        if (string.Equals(key, "Radio type", StringComparison.OrdinalIgnoreCase))
+            return (val.Contains("802.11a", StringComparison.OrdinalIgnoreCase) && !val.Contains("802.11ax", StringComparison.OrdinalIgnoreCase))
+                || val.Contains("802.11ac", StringComparison.OrdinalIgnoreCase);
         return false;
     }
 

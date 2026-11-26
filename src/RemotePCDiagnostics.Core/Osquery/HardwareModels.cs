@@ -213,7 +213,8 @@ public sealed record HardwareInventory(
     public long TotalDiskBytes => Disks.Items.Sum(d => d.SizeBytes ?? 0);
 
     /// <summary>The adapters that are real hardware: those osquery flags as physical, or every adapter when none carries the flag.</summary>
-    public IReadOnlyList<NetworkAdapterInfo> PhysicalNetworkAdapters =>
+    public IReadOnlyList<NetworkAdapterInfo> PhysicalNetworkAdapters => GetPhysicalNetworkAdapters();
+    private IReadOnlyList<NetworkAdapterInfo> GetPhysicalNetworkAdapters() =>
         NetworkAdapters.Items.Any(a => a.Physical is not null) ? NetworkAdapters.Items.Where(a => a.Physical == true).ToList() : NetworkAdapters.Items;
 
     /// <summary>End-user one-liner for the Dashboard: computer, processor, memory, storage.</summary>

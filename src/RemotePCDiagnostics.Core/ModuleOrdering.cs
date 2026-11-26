@@ -60,24 +60,48 @@ public static class ModuleOrdering
         var cycles = new List<IReadOnlyList<Guid>>();
         var counter = 0;
 
-        void Visit(Guid v)
+        foreach (var id in byId.Keys.OrderBy(i => byId[i].Slug, StringComparer.OrdinalIgnoreCase))
         {
-            index[v] = low[v] = counter++;
-            stack.Push(v); onStack.Add(v);
-            foreach (var w in Before(byId[v]).Where(byId.ContainsKey))
-            {
-                if (!index.ContainsKey(w)) { Visit(w); low[v] = Math.Min(low[v], low[w]); }
-                else if (onStack.Contains(w)) low[v] = Math.Min(low[v], index[w]);
-            }
-            if (low[v] != index[v]) return;
-            var scc = new List<Guid>();
-            Guid x;
-            do { x = stack.Pop(); onStack.Remove(x); scc.Add(x); } while (x != v);
-            if (scc.Count > 1 || Before(byId[v]).Contains(v)) cycles.Add(scc);
+            if (!index.ContainsKey(id)) Visit(id, byId, index, low, onStack, stack, cycles, ref counter);
         }
-
-        foreach (var id in byId.Keys.OrderBy(i => byId[i].Slug, StringComparer.OrdinalIgnoreCase)) if (!index.ContainsKey(id)) Visit(id);
         return cycles;
+    }
+
+    private static void Visit(
+        Guid v,
+        Dictionary<Guid, ModuleDescriptor> byId,
+        Dictionary<Guid, int> index,
+        Dictionary<Guid, int> low,
+        HashSet<Guid> onStack,
+        Stack<Guid> stack,
+        List<IReadOnlyList<Guid>> cycles,
+        ref int counter)
+    {
+        index[v] = low[v] = counter++;
+        stack.Push(v);
+        onStack.Add(v);
+        foreach (var w in Before(byId[v]).Where(byId.ContainsKey))
+        {
+            if (!index.ContainsKey(w))
+            {
+                Visit(w, byId, index, low, onStack, stack, cycles, ref counter);
+                low[v] = Math.Min(low[v], low[w]);
+            }
+            else if (onStack.Contains(w))
+            {
+                low[v] = Math.Min(low[v], index[w]);
+            }
+        }
+        if (low[v] != index[v]) return;
+        var scc = new List<Guid>();
+        Guid x;
+        do
+        {
+            x = stack.Pop();
+            onStack.Remove(x);
+            scc.Add(x);
+        } while (x != v);
+        if (scc.Count > 1 || Before(byId[v]).Contains(v)) cycles.Add(scc);
     }
 
     /// <summary>A result that lets dependents run: OK or Warning, not cancelled, not unavailable, not itself skipped or blocked.</summary>

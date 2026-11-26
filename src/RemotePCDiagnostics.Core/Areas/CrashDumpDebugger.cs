@@ -86,18 +86,8 @@ public static class CrashDumpDebugger
         Func<string, string, IEnumerable<string>>? enumerateDirectories = null)
     {
         var arch = architecture ?? RuntimeInformation.OSArchitecture;
-        var sdkArch = arch switch
-        {
-            Architecture.Arm64 => "arm64",
-            Architecture.X86 => "x86",
-            _ => "x64",
-        };
-        var storeArch = arch switch
-        {
-            Architecture.Arm64 => "arm64",
-            Architecture.X86 => "x86",
-            _ => "amd64",
-        };
+        var sdkArch = arch switch { Architecture.Arm64 => "arm64", Architecture.X86 => "x86", _ => "x64" };
+        var storeArch = arch switch { Architecture.Arm64 => "arm64", Architecture.X86 => "x86", _ => "amd64" };
 
         var local = localAppData ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var pf = programFiles ?? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
@@ -107,46 +97,57 @@ public static class CrashDumpDebugger
 
         // Prefer cdb.exe for user-mode minidumps when available, falling back to kd.exe.
         string[] exeNames = userMode ? ["cdb.exe", "kd.exe"] : ["kd.exe"];
-
         foreach (var exe in exeNames)
         {
-            // 1. Microsoft Store WinDbg (App Execution Alias + package folder)
-            if (!string.IsNullOrEmpty(local))
-            {
-                var winAppsLocal = Path.Combine(local, "Microsoft", "WindowsApps");
-                var alias = Path.Combine(winAppsLocal, exe);
-                if (exists(alias)) return alias;
-
-                foreach (var pkgDir in enumDirs(winAppsLocal, "Microsoft.WinDbg_*"))
-                {
-                    var direct = Path.Combine(pkgDir, exe);
-                    if (exists(direct)) return direct;
-                    var nested = Path.Combine(pkgDir, storeArch, exe);
-                    if (exists(nested)) return nested;
-                }
-            }
-
-            if (!string.IsNullOrEmpty(pf))
-            {
-                var winAppsGlobal = Path.Combine(pf, "WindowsApps");
-                foreach (var pkgDir in enumDirs(winAppsGlobal, "Microsoft.WinDbg_*").OrderByDescending(d => d, StringComparer.OrdinalIgnoreCase))
-                {
-                    var nested = Path.Combine(pkgDir, storeArch, exe);
-                    if (exists(nested)) return nested;
-                    var direct = Path.Combine(pkgDir, exe);
-                    if (exists(direct)) return direct;
-                }
-            }
-
-            // 2. Windows SDK Debugging Tools
-            foreach (var root in new[] { pfx86, pf })
-            {
-                if (string.IsNullOrEmpty(root)) continue;
-                var candidate = Path.Combine(root, "Windows Kits", "10", "Debuggers", sdkArch, exe);
-                if (exists(candidate)) return candidate;
-            }
+            var found = FindInLocalStoreWinDbg(local, storeArch, exe, exists, enumDirs)
+                ?? FindInGlobalStoreWinDbg(pf, storeArch, exe, exists, enumDirs)
+                ?? FindInWindowsSdk(pfx86, pf, sdkArch, exe, exists);
+            if (found is not null) return found;
         }
+        return null;
+    }
 
+    private static string? FindInLocalStoreWinDbg(
+        string local, string storeArch, string exe, Func<string, bool> exists, Func<string, string, IEnumerable<string>> enumDirs)
+    {
+        if (string.IsNullOrEmpty(local)) return null;
+        var winAppsLocal = Path.Combine(local, "Microsoft", "WindowsApps");
+        var alias = Path.Combine(winAppsLocal, exe);
+        if (exists(alias)) return alias;
+
+        foreach (var pkgDir in enumDirs(winAppsLocal, "Microsoft.WinDbg_*"))
+        {
+            var direct = Path.Combine(pkgDir, exe);
+            if (exists(direct)) return direct;
+            var nested = Path.Combine(pkgDir, storeArch, exe);
+            if (exists(nested)) return nested;
+        }
+        return null;
+    }
+
+    private static string? FindInGlobalStoreWinDbg(
+        string pf, string storeArch, string exe, Func<string, bool> exists, Func<string, string, IEnumerable<string>> enumDirs)
+    {
+        if (string.IsNullOrEmpty(pf)) return null;
+        var winAppsGlobal = Path.Combine(pf, "WindowsApps");
+        foreach (var pkgDir in enumDirs(winAppsGlobal, "Microsoft.WinDbg_*").OrderByDescending(d => d, StringComparer.OrdinalIgnoreCase))
+        {
+            var nested = Path.Combine(pkgDir, storeArch, exe);
+            if (exists(nested)) return nested;
+            var direct = Path.Combine(pkgDir, exe);
+            if (exists(direct)) return direct;
+        }
+        return null;
+    }
+
+    private static string? FindInWindowsSdk(string pfx86, string pf, string sdkArch, string exe, Func<string, bool> exists)
+    {
+        foreach (var root in new[] { pfx86, pf })
+        {
+            if (string.IsNullOrEmpty(root)) continue;
+            var candidate = Path.Combine(root, "Windows Kits", "10", "Debuggers", sdkArch, exe);
+            if (exists(candidate)) return candidate;
+        }
         return null;
     }
 
@@ -165,23 +166,27 @@ public static class CrashDumpDebugger
         if (CanReadFile(full))
             return await AnalyzeLocalAsync(full, ct).ConfigureAwait(false);
 
-        if (IsAllowedSystemDumpPath(path))
-        {
-            if (commands is not null)
-            {
-                var target = OperatingSystem.IsWindows() ? full : path.Trim();
-                var pr = await commands.RunAgentScriptAsync(
-                    AgentScripts.Of(AgentScripts.AnalyzeCrashDump, target),
-                    TimeSpan.FromMinutes(3), ct).ConfigureAwait(false);
-                if (pr is { ExitCode: 0 } && !string.IsNullOrWhiteSpace(pr.StdOut))
-                    return pr.StdOut.Trim();
-                if (pr is not null && !string.IsNullOrWhiteSpace(pr.StdErr))
-                    return pr.StdErr.Trim();
-            }
-            return "This dump file requires administrator access to read. Connect the Admin Agent or run Remote PC Diagnostics as administrator, then try again.";
-        }
+        if (!IsAllowedSystemDumpPath(path))
+            return "The dump file is missing or inaccessible.";
 
-        return "The dump file is missing or inaccessible.";
+        return await AnalyzeElevatedSystemDumpAsync(path, full, commands, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<string> AnalyzeElevatedSystemDumpAsync(
+        string path, string full, SystemCommandRunner? commands, CancellationToken ct)
+    {
+        if (commands is not null)
+        {
+            var target = OperatingSystem.IsWindows() ? full : path.Trim();
+            var pr = await commands.RunAgentScriptAsync(
+                AgentScripts.Of(AgentScripts.AnalyzeCrashDump, target),
+                TimeSpan.FromMinutes(3), ct).ConfigureAwait(false);
+            if (pr is { ExitCode: 0 } && !string.IsNullOrWhiteSpace(pr.StdOut))
+                return pr.StdOut.Trim();
+            if (pr is not null && !string.IsNullOrWhiteSpace(pr.StdErr))
+                return pr.StdErr.Trim();
+        }
+        return "This dump file requires administrator access to read. Connect the Admin Agent or run Remote PC Diagnostics as administrator, then try again.";
     }
 
     /// <summary>Parses the dump in pure C# and runs Store WinDbg / SDK <c>kd.exe</c> or <c>cdb.exe</c> in the current process (when readable or inside the elevated Admin Agent).</summary>

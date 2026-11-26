@@ -36,7 +36,8 @@ public static class BiosPackageVerifier
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         const int maxAttempts = 6;
-        for (var attempt = 1; ; attempt++)
+        var attempt = 1;
+        while (true)
         {
             try
             {
@@ -53,6 +54,7 @@ public static class BiosPackageVerifier
             catch (IOException) when (attempt < maxAttempts && File.Exists(filePath))
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(25 * attempt), ct).ConfigureAwait(false);
+                attempt++;
             }
         }
     }

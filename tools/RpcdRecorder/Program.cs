@@ -17,6 +17,7 @@ using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Recording;
 using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Legacy;
+using RpcdRecorder;
 
 var outRoot = Arg("--out") ?? Path.Combine(Environment.CurrentDirectory, "recordings");
 var osqueryPath = Arg("--osquery") ?? Environment.GetEnvironmentVariable(OsqueryRunner.PathEnvironmentVariable)
@@ -161,17 +162,20 @@ string? Arg(string name)
 
 static string FirstExisting(params string[] paths) => paths.FirstOrDefault(File.Exists) ?? paths[0];
 
-/// <summary>The legacy reader's dump file lists, recorded as JSON under <see cref="CrashDumpFiles"/>'s names.</summary>
-sealed class RecordedFileCrashDumps(FileRecorder files) : ICrashDumpSource
+namespace RpcdRecorder
 {
-    private readonly FileCrashDumpSource _inner = new();
-    public async Task<IReadOnlyList<MinidumpFile>> ReadMinidumpsAsync(CancellationToken ct) =>
-        CrashDumpFiles.Parse(await files.ReadAsync(CrashDumpFiles.Minidumps, async () => CrashDumpFiles.Json(await _inner.ReadMinidumpsAsync(ct))));
-    public async Task<IReadOnlyList<MinidumpFile>> ReadLiveKernelReportsAsync(CancellationToken ct) =>
-        CrashDumpFiles.Parse(await files.ReadAsync(CrashDumpFiles.LiveKernelReports, async () => CrashDumpFiles.Json(await _inner.ReadLiveKernelReportsAsync(ct))));
-}
+    /// <summary>The legacy reader's dump file lists, recorded as JSON under <see cref="CrashDumpFiles"/>'s names.</summary>
+    sealed class RecordedFileCrashDumps(FileRecorder files) : ICrashDumpSource
+    {
+        private readonly FileCrashDumpSource _inner = new();
+        public async Task<IReadOnlyList<MinidumpFile>> ReadMinidumpsAsync(CancellationToken ct) =>
+            CrashDumpFiles.Parse(await files.ReadAsync(CrashDumpFiles.Minidumps, async () => CrashDumpFiles.Json(await _inner.ReadMinidumpsAsync(ct))));
+        public async Task<IReadOnlyList<MinidumpFile>> ReadLiveKernelReportsAsync(CancellationToken ct) =>
+            CrashDumpFiles.Parse(await files.ReadAsync(CrashDumpFiles.LiveKernelReports, async () => CrashDumpFiles.Json(await _inner.ReadLiveKernelReportsAsync(ct))));
+    }
 
-sealed class RecordedBatteryReport(FileRecorder files, IBatteryReportSource inner) : IBatteryReportSource
-{
-    public Task<string?> ReadXmlAsync(CancellationToken ct) => files.ReadAsync(PowerCfgBatteryReport.RecordingName, () => inner.ReadXmlAsync(ct));
+    sealed class RecordedBatteryReport(FileRecorder files, IBatteryReportSource inner) : IBatteryReportSource
+    {
+        public Task<string?> ReadXmlAsync(CancellationToken ct) => files.ReadAsync(PowerCfgBatteryReport.RecordingName, () => inner.ReadXmlAsync(ct));
+    }
 }

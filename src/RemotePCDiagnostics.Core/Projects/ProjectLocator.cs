@@ -35,17 +35,16 @@ public sealed class ProjectLocator(ProjectLocatorPaths paths, Func<CancellationT
     public async Task<IReadOnlyList<ProjectRoot>> FindAsync(CancellationToken ct = default)
     {
         var hits = new List<(string Path, ProjectSource Source)>();
-        void Add(IEnumerable<string> found, ProjectSource src) { foreach (var p in found) hits.Add((p, src)); }
 
-        Add(Safe(() => VsCodeFolders(paths.AppData)), ProjectSource.VsCode);
-        Add(Safe(() => VisualStudioFolders(paths.LocalAppData)), ProjectSource.VisualStudio);
-        Add(Safe(() => RiderFolders(paths.AppData, paths.UserProfile)), ProjectSource.Rider);
+        hits.AddRange(Safe(() => VsCodeFolders(paths.AppData)).Select(p => (p, ProjectSource.VsCode)));
+        hits.AddRange(Safe(() => VisualStudioFolders(paths.LocalAppData)).Select(p => (p, ProjectSource.VisualStudio)));
+        hits.AddRange(Safe(() => RiderFolders(paths.AppData, paths.UserProfile)).Select(p => (p, ProjectSource.Rider)));
         if (searchIndex is not null)
         {
-            try { Add((await searchIndex(ct).ConfigureAwait(false)).Select(ProjectFolderOf), ProjectSource.SearchIndex); }
+            try { hits.AddRange((await searchIndex(ct).ConfigureAwait(false)).Select(p => (ProjectFolderOf(p), ProjectSource.SearchIndex))); }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log("search index: " + ex.Message); }
         }
-        Add(CommonFolders(paths).Where(Directory.Exists), ProjectSource.CommonFolder);
+        hits.AddRange(CommonFolders(paths).Where(Directory.Exists).Select(p => (p, ProjectSource.CommonFolder)));
 
         var roots = new Dictionary<string, ProjectRoot>(StringComparer.OrdinalIgnoreCase);
         foreach (var (p, src) in hits)

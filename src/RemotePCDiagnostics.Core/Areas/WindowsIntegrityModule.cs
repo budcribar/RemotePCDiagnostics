@@ -58,29 +58,14 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
         using var scan = CancellationTokenSource.CreateLinkedTokenSource(ct);
         lock (_scanGate) _scan = scan;
         var gateTaken = false;
-        double lastPercent = -1;
-        long lastEmitTickMs = 0;
         RemotePCDiagnostics.Core.Osquery.ProcessResult? result;
         try
         {
-            if (!await ServicingGate.WaitAsync(0, ct).ConfigureAwait(false))
-            {
-                var other = Volatile.Read(ref _runningScan) ?? "another Windows integrity scan";
-                progress?.Report($"Waiting for {other} to finish before starting.");
-                RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, $"Waiting for {other} to finish", DateTimeOffset.Now, 0));
-                await ServicingGate.WaitAsync(scan.Token).ConfigureAwait(false);
-            }
+            await WaitForServicingGateAsync(progress, scan.Token, ct).ConfigureAwait(false);
             gateTaken = true;
             Volatile.Write(ref _runningScan, DisplayName);
             OnScanStarting();
-            var started = DateTimeOffset.Now;
-            result = await commands.RunAsync(exe, args, TimeSpan.FromMinutes(30), scan.Token, line =>
-            {
-                if (scan.IsCancellationRequested) return;
-                if (!TryAcceptProgressPercent(line, ref lastPercent, ref lastEmitTickMs, out var percent)) return;
-                progress.ReportStep((int)Math.Round(percent), 100, "Scanning…");
-                RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, $"Scan {percent:0.#}% complete", started, percent));
-            }).ConfigureAwait(false);
+            result = await RunToolWithProgressAsync(exe, args, progress, scan).ConfigureAwait(false);
             scan.Token.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) when (scan.IsCancellationRequested && !ct.IsCancellationRequested)
@@ -89,13 +74,49 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
         }
         finally
         {
-            if (gateTaken)
-            {
-                Volatile.Write(ref _runningScan, null);
-                ServicingGate.Release();
-            }
-            lock (_scanGate) _scan = null;
+            ReleaseServicingGate(gateTaken);
         }
+
+        return BuildIntegrityReport(exe, args, result);
+    }
+
+    private async Task WaitForServicingGateAsync(IProgress<string>? progress, CancellationToken scanToken, CancellationToken ct)
+    {
+        if (await ServicingGate.WaitAsync(0, ct).ConfigureAwait(false))
+            return;
+        var other = Volatile.Read(ref _runningScan) ?? "another Windows integrity scan";
+        progress?.Report($"Waiting for {other} to finish before starting.");
+        RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, $"Waiting for {other} to finish", DateTimeOffset.Now, 0));
+        await ServicingGate.WaitAsync(scanToken).ConfigureAwait(false);
+    }
+
+    private Task<RemotePCDiagnostics.Core.Osquery.ProcessResult?> RunToolWithProgressAsync(
+        string exe, string[] args, IProgress<string>? progress, CancellationTokenSource scan)
+    {
+        double lastPercent = -1;
+        long lastEmitTickMs = 0;
+        var started = DateTimeOffset.Now;
+        return commands.RunAsync(exe, args, TimeSpan.FromMinutes(30), scan.Token, line =>
+        {
+            if (scan.IsCancellationRequested) return;
+            if (!TryAcceptProgressPercent(line, ref lastPercent, ref lastEmitTickMs, out var percent)) return;
+            progress.ReportStep((int)Math.Round(percent), 100, "Scanning…");
+            RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, $"Scan {percent:0.#}% complete", started, percent));
+        });
+    }
+
+    private void ReleaseServicingGate(bool gateTaken)
+    {
+        if (gateTaken)
+        {
+            Volatile.Write(ref _runningScan, null);
+            ServicingGate.Release();
+        }
+        lock (_scanGate) _scan = null;
+    }
+
+    private AreaReport BuildIntegrityReport(string exe, string[] args, RemotePCDiagnostics.Core.Osquery.ProcessResult? result)
+    {
         if (result is null && !InterpretWithoutResult)
             return CouldNotRunReason("", null) is { } why ? new([], why, DiagnosticStatus.Error) { CouldNotRunReason = why } : AreaReport.Failed(FailedMessage);
 
@@ -111,13 +132,15 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
         if (status != DiagnosticStatus.Ok) AddProblemEvidence(rows);
         AddStatusRows(rows, status);
 
-        return new([new("integrity", DisplayName, status switch
-            {
-                DiagnosticStatus.Ok => AreaLevel.Ok,
-                DiagnosticStatus.Warning => AreaLevel.Warning,
-                _ when couldNotRun is not null => AreaLevel.Warning,
-                _ => AreaLevel.Error
-            }, summary, result is null ? "Scan did not return an exit code" : $"Exit code {result.ExitCode}",
+        var cardLevel = status switch
+        {
+            DiagnosticStatus.Ok => AreaLevel.Ok,
+            DiagnosticStatus.Warning => AreaLevel.Warning,
+            _ when couldNotRun is not null => AreaLevel.Warning,
+            _ => AreaLevel.Error
+        };
+        var meta = result is null ? "Scan did not return an exit code" : $"Exit code {result.ExitCode}";
+        return new([new("integrity", DisplayName, cardLevel, summary, meta,
             ["Detail", "Value"], rows, Actions: CardActions(status) is { Count: > 0 } actions ? actions : null)], summary, status)
         { CouldNotRunReason = couldNotRun };
     }

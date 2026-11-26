@@ -27,7 +27,7 @@ public sealed record PluginRecord(string PluginId, ModuleSource Source, PluginSt
 /// </summary>
 public sealed class PluginRegistrar(ISessionContext session, Version hostVersion, ILogger? log = null)
 {
-    private readonly List<PluginRecord> _records = [];
+    private System.Collections.Immutable.ImmutableArray<PluginRecord> _records = [];
     private readonly ConcurrentDictionary<Guid, (ModuleSource Source, string PluginId)> _origins = new();
     private readonly ConcurrentDictionary<Guid, Type> _details = new();
     private readonly ConcurrentDictionary<Guid, ModuleDescriptor> _known = new();
@@ -36,7 +36,7 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
     private readonly ConcurrentDictionary<Guid, ModuleHosting> _hosting = new();
     private readonly object _gate = new();
 
-    public IReadOnlyList<PluginRecord> Records { get { lock (_gate) return _records.ToList(); } }
+    public IReadOnlyList<PluginRecord> Records { get { lock (_gate) return _records; } }
 
     /// <summary>Calls the plugin's Register. Returns false (and records it Disabled) when it throws or the module id isn't the expected one.</summary>
     /// <param name="expectedModuleId">From the plugin's manifest: the one module it may register.</param>
@@ -129,7 +129,7 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
         });
     }
 
-    private void Add(PluginRecord r) { lock (_gate) _records.Add(r); }
+    private void Add(PluginRecord r) { lock (_gate) _records = _records.Add(r); }
     private void Log(string m) => log.Info(m);
     private void LogError(string m) => log.Error(m);
 

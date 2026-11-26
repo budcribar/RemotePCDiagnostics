@@ -17,7 +17,8 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
     public IEnumerable<UndoItemResult> Permanent => Items.Where(i => i.Skipped);
     public bool NeedsRestart => Items.Any(i => i.Success && i.Change.NeedsRestart);
     /// <summary>Short names of the undone changes that finish after a restart ("Widgets", "page file"), each once, in undo order.</summary>
-    public IReadOnlyList<string> RestartItems => Items.Where(i => i.Success && i.Change.NeedsRestart)
+    public IReadOnlyList<string> RestartItems => GetRestartItems();
+    private IReadOnlyList<string> GetRestartItems() => Items.Where(i => i.Success && i.Change.NeedsRestart)
         .Select(i => RestartName(i.Change)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     private int Attempted => Items.Count - Skipped;
     public string Summary => Items.Count == 0 ? "Nothing to undo."

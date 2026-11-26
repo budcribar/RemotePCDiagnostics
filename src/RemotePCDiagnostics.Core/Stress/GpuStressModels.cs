@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text.Json.Serialization;
 
 namespace RemotePCDiagnostics.Core.Stress;
@@ -7,7 +8,7 @@ public enum GpuStressOutcome { Passed, ErrorsFound, DriverReset, NoGpu, Software
 
 public sealed record GpuStressOptions
 {
-    public static readonly TimeSpan[] DurationChoices = new[] { 1, 2, 5, 10, 15 }.Select(m => TimeSpan.FromMinutes(m)).ToArray();
+    public static readonly ImmutableArray<TimeSpan> DurationChoices = [.. new[] { 1, 2, 5, 10, 15 }.Select(m => TimeSpan.FromMinutes(m))];
     public static TimeSpan MaxDuration => DurationChoices[^1];
 
     public TimeSpan Duration { get; init; } = TimeSpan.FromMinutes(1);

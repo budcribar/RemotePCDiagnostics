@@ -148,23 +148,25 @@ public static class DevDrivePackageCaches
             var stack = new Stack<string>();
             stack.Push(path);
             while (stack.Count > 0 && count < 20_000)
-            {
-                var dir = stack.Pop();
-                try
-                {
-                    foreach (var f in Directory.EnumerateFiles(dir))
-                    {
-                        if (++count > 20_000) break;
-                        try { total += new FileInfo(f).Length; } catch { }
-                    }
-                    foreach (var sub in Directory.EnumerateDirectories(dir))
-                        stack.Push(sub);
-                }
-                catch { }
-            }
+                AccumulateDirectoryBytes(stack.Pop(), stack, ref total, ref count);
             return total;
         }
         catch { return null; }
+    }
+
+    private static void AccumulateDirectoryBytes(string dir, Stack<string> stack, ref long total, ref int count)
+    {
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(dir))
+            {
+                if (++count > 20_000) break;
+                try { total += new FileInfo(f).Length; } catch { }
+            }
+            foreach (var sub in Directory.EnumerateDirectories(dir))
+                stack.Push(sub);
+        }
+        catch { }
     }
 
     public static PackageCacheSpec? FindWritable(string? envVar) =>
@@ -228,17 +230,23 @@ public static class DevDrivePackageCaches
                 inWsl2 = string.Equals(line[1..^1].Trim(), "wsl2", StringComparison.OrdinalIgnoreCase);
                 continue;
             }
-            if (!inWsl2) continue;
-            var eq = line.IndexOf('=');
-            if (eq <= 0) continue;
-            var key = line[..eq].Trim();
-            if (!string.Equals(key, "memory", StringComparison.OrdinalIgnoreCase)) continue;
-            var val = line[(eq + 1)..].Trim();
-            var commentIdx = val.IndexOfAny(['#', ';']);
-            if (commentIdx >= 0) val = val[..commentIdx].Trim();
-            return val.Length > 0 ? val : null;
+            if (inWsl2 && TryParseIniMemoryValue(line, out var value))
+                return value;
         }
         return null;
+    }
+
+    private static bool TryParseIniMemoryValue(string line, out string? value)
+    {
+        value = null;
+        var eq = line.IndexOf('=');
+        if (eq <= 0 || !string.Equals(line[..eq].Trim(), "memory", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var val = line[(eq + 1)..].Trim();
+        var commentIdx = val.IndexOfAny(['#', ';']);
+        if (commentIdx >= 0) val = val[..commentIdx].Trim();
+        value = val.Length > 0 ? val : null;
+        return true;
     }
 
     public static async Task<bool?> ReadLongPathsEnabledAsync(IRegistrySource registry, CancellationToken ct)

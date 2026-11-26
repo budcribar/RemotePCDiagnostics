@@ -88,36 +88,46 @@ public sealed class WindowsPowerSettingController(
 
         var writeErr = WriteValue(schemeGuid, newValue);
         if (writeErr == WindowsPowerPolicyReader.ErrorAccessDenied)
-        {
-            if (agent is { IsConnected: true })
-            {
-                var agentRes = await agent.SetPowerSettingAsync(target.Encode(), newValue, activateIfActive, ct).ConfigureAwait(false);
-                if (agentRes.Success)
-                    return new(true, agentRes.Message, Target: target, PreviousValue: oldValue);
-                return new(false, agentRes.Message, AccessDenied: true, Target: target, PreviousValue: oldValue);
-            }
-            return new(false, "Windows denied permission to edit the active power scheme. " + Session.ElevationService.AdminRepairHint,
-                AccessDenied: true, Target: target, PreviousValue: oldValue);
-        }
+            return await HandleAccessDeniedWriteAsync(target, newValue, activateIfActive, oldValue.Value, ct).ConfigureAwait(false);
         if (writeErr != 0)
             return new(false, $"Couldn't update maximum processor state (Windows error {writeErr}).", Target: target, PreviousValue: oldValue);
 
-        if (activateIfActive && ReadActiveSchemeGuid() == schemeGuid)
-        {
-            var actErr = ActivateScheme(schemeGuid);
-            if (actErr != 0)
-            {
-                var rollbackErr = WriteValue(schemeGuid, oldValue.Value);
-                var observed = ReadAcMaxProcessorState(schemeGuid);
-                if (rollbackErr == 0 && observed == oldValue.Value)
-                    return new(false, $"Power plan activation failed (error {actErr}); original setting ({oldValue}%) was restored.",
-                        ActivationFailed: true, Target: target, PreviousValue: oldValue);
-
-                return new(false, $"Power plan activation failed (error {actErr}) and rollback left the setting at {observed?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}%.",
-                    ActivationFailed: true, PartialChange: true, ObservedValueAfter: observed, Target: target, PreviousValue: oldValue);
-            }
-        }
+        if (activateIfActive && ReadActiveSchemeGuid() == schemeGuid
+            && TryActivateOrRollback(schemeGuid, target, oldValue.Value) is { } activationFailure)
+            return activationFailure;
 
         return new(true, $"Configured maximum processor state on AC set to {newValue}%.", Target: target, PreviousValue: oldValue);
+    }
+
+    private async Task<PowerSettingWriteOutcome> HandleAccessDeniedWriteAsync(
+        PowerSettingTarget target, int newValue, bool activateIfActive, int oldValue, CancellationToken ct)
+    {
+        if (agent is not { IsConnected: true })
+        {
+            return new(false, "Windows denied permission to edit the active power scheme. " + Session.ElevationService.AdminRepairHint,
+                AccessDenied: true, Target: target, PreviousValue: oldValue);
+        }
+
+        var agentRes = await agent.SetPowerSettingAsync(target.Encode(), newValue, activateIfActive, ct).ConfigureAwait(false);
+        return agentRes.Success
+            ? new(true, agentRes.Message, Target: target, PreviousValue: oldValue)
+            : new(false, agentRes.Message, AccessDenied: true, Target: target, PreviousValue: oldValue);
+    }
+
+    private PowerSettingWriteOutcome? TryActivateOrRollback(Guid schemeGuid, PowerSettingTarget target, int oldValue)
+    {
+        var actErr = ActivateScheme(schemeGuid);
+        if (actErr == 0) return null;
+
+        var rollbackErr = WriteValue(schemeGuid, oldValue);
+        var observed = ReadAcMaxProcessorState(schemeGuid);
+        if (rollbackErr == 0 && observed == oldValue)
+        {
+            return new(false, $"Power plan activation failed (error {actErr}); original setting ({oldValue}%) was restored.",
+                ActivationFailed: true, Target: target, PreviousValue: oldValue);
+        }
+
+        return new(false, $"Power plan activation failed (error {actErr}) and rollback left the setting at {observed?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}%.",
+            ActivationFailed: true, PartialChange: true, ObservedValueAfter: observed, Target: target, PreviousValue: oldValue);
     }
 }

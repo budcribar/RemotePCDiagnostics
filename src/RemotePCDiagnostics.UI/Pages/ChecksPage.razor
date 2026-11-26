@@ -594,7 +594,7 @@
             </div>
             @if (historyOpen)
             {
-                <div id="ct-trend-@m.Name"><CheckTrendPanel Module="@m.Name" Entries="_trendEntries" Days="TrendDays" HistoryHref="@history" /></div>
+                <div id="ct-trend-@m.Name"><CheckTrendPanel Module="@m.Name" Entries="@_trendEntries" Days="TrendDays" HistoryHref="@history" /></div>
             }
         </div>
         @* Collapsed details stay in the page (hidden), so the result data is still there for the shop's tools; they expand it to click. *@

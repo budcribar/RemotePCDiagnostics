@@ -179,8 +179,17 @@ public sealed class AgentAlertBook
         Load();
     }
 
-    public IReadOnlyList<AlertRecord> Alerts { get { lock (_gate) return _state.Alerts.ToList(); } }
-    public IReadOnlyList<AlertRecord> Open { get { lock (_gate) return _state.Alerts.Where(a => a.IsOpen).ToList(); } }
+    private System.Collections.Immutable.ImmutableArray<AlertRecord> _alertsSnapshot = [];
+    private System.Collections.Immutable.ImmutableArray<AlertRecord> _openSnapshot = [];
+
+    public IReadOnlyList<AlertRecord> Alerts { get { lock (_gate) return _alertsSnapshot; } }
+    public IReadOnlyList<AlertRecord> Open { get { lock (_gate) return _openSnapshot; } }
+
+    private void RefreshSnapshotsNoLock()
+    {
+        _alertsSnapshot = [.. _state.Alerts];
+        _openSnapshot = [.. _state.Alerts.Where(a => a.IsOpen)];
+    }
 
     /// <summary>How many alerts changed since Admin last acknowledged.</summary>
     public int Waiting { get { lock (_gate) return _state.Alerts.Count(a => a.Seq > _state.AckedThrough); } }
@@ -368,6 +377,7 @@ public sealed class AgentAlertBook
                 // The next number never goes back, even if the file was edited: Admin acknowledges by sequence.
                 var next = Math.Max(saved.NextSeq, alerts.Count > 0 ? alerts.Max(a => a.Seq) + 1 : 1);
                 _state = new(next, Math.Clamp(saved.AckedThrough, 0, next - 1), alerts);
+                RefreshSnapshotsNoLock();
             }
         }
         catch (Exception ex)
@@ -379,6 +389,7 @@ public sealed class AgentAlertBook
 
     private void SaveNoLock()
     {
+        RefreshSnapshotsNoLock();
         if (_path is null) return;
         try
         {

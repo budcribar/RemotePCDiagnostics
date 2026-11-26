@@ -19,7 +19,9 @@ public sealed class DiagnosticsService
 
     /// <summary>The stress suite's run order (module slugs): the registered stress tests sorted on DependsOn and RunAfter, ties by group
     /// and Order. Built-ins chain CPU, Memory, Disk, GPU, Network through RunAfter; a plugin stress test joins by its own RunAfter.</summary>
-    public IReadOnlyList<string> StressOrder => ModuleOrdering.Sort(_modules.OfType<IStressSuiteModule>()
+    public IReadOnlyList<string> StressOrder => GetStressOrder();
+
+    private IReadOnlyList<string> GetStressOrder() => ModuleOrdering.Sort(_modules.OfType<IStressSuiteModule>()
         .Select(m => Catalog.Get(m.Id)).OfType<ModuleDescriptor>().Where(d => d.Kind == ModuleKind.StressTest && IsRunnable(d.Id))).Select(d => d.Slug).ToList();
     /// <summary>Latest suite progress, so a page opened mid-run can show it.</summary>
     public StressSuiteProgress? LastStressSuiteProgress { get; private set; }
@@ -521,9 +523,13 @@ public sealed class DiagnosticsService
         lock (_gate) return _backgroundAutoRun.Contains(moduleName);
     }
 
+    private System.Collections.Immutable.ImmutableArray<(string ModuleName, Guid? RunId)> _runningModules = [];
+
     /// <summary>Every module run in flight now, with its run ID (null for a run that has none, such as a per-instance run).</summary>
-    public IReadOnlyList<(string ModuleName, Guid? RunId)> RunningModules =>
-        _inFlight.Keys.Select(name => (name, _runIds.TryGetValue(name, out var id) ? id : (Guid?)null)).ToList();
+    public IReadOnlyList<(string ModuleName, Guid? RunId)> RunningModules { get { lock (_gate) return _runningModules; } }
+
+    private void RefreshRunningModulesNoLock() =>
+        _runningModules = [.. _inFlight.Keys.Select(name => (name, _runIds.TryGetValue(name, out var id) ? id : (Guid?)null))];
 
     /// <summary>Starts a run unless one is already in progress, in which case the in-flight task is returned (no double-runs).</summary>
     private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance = null, bool gateInstances = false, bool isBackgroundAutoRun = false) =>
@@ -548,6 +554,7 @@ public sealed class DiagnosticsService
                 if (!silent) MarkRunning(module, runId);
                 var tcs = new TaskCompletionSource<DiagnosticResult>(TaskCreationOptions.RunContinuationsAsynchronously);
                 _inFlight[module.Name] = existing = tcs.Task;
+                RefreshRunningModulesNoLock();
                 Func<Task>? cleanup = null;
                 if (module is IStressSuiteModule stress)
                 {
@@ -575,6 +582,7 @@ public sealed class DiagnosticsService
                             _runIds.TryRemove(module.Name, out _);
                             _backgroundAutoRun.Remove(module.Name);
                             _inFlightCleanups.Remove(module.Name);
+                            RefreshRunningModulesNoLock();
                         }
                     }
                     if (err is not null) tcs.SetException(err);

@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Globalization;
 using System.Net;
 using System.Text;
@@ -6,6 +5,9 @@ using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Session;
+
+using static RemotePCDiagnostics.Core.Bios.BiosProviderCommon;
+using static RemotePCDiagnostics.Core.Bios.BiosProviderHttp;
 
 namespace RemotePCDiagnostics.Core.Bios;
 
@@ -22,8 +24,6 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
     public static readonly IReadOnlyList<string> AllowedHostSuffixes = ["lenovo.com"];
 
     private const long MaxCatalogXmlBytes = 16L * 1024 * 1024;
-    private const int MaxInitialStreamCapacity = 1024 * 1024;
-    private const int CopyBufferSize = 81920;
     private const int MaxDescriptorCandidatesToFetch = 5;
 
     private static readonly HashSet<int> RebootSuccessExitCodes = [0, 1, 3010];
@@ -720,109 +720,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
         return TryResolveDescriptorRelativeUrl(indexUri, trimmed, AllowedHostSuffixes, out descriptorUrl);
     }
 
-    private static bool HasUnsafePathSegments(string url)
-    {
-        var schemeSep = url.IndexOf("://", StringComparison.Ordinal);
-        if (schemeSep < 0)
-            return true;
-
-        var afterScheme = url[(schemeSep + 3)..];
-        var slashIdx = afterScheme.IndexOf('/');
-        if (slashIdx < 0)
-            return false;
-
-        var pathPart = afterScheme[(slashIdx + 1)..];
-        var queryOrFragIdx = pathPart.IndexOfAny(['?', '#']);
-        if (queryOrFragIdx >= 0)
-            pathPart = pathPart[..queryOrFragIdx];
-
-        if (pathPart.Length == 0)
-            return false;
-
-        foreach (var seg in pathPart.Split('/'))
-        {
-            if (seg.Length == 0)
-                continue;
-
-            if (IsUnsafePathSegment(seg))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static bool IsUnsafePathSegment(string segment)
-    {
-        var current = segment;
-        for (var round = 0; round < 5; round++)
-        {
-            if (current is "." or ".." || current.Trim() is "." or "..")
-                return true;
-
-            if (current.Contains("%2e", StringComparison.OrdinalIgnoreCase)
-                || current.Contains("%2f", StringComparison.OrdinalIgnoreCase)
-                || current.Contains("%5c", StringComparison.OrdinalIgnoreCase)
-                || current.Contains("%00", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            for (var i = 0; i < current.Length; i++)
-            {
-                var c = current[i];
-                if (char.IsControl(c) || c is '/' or '\\' or '?' or '#' or '@')
-                    return true;
-
-                if (c == '%')
-                {
-                    if (i + 2 >= current.Length
-                        || !Uri.IsHexDigit(current[i + 1])
-                        || !Uri.IsHexDigit(current[i + 2]))
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            if (!current.Contains('%', StringComparison.Ordinal))
-                return false;
-
-            string decoded;
-            try
-            {
-                decoded = Uri.UnescapeDataString(current);
-            }
-            catch
-            {
-                return true;
-            }
-
-            if (string.Equals(decoded, current, StringComparison.Ordinal))
-                return false;
-
-            current = decoded;
-        }
-
-        return true;
-    }
-
-    private static BiosLatestInfo RedactLatestInfo(BiosLatestInfo info, string? serialNumber)
-    {
-        if (string.IsNullOrWhiteSpace(serialNumber))
-            return info;
-
-        var safeMessage = info.Message is not null
-            ? BiosInstallerRunner.RedactSerialNumber(info.Message, serialNumber)
-            : null;
-        var safeSummary = info.ReleaseSummary is not null
-            ? BiosInstallerRunner.RedactSerialNumber(info.ReleaseSummary, serialNumber)
-            : null;
-
-        if (ReferenceEquals(safeMessage, info.Message) && ReferenceEquals(safeSummary, info.ReleaseSummary))
-            return info;
-
-        return info with { Message = safeMessage, ReleaseSummary = safeSummary };
-    }
+    private static bool HasUnsafePathSegments(string url) => BiosProviderHttp.HasUnsafePathSegments(url, rejectAtSign: true);
 
     private static int GetIndexEntryFamilyRank(LenovoIndexEntry entry, string currentFamily)
     {
@@ -1526,107 +1424,11 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
         return null;
     }
 
-    private static string? GetAttribute(XElement element, string localName)
-    {
-        foreach (var attr in element.Attributes())
-        {
-            if (attr.Name.LocalName.Equals(localName, StringComparison.OrdinalIgnoreCase))
-            {
-                var val = attr.Value?.Trim();
-                if (!string.IsNullOrEmpty(val))
-                    return val;
-            }
-        }
-
-        return null;
-    }
-
-    private static string? FirstNonEmpty(params string?[] values)
-    {
-        foreach (var value in values)
-        {
-            if (!string.IsNullOrWhiteSpace(value))
-                return value.Trim();
-        }
-
-        return null;
-    }
-
-    private static long? TryParsePositiveLong(string? raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw))
-            return null;
-
-        return long.TryParse(raw.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var value) && value > 0
-            ? value
-            : null;
-    }
-
     private static bool TryEnsureExecutableExtension(string filePath, out string executablePath, out string error) =>
         BiosPackageVerification.TryEnsureExecutableExtension(filePath, "Lenovo", out executablePath, out error);
 
-    private static async Task<string> ReadBoundedStringAsync(HttpContent content, long maxBytes, CancellationToken ct)
-    {
-        var contentLength = content.Headers.ContentLength;
-        if (contentLength.HasValue && contentLength.Value > maxBytes)
-            throw new InvalidDataException($"Lenovo BIOS XML response ({contentLength.Value} bytes) exceeds maximum allowed limit ({maxBytes} bytes).");
-
-        await using var source = await content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        using var destination = contentLength is > 0
-            ? new MemoryStream((int)Math.Min(contentLength.Value, MaxInitialStreamCapacity))
-            : new MemoryStream();
-
-        var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
-        try
-        {
-            long totalRead = 0;
-            while (true)
-            {
-                var read = await source.ReadAsync(buffer.AsMemory(0, CopyBufferSize), ct).ConfigureAwait(false);
-                if (read == 0)
-                    break;
-
-                totalRead += read;
-                if (totalRead > maxBytes)
-                    throw new InvalidDataException($"Lenovo BIOS XML response exceeded maximum allowed limit ({maxBytes} bytes).");
-
-                await destination.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-            }
-
-            var bytes = destination.ToArray();
-            return Encoding.UTF8.GetString(bytes);
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
-        }
-    }
-
-    private static void TryDeleteFile(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-                File.Delete(path);
-        }
-        catch
-        {
-            // Best-effort cleanup.
-        }
-    }
-
-    private static void TryDeleteDirectoryRecursive(string dir)
-    {
-        try
-        {
-            if (Directory.Exists(dir))
-                Directory.Delete(dir, recursive: true);
-        }
-        catch
-        {
-            // Best-effort cleanup of provider-owned temporary staging directory.
-        }
-    }
+    private static async Task<string> ReadBoundedStringAsync(HttpContent content, long maxBytes, CancellationToken ct) =>
+        Encoding.UTF8.GetString(await BiosProviderHttp.ReadBoundedBytesAsync(content, maxBytes, "Lenovo BIOS XML response", ct).ConfigureAwait(false));
 
     internal enum LenovoVersionKind
     {

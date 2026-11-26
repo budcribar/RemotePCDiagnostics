@@ -218,7 +218,7 @@ public static class HardwareIdentityProbe
         {
             using var s = new System.Management.ManagementObjectSearcher("SELECT Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed, Architecture FROM Win32_Processor");
             using var res = s.Get();
-            foreach (System.Management.ManagementObject o in res)
+            foreach (System.Management.ManagementBaseObject o in res)
             {
                 using (o)
                 {
@@ -239,7 +239,7 @@ public static class HardwareIdentityProbe
             using var s = new System.Management.ManagementObjectSearcher("SELECT Capacity, Speed, ConfiguredClockSpeed, SMBIOSMemoryType FROM Win32_PhysicalMemory");
             using var res = s.Get();
             var dimms = new List<double>();
-            foreach (System.Management.ManagementObject o in res)
+            foreach (System.Management.ManagementBaseObject o in res)
             {
                 using (o)
                 {
@@ -267,7 +267,7 @@ public static class HardwareIdentityProbe
             using var s = new System.Management.ManagementObjectSearcher("SELECT Model, Size, MediaType, InterfaceType FROM Win32_DiskDrive");
             using var res = s.Get();
             var drives = new List<string>();
-            foreach (System.Management.ManagementObject o in res)
+            foreach (System.Management.ManagementBaseObject o in res)
             {
                 using (o)
                 {
@@ -289,7 +289,7 @@ public static class HardwareIdentityProbe
         {
             using var s = new System.Management.ManagementObjectSearcher("SELECT Name, AdapterRAM, CurrentHorizontalResolution, CurrentVerticalResolution, CurrentRefreshRate FROM Win32_VideoController");
             using var res = s.Get();
-            foreach (System.Management.ManagementObject o in res)
+            foreach (System.Management.ManagementBaseObject o in res)
             {
                 using (o)
                 {

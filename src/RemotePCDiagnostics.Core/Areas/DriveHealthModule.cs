@@ -145,16 +145,7 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
     private async Task<DriveRead> ReadDrivesCachedAsync(IProgress<string>? progress, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        SharedRead shared;
-        lock (_readGate)
-        {
-            var now = Now();
-            if (_sharedRead is { Task: { IsFaulted: false, IsCanceled: false } } existing && now - existing.StartedAt < (reuseReadFor ?? ReuseReadFor))
-                shared = existing;
-            else
-                shared = _sharedRead = new SharedRead(now, token => ReadDrivesAsync(progress, token));
-            shared.Waiters++;
-        }
+        var shared = AcquireSharedRead(progress);
         var decremented = false;
         try
         {
@@ -162,28 +153,44 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            CancellationTokenSource? toCancel = null;
-            lock (_readGate)
-            {
-                decremented = true;
-                if (--shared.Waiters == 0 && !shared.Task.IsCompleted)
-                {
-                    if (ReferenceEquals(_sharedRead, shared)) _sharedRead = null;
-                    toCancel = shared.Cts;
-                }
-            }
-            if (toCancel is not null)
-            {
-                try { await toCancel.CancelAsync().ConfigureAwait(false); } catch (ObjectDisposedException) { }
-            }
+            decremented = true;
+            await ReleaseCanceledWaiterAsync(shared).ConfigureAwait(false);
             throw;
         }
         finally
         {
             if (!decremented)
-            {
                 lock (_readGate) shared.Waiters--;
+        }
+    }
+
+    private SharedRead AcquireSharedRead(IProgress<string>? progress)
+    {
+        lock (_readGate)
+        {
+            var now = Now();
+            var shared = _sharedRead is { Task: { IsFaulted: false, IsCanceled: false } } existing && now - existing.StartedAt < (reuseReadFor ?? ReuseReadFor)
+                ? existing
+                : _sharedRead = new SharedRead(now, token => ReadDrivesAsync(progress, token));
+            shared.Waiters++;
+            return shared;
+        }
+    }
+
+    private async Task ReleaseCanceledWaiterAsync(SharedRead shared)
+    {
+        CancellationTokenSource? toCancel = null;
+        lock (_readGate)
+        {
+            if (--shared.Waiters == 0 && !shared.Task.IsCompleted)
+            {
+                if (ReferenceEquals(_sharedRead, shared)) _sharedRead = null;
+                toCancel = shared.Cts;
             }
+        }
+        if (toCancel is not null)
+        {
+            try { await toCancel.CancelAsync().ConfigureAwait(false); } catch (ObjectDisposedException) { }
         }
     }
 
@@ -253,14 +260,14 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
         return read.Drives.Count == 0 ? ModuleDetection.NotApplicable("No drives found") : ModuleDetection.For(Instances(read.Drives).Select(x => x.Instance));
     }
 
-    public async Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken cancellationToken = default)
+    public async Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken ct = default)
     {
-        if (instance.Key == AllDrivesKey) return await RefreshAsync(progress, cancellationToken).ConfigureAwait(false);
+        if (instance.Key == AllDrivesKey) return await RefreshAsync(progress, ct).ConfigureAwait(false);
         AreaReport report;
         string? volumeText = null;
         try
         {
-            var read = await ReadDrivesCachedAsync(progress, cancellationToken).ConfigureAwait(false);
+            var read = await ReadDrivesCachedAsync(progress, ct).ConfigureAwait(false);
             if (read.Drives is null) report = AreaReport.Failed(FailedMessage);
             else if (Instances(read.Drives).FirstOrDefault(x => x.Instance.Key == instance.Key) is { Drive: { } drive })
             {
@@ -270,7 +277,7 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
             }
             else return CouldNotRun.Result(Name, $"{instance.Label} is no longer connected.");
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             LogError($"{Name}: collection failed: {ex}");
@@ -366,86 +373,186 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
     {
         if (drives.Count == 0)
             return new([], "No drives were found to check.", DiagnosticStatus.Warning);
+
         var sysLetter = char.ToUpperInvariant(systemDriveLetter ?? ReadSystemDriveLetter());
-        string[] cols = ["Detail", "Value"];
-        var cards = drives.Select((d, i) =>
-        {
-            var trend = historyStore?.AnalyzeTrend(d.RawId, d, timestamp);
-            var level = d.Level;
-            var verdict = d.Verdict;
-            var reasons = d.Reasons().ToList();
-            if (trend is { IsDegrading: true })
-            {
-                if (level < AreaLevel.Warning) level = AreaLevel.Warning;
-                verdict = "Degrading – check errors and back up files";
-                reasons.Insert(0, trend.SummaryText);
-            }
-
-            // A nearly full volume makes its drive need attention; it never outranks a failing drive.
-            var own = volumes.Of(d);
-            var nearlyFull = own.Where(v => v.IsLowOnSpace).ToList();
-            if (nearlyFull.Count > 0)
-            {
-                if (level < AreaLevel.Warning) { level = AreaLevel.Warning; verdict = "Needs attention"; }
-                reasons.AddRange(nearlyFull.Select(v => v.NearlyFullText));
-            }
-
-            var holdsSystemDrive = d.Letters.Any(c => char.ToUpperInvariant(c) == sysLetter)
-                || own.Any(v => v.Letter.Length > 0 && char.ToUpperInvariant(v.Letter[0]) == sysLetter);
-            var bootOnHdd = holdsSystemDrive && d.IsSpinningHdd;
-            if (bootOnHdd)
-            {
-                if (level < AreaLevel.Warning) { level = AreaLevel.Warning; verdict = "Needs attention"; }
-                reasons.Add(HddBootWarning);
-            }
-
-            var meta = string.Join(" · ", new[]
-            {
-                d.Kind, d.SizeBytes is > 0 ? HardwareInventory.FormatBytes(d.SizeBytes) : null,
-                own.Count > 0 ? $"{HardwareInventory.FormatBytes(own.Sum(v => v.FreeBytes))} free" : null,
-                d.TemperatureC is > 0 ? $"{d.TemperatureC}°C" : null, d.Wear is not null ? $"{d.Wear}% worn" : null,
-                trend is { IsDegrading: true } ? "Degrading" : null,
-            }.Where(x => x is not null));
-            var rows = new List<AreaRow>();
-            void Add(string label, string? v, AreaLevel l = AreaLevel.Neutral, string? detail = null) { if (!string.IsNullOrWhiteSpace(v)) rows.Add(new(l, [label, v], Detail: detail)); }
-            Add("Overall", verdict + (reasons.Count > 0 ? ": " + string.Join("; ", reasons) : ""), level);
-            Add("Status reported by Windows", d.Health.Length > 0 ? $"{d.Health}{(d.Operational.Length > 0 && d.Operational != "OK" ? $" ({d.Operational})" : "")}" : "Not reported");
-            if (trend is not null)
-                Add("Health trend", trend.SummaryText, trend.IsDegrading ? AreaLevel.Warning : AreaLevel.Neutral, detail: trend.HistoryDetail);
-            Add("Type", d.Kind, bootOnHdd ? AreaLevel.Warning : AreaLevel.Neutral);
-            if (bootOnHdd)
-                Add("Windows boot drive", HddBootWarning, AreaLevel.Warning);
-            Add("Connection", d.BusType);
-            Add("Size", d.SizeBytes is > 0 ? HardwareInventory.FormatBytes(d.SizeBytes) : null);
-            foreach (var vol in own)
-                Add($"Volume {vol.Letter}", $"{HardwareInventory.FormatBytes(vol.FreeBytes)} free of {HardwareInventory.FormatBytes(vol.TotalBytes)} ({vol.UsedPercent:0.#}% used · {vol.DriveFormat})",
-                    vol.IsLowOnSpace ? AreaLevel.Warning : AreaLevel.Neutral);
-            Add("Temperature", d.TemperatureC is > 0 ? $"{d.TemperatureC}°C" : "Not reported", d.TemperatureC >= DriveHealth.HotC ? AreaLevel.Warning : AreaLevel.Neutral,
-                detail: d.TemperatureC is > 0 ? TemperatureDetail : null);
-            Add("Life used", d.Wear is not null ? $"{d.Wear}%" : "Not reported", d.Wear >= DriveHealth.WornPercent ? AreaLevel.Warning : AreaLevel.Neutral);
-            Add("Uncorrected read errors", d.ReadErrors?.ToString(CultureInfo.InvariantCulture) ?? "Not reported", d.ReadErrors is > 0 ? AreaLevel.Warning : AreaLevel.Neutral);
-            Add("Uncorrected write errors", d.WriteErrors?.ToString(CultureInfo.InvariantCulture) ?? "Not reported", d.WriteErrors is > 0 ? AreaLevel.Warning : AreaLevel.Neutral);
-            Add("Hours powered on", d.PowerOnHours is >= 0 ? d.PowerOnHours.Value.ToString("N0", CultureInfo.InvariantCulture) : "Not reported");
-            var ssdLetters = d.Kind == "SSD" ? RemediationService.DriveLetters(d.Letters) : "";
-            if (ssdLetters.Length > 0) Add("Last optimized", LastOptimizedText(ssdLetters, retrims, timestamp));
-            Add("Serial number", d.Serial);
-            var actions = new List<AreaAction>();
-            if (i == 0)
-                actions.Add(new(RemediationKind.CleanTempFiles, "Clean up temporary files", "", "Temporary files & Recycle Bin"));
-            // Not offered when Windows or this app retrimmed every volume of this SSD in the last 30 days.
-            var dueLetters = new string(ssdLetters.Where(letter =>
-                !RecentlyRetrimmed(letter.ToString(), retrims, timestamp)).ToArray());
-            if (dueLetters.Length > 0)
-                actions.Add(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", dueLetters, d.Name.Length > 0 ? d.Name : "SSD"));
-            return new AreaCard($"drive{i}", d.Name.Length > 0 ? d.Name : $"Drive {i + 1}", level, verdict, meta, cols, rows,
-                Note: bootOnHdd ? HddBootWarning : null,
-                Actions: actions.Count > 0 ? actions : null);
-        }).ToList();
+        var cards = drives.Select((d, i) => BuildDriveCard(d, i, retrims, timestamp, historyStore, volumes, sysLetter)).ToList();
 
         var degrading = drives.Count(d => historyStore?.AnalyzeTrend(d.RawId, d, timestamp).IsDegrading == true);
         // Drives only: the capacity card repeats what its drives' cards already say, so it is never counted as a drive.
         var bad = cards.Count(c => c.Level is AreaLevel.Warning or AreaLevel.Error);
         var unknown = cards.All(c => c.Level == AreaLevel.Neutral);
+        var freePart = AddOptionalCards(cards, volumes, capacityCard, storageSense);
+        var summary = BuildDriveSummary(drives.Count, bad, unknown, degrading, freePart);
+        // One drive's own result (each drive is its own History series): free space, life used and media errors over time.
+        return new(cards, summary, AreaReport.Worst(cards.Select(c => c.Level)))
+        {
+            KeyMetrics = drives.Count == 1 ? KeyMetrics(drives[0], volumes.Of(drives[0])) : null
+        };
+    }
+
+    private static AreaCard BuildDriveCard(
+        DriveHealth d,
+        int index,
+        IReadOnlyDictionary<char, RetrimRecord>? retrims,
+        DateTimeOffset timestamp,
+        IDriveHealthHistoryStore? historyStore,
+        DriveVolumeMap volumes,
+        char sysLetter)
+    {
+        var trend = historyStore?.AnalyzeTrend(d.RawId, d, timestamp);
+        var own = volumes.Of(d);
+        var (level, verdict, reasons, bootOnHdd) = EvaluateDriveStatus(d, trend, own, sysLetter);
+        var meta = BuildDriveMeta(d, own, trend);
+        var ssdLetters = d.Kind == "SSD" ? RemediationService.DriveLetters(d.Letters) : "";
+        var rows = BuildDriveRows(d, level, verdict, reasons, trend, own, bootOnHdd, ssdLetters, retrims, timestamp);
+        var actions = BuildDriveActions(d, index, ssdLetters, retrims, timestamp);
+
+        return new AreaCard(
+            $"drive{index}",
+            d.Name.Length > 0 ? d.Name : $"Drive {index + 1}",
+            level,
+            verdict,
+            meta,
+            ["Detail", "Value"],
+            rows,
+            Note: bootOnHdd ? HddBootWarning : null,
+            Actions: actions.Count > 0 ? actions : null);
+    }
+
+    private static (AreaLevel Level, string Verdict, List<string> Reasons, bool BootOnHdd) EvaluateDriveStatus(
+        DriveHealth d,
+        DriveTrendAnalysis? trend,
+        IReadOnlyList<DriveCapacityInfo> own,
+        char sysLetter)
+    {
+        var level = d.Level;
+        var verdict = d.Verdict;
+        var reasons = d.Reasons().ToList();
+
+        if (trend is { IsDegrading: true })
+        {
+            if (level < AreaLevel.Warning) level = AreaLevel.Warning;
+            verdict = "Degrading – check errors and back up files";
+            reasons.Insert(0, trend.SummaryText);
+        }
+
+        // A nearly full volume makes its drive need attention; it never outranks a failing drive.
+        var nearlyFull = own.Where(v => v.IsLowOnSpace).ToList();
+        if (nearlyFull.Count > 0)
+        {
+            if (level < AreaLevel.Warning) { level = AreaLevel.Warning; verdict = "Needs attention"; }
+            reasons.AddRange(nearlyFull.Select(v => v.NearlyFullText));
+        }
+
+        var holdsSystemDrive = d.Letters.Any(c => char.ToUpperInvariant(c) == sysLetter)
+            || own.Any(v => v.Letter.Length > 0 && char.ToUpperInvariant(v.Letter[0]) == sysLetter);
+        var bootOnHdd = holdsSystemDrive && d.IsSpinningHdd;
+        if (bootOnHdd)
+        {
+            if (level < AreaLevel.Warning) { level = AreaLevel.Warning; verdict = "Needs attention"; }
+            reasons.Add(HddBootWarning);
+        }
+
+        return (level, verdict, reasons, bootOnHdd);
+    }
+
+    private static string BuildDriveMeta(DriveHealth d, IReadOnlyList<DriveCapacityInfo> own, DriveTrendAnalysis? trend) =>
+        string.Join(" · ", new[]
+        {
+            d.Kind,
+            d.SizeBytes is > 0 ? HardwareInventory.FormatBytes(d.SizeBytes) : null,
+            own.Count > 0 ? $"{HardwareInventory.FormatBytes(own.Sum(v => v.FreeBytes))} free" : null,
+            d.TemperatureC is > 0 ? $"{d.TemperatureC}°C" : null,
+            d.Wear is not null ? $"{d.Wear}% worn" : null,
+            trend is { IsDegrading: true } ? "Degrading" : null,
+        }.Where(x => x is not null));
+
+    private static List<AreaRow> BuildDriveRows(
+        DriveHealth d,
+        AreaLevel level,
+        string verdict,
+        List<string> reasons,
+        DriveTrendAnalysis? trend,
+        IReadOnlyList<DriveCapacityInfo> own,
+        bool bootOnHdd,
+        string ssdLetters,
+        IReadOnlyDictionary<char, RetrimRecord>? retrims,
+        DateTimeOffset timestamp)
+    {
+        var rows = new List<AreaRow>();
+        AddDriveRow(rows, "Overall", verdict + (reasons.Count > 0 ? ": " + string.Join("; ", reasons) : ""), level);
+        AddDriveRow(rows, "Status reported by Windows", FormatWindowsStatus(d));
+        if (trend is not null)
+            AddDriveRow(rows, "Health trend", trend.SummaryText, trend.IsDegrading ? AreaLevel.Warning : AreaLevel.Neutral, detail: trend.HistoryDetail);
+        AddDriveRow(rows, "Type", d.Kind, bootOnHdd ? AreaLevel.Warning : AreaLevel.Neutral);
+        if (bootOnHdd)
+            AddDriveRow(rows, "Windows boot drive", HddBootWarning, AreaLevel.Warning);
+        AddDriveRow(rows, "Connection", d.BusType);
+        AddDriveRow(rows, "Size", d.SizeBytes is > 0 ? HardwareInventory.FormatBytes(d.SizeBytes) : null);
+        foreach (var vol in own)
+            AddDriveRow(rows, $"Volume {vol.Letter}", $"{HardwareInventory.FormatBytes(vol.FreeBytes)} free of {HardwareInventory.FormatBytes(vol.TotalBytes)} ({vol.UsedPercent:0.#}% used · {vol.DriveFormat})",
+                vol.IsLowOnSpace ? AreaLevel.Warning : AreaLevel.Neutral);
+        AddSmartMetricRows(rows, d, ssdLetters, retrims, timestamp);
+        return rows;
+    }
+
+    private static void AddSmartMetricRows(
+        List<AreaRow> rows,
+        DriveHealth d,
+        string ssdLetters,
+        IReadOnlyDictionary<char, RetrimRecord>? retrims,
+        DateTimeOffset timestamp)
+    {
+        AddDriveRow(rows, "Temperature", d.TemperatureC is > 0 ? $"{d.TemperatureC}°C" : "Not reported",
+            d.TemperatureC >= DriveHealth.HotC ? AreaLevel.Warning : AreaLevel.Neutral,
+            detail: d.TemperatureC is > 0 ? TemperatureDetail : null);
+        AddDriveRow(rows, "Life used", d.Wear is not null ? $"{d.Wear}%" : "Not reported",
+            d.Wear >= DriveHealth.WornPercent ? AreaLevel.Warning : AreaLevel.Neutral);
+        AddDriveRow(rows, "Uncorrected read errors", d.ReadErrors?.ToString(CultureInfo.InvariantCulture) ?? "Not reported",
+            d.ReadErrors is > 0 ? AreaLevel.Warning : AreaLevel.Neutral);
+        AddDriveRow(rows, "Uncorrected write errors", d.WriteErrors?.ToString(CultureInfo.InvariantCulture) ?? "Not reported",
+            d.WriteErrors is > 0 ? AreaLevel.Warning : AreaLevel.Neutral);
+        AddDriveRow(rows, "Hours powered on", d.PowerOnHours is >= 0 ? d.PowerOnHours.Value.ToString("N0", CultureInfo.InvariantCulture) : "Not reported");
+        if (ssdLetters.Length > 0) AddDriveRow(rows, "Last optimized", LastOptimizedText(ssdLetters, retrims, timestamp));
+        AddDriveRow(rows, "Serial number", d.Serial);
+    }
+
+    private static void AddDriveRow(List<AreaRow> rows, string label, string? value, AreaLevel level = AreaLevel.Neutral, string? detail = null)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            rows.Add(new(level, [label, value], Detail: detail));
+    }
+
+    private static string FormatWindowsStatus(DriveHealth d)
+    {
+        if (d.Health.Length == 0) return "Not reported";
+        var operationalSuffix = d.Operational.Length > 0 && d.Operational != "OK" ? $" ({d.Operational})" : "";
+        return $"{d.Health}{operationalSuffix}";
+    }
+
+    private static List<AreaAction> BuildDriveActions(
+        DriveHealth d,
+        int index,
+        string ssdLetters,
+        IReadOnlyDictionary<char, RetrimRecord>? retrims,
+        DateTimeOffset timestamp)
+    {
+        var actions = new List<AreaAction>();
+        if (index == 0)
+            actions.Add(new(RemediationKind.CleanTempFiles, "Clean up temporary files", "", "Temporary files & Recycle Bin"));
+        // Not offered when Windows or this app retrimmed every volume of this SSD in the last 30 days.
+        var dueLetters = new string(ssdLetters.Where(letter => !RecentlyRetrimmed(letter.ToString(), retrims, timestamp)).ToArray());
+        if (dueLetters.Length > 0)
+            actions.Add(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", dueLetters, d.Name.Length > 0 ? d.Name : "SSD"));
+        return actions;
+    }
+
+    private static string AddOptionalCards(
+        List<AreaCard> cards,
+        DriveVolumeMap volumes,
+        bool capacityCard,
+        StorageSenseStatus? storageSense)
+    {
         var freePart = "";
         if (capacityCard && volumes.All.Count > 0)
         {
@@ -458,13 +565,20 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
         }
         if (capacityCard && storageSense is not null)
             cards.Add(BuildStorageSenseCard(storageSense));
-        var summary = bad > 0 ? $"{bad} of {Plural(drives.Count, "drive")} need{(bad == 1 ? "s" : "")} attention{freePart}"
-            : unknown ? $"{Plural(drives.Count, "drive")} found · health not reported{freePart}"
-            : drives.Count == 1 ? $"1 drive · healthy{freePart}" : $"{drives.Count} drives · all healthy{freePart}";
-        if (degrading > 0)
-            summary = $"{summary} ({Plural(degrading, "drive")} getting worse)";
-        // One drive's own result (each drive is its own History series): free space, life used and media errors over time.
-        return new(cards, summary, AreaReport.Worst(cards.Select(c => c.Level))) { KeyMetrics = drives.Count == 1 ? KeyMetrics(drives[0], volumes.Of(drives[0])) : null };
+        return freePart;
+    }
+
+    private static string BuildDriveSummary(int driveCount, int bad, bool unknown, int degrading, string freePart)
+    {
+        string summary;
+        if (bad > 0)
+            summary = $"{bad} of {Plural(driveCount, "drive")} need{(bad == 1 ? "s" : "")} attention{freePart}";
+        else if (unknown)
+            summary = $"{Plural(driveCount, "drive")} found · health not reported{freePart}";
+        else
+            summary = driveCount == 1 ? $"1 drive · healthy{freePart}" : $"{driveCount} drives · all healthy{freePart}";
+
+        return degrading > 0 ? $"{summary} ({Plural(degrading, "drive")} getting worse)" : summary;
     }
 
     public static AreaCard BuildStorageSenseCard(StorageSenseStatus ss)

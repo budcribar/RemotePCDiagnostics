@@ -54,11 +54,11 @@ public static class InteractiveExport
         personCanRunTests = !page.TechnicianHasControl || !page.RemoteSessionActive,
         tests = new object[]
         {
-            Keyboard(page, bench),
-            Display(page, bench),
-            Webcam(page, webcam),
-            SpeakerToMic(page, speakerToMic),
-            MicToSpeaker(page, micToSpeaker),
+            KeyboardTest(page, bench),
+            DisplayTest(page, bench),
+            WebcamTest(page, webcam),
+            SpeakerToMicTest(page, speakerToMic),
+            MicToSpeakerTest(page, micToSpeaker),
             SoundCheckTest(page, soundCheck ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.SoundCheck), false), help),
         },
     };
@@ -79,7 +79,7 @@ public static class InteractiveExport
         _ => "notrun",
     };
 
-    private static object Keyboard(PageState page, PhysicalBenchQaSnapshot b) => new
+    private static object KeyboardTest(PageState page, PhysicalBenchQaSnapshot b) => new
     {
         id = "keyboard",
         name = "Keyboard",
@@ -94,7 +94,7 @@ public static class InteractiveExport
         reportIf = ReportIf.Keyboard,
     };
 
-    private static object Display(PageState page, PhysicalBenchQaSnapshot b) => new
+    private static object DisplayTest(PageState page, PhysicalBenchQaSnapshot b) => new
     {
         id = "display",
         name = "Display and touch",
@@ -109,7 +109,7 @@ public static class InteractiveExport
         reportIf = ReportIf.Display,
     };
 
-    private static object Webcam(PageState page, ModuleState m)
+    private static object WebcamTest(PageState page, ModuleState m)
     {
         var r = m.Result;
         var rep = r.Payload as WebcamReport;
@@ -144,7 +144,7 @@ public static class InteractiveExport
         };
     }
 
-    private static object SpeakerToMic(PageState page, ModuleState m)
+    private static object SpeakerToMicTest(PageState page, ModuleState m)
     {
         var r = m.Result;
         var rep = r.Payload as SpeakerToMicReport;
@@ -178,7 +178,7 @@ public static class InteractiveExport
         };
     }
 
-    private static object MicToSpeaker(PageState page, ModuleState m)
+    private static object MicToSpeakerTest(PageState page, ModuleState m)
     {
         var r = m.Result;
         var rep = r.Payload as MicToSpeakerReport;

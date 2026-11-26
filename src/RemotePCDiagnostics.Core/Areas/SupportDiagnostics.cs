@@ -56,26 +56,24 @@ public sealed class SupportDiagnostics(IProcessLauncher launcher)
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return [new("System DNS", "Timed out")]; }
 
         timeout.CancelAfter(ProbeTimeout);
+        await ProbeEndpointAsync(endpoint, includeClock, observations, timeout.Token, ct).ConfigureAwait(false);
+        return observations;
+    }
+
+    private static async Task ProbeEndpointAsync(
+        SupportEndpoint endpoint, bool includeClock, List<SupportObservation> observations, CancellationToken timeoutToken, CancellationToken ct)
+    {
         var probe = endpoint.Web is null ? "SMB port 445" : "Web endpoint";
         try
         {
             if (endpoint.Web is { } uri)
             {
-                using var request = new HttpRequestMessage(HttpMethod.Head, uri);
-                using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
-                observations.Add(new(probe, DescribeHttp(response.StatusCode)));
-                if (includeClock)
-                {
-                    var clock = uri.Scheme == "https" && response.Headers.Date is { } serverTime
-                        ? $"This PC differs from the HTTPS response time by about {Math.Abs((DateTimeOffset.UtcNow - serverTime).TotalSeconds):0} seconds"
-                        : "No HTTPS response time available";
-                    observations.Add(new("Clock comparison", clock));
-                }
+                await ProbeWebAsync(uri, probe, includeClock, observations, timeoutToken).ConfigureAwait(false);
             }
             else
             {
                 using var client = new TcpClient();
-                await client.ConnectAsync(endpoint.Host, 445, timeout.Token).ConfigureAwait(false);
+                await client.ConnectAsync(endpoint.Host, 445, timeoutToken).ConfigureAwait(false);
                 observations.Add(new(probe, "Server port reachable. Share access and credentials were not tested."));
             }
         }
@@ -86,7 +84,21 @@ public sealed class SupportDiagnostics(IProcessLauncher launcher)
                 ? "TLS connection failed. Check the clock, certificate, or network inspection." : "No HTTP response was received."));
         }
         catch (SocketException) { observations.Add(new(probe, "Could not connect to the server port")); }
-        return observations;
+    }
+
+    private static async Task ProbeWebAsync(
+        Uri uri, string probe, bool includeClock, List<SupportObservation> observations, CancellationToken timeoutToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Head, uri);
+        using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutToken).ConfigureAwait(false);
+        observations.Add(new(probe, DescribeHttp(response.StatusCode)));
+        if (includeClock)
+        {
+            var clock = uri.Scheme == "https" && response.Headers.Date is { } serverTime
+                ? $"This PC differs from the HTTPS response time by about {Math.Abs((DateTimeOffset.UtcNow - serverTime).TotalSeconds):0} seconds"
+                : "No HTTPS response time available";
+            observations.Add(new("Clock comparison", clock));
+        }
     }
 
     public static string DescribeHttp(HttpStatusCode status) => (int)status switch

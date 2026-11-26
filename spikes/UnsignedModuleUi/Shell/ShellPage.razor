@@ -18,9 +18,9 @@
     private string _origin = "?", _log = "", _saved = "";
     private DotNetObjectReference<ShellPage>? _self;
 
-    protected override async Task OnAfterRenderAsync(bool first)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!first) return;
+        if (!firstRender) return;
         _self = DotNetObjectReference.Create(this);
         _origin = await JS.InvokeAsync<string>("shell.listen", _self);
         Spike.ShellOrigin = _origin;

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text.Json.Serialization;
 
 namespace RemotePCDiagnostics.Core.Stress;
@@ -7,7 +8,7 @@ public enum CpuStressOutcome { Passed, Overheated, StoppedByUser, ComputationErr
 
 public sealed record CpuStressOptions
 {
-    public static readonly TimeSpan[] DurationChoices = new[] { 1, 2, 3, 5, 10 }.Select(m => TimeSpan.FromMinutes(m)).ToArray();
+    public static readonly ImmutableArray<TimeSpan> DurationChoices = [.. new[] { 1, 2, 3, 5, 10 }.Select(m => TimeSpan.FromMinutes(m))];
     public static TimeSpan MaxDuration => DurationChoices[^1];
 
     public TimeSpan Duration { get; init; } = TimeSpan.FromMinutes(1);

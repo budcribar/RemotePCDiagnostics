@@ -45,7 +45,6 @@ public static class PendingUpdates
 
     private static readonly object Gate = new();
     private static Task<PendingUpdateList?>? _read;
-    private static DateTimeOffset _readAt;
 
     /// <summary>Forget the cached list (after an install changed it).</summary>
     public static void Invalidate()
@@ -64,7 +63,6 @@ public static class PendingUpdates
         lock (Gate)
         {
             if (_read is { IsCompleted: false }) return _read;
-            _readAt = DateTimeOffset.UtcNow;
             return _read = ReadOnceWindowsAsync(ct);
         }
     }
@@ -103,150 +101,184 @@ public static class PendingUpdates
         object? searcherObj = null;
         object? searchResultObj = null;
         object? updatesObj = null;
-        object? sysInfoObj = null;
 
         try
         {
             var sessionType = Type.GetTypeFromProgID("Microsoft.Update.Session", throwOnError: true)!;
             sessionObj = Activator.CreateInstance(sessionType)!;
             dynamic session = sessionObj;
-            try { session.ClientApplicationID = "Remote PC Diagnostics"; }
-            catch (COMException) { }
+            TryRunCom(() => session.ClientApplicationID = "Remote PC Diagnostics");
 
             searcherObj = session.CreateUpdateSearcher();
             dynamic searcher = searcherObj;
-            try { searcher.Online = false; }
-            catch (COMException) { }
+            TryRunCom(() => searcher.Online = false);
 
             searchResultObj = searcher.Search("IsInstalled=0 and IsHidden=0");
             dynamic searchResult = searchResultObj;
             updatesObj = searchResult.Updates;
             dynamic updates = updatesObj;
 
-            var count = (int)updates.Count;
-            var pending = new List<PendingUpdate>(count);
-            for (var i = 0; i < count; i++)
-            {
-                object? updateObj = null;
-                object? identityObj = null;
-                object? kbObj = null;
-                object? categoriesObj = null;
-                object? behaviorObj = null;
-                try
-                {
-                    updateObj = updates.Item(i);
-                    dynamic u = updateObj;
-
-                    identityObj = u.Identity;
-                    dynamic? identity = identityObj;
-                    var rawId = identity is not null ? (string?)identity.UpdateID ?? "" : "";
-                    if (!Guid.TryParse(rawId, out var id)) continue;
-
-                    var title = TryReadCom(() => (string?)u.Title) ?? "";
-                    var driver = TryReadCom(() => Convert.ToInt32(u.Type, CultureInfo.InvariantCulture)) == 2;
-                    var sizeBytes = TryReadCom(() => Convert.ToInt64(u.MaxDownloadSize, CultureInfo.InvariantCulture));
-                    var downloaded = TryReadCom(() => (bool)u.IsDownloaded);
-                    var severity = TryReadCom(() => (string?)u.MsrcSeverity) ?? "";
-                    var driverModel = TryReadCom(() => (string?)u.DriverModel) ?? "";
-
-                    var mayNeedRestart = false;
-                    try
-                    {
-                        behaviorObj = u.InstallationBehavior;
-                        if (behaviorObj is not null)
-                            mayNeedRestart = Convert.ToInt32(((dynamic)behaviorObj).RebootBehavior, CultureInfo.InvariantCulture) != 0;
-                    }
-                    catch { }
-
-                    var kbs = new List<string>();
-                    try
-                    {
-                        kbObj = u.KBArticleIDs;
-                        if (kbObj is not null)
-                        {
-                            dynamic kbColl = kbObj;
-                            var kbCount = (int)kbColl.Count;
-                            for (var j = 0; j < kbCount; j++)
-                            {
-                                var kb = (string?)kbColl.Item(j);
-                                if (!string.IsNullOrWhiteSpace(kb)) kbs.Add("KB" + kb.Trim());
-                            }
-                        }
-                    }
-                    catch { }
-
-                    var cats = new List<string>();
-                    try
-                    {
-                        categoriesObj = u.Categories;
-                        if (categoriesObj is not null)
-                        {
-                            dynamic catColl = categoriesObj;
-                            var catCount = Math.Min((int)catColl.Count, 2);
-                            for (var j = 0; j < catCount; j++)
-                            {
-                                object? catObj = null;
-                                try
-                                {
-                                    catObj = catColl.Item(j);
-                                    var name = (string?)((dynamic)catObj).Name;
-                                    if (!string.IsNullOrWhiteSpace(name)) cats.Add(name.Trim());
-                                }
-                                finally { SafeReleaseCom(catObj); }
-                            }
-                        }
-                    }
-                    catch { }
-
-                    pending.Add(new(id.ToString("D"), title, string.Join(", ", kbs), driver, string.Join(", ", cats),
-                        Math.Max(0, sizeBytes), downloaded, mayNeedRestart, severity, driverModel));
-                }
-                finally
-                {
-                    SafeReleaseCom(behaviorObj);
-                    SafeReleaseCom(categoriesObj);
-                    SafeReleaseCom(kbObj);
-                    SafeReleaseCom(identityObj);
-                    SafeReleaseCom(updateObj);
-                }
-            }
-
+            var pending = ReadPendingUpdatesCom(updates);
             var failed = ReadFailedHistoryWindows(searcher, now);
-
-            var rebootReasons = new List<string>();
-            var rebootRequired = false;
-            try
-            {
-                var sysInfoType = Type.GetTypeFromProgID("Microsoft.Update.SystemInfo", throwOnError: false);
-                if (sysInfoType is not null)
-                {
-                    sysInfoObj = Activator.CreateInstance(sysInfoType);
-                    if (sysInfoObj is not null && (bool)((dynamic)sysInfoObj).RebootRequired)
-                    {
-                        rebootRequired = true;
-                        rebootReasons.Add("Windows Update Agent");
-                    }
-                }
-            }
-            catch { }
-
-            foreach (var reason in ReadRegistryRebootReasons())
-            {
-                rebootRequired = true;
-                if (!rebootReasons.Contains(reason, StringComparer.OrdinalIgnoreCase))
-                    rebootReasons.Add(reason);
-            }
+            var (rebootRequired, rebootReasons) = ReadRebootStateWindows();
 
             return new(pending, rebootRequired, failed, rebootReasons.Count > 0 ? rebootReasons : null);
         }
         finally
         {
-            SafeReleaseCom(sysInfoObj);
             SafeReleaseCom(updatesObj);
             SafeReleaseCom(searchResultObj);
             SafeReleaseCom(searcherObj);
             SafeReleaseCom(sessionObj);
         }
+    }
+
+    private static void TryRunCom(Action action)
+    {
+        try { action(); }
+        catch (COMException) { }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static List<PendingUpdate> ReadPendingUpdatesCom(dynamic updates)
+    {
+        var count = (int)updates.Count;
+        var pending = new List<PendingUpdate>(count);
+        for (var i = 0; i < count; i++)
+        {
+            if (ReadSingleUpdateCom(updates, i) is { } item)
+                pending.Add(item);
+        }
+        return pending;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static PendingUpdate? ReadSingleUpdateCom(dynamic updates, int index)
+    {
+        object? updateObj = null;
+        object? identityObj = null;
+        try
+        {
+            updateObj = updates.Item(index);
+            dynamic u = updateObj;
+
+            identityObj = u.Identity;
+            dynamic? identity = identityObj;
+            var rawId = identity is not null ? (string?)identity.UpdateID ?? "" : "";
+            if (!Guid.TryParse(rawId, out var id)) return null;
+
+            var title = TryReadCom(() => (string?)u.Title) ?? "";
+            var driver = TryReadCom(() => Convert.ToInt32(u.Type, CultureInfo.InvariantCulture)) == 2;
+            var sizeBytes = TryReadCom(() => Convert.ToInt64(u.MaxDownloadSize, CultureInfo.InvariantCulture));
+            var downloaded = TryReadCom(() => (bool)u.IsDownloaded);
+            var severity = TryReadCom(() => (string?)u.MsrcSeverity) ?? "";
+            var driverModel = TryReadCom(() => (string?)u.DriverModel) ?? "";
+            var mayNeedRestart = ReadMayNeedRestartCom(u);
+            var kbs = ReadKbArticlesCom(u);
+            var cats = ReadCategoriesCom(u);
+
+            return new(id.ToString("D"), title, string.Join(", ", kbs), driver, string.Join(", ", cats),
+                Math.Max(0, sizeBytes), downloaded, mayNeedRestart, severity, driverModel);
+        }
+        finally
+        {
+            SafeReleaseCom(identityObj);
+            SafeReleaseCom(updateObj);
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool ReadMayNeedRestartCom(dynamic u)
+    {
+        object? behaviorObj = null;
+        try
+        {
+            behaviorObj = u.InstallationBehavior;
+            return behaviorObj is not null && Convert.ToInt32(((dynamic)behaviorObj).RebootBehavior, CultureInfo.InvariantCulture) != 0;
+        }
+        catch { return false; }
+        finally { SafeReleaseCom(behaviorObj); }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static List<string> ReadKbArticlesCom(dynamic u)
+    {
+        var kbs = new List<string>();
+        object? kbObj = null;
+        try
+        {
+            kbObj = u.KBArticleIDs;
+            if (kbObj is null) return kbs;
+            dynamic kbColl = kbObj;
+            var kbCount = (int)kbColl.Count;
+            for (var j = 0; j < kbCount; j++)
+            {
+                var kb = (string?)kbColl.Item(j);
+                if (!string.IsNullOrWhiteSpace(kb)) kbs.Add("KB" + kb.Trim());
+            }
+        }
+        catch { }
+        finally { SafeReleaseCom(kbObj); }
+        return kbs;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static List<string> ReadCategoriesCom(dynamic u)
+    {
+        var cats = new List<string>();
+        object? categoriesObj = null;
+        try
+        {
+            categoriesObj = u.Categories;
+            if (categoriesObj is null) return cats;
+            dynamic catColl = categoriesObj;
+            var catCount = Math.Min((int)catColl.Count, 2);
+            for (var j = 0; j < catCount; j++)
+            {
+                object? catObj = null;
+                try
+                {
+                    catObj = catColl.Item(j);
+                    var name = (string?)((dynamic)catObj).Name;
+                    if (!string.IsNullOrWhiteSpace(name)) cats.Add(name.Trim());
+                }
+                finally { SafeReleaseCom(catObj); }
+            }
+        }
+        catch { }
+        finally { SafeReleaseCom(categoriesObj); }
+        return cats;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static (bool RebootRequired, List<string> Reasons) ReadRebootStateWindows()
+    {
+        var rebootReasons = new List<string>();
+        var rebootRequired = false;
+        object? sysInfoObj = null;
+        try
+        {
+            var sysInfoType = Type.GetTypeFromProgID("Microsoft.Update.SystemInfo", throwOnError: false);
+            if (sysInfoType is not null)
+            {
+                sysInfoObj = Activator.CreateInstance(sysInfoType);
+                if (sysInfoObj is not null && (bool)((dynamic)sysInfoObj).RebootRequired)
+                {
+                    rebootRequired = true;
+                    rebootReasons.Add("Windows Update Agent");
+                }
+            }
+        }
+        catch { }
+        finally { SafeReleaseCom(sysInfoObj); }
+
+        foreach (var reason in ReadRegistryRebootReasons())
+        {
+            rebootRequired = true;
+            if (!rebootReasons.Contains(reason, StringComparer.OrdinalIgnoreCase))
+                rebootReasons.Add(reason);
+        }
+        return (rebootRequired, rebootReasons);
     }
 
     [SupportedOSPlatform("windows")]
@@ -325,28 +357,39 @@ public static class PendingUpdates
 
         foreach (var group in groups)
         {
-            var ordered = group.OrderByDescending(e => e.Date).ToList();
-            var latest = ordered[0];
-            if (latest.ResultCode != ResultCodeFailed || latest.Date < cutoff)
-                continue;
-
-            // Count consecutive failed attempts since the most recent non-failed (e.g. succeeded) entry, within the window.
-            var attempts = 0;
-            foreach (var entry in ordered)
-            {
-                if (entry.ResultCode != ResultCodeFailed) break;
-                if (entry.Date >= cutoff) attempts++;
-            }
-            if (attempts == 0) continue;
-
-            // Defender signature updates run several times a day; ignore one-off transient failures.
-            if (IsDefenderDefinition(latest.Title) && attempts < RepeatFailureCount)
-                continue;
-
-            failed.Add(new(latest.Id, latest.Title, latest.Date, latest.HResult, attempts));
+            if (TryBuildFailedUpdate(group, cutoff) is { } item)
+                failed.Add(item);
         }
 
         return failed.OrderByDescending(f => f.LastFailed).ThenBy(f => f.Title, StringComparer.CurrentCultureIgnoreCase).ToList();
+    }
+
+    private static FailedUpdate? TryBuildFailedUpdate(IEnumerable<UpdateHistoryEntry> group, DateTimeOffset cutoff)
+    {
+        var ordered = group.OrderByDescending(e => e.Date).ToList();
+        var latest = ordered[0];
+        if (latest.ResultCode != ResultCodeFailed || latest.Date < cutoff)
+            return null;
+
+        // Count consecutive failed attempts since the most recent non-failed (e.g. succeeded) entry, within the window.
+        var attempts = CountConsecutiveFailures(ordered, cutoff);
+        if (attempts == 0) return null;
+        // Defender signature updates run several times a day; ignore one-off transient failures.
+        if (IsDefenderDefinition(latest.Title) && attempts < RepeatFailureCount)
+            return null;
+
+        return new(latest.Id, latest.Title, latest.Date, latest.HResult, attempts);
+    }
+
+    private static int CountConsecutiveFailures(List<UpdateHistoryEntry> ordered, DateTimeOffset cutoff)
+    {
+        var attempts = 0;
+        foreach (var entry in ordered)
+        {
+            if (entry.ResultCode != ResultCodeFailed) break;
+            if (entry.Date >= cutoff) attempts++;
+        }
+        return attempts;
     }
 
     private static bool IsDefenderDefinition(string title) =>
@@ -413,24 +456,44 @@ public static class PendingUpdates
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object || !Bool(root, "Ok")) return null;
-            var updates = new List<PendingUpdate>();
-            if (root.TryGetProperty("Updates", out var list))
-            {
-                // Windows PowerShell writes a one-item list as the item itself.
-                var items = list.ValueKind == JsonValueKind.Array ? list.EnumerateArray().ToList()
-                    : list.ValueKind == JsonValueKind.Object ? [list] : [];
-                foreach (var u in items)
-                {
-                    if (u.ValueKind != JsonValueKind.Object || !Guid.TryParse(Str(u, "Id"), out var id)) continue;
-                    updates.Add(new(id.ToString("D"), Str(u, "Title"), Str(u, "Kb"), Bool(u, "Driver"), Str(u, "Category"),
-                        long.TryParse(Str(u, "SizeBytes"), NumberStyles.Float, CultureInfo.InvariantCulture, out var size) ? size
-                            : decimal.TryParse(Str(u, "SizeBytes"), NumberStyles.Float, CultureInfo.InvariantCulture, out var big) ? (long)Math.Min(big, long.MaxValue) : 0,
-                        Bool(u, "Downloaded"), Bool(u, "MayNeedRestart"), Str(u, "Severity"), Str(u, "DriverModel")));
-                }
-            }
+            var updates = ParseJsonUpdates(root);
             return new(updates, Bool(root, "RebootRequired"));
         }
         catch (JsonException) { return null; }
+    }
+
+    private static List<PendingUpdate> ParseJsonUpdates(JsonElement root)
+    {
+        var updates = new List<PendingUpdate>();
+        if (!root.TryGetProperty("Updates", out var list)) return updates;
+
+        // Windows PowerShell writes a one-item list as the item itself.
+        var items = list.ValueKind == JsonValueKind.Array ? list.EnumerateArray().ToList()
+            : list.ValueKind == JsonValueKind.Object ? [list] : [];
+        foreach (var u in items)
+        {
+            if (TryParseJsonUpdate(u) is { } parsed)
+                updates.Add(parsed);
+        }
+        return updates;
+    }
+
+    private static PendingUpdate? TryParseJsonUpdate(JsonElement u)
+    {
+        if (u.ValueKind != JsonValueKind.Object || !Guid.TryParse(Str(u, "Id"), out var id))
+            return null;
+        return new(id.ToString("D"), Str(u, "Title"), Str(u, "Kb"), Bool(u, "Driver"), Str(u, "Category"),
+            ParseSizeBytes(Str(u, "SizeBytes")),
+            Bool(u, "Downloaded"), Bool(u, "MayNeedRestart"), Str(u, "Severity"), Str(u, "DriverModel"));
+    }
+
+    private static long ParseSizeBytes(string raw)
+    {
+        if (long.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var size))
+            return size;
+        return decimal.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var big)
+            ? (long)Math.Min(big, long.MaxValue)
+            : 0;
     }
 
     private static string Str(JsonElement e, string name) =>
@@ -486,28 +549,57 @@ public static class PendingUpdates
             return new(id, title, AreaLevel.Neutral, "Not available", "", columns, [],
                 EmptyText: "Windows couldn't be asked which updates are waiting. Use \"Check & install\" to check with Windows Update.");
 
-        var mine = list.Updates.Where(u => u.Driver == drivers).OrderByDescending(u => u.Severity.Length > 0).ThenBy(u => u.Title, StringComparer.CurrentCultureIgnoreCase).ToList();
-        var rows = mine.Take(MaxRows).Select(u => new AreaRow(AreaLevel.Neutral,
-            [u.Title, drivers ? u.DriverModel : string.Join(" · ", new[] { u.Kb, u.Severity, u.Category }.Where(x => x.Length > 0)),
-                u.SizeBytes > 0 ? Osquery.HardwareInventory.FormatBytes(u.SizeBytes) : "", u.MayNeedRestart ? "May be needed" : "No"],
-            [null, null, u.SizeBytes.ToString("D20"), null], Key: u.Id,
-            Actions: [new AreaAction(RemediationKind.InstallUpdate, "Install", u.Id, u.Title)])).ToList();
+        var mine = list.Updates.Where(u => u.Driver == drivers)
+            .OrderByDescending(u => u.Severity.Length > 0)
+            .ThenBy(u => u.Title, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        var rows = mine.Take(MaxRows).Select(u => BuildUpdateRow(u, drivers)).ToList();
+        var actions = BuildCardActions(mine.Count, drivers, list.RebootRequired);
+        var headline = BuildCardHeadline(mine.Count, drivers, word);
+        var meta = BuildCardMeta(mine.Count, list);
 
-        var actions = new List<AreaAction>();
-        if (drivers && mine.Count > 0)
-            actions.Add(new(RemediationKind.CheckAndInstallDriverUpdates,
-                mine.Count > 1 ? "Check & install all driver updates" : "Check & install driver updates"));
-        else if (!drivers && mine.Count > 1)
-            actions.Add(new(RemediationKind.CheckAndInstallWindowsUpdates, "Check & install all updates"));
-        if (list.RebootRequired) actions.Add(RestartAction);
-        var headline = mine.Count == 0 ? (drivers ? "No driver updates waiting" : "No updates waiting") : AreaModuleBase.Plural(mine.Count, word) + " waiting";
-        var rebootSuffix = list.RebootReasons is { Count: > 0 } ? $" ({string.Join(", ", list.RebootReasons)})" : "";
-        var meta = list.RebootRequired ? $"Windows is waiting for a restart to finish installing updates{rebootSuffix}"
-            : mine.Count == 0 ? "As of Windows' last check with Windows Update" : "Install one at a time, or all at once";
         return new(id, title, mine.Count == 0 && !list.RebootRequired ? AreaLevel.Ok : AreaLevel.Neutral, headline, meta, columns, rows,
             EmptyText: mine.Count == 0 ? "Windows lists nothing waiting. \"Check & install\" asks Windows Update for anything newer." : null,
             Note: "From Windows' last check with Windows Update. \"Check & install\" checks again online.",
             Actions: actions.Count > 0 ? actions : null);
+    }
+
+    private static AreaRow BuildUpdateRow(PendingUpdate u, bool drivers)
+    {
+        var category = drivers ? u.DriverModel : string.Join(" · ", new[] { u.Kb, u.Severity, u.Category }.Where(x => x.Length > 0));
+        var size = u.SizeBytes > 0 ? Osquery.HardwareInventory.FormatBytes(u.SizeBytes) : "";
+        return new(AreaLevel.Neutral,
+            [u.Title, category, size, u.MayNeedRestart ? "May be needed" : "No"],
+            [null, null, u.SizeBytes.ToString("D20"), null], Key: u.Id,
+            Actions: [new AreaAction(RemediationKind.InstallUpdate, "Install", u.Id, u.Title)]);
+    }
+
+    private static List<AreaAction> BuildCardActions(int count, bool drivers, bool rebootRequired)
+    {
+        var actions = new List<AreaAction>();
+        if (drivers && count > 0)
+            actions.Add(new(RemediationKind.CheckAndInstallDriverUpdates,
+                count > 1 ? "Check & install all driver updates" : "Check & install driver updates"));
+        else if (!drivers && count > 1)
+            actions.Add(new(RemediationKind.CheckAndInstallWindowsUpdates, "Check & install all updates"));
+        if (rebootRequired) actions.Add(RestartAction);
+        return actions;
+    }
+
+    private static string BuildCardHeadline(int count, bool drivers, string word)
+    {
+        if (count == 0) return drivers ? "No driver updates waiting" : "No updates waiting";
+        return AreaModuleBase.Plural(count, word) + " waiting";
+    }
+
+    private static string BuildCardMeta(int count, PendingUpdateList list)
+    {
+        if (list.RebootRequired)
+        {
+            var rebootSuffix = list.RebootReasons is { Count: > 0 } ? $" ({string.Join(", ", list.RebootReasons)})" : "";
+            return $"Windows is waiting for a restart to finish installing updates{rebootSuffix}";
+        }
+        return count == 0 ? "As of Windows' last check with Windows Update" : "Install one at a time, or all at once";
     }
 
     /// <summary>

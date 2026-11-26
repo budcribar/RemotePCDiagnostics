@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Plugins;
+using RemotePCDiagnostics.ModuleHost;
 
 // RemotePCDiagnostics.ModuleHost "<module.dll>" | --shared
 // Loads one module (or, with --shared, any number of bundled modules of the same token level) into its own load context and answers the
@@ -115,6 +116,8 @@ else
     return 0;
 }
 
+namespace RemotePCDiagnostics.ModuleHost
+{
 internal sealed class ModuleSession
 {
     private sealed class RunState
@@ -322,4 +325,5 @@ internal sealed class ModuleSession
         }
         try { session.Cancel(); } catch (ObjectDisposedException) { }
     }
+}
 }

@@ -77,8 +77,12 @@ public sealed class ModuleCatalog
     /// <summary>Raised when a module is added or its state changes.</summary>
     public event EventHandler? Changed;
 
+    private IReadOnlyList<ModuleDescriptor>? _allCache;
+
     /// <summary>Every known descriptor, in group then order.</summary>
-    public IReadOnlyList<ModuleDescriptor> All =>
+    public IReadOnlyList<ModuleDescriptor> All => _allCache ??= BuildAll();
+
+    private IReadOnlyList<ModuleDescriptor> BuildAll() =>
         _byId.Values.OrderBy(d => d.Group, StringComparer.Ordinal).ThenBy(d => d.Order).ThenBy(d => d.Slug, StringComparer.OrdinalIgnoreCase).ToList();
 
     /// <summary>Adds a registered module. Its descriptor comes from the module, keeping the built-in Group, Order and links when known.</summary>
@@ -144,7 +148,7 @@ public sealed class ModuleCatalog
     /// <summary>Marks a module disabled (a plugin turned off or failed verification).</summary>
     public void Disable(Guid id) { _disabled[id] = ModuleState.Disabled; RaiseChanged(); }
 
-    internal void RaiseChanged() { try { Changed?.Invoke(this, EventArgs.Empty); } catch { } }
+    internal void RaiseChanged() { _allCache = null; try { Changed?.Invoke(this, EventArgs.Empty); } catch { } }
 
     private static ModuleDescriptor DescriptorFor(IDiagnosticModule m, ModuleDescriptor? known)
     {
@@ -185,5 +189,7 @@ public sealed class ModuleCatalog
         Find(slug) is { MergedInto: { } into } && Get(into) is { } target ? target.Slug : slug;
 
     /// <summary>Known descriptors that can run here now.</summary>
-    public IReadOnlyList<ModuleDescriptor> Available => All.Where(d => StateOf(d.Id) == ModuleState.Available).ToList();
+    public IReadOnlyList<ModuleDescriptor> Available => GetAvailable();
+
+    private IReadOnlyList<ModuleDescriptor> GetAvailable() => All.Where(d => StateOf(d.Id) == ModuleState.Available).ToList();
 }

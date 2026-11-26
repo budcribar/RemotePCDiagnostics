@@ -161,93 +161,118 @@ public sealed class DuplicateFilesModule(
     public AreaReport Scan(IReadOnlyList<string> roots, long minSizeBytes, IProgress<string>? progress, CancellationToken ct)
     {
         progress.ReportStep(1, 4, "Gathering candidate files…");
+        var sizeCandidates = GroupFilesBySize(roots, minSizeBytes, ct);
 
-        // Phase 1: Group by file length
+        progress.ReportStep(2, 4, $"Checking headers for {sizeCandidates.Sum(kv => kv.Value.Count)} potential duplicates…");
+        var prefixCandidates = GroupByPrefixHash(sizeCandidates, ct);
+
+        progress.ReportStep(3, 4, $"Calculating confirmation hashes on {prefixCandidates.Sum(kv => kv.Value.Count)} files…");
+        var confirmedDuplicates = ConfirmFullHashDuplicates(prefixCandidates, ct);
+
+        progress.ReportStep(4, 4, "Finalizing duplicate analysis…");
+        return BuildReport(confirmedDuplicates.OrderByDescending(g => g.WastedBytes).ToList(), minSizeBytes);
+    }
+
+    private static List<KeyValuePair<long, List<string>>> GroupFilesBySize(IReadOnlyList<string> roots, long minSizeBytes, CancellationToken ct)
+    {
         var bySize = new Dictionary<long, List<string>>();
-        int filesCount = 0;
-
         foreach (var root in roots)
         {
             ct.ThrowIfCancellationRequested();
-            if (!Directory.Exists(root)) continue;
+            if (Directory.Exists(root))
+                CollectSizeCandidatesForRoot(root, minSizeBytes, bySize, ct);
+        }
+        return bySize.Where(kv => kv.Value.Count >= 2).ToList();
+    }
 
-            var pendingDirs = new Stack<string>();
-            pendingDirs.Push(root);
+    private static void CollectSizeCandidatesForRoot(string root, long minSizeBytes, Dictionary<long, List<string>> bySize, CancellationToken ct)
+    {
+        var pendingDirs = new Stack<string>();
+        pendingDirs.Push(root);
+        while (pendingDirs.Count > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            var currentDir = pendingDirs.Pop();
+            if (!AddDirectoryFilesBySize(currentDir, minSizeBytes, bySize, ct))
+                continue;
+            EnqueueSubdirectories(currentDir, pendingDirs, ct);
+        }
+    }
 
-            while (pendingDirs.Count > 0)
+    private static bool AddDirectoryFilesBySize(string currentDir, long minSizeBytes, Dictionary<long, List<string>> bySize, CancellationToken ct)
+    {
+        try
+        {
+            foreach (var file in new DirectoryInfo(currentDir).EnumerateFiles())
             {
                 ct.ThrowIfCancellationRequested();
-                var currentDir = pendingDirs.Pop();
+                TryAddFileBySize(file, minSizeBytes, bySize);
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PathTooLongException)
+        {
+            return false;
+        }
+    }
 
-                try
-                {
-                    var dirInfo = new DirectoryInfo(currentDir);
-                    foreach (var file in dirInfo.EnumerateFiles())
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        try
-                        {
-                            long len = file.Length;
-                            if (len < minSizeBytes) continue;
+    private static void TryAddFileBySize(FileInfo file, long minSizeBytes, Dictionary<long, List<string>> bySize)
+    {
+        try
+        {
+            long len = file.Length;
+            if (len < minSizeBytes) return;
+            if (!bySize.TryGetValue(len, out var list))
+                bySize[len] = list = [];
+            list.Add(file.FullName);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
 
-                            if (!bySize.TryGetValue(len, out var list))
-                            {
-                                list = [];
-                                bySize[len] = list;
-                            }
-                            list.Add(file.FullName);
-                            filesCount++;
-                        }
-                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-                    }
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PathTooLongException) { continue; }
-
-                try
-                {
-                    foreach (var subDir in Directory.EnumerateDirectories(currentDir))
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        if (StorageCleanupEngine.IsReparsePoint(subDir)) continue;
-                        pendingDirs.Push(subDir);
-                    }
-                }
-                catch { }
+    private static void EnqueueSubdirectories(string currentDir, Stack<string> pendingDirs, CancellationToken ct)
+    {
+        try
+        {
+            foreach (var subDir in Directory.EnumerateDirectories(currentDir))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (!StorageCleanupEngine.IsReparsePoint(subDir))
+                    pendingDirs.Push(subDir);
             }
         }
+        catch { }
+    }
 
-        // Keep only size groups with 2 or more files
-        var sizeCandidates = bySize.Where(kv => kv.Value.Count >= 2).ToList();
-
-        progress.ReportStep(2, 4, $"Checking headers for {sizeCandidates.Sum(kv => kv.Value.Count)} potential duplicates…");
-
-        // Phase 2: Prefix hash comparison
+    private static List<KeyValuePair<string, List<string>>> GroupByPrefixHash(
+        List<KeyValuePair<long, List<string>>> sizeCandidates, CancellationToken ct)
+    {
         var byPrefix = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var (size, fileList) in sizeCandidates)
         {
             ct.ThrowIfCancellationRequested();
-            foreach (var filePath in fileList)
-            {
-                ct.ThrowIfCancellationRequested();
-                string? prefixHash = ComputePrefixHash(filePath, ct);
-                if (prefixHash is null) continue;
-
-                string key = $"{size}:{prefixHash}";
-                if (!byPrefix.TryGetValue(key, out var list))
-                {
-                    list = [];
-                    byPrefix[key] = list;
-                }
-                list.Add(filePath);
-            }
+            AddPrefixHashes(size, fileList, byPrefix, ct);
         }
+        return byPrefix.Where(kv => kv.Value.Count >= 2).ToList();
+    }
 
-        // Keep only prefix groups with 2 or more files
-        var prefixCandidates = byPrefix.Where(kv => kv.Value.Count >= 2).ToList();
+    private static void AddPrefixHashes(long size, List<string> fileList, Dictionary<string, List<string>> byPrefix, CancellationToken ct)
+    {
+        foreach (var filePath in fileList)
+        {
+            ct.ThrowIfCancellationRequested();
+            string? prefixHash = ComputePrefixHash(filePath, ct);
+            if (prefixHash is null) continue;
 
-        progress.ReportStep(3, 4, $"Calculating confirmation hashes on {prefixCandidates.Sum(kv => kv.Value.Count)} files…");
+            string key = $"{size}:{prefixHash}";
+            if (!byPrefix.TryGetValue(key, out var list))
+                byPrefix[key] = list = [];
+            list.Add(filePath);
+        }
+    }
 
-        // Phase 3: Full SHA-256 confirmation hash
+    private static List<DuplicateGroup> ConfirmFullHashDuplicates(
+        List<KeyValuePair<string, List<string>>> prefixCandidates, CancellationToken ct)
+    {
         var confirmedDuplicates = new List<DuplicateGroup>();
         var byFullHash = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
@@ -255,33 +280,28 @@ public sealed class DuplicateFilesModule(
         {
             ct.ThrowIfCancellationRequested();
             long size = long.Parse(prefixKey.Split(':')[0], CultureInfo.InvariantCulture);
-
             byFullHash.Clear();
-            foreach (var filePath in fileList)
-            {
-                ct.ThrowIfCancellationRequested();
-                string? fullHash = ComputeFullHash(filePath, ct);
-                if (fullHash is null) continue;
-
-                if (!byFullHash.TryGetValue(fullHash, out var list))
-                {
-                    list = [];
-                    byFullHash[fullHash] = list;
-                }
-                list.Add(filePath);
-            }
-
+            AddFullHashes(fileList, byFullHash, ct);
             foreach (var (hash, matchingFiles) in byFullHash)
             {
                 if (matchingFiles.Count >= 2)
-                {
                     confirmedDuplicates.Add(new DuplicateGroup(hash, size, matchingFiles));
-                }
             }
         }
+        return confirmedDuplicates;
+    }
 
-        progress.ReportStep(4, 4, "Finalizing duplicate analysis…");
-        return BuildReport(confirmedDuplicates.OrderByDescending(g => g.WastedBytes).ToList(), minSizeBytes);
+    private static void AddFullHashes(List<string> fileList, Dictionary<string, List<string>> byFullHash, CancellationToken ct)
+    {
+        foreach (var filePath in fileList)
+        {
+            ct.ThrowIfCancellationRequested();
+            string? fullHash = ComputeFullHash(filePath, ct);
+            if (fullHash is null) continue;
+            if (!byFullHash.TryGetValue(fullHash, out var list))
+                byFullHash[fullHash] = list = [];
+            list.Add(filePath);
+        }
     }
 
     public sealed record DuplicateDeletionSet(string Keep, IReadOnlyList<string> Delete);
@@ -390,8 +410,7 @@ public sealed class DuplicateFilesModule(
             foreach (var target in set.Delete)
             {
                 ct.ThrowIfCancellationRequested();
-                long size = 0;
-                try { if (File.Exists(target)) size = new FileInfo(target).Length; } catch { }
+                long size = TryGetFileLength(target);
                 if (DeleteToRecycleBin(target, set.Keep, out var err))
                 {
                     removed++;
@@ -404,6 +423,18 @@ public sealed class DuplicateFilesModule(
                 }
             }
         }
+        return FormatDeletionResult(removed, failed, freedBytes, firstError);
+    }
+
+    private static long TryGetFileLength(string path)
+    {
+        try { return File.Exists(path) ? new FileInfo(path).Length : 0; }
+        catch { return 0; }
+    }
+
+    private static (bool Success, string Message, long FreedBytes, int RemovedFiles) FormatDeletionResult(
+        int removed, int failed, long freedBytes, string? firstError)
+    {
         if (removed == 0)
             return (false, firstError ?? "No duplicate files were deleted.", 0, 0);
         var noun = removed == 1 ? "duplicate file" : "duplicate files";

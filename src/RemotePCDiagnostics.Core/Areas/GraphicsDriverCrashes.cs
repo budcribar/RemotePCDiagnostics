@@ -224,22 +224,10 @@ public static class GraphicsDriverCrashes
         var resets = incidents.Where(i => !i.BlueScreen).ToList();
         var bsods = incidents.Count(i => i.BlueScreen);
         var recent = incidents.Count(i => i.Time >= cutoff);
-        var level = bsods > 0 || resets.Count >= RepeatedResets ? AreaLevel.Error
-            : recent > 0 ? AreaLevel.Warning : incidents.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok;
+        var level = EvaluateCardLevel(incidents.Count, resets.Count, bsods, recent);
 
-        var rows = incidents.Select(i => new AreaRow(
-            i.BlueScreen ? AreaLevel.Error : i.Time >= cutoff ? AreaLevel.Warning : AreaLevel.Neutral,
-            [WindowsEventLog.FormatTime(i.Time), i.What, i.Driver ?? "Unknown"],
-            [AreaSort.TimeKey(i.Time), null, null],
-            Detail: string.Join("\n", i.Evidence.Prepend(i.Driver is null ? "Driver at the time: unknown" : $"Driver at the time: {i.Driver}")),
-            DumpPath: i.DumpPath, ReviewKeys: i.ReviewKeys.Count > 0 ? i.ReviewKeys : null)).ToList();
-
-        var headline = incidents.Count == 0 ? "None"
-            : string.Join(", ", new[]
-            {
-                resets.Count > 0 ? AreaModuleBase.Plural(resets.Count, "driver reset") : null,
-                bsods > 0 ? AreaModuleBase.Plural(bsods, "graphics blue screen") : null
-            }.OfType<string>());
+        var rows = incidents.Select(i => BuildIncidentRow(i, cutoff)).ToList();
+        var headline = BuildCardHeadline(incidents.Count, resets.Count, bsods);
         var latest = incidents.FirstOrDefault();
         var meta = latest is null ? $"In the last {Days} days"
             : $"Latest: {WindowsEventLog.FormatTime(latest.Time)}" + (latest.Driver is { } d ? $" · driver {d}" : "");
@@ -254,6 +242,36 @@ public static class GraphicsDriverCrashes
             EventCount = incidents.Count, WindowDays = Days, RecentEventCount = recent, RecentWindowDays = RecentDays,
             RunCheck = stress ? new AreaCheckLink(ModuleSlugs.GpuStress, "Run GPU stress test") : null
         };
+    }
+
+    private static AreaLevel EvaluateCardLevel(int total, int resets, int bsods, int recent)
+    {
+        if (bsods > 0 || resets >= RepeatedResets) return AreaLevel.Error;
+        if (recent > 0) return AreaLevel.Warning;
+        return total > 0 ? AreaLevel.Neutral : AreaLevel.Ok;
+    }
+
+    private static AreaRow BuildIncidentRow(Incident i, DateTimeOffset cutoff)
+    {
+        var rowLevel = i.BlueScreen ? AreaLevel.Error : i.Time >= cutoff ? AreaLevel.Warning : AreaLevel.Neutral;
+        var driverLine = i.Driver is null ? "Driver at the time: unknown" : $"Driver at the time: {i.Driver}";
+        return new AreaRow(
+            rowLevel,
+            [WindowsEventLog.FormatTime(i.Time), i.What, i.Driver ?? "Unknown"],
+            [AreaSort.TimeKey(i.Time), null, null],
+            Detail: string.Join("\n", i.Evidence.Prepend(driverLine)),
+            DumpPath: i.DumpPath,
+            ReviewKeys: i.ReviewKeys.Count > 0 ? i.ReviewKeys : null);
+    }
+
+    private static string BuildCardHeadline(int total, int resets, int bsods)
+    {
+        if (total == 0) return "None";
+        return string.Join(", ", new[]
+        {
+            resets > 0 ? AreaModuleBase.Plural(resets, "driver reset") : null,
+            bsods > 0 ? AreaModuleBase.Plural(bsods, "graphics blue screen") : null
+        }.OfType<string>());
     }
 
     /// <summary>The install the resets started after: the latest one before the first reset, at most <see cref="UpdateLeadDays"/> days before it.</summary>

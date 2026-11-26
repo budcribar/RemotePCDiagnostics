@@ -320,7 +320,7 @@ public sealed class WindowsAdminSettings(ILogger? log = null) : IAdminSettingsBa
         var escaped = alias.Replace("\\", "\\\\").Replace("'", "\\'");
         using var adapters = new ManagementObjectSearcher($"SELECT Index FROM Win32_NetworkAdapter WHERE NetConnectionID = '{escaped}'");
         using var adapterResults = adapters.Get();
-        foreach (ManagementObject adapter in adapterResults)
+        foreach (ManagementBaseObject adapter in adapterResults)
         {
             using (adapter)
             {
@@ -328,7 +328,7 @@ public sealed class WindowsAdminSettings(ILogger? log = null) : IAdminSettingsBa
                 using var configs = new ManagementObjectSearcher($"SELECT * FROM Win32_NetworkAdapterConfiguration WHERE Index = {index}");
                 using var configResults = configs.Get();
                 ManagementObject? found = null;
-                foreach (ManagementObject config in configResults)
+                foreach (var config in configResults.OfType<ManagementObject>())
                 {
                     if (found is null) found = config;
                     else config.Dispose();

@@ -145,7 +145,7 @@ public static class MemoryProbe
         {
             using var searcher = new System.Management.ManagementObjectSearcher("SELECT MemoryDevices, MaxCapacityEx, MaxCapacity FROM Win32_PhysicalMemoryArray WHERE Use = 3");
             using var results = searcher.Get();
-            foreach (System.Management.ManagementObject o in results)
+            foreach (System.Management.ManagementBaseObject o in results)
             {
                 using (o)
                 {
@@ -164,7 +164,7 @@ public static class MemoryProbe
         {
             using var searcher = new System.Management.ManagementObjectSearcher("SELECT Capacity FROM Win32_PhysicalMemory");
             using var results = searcher.Get();
-            foreach (System.Management.ManagementObject o in results)
+            foreach (System.Management.ManagementBaseObject o in results)
             {
                 using (o)
                 {

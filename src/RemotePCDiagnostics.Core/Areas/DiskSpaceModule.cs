@@ -177,142 +177,9 @@ public sealed class DiskSpaceModule(
         var windowsDir = GetWindowsDirectory();
         var ignoredPaths = _ignoreStore.GetIgnoredPaths();
         var drives = GetDrivesForScan(root, Logger);
+        var branchRoots = CollectBranchRoots(root, ct);
 
-        // Gather candidate top-level branches to measure (e.g. C:\Users, C:\Program Files, C:\Windows, C:\Users\<user>\*)
-        var branchRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            foreach (var dir in Directory.EnumerateDirectories(root))
-            {
-                ct.ThrowIfCancellationRequested();
-                if (StorageCleanupEngine.IsReparsePoint(dir)) continue;
-                if (IsSystemDirectory(dir)) continue;
-                branchRoots.Add(dir);
-
-                // If Users directory, also break down per-user folders
-                if (string.Equals(Path.GetFileName(dir), "Users", StringComparison.OrdinalIgnoreCase))
-                {
-                    try
-                    {
-                        foreach (var userDir in Directory.EnumerateDirectories(dir))
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            if (!StorageCleanupEngine.IsReparsePoint(userDir))
-                            {
-                                branchRoots.Add(userDir);
-                                foreach (var sub in new[] { "Downloads", "Documents", "Videos", "Music", "Pictures", "Desktop", "OneDrive" })
-                                {
-                                    var subPath = Path.Combine(userDir, sub);
-                                    if (Directory.Exists(subPath) && !StorageCleanupEngine.IsReparsePoint(subPath))
-                                        branchRoots.Add(subPath);
-                                }
-                            }
-                        }
-                    }
-                    catch { /* skip inaccessible user folders */ }
-                }
-            }
-        }
-        catch { /* root enumeration error */ }
-
-        // Stack-based directory traversal
-        var pendingDirs = new Stack<string>();
-        pendingDirs.Push(root);
-
-        int scannedFolders = 0;
-        long totalScannedBytes = 0;
-        long lastReportTicks = Environment.TickCount64;
-
-        while (pendingDirs.Count > 0)
-        {
-            ct.ThrowIfCancellationRequested();
-            var currentDir = pendingDirs.Pop();
-
-            scannedFolders++;
-            if ((scannedFolders & 63) == 0) Thread.Yield();
-            var now = Environment.TickCount64;
-            // Throttle progress updates to at most once per 500ms to prevent flooding the Blazor UI dispatcher
-            if (now - lastReportTicks >= 500)
-            {
-                lastReportTicks = now;
-                progress?.ReportStep(2, 3, $"Scanning {Path.GetFileName(currentDir)} ({largeFiles.Count} large files found)…");
-            }
-
-            // Determine matching branch roots once for the current folder instead of repeatedly per file
-            List<string>? currentMatchingBranches = null;
-            foreach (var branch in branchRoots)
-            {
-                if (currentDir.StartsWith(branch, StringComparison.OrdinalIgnoreCase))
-                {
-                    currentMatchingBranches ??= [];
-                    currentMatchingBranches.Add(branch);
-                }
-            }
-
-            // Enumerate files in current directory
-            try
-            {
-                var dirInfo = new DirectoryInfo(currentDir);
-                foreach (var file in dirInfo.EnumerateFiles())
-                {
-                    ct.ThrowIfCancellationRequested();
-                    try
-                    {
-                        long len = file.Length;
-                        bool isCloud = IsCloudOnlyFile(file);
-                        long diskBytes = GetDiskSpaceUsed(file, isCloud);
-
-                        totalScannedBytes += diskBytes;
-
-                        // Attribute to branch roots (accumulating actual disk space and logical space)
-                        if (currentMatchingBranches is not null)
-                        {
-                            foreach (var branch in currentMatchingBranches)
-                            {
-                                var current = folderSizes.GetValueOrDefault(branch);
-                                folderSizes[branch] = (current.DiskBytes + diskBytes, current.Files + 1, current.LogicalBytes + len);
-                            }
-                        }
-
-                        // Check if file qualifies as a local large file on disk and is not a system file, virtual disk (.vhdx), or user-ignored file
-                        if (!isCloud
-                            && diskBytes >= minSizeBytes
-                            && !IsSystemFile(file, windowsDir)
-                            && !IsIgnoredLargeFileExtension(file.Extension)
-                            && !ignoredPaths.Contains(file.FullName))
-                        {
-                            largeFiles.Add(new LargeFileInfo(
-                                file.Name,
-                                file.FullName,
-                                len,
-                                file.LastWriteTimeUtc,
-                                LargeFileInfo.Classify(file.Extension),
-                                IsCloudOnly: isCloud,
-                                DiskSizeBytes: diskBytes));
-                        }
-                    }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PathTooLongException)
-            {
-                // Inaccessible folder; continue with remaining folders
-                continue;
-            }
-
-            // Enumerate subdirectories
-            try
-            {
-                foreach (var subDir in Directory.EnumerateDirectories(currentDir))
-                {
-                    ct.ThrowIfCancellationRequested();
-                    if (StorageCleanupEngine.IsReparsePoint(subDir)) continue;
-                    if (IsSystemDirectory(subDir)) continue;
-                    pendingDirs.Push(subDir);
-                }
-            }
-            catch { }
-        }
+        TraverseDirectories(root, minSizeBytes, windowsDir, ignoredPaths, branchRoots, largeFiles, folderSizes, progress, ct);
 
         progress.ReportStep(3, 3, "Compiling disk space breakdown…");
 
@@ -336,6 +203,194 @@ public sealed class DiskSpaceModule(
             .ToList();
 
         return BuildReport(root, minSizeBytes, topFiles, topFolders, drives);
+    }
+
+    private static HashSet<string> CollectBranchRoots(string root, CancellationToken ct)
+    {
+        // Gather candidate top-level branches to measure (e.g. C:\Users, C:\Program Files, C:\Windows, C:\Users\<user>\*)
+        var branchRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var dir in Directory.EnumerateDirectories(root))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (StorageCleanupEngine.IsReparsePoint(dir) || IsSystemDirectory(dir)) continue;
+                branchRoots.Add(dir);
+
+                if (string.Equals(Path.GetFileName(dir), "Users", StringComparison.OrdinalIgnoreCase))
+                    AddUserBranchRoots(dir, branchRoots, ct);
+            }
+        }
+        catch { /* root enumeration error */ }
+        return branchRoots;
+    }
+
+    private static void AddUserBranchRoots(string usersDir, HashSet<string> branchRoots, CancellationToken ct)
+    {
+        string[] userSubFolders = ["Downloads", "Documents", "Videos", "Music", "Pictures", "Desktop", "OneDrive"];
+        try
+        {
+            foreach (var userDir in Directory.EnumerateDirectories(usersDir))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (StorageCleanupEngine.IsReparsePoint(userDir)) continue;
+                branchRoots.Add(userDir);
+                foreach (var sub in userSubFolders)
+                {
+                    var subPath = Path.Combine(userDir, sub);
+                    if (Directory.Exists(subPath) && !StorageCleanupEngine.IsReparsePoint(subPath))
+                        branchRoots.Add(subPath);
+                }
+            }
+        }
+        catch { /* skip inaccessible user folders */ }
+    }
+
+    private static void TraverseDirectories(
+        string root,
+        long minSizeBytes,
+        string? windowsDir,
+        IReadOnlySet<string> ignoredPaths,
+        HashSet<string> branchRoots,
+        List<LargeFileInfo> largeFiles,
+        Dictionary<string, (long DiskBytes, int Files, long LogicalBytes)> folderSizes,
+        IProgress<string>? progress,
+        CancellationToken ct)
+    {
+        var pendingDirs = new Stack<string>();
+        pendingDirs.Push(root);
+
+        int scannedFolders = 0;
+        long lastReportTicks = Environment.TickCount64;
+
+        while (pendingDirs.Count > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            var currentDir = pendingDirs.Pop();
+
+            scannedFolders++;
+            if ((scannedFolders & 63) == 0) Thread.Yield();
+            ReportScanProgress(currentDir, largeFiles.Count, ref lastReportTicks, progress);
+
+            var matchingBranches = FindMatchingBranches(currentDir, branchRoots);
+            if (!ScanDirectoryFiles(currentDir, minSizeBytes, windowsDir, ignoredPaths, matchingBranches, largeFiles, folderSizes, ct))
+                continue;
+
+            EnqueueSubdirectories(currentDir, pendingDirs, ct);
+        }
+    }
+
+    private static void ReportScanProgress(string currentDir, int largeFileCount, ref long lastReportTicks, IProgress<string>? progress)
+    {
+        var now = Environment.TickCount64;
+        // Throttle progress updates to at most once per 500ms to prevent flooding the Blazor UI dispatcher
+        if (now - lastReportTicks >= 500)
+        {
+            lastReportTicks = now;
+            progress?.ReportStep(2, 3, $"Scanning {Path.GetFileName(currentDir)} ({largeFileCount} large files found)…");
+        }
+    }
+
+    private static List<string>? FindMatchingBranches(string currentDir, HashSet<string> branchRoots)
+    {
+        List<string>? matching = null;
+        foreach (var branch in branchRoots)
+        {
+            if (currentDir.StartsWith(branch, StringComparison.OrdinalIgnoreCase))
+            {
+                matching ??= [];
+                matching.Add(branch);
+            }
+        }
+        return matching;
+    }
+
+    private static bool ScanDirectoryFiles(
+        string currentDir,
+        long minSizeBytes,
+        string? windowsDir,
+        IReadOnlySet<string> ignoredPaths,
+        List<string>? matchingBranches,
+        List<LargeFileInfo> largeFiles,
+        Dictionary<string, (long DiskBytes, int Files, long LogicalBytes)> folderSizes,
+        CancellationToken ct)
+    {
+        try
+        {
+            var dirInfo = new DirectoryInfo(currentDir);
+            foreach (var file in dirInfo.EnumerateFiles())
+            {
+                ct.ThrowIfCancellationRequested();
+                ProcessScannedFile(file, minSizeBytes, windowsDir, ignoredPaths, matchingBranches, largeFiles, folderSizes);
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PathTooLongException)
+        {
+            // Inaccessible folder; continue with remaining folders
+            return false;
+        }
+    }
+
+    private static void ProcessScannedFile(
+        FileInfo file,
+        long minSizeBytes,
+        string? windowsDir,
+        IReadOnlySet<string> ignoredPaths,
+        List<string>? matchingBranches,
+        List<LargeFileInfo> largeFiles,
+        Dictionary<string, (long DiskBytes, int Files, long LogicalBytes)> folderSizes)
+    {
+        try
+        {
+            long len = file.Length;
+            bool isCloud = IsCloudOnlyFile(file);
+            long diskBytes = GetDiskSpaceUsed(file, isCloud);
+
+            if (matchingBranches is not null)
+            {
+                foreach (var branch in matchingBranches)
+                {
+                    var current = folderSizes.GetValueOrDefault(branch);
+                    folderSizes[branch] = (current.DiskBytes + diskBytes, current.Files + 1, current.LogicalBytes + len);
+                }
+            }
+
+            if (QualifiesAsLargeFile(file, isCloud, diskBytes, minSizeBytes, windowsDir, ignoredPaths))
+            {
+                largeFiles.Add(new LargeFileInfo(
+                    file.Name,
+                    file.FullName,
+                    len,
+                    file.LastWriteTimeUtc,
+                    LargeFileInfo.Classify(file.Extension),
+                    IsCloudOnly: isCloud,
+                    DiskSizeBytes: diskBytes));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    private static bool QualifiesAsLargeFile(
+        FileInfo file, bool isCloud, long diskBytes, long minSizeBytes, string? windowsDir, IReadOnlySet<string> ignoredPaths) =>
+        !isCloud
+        && diskBytes >= minSizeBytes
+        && !IsSystemFile(file, windowsDir)
+        && !IsIgnoredLargeFileExtension(file.Extension)
+        && !ignoredPaths.Contains(file.FullName);
+
+    private static void EnqueueSubdirectories(string currentDir, Stack<string> pendingDirs, CancellationToken ct)
+    {
+        try
+        {
+            foreach (var subDir in Directory.EnumerateDirectories(currentDir))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (StorageCleanupEngine.IsReparsePoint(subDir) || IsSystemDirectory(subDir)) continue;
+                pendingDirs.Push(subDir);
+            }
+        }
+        catch { }
     }
 
     public static string? GetWindowsDirectory()

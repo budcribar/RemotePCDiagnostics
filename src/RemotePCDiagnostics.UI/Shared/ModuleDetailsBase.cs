@@ -74,7 +74,7 @@ public abstract class StressPageBase<TModule, TProgress, TReport> : ModuleDetail
         Module?.Stop();
     }
 
-    protected static string Minutes(TimeSpan d) => d.TotalMinutes == 1 ? "1 minute" : $"{d.TotalMinutes:0} minutes";
+    protected static string Minutes(TimeSpan d) => d == TimeSpan.FromMinutes(1) ? "1 minute" : $"{d.TotalMinutes:0} minutes";
     protected static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
 
     public override void Dispose()

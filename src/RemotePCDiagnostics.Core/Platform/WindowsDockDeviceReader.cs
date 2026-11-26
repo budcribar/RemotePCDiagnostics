@@ -55,7 +55,7 @@ public static partial class WindowsDockDeviceReader
             "SELECT PNPDeviceID, PNPClass, Name, Status FROM Win32_PnPEntity " +
             "WHERE Present = TRUE AND (PNPClass = 'Monitor' OR PNPClass = 'USB' OR PNPClass = 'Net' OR PNPClass = 'AudioEndpoint')");
         using var results = searcher.Get();
-        foreach (ManagementObject o in results)
+        foreach (ManagementBaseObject o in results)
         {
             ct.ThrowIfCancellationRequested();
             using (o)
@@ -103,7 +103,7 @@ public static partial class WindowsDockDeviceReader
         {
             using var searcher = new ManagementObjectSearcher(new ManagementScope(ns), new ObjectQuery(query));
             using var results = searcher.Get();
-            foreach (ManagementObject o in results)
+            foreach (ManagementBaseObject o in results)
             {
                 ct.ThrowIfCancellationRequested();
                 using (o)
@@ -128,7 +128,7 @@ public static partial class WindowsDockDeviceReader
                 new ManagementScope(@"root\StandardCimv2"),
                 new ObjectQuery("SELECT PnPDeviceID, NdisPhysicalMedium, MediaType FROM MSFT_NetAdapter WHERE HardwareInterface = TRUE"));
             using var results = searcher.Get();
-            foreach (ManagementObject o in results)
+            foreach (ManagementBaseObject o in results)
             {
                 ct.ThrowIfCancellationRequested();
                 using (o)
@@ -158,7 +158,7 @@ public static partial class WindowsDockDeviceReader
                 new ManagementScope(@"root\wmi"),
                 new ObjectQuery("SELECT InstanceName, Active, VideoOutputTechnology FROM WmiMonitorConnectionParams"));
             using var results = searcher.Get();
-            foreach (ManagementObject o in results)
+            foreach (ManagementBaseObject o in results)
             {
                 ct.ThrowIfCancellationRequested();
                 using (o)

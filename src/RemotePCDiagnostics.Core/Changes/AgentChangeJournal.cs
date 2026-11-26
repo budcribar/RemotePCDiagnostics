@@ -45,9 +45,11 @@ public sealed class AgentChangeJournal : IChangeJournal, IDisposable
 
     public event Action? Changed;
 
+    private System.Collections.Immutable.ImmutableArray<ChangeRecord> _allSnapshot = [];
+
     public bool IsLoaded { get { lock (_gate) return _loaded; } }
 
-    public IReadOnlyList<ChangeRecord> All { get { lock (_gate) return _items.ToList(); } }
+    public IReadOnlyList<ChangeRecord> All { get { lock (_gate) return _allSnapshot; } }
 
     /// <summary>Unsaved records and removals waiting for the Agent (tests and logs).</summary>
     public int UnsentCount { get { lock (_gate) return _unsent.Count; } }
@@ -68,6 +70,7 @@ public sealed class AgentChangeJournal : IChangeJournal, IDisposable
             // Only the oldest "before" matters for a target (as in the file journal): undo returns to the state before this app touched it.
             if (_items.Any(x => x.Kind == r.Kind && string.Equals(x.Target, r.Target, StringComparison.OrdinalIgnoreCase))) return;
             _items.Add(r);
+            _allSnapshot = [.. _items];
             _version++;
         }
         Save((r, null));
@@ -76,7 +79,7 @@ public sealed class AgentChangeJournal : IChangeJournal, IDisposable
 
     public void Remove(Guid id)
     {
-        lock (_gate) { _items.RemoveAll(x => x.Id == id); _version++; }
+        lock (_gate) { _items.RemoveAll(x => x.Id == id); _allSnapshot = [.. _items]; _version++; }
         Save((null, id));
         Raise();
     }
@@ -111,6 +114,7 @@ public sealed class AgentChangeJournal : IChangeJournal, IDisposable
                 {
                     if (_version != before) continue; // a record or removal crossed this read: read again
                     _items = [.. saved];
+                    _allSnapshot = [.. _items];
                     _loaded = true;
                     _fromFile = false;
                 }
@@ -160,7 +164,7 @@ public sealed class AgentChangeJournal : IChangeJournal, IDisposable
                 ? JsonSerializer.Deserialize<List<ChangeRecord>>(File.ReadAllText(_fallbackPath), FileChangeJournal.Json) ?? []
                 : Directory.Exists(Path.GetDirectoryName(_fallbackPath)) && CanWriteNextTo(_fallbackPath) ? [] : null;
             if (loaded is null) return;
-            lock (_gate) { _items = loaded; _loaded = true; _fromFile = true; }
+            lock (_gate) { _items = loaded; _allSnapshot = [.. _items]; _loaded = true; _fromFile = true; }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { /* a standard-user app: wait for the Agent */ }
     }

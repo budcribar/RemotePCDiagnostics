@@ -102,9 +102,9 @@ internal sealed class StartTest(string exe, string? profile)
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct IO_COUNTERS { public ulong ReadOps, WriteOps, OtherOps, ReadBytes, WriteBytes, OtherBytes; }
+    private struct IO_COUNTERS { public ulong ReadOps, WriteOps, OtherOps, ReadTransferCount, WriteTransferCount, OtherTransferCount; }
     [DllImport("kernel32.dll")] private static extern bool GetProcessIoCounters(IntPtr h, out IO_COUNTERS c);
-    private static long ReadBytes(Process p) { try { return GetProcessIoCounters(p.Handle, out var c) ? (long)c.ReadBytes : 0; } catch { return 0; } }
+    private static long ReadBytes(Process p) { try { return GetProcessIoCounters(p.Handle, out var c) ? (long)c.ReadTransferCount : 0; } catch { return 0; } }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MEMORYSTATUSEX { public uint dwLength, dwMemoryLoad; public ulong ullTotalPhys, ullAvailPhys, ullTotalPageFile, ullAvailPageFile, ullTotalVirtual, ullAvailVirtual, ullAvailExtendedVirtual; }
