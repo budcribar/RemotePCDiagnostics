@@ -44,6 +44,9 @@ public sealed record NpuWorkloadResult(NpuWorkloadKind Kind, float[]? Output, do
 /// <summary>Device creation or the workload failed (driver error, device removed, TDR).</summary>
 public sealed class NpuDeviceException(string message, Exception? inner = null) : Exception(message, inner);
 
+/// <summary>The NPU is healthy and enumerated by DXCore, but its driver does not expose Direct3D 12 (DXGI_ERROR_UNSUPPORTED / 0x887A0004).</summary>
+public sealed class NpuDirect3DUnsupportedException(string message, Exception? inner = null) : Exception(message, inner);
+
 /// <summary>NPU access (Host: WMI/PnP + DXCore + Direct3D 12). Implementations never show OS dialogs, never use the network, and honour cancellation.</summary>
 public interface INpuIo
 {

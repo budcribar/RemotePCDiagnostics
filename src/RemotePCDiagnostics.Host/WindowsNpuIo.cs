@@ -61,12 +61,15 @@ public sealed class WindowsNpuIo(ILogger? log = null) : INpuIo
         {
             try { tcs.TrySetResult(Run(luid, device, request, ct)); }
             catch (OperationCanceledException oce) { tcs.TrySetCanceled(oce.CancellationToken); }
+            catch (NpuDirect3DUnsupportedException ex) { tcs.TrySetException(ex); }
             catch (NpuDeviceException ex) { tcs.TrySetException(ex); }
             catch (Exception ex) { tcs.TrySetException(new NpuDeviceException(ex.Message, ex)); }
         }) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "NpuTest" };
         t.Start();
         return tcs.Task;
     }
+
+    private const int DxgiErrorUnsupported = unchecked((int)0x887A0004);
 
     private NpuWorkloadResult Run(long luid, NpuDevice device, NpuWorkloadRequest req, CancellationToken ct)
     {
@@ -81,6 +84,8 @@ public sealed class WindowsNpuIo(ILogger? log = null) : INpuIo
             core = false; level = FeatureLevel.Level_1_0_GENERIC;
             hr = D3D12.D3D12CreateDevice(adapter.Pointer, level, out d3d);
         }
+        if (hr.Code == DxgiErrorUnsupported)
+            throw new NpuDirect3DUnsupportedException($"This NPU driver does not support Direct3D 12 (0x{hr.Code:X8}).");
         if (hr.Failure) throw new NpuDeviceException($"Couldn't open the NPU with Direct3D 12 (0x{hr.Code:X8}).");
         using var dev = d3d!;
         Log($"NpuTest: D3D12 device on '{adapter.Description}' level={level}");
