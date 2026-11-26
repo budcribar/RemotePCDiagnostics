@@ -292,10 +292,28 @@ public sealed record DeveloperBuildResult(
         : null;
     public double? AntivirusCostPercent => DeveloperScoring.PercentFaster(WarmMedianSeconds, WarmExcludedMedianSeconds);
 
+    public string? FormatToolchainVersion()
+    {
+        if (string.IsNullOrWhiteSpace(ToolchainVersion)) return null;
+        var label = Language switch
+        {
+            DeveloperLanguage.CSharp => ".NET SDK",
+            DeveloperLanguage.Rust => "Rust",
+            DeveloperLanguage.Go => "Go",
+            DeveloperLanguage.TypeScript => "TypeScript",
+            DeveloperLanguage.Python => "Python",
+            DeveloperLanguage.Cpp => "C++",
+            _ => Language.ToString(),
+        };
+        return $"{label} {ToolchainVersion}";
+    }
+
     public string FormatDetail()
     {
         if (!Succeeded) return Note ?? "Could not run";
         var parts = new List<string>();
+        if (FormatToolchainVersion() is { } tc)
+            parts.Add(tc);
         if (ColdMedianSeconds is { } cold)
             parts.Add(string.Create(CultureInfo.InvariantCulture, $"cold {cold:0.0} s"));
         parts.Add(string.Create(CultureInfo.InvariantCulture, $"warm {WarmMedianSeconds!.Value:0.0} s ({WarmSamples.Count} runs)"));

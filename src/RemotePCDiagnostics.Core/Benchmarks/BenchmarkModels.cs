@@ -130,6 +130,9 @@ public sealed record BenchmarkSettings
 
     /// <summary>Optional pinned .NET SDK major version (10 or 11) for the After pass of a Build speed experiment.</summary>
     public int? TargetDotNetSdkMajor { get; init; }
+
+    /// <summary>Optional root folder/drive (e.g. an existing Dev Drive <c>D:\</c>) where the C# clean build benchmark runs.</summary>
+    public string? BuildWorkRoot { get; init; }
 }
 
 /// <summary>Goal presets over the existing <see cref="BenchmarkSettings.Enabled"/> list (never a separate run path).</summary>
@@ -214,8 +217,23 @@ public sealed record BenchmarkMeasurement(BenchmarkKind Kind, IReadOnlyList<doub
         }
     }
 
-    /// <summary>(max − min) / median; 0 for one run.</summary>
-    public double Spread => Samples.Count < 2 || Median is not > 0 ? 0 : (Samples.Max() - Samples.Min()) / Median!.Value;
+    /// <summary>
+    /// Relative spread around the median. With 5+ samples, trims the single lowest and single highest outlier
+    /// so one transient OS/Defender spike does not falsely mark a repeatable benchmark as noisy.
+    /// </summary>
+    public double Spread
+    {
+        get
+        {
+            if (Samples.Count < 2 || Median is not > 0) return 0;
+            if (Samples.Count >= 5)
+            {
+                var s = Samples.OrderBy(x => x).ToList();
+                return (s[^2] - s[1]) / Median!.Value;
+            }
+            return (Samples.Max() - Samples.Min()) / Median!.Value;
+        }
+    }
 }
 
 /// <summary>Conditions that change results a lot; compared between before and after.</summary>

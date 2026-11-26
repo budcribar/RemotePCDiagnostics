@@ -40,6 +40,8 @@ public sealed record AnalyzeCrashDumpAction(string DumpPath) : AgentNativeAction
 public sealed record SetCapturePrivacyAction(string Capability, string? Value) : AgentNativeAction;
 /// <summary>Starts or restarts the two Windows Audio services (<see cref="Audio.AudioServices"/>).</summary>
 public sealed record AudioServicesAction(string Verb) : AgentNativeAction;
+/// <summary>Silently downloads, SHA-512 verifies, and extracts an allowlisted .NET SDK (10 or 11) side-by-side into Program Files\dotnet.</summary>
+public sealed record InstallDotNetSdkAction(int MajorVersion) : AgentNativeAction;
 
 /// <summary>What the Agent does for an <see cref="AdminPipeScript"/>: PowerShell it built (<see cref="Script"/>) or a change it makes itself (<see cref="Native"/>).</summary>
 public sealed record AgentPlan(string? Script, AgentNativeAction? Native);
@@ -182,6 +184,7 @@ public sealed partial class WindowsAgentNativeOps : IAgentNativeOps
                 AnalyzeCrashDumpAction dump => AnalyzeCrashDumpAsync(dump, ct),
                 SetCapturePrivacyAction privacy => Task.FromResult(SetCapturePrivacy(privacy)),
                 AudioServicesAction audio => Task.Run(() => Audio.AudioServices.Run(audio.Verb, new Audio.AudioServices.WindowsHost()) is { } why ? Failed(why) : Ok(), ct),
+                InstallDotNetSdkAction sdk => AgentDotNetSdkInstaller.InstallAsync(sdk.MajorVersion, ct),
                 _ => RunOtherAsync(action, ct),
             };
         }

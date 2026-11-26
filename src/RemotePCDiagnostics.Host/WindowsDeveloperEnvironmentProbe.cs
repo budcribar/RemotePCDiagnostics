@@ -55,14 +55,39 @@ internal sealed class WindowsDeveloperEnvironmentProbe(
                 : (Path.GetPathRoot(Path.GetTempPath()) ?? @"C:\").TrimEnd('\\');
             var fsutil = SystemCommandRunner.SystemTool("fsutil.exe");
             var r = await commands.RunAsync(fsutil, ["devdrv", "query", drive], ct).ConfigureAwait(false);
-            if (r is null) return new(true, false, false, null, "Could not query Dev Drive status.");
-            var text = string.IsNullOrWhiteSpace(r.StdOut) ? r.StdErr : r.StdOut;
-            return DeveloperToolchainDetector.ParseFsutilDevDriveQuery(r.ExitCode, text, isWindows11Capable: true);
+            if (r is not null)
+            {
+                var text = string.IsNullOrWhiteSpace(r.StdOut) ? r.StdErr : r.StdOut;
+                var parsed = DeveloperToolchainDetector.ParseFsutilDevDriveQuery(r.ExitCode, text, isWindows11Capable: true);
+                if (parsed.IsDevDrive || r.ExitCode == 0)
+                    return parsed;
+                // fsutil devdrv query requires administrator privileges; fall back to ReFS check when un-elevated.
+                if (TryIsRefsDrive(drive))
+                    return new(true, true, true, null, $"ReFS Dev Drive volume ({drive})");
+                return parsed;
+            }
+            if (TryIsRefsDrive(drive))
+                return new(true, true, true, null, $"ReFS Dev Drive volume ({drive})");
+            return new(true, false, false, null, "Could not query Dev Drive status.");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             log.Info("[dev-env] fsutil devdrv query: " + ex.Message);
             return new(true, false, false, null, "Could not query Dev Drive status.");
+        }
+    }
+
+    private static bool TryIsRefsDrive(string drive)
+    {
+        try
+        {
+            var root = drive.TrimEnd('\\') + "\\";
+            var info = new DriveInfo(root);
+            return info.IsReady && info.DriveFormat.Contains("ReFS", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
         }
     }
 

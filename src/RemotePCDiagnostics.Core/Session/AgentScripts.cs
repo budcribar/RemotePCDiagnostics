@@ -48,6 +48,8 @@ public static class AgentScripts
     public const string CapturePrivacySet = "capture_privacy_set";
     /// <summary>Args: "start", "restart" (Windows Audio) or "restart_all" (the Endpoint Builder too). Only the two Windows Audio services.</summary>
     public const string AudioServices = "audio_services";
+    /// <summary>Silently installs an allowlisted .NET SDK (10 or 11) side-by-side into Program Files\dotnet via the elevated Agent.</summary>
+    public const string InstallDotNetSdk = "install_dotnet_sdk";
 
     public const string RebootTask = "reboot";
     public const string WorkflowTask = "workflow";
@@ -148,6 +150,11 @@ public static class AgentScripts
             case AudioServices:
                 if (a.Count != 1 || !Audio.AudioServices.IsVerb(Arg(0))) return Refuse("That isn't something this app does to Windows Audio.");
                 return Native(new AudioServicesAction(Arg(0)!));
+
+            case InstallDotNetSdk:
+                if (a.Count != 1 || !int.TryParse(Arg(0), out var sdkMajor) || !AgentDotNetSdkInstaller.IsAllowedMajor(sdkMajor))
+                    return Refuse("Only .NET 10 and .NET 11 SDKs can be installed.");
+                return Native(new InstallDotNetSdkAction(sdkMajor));
 
             default:
                 return Refuse($"Unknown script '{request.Name}'.");
