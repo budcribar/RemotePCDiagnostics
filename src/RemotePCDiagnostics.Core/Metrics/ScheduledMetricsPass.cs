@@ -57,8 +57,10 @@ public sealed class ScheduledMetricsPass(IMetricsProbes probes, MetricsOutbox ou
 /// </summary>
 /// <param name="appFolder">The app's folder, for osquery (the battery). Null when no app is installed or cached: the battery is then skipped.</param>
 /// <param name="sensors">Reads temperatures (the Agent's sensor provider), or null when there is none.</param>
+/// <param name="wmi">Where WMI is read (a recording in the replay tests); the PC's own WMI when null.</param>
+/// <param name="driveHistoryPath">The drives' history file; the protected state folder's when null.</param>
 public sealed class CoreMetricsProbes(string? appFolder, Func<CancellationToken, Task<SensorSnapshot?>>? sensors, ILogger? log = null,
-    DataSources.IWmiSource? wmi = null) : IMetricsProbes
+    DataSources.IWmiSource? wmi = null, string? driveHistoryPath = null) : IMetricsProbes
 {
     public async Task<IReadOnlyList<DiagnosticResult>> MeasureAsync(string checkId, CancellationToken ct)
     {
@@ -72,7 +74,7 @@ public sealed class CoreMetricsProbes(string? appFolder, Func<CancellationToken,
     private async Task<IReadOnlyList<DiagnosticResult>> DrivesAsync(CancellationToken ct)
     {
         var module = new DriveHealthModule(new WmiDriveSource(wmi ?? new DataSources.SystemWmiSource(log)),
-            historyStore: new DriveHealthHistoryStore(ProtectedState.PathFor("drive_health_history.json"), log), log: log);
+            historyStore: new DriveHealthHistoryStore(driveHistoryPath ?? ProtectedState.PathFor("drive_health_history.json"), log), log: log);
         var detection = await module.DetectAsync(ct).ConfigureAwait(false);
         var list = new List<DiagnosticResult>();
         foreach (var instance in detection.Instances)
