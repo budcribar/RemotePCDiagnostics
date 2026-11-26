@@ -126,6 +126,7 @@ public sealed class ResultEventLogger
     public static string Outcome(DiagnosticResult r) => r.Payload is DependencyGate gate ? gate.Outcome
         : r.Payload is ModuleAvailability or IRunEnd { RunEnd: RunEnd.CouldNotRun } ? CouldNotRun.OutcomeText
         : IsCancelled(r) ? "Cancelled"
+        : r.Payload is Areas.AreaReport { NotOnThisPc: true } ? "Skipped"
         : r.Status switch { DiagnosticStatus.Ok => "OK", DiagnosticStatus.Warning => "Warning", DiagnosticStatus.Error => "Critical", _ => r.Status.ToString() };
 
     public static LogLevel LevelFor(DiagnosticResult r) => Outcome(r) switch

@@ -29,7 +29,8 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
     public IProcessLauncher Launcher => _faults?.Launcher(Replay.Launcher) ?? Replay.Launcher;
     public OsqueryRunner Osquery => new(options: new OsqueryOptions { ExecutablePath = "osqueryi.exe" }, launcher: Launcher, fileExists: _ => true);
     public SystemCommandRunner Commands => new(Launcher, isProcessElevated: () => false);
-    public IWmiSource Wmi => _faults?.Wmi(Replay.Wmi) ?? Replay.Wmi;
+    /// <summary>Noting failed answers as the app's WMI source does, so a missing class reads "Not available on this PC" here too.</summary>
+    public IWmiSource Wmi => new NotingWmiSource(_faults?.Wmi(Replay.Wmi) ?? Replay.Wmi);
     public IRegistrySource Registry => _faults?.Registry(Replay.Registry) ?? Replay.Registry;
     public IPackageSource Packages => _faults?.Packages(Replay.Packages) ?? Replay.Packages;
     public Core.Security.IAntivirusProductSource AntivirusProducts => _faults?.Antivirus(Replay.AntivirusProducts) ?? Replay.AntivirusProducts;

@@ -47,6 +47,9 @@ public static class AreaReportExport
             cards)
         {
             Services = services?.Take(MaxServices).ToList(),
+            NotAvailable = report.NotAvailable is { Count: > 0 } missing
+                ? missing.Select(m => new ExportedMissing(m.Namespace, Text(m.Query, MaxTextLength) ?? "", Text(m.Error, MaxValueLength) ?? "")).ToList()
+                : null,
         };
     }
 
@@ -176,7 +179,11 @@ public static class AreaReportExport
         int Schema, string Status, string? Summary, string? Notice, bool? Cancelled, int CardCount, IReadOnlyList<ExportedCard> Cards)
     {
         public IReadOnlyList<ExportedService>? Services { get; init; }
+        /// <summary>WMI questions this PC has no answer to (<see cref="AreaReport.NotAvailable"/>), for the shop's connector to log.</summary>
+        public IReadOnlyList<ExportedMissing>? NotAvailable { get; init; }
     }
+
+    public sealed record ExportedMissing(string Namespace, string Query, string Error);
 
     public sealed record ExportedCard(
         string Id, string Title, string Level, string? Headline, string? Meta, string? Note, string? Error,

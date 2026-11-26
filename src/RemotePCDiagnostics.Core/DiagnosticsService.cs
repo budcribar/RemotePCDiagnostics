@@ -643,9 +643,13 @@ public sealed class DiagnosticsService
                 }
             }
             var availability = await module.CheckAvailabilityAsync(ct).ConfigureAwait(false);
-            result = !availability.IsAvailable ? CouldNotRun.Result(module.Name, availability.Reason ?? "Couldn't run")
-                : module is IPerDeviceModule perDevice ? await RunInstancesAsync(perDevice, trackedProgress, ct, onlyInstance, gateInstances).ConfigureAwait(false)
-                : await module.RefreshAsync(trackedProgress, ct).ConfigureAwait(false);
+            if (!availability.IsAvailable) result = CouldNotRun.Result(module.Name, availability.Reason ?? "Couldn't run");
+            else if (module is IPerDeviceModule perDevice) result = await RunInstancesAsync(perDevice, trackedProgress, ct, onlyInstance, gateInstances).ConfigureAwait(false);
+            else
+            {
+                using var answers = DataSources.WmiAnswers.Begin();
+                result = DataSources.NotOnThisPc.Apply(await module.RefreshAsync(trackedProgress, ct).ConfigureAwait(false), answers);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -688,7 +692,11 @@ public sealed class DiagnosticsService
             }
             else
             {
-                try { r = await module.RefreshAsync(inst, progress, ct).ConfigureAwait(false); }
+                try
+                {
+                    using var answers = DataSources.WmiAnswers.Begin();
+                    r = DataSources.NotOnThisPc.Apply(await module.RefreshAsync(inst, progress, ct).ConfigureAwait(false), answers);
+                }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
                 catch (Exception ex) { r = new DiagnosticResult(module.Name, DiagnosticStatus.Error, ex.Message, DateTimeOffset.Now, ex); }
             }

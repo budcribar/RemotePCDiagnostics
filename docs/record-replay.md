@@ -29,6 +29,20 @@ The PC name, user names and serial numbers are replaced with placeholders (`<pc:
 written, and so is the SMBIOS UUID. Even so, a recording lists the PC's hardware and software, so real recordings stay out of this public
 repo: they are kept in the private Admin repo under `test-data/rpcd-recordings`. Point `RPD_RECORDINGS_DIR` at that folder.
 
+## Recording and replaying in the app
+
+Two environment variables do the same in the real app, without the recorder tool:
+
+- `RPCD_LOG=<folder>` records what the checks read from this PC (WMI through the Agent, the registry, Store packages, Security Center's
+  antivirus list, the audio state and the tools the checks run) while the app runs. It saves a scrubbed recording folder
+  (`<product id>-<start time>`, with `machine.json`, `calls.json` and `scrub-report.txt`) under that folder every 10 seconds while new
+  answers arrive, and when the app exits. Checks behave exactly as without it. Use it to capture a problem a person sees, then replay it.
+- `RPCD_REPLAY=<recording folder>` (Debug builds only) makes the checks read that recording instead of this PC, so you can see another
+  PC's results, or a recording made with `RPCD_LOG`, in the real pages. `RPCD_LOG` is ignored while replaying.
+
+Not covered yet: fixes (never recorded or replayed), the battery report file and the crash dump folders (read from disk), and the clock
+(replayed events are compared with today's date, and finished checks still write history to this PC's Event Log).
+
 ## Running the tests
 
 The tests in `tests/RemotePCDiagnostics.Tests/Replay` run every recording in `Replay/Recordings` (hand-made samples) and, when it is set,

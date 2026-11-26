@@ -178,6 +178,10 @@ public sealed record AreaCard(
         new(id, title, AreaLevel.Error, "", "", [], [], ErrorText: errorText);
 }
 
+/// <summary>A WMI question this PC has no answer to: the namespace, the query, and the error Windows gave (its status name and code, such
+/// as "InvalidClass (0x80041010)").</summary>
+public sealed record MissingOnPc(string Namespace, string Query, string Error);
+
 /// <summary>Payload of an area module: the cards, a one-line summary for the Dashboard, and the overall status.</summary>
 public sealed record AreaReport(IReadOnlyList<AreaCard> Cards, string Summary, DiagnosticStatus Status, string? Notice = null, IReadOnlyList<AreaCard>? ReviewedCards = null, bool Cancelled = false)
     : IRunEnd, IKeyMetrics
@@ -191,6 +195,16 @@ public sealed record AreaReport(IReadOnlyList<AreaCard> Cards, string Summary, D
     /// the run as passed.
     /// </summary>
     public string? CouldNotRunReason { get; init; }
+
+    /// <summary>The WMI classes or namespaces the check asked for that this PC doesn't have (sent to the shop's connector so they can be
+    /// tracked down); null when it had everything it asked for.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<MissingOnPc>? NotAvailable { get; init; }
+
+    /// <summary>Nothing the check reads exists on this PC: it shows "Not available on this PC" and History records it as Skipped, not as a
+    /// failure.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool NotOnThisPc { get; init; }
 
     [System.Text.Json.Serialization.JsonIgnore]
     public RunEnd RunEnd => Cancelled ? RunEnd.Cancelled : CouldNotRunReason is not null ? RunEnd.CouldNotRun : RunEnd.Finished;

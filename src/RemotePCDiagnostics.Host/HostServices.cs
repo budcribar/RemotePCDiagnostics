@@ -52,7 +52,8 @@ public static class HostServices
         if (session.Mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
         services.AddSingleton<ResultStore>();
         // WMI is read by the Agent, never by the app (it has the rights some classes need).
-        services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IWmiSource>(sp => new RemotePCDiagnostics.Core.DataSources.AgentWmiSource(sp.GetRequiredService<IElevatedCommandBridge>()));
+        services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IWmiSource>(sp => new RemotePCDiagnostics.Core.DataSources.NotingWmiSource(
+            new RemotePCDiagnostics.Core.DataSources.AgentWmiSource(sp.GetRequiredService<IElevatedCommandBridge>())));
         // The registry keys checks read need no administrator rights, so the app reads them itself.
         services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IRegistrySource>(_ => new RemotePCDiagnostics.Core.DataSources.SystemRegistrySource(L<RemotePCDiagnostics.Core.DataSources.SystemRegistrySource>()));
         services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IPackageSource>(_ => new RemotePCDiagnostics.Host.Platform.SystemPackageSource(L<RemotePCDiagnostics.Host.Platform.SystemPackageSource>()));
@@ -266,6 +267,15 @@ public static class HostServices
             sp.GetService<IBiosUpdateService>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
+        // RPCD_REPLAY (Debug builds): the checks read a recording instead of this PC. RPCD_LOG: they also record what they read.
+#if DEBUG
+        const bool allowReplay = true;
+#else
+        const bool allowReplay = false;
+#endif
+        if (RemotePCDiagnostics.Core.Recording.RecordReplaySwitches.Apply(services, allowReplay,
+                typeof(HostServices).Assembly.GetName().Version?.ToString() ?? "") is { } switched)
+            log(switched);
         return services;
     }
 
