@@ -413,7 +413,7 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
     /// done is answered "cancelled", so the module is never left waiting on the app.
     /// </summary>
     private void Answer(IModuleHostConnection conn, ModuleHostMessage query, Queries queries) =>
-        queries.Track(Task.Run(() => AnswerAsync(conn, query, queries.Token)));
+        queries.Track(Task.Run(() => AnswerAsync(conn, query, queries.Token), queries.Token));
 
     private async Task AnswerAsync(IModuleHostConnection conn, ModuleHostMessage query, CancellationToken ct)
     {

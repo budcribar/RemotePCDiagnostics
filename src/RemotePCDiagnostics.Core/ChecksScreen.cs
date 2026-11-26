@@ -439,7 +439,7 @@ public sealed class ChecksScreenState
                         lock (_gate) { LastSuiteResult = res; errors.Insert(0, res.Message); }
                         // Cancelled from anywhere (this page's Stop, the Dashboard's Cancel, the test's own Stop button): the
                         // whole run stops, so the separate steps ticked after the stress tests are not started.
-                        if (res.Outcome == StressSuiteOutcome.Cancelled) cts.Cancel();
+                        if (res.Outcome == StressSuiteOutcome.Cancelled) await cts.CancelAsync().ConfigureAwait(false);
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException && cts.IsCancellationRequested))
                     {
@@ -453,7 +453,7 @@ public sealed class ChecksScreenState
                     try
                     {
                         var r = await _diag.RunAsync(separate[i].Name, null, cts.Token).ConfigureAwait(false);
-                        if (CheckRows.KindOf(r) == RowKind.Cancelled) cts.Cancel(); // stopped from its own page: the rest are not started
+                        if (CheckRows.KindOf(r) == RowKind.Cancelled) await cts.CancelAsync().ConfigureAwait(false); // stopped from its own page: the rest are not started
                     }
                     catch (Exception ex) { Failed(separate[i], ex); }
                 }
@@ -540,7 +540,7 @@ public sealed class ChecksScreenState
     /// <summary>Tooltip on a disabled "Run just this", whatever the reason (a group run, a stress test, the other integrity scan).</summary>
     public const string UnavailableTooltip = "Unavailable while other checks are running";
 
-    public Task RunSingleAsync(IDiagnosticModule m) => CanRunSingle(m) ? _diag.RunAsync(m.Name) : Task.CompletedTask;
+    public Task RunSingleAsync(IDiagnosticModule m) => CanRunSingle(m) ? _diag.RunAsync(m.Name, null, CancellationToken.None) : Task.CompletedTask;
 
     private void SetProgress(CheckGroup g, int i, int n, IDiagnosticModule m)
     {

@@ -63,7 +63,7 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
         RemotePCDiagnostics.Core.Osquery.ProcessResult? result;
         try
         {
-            if (!ServicingGate.Wait(0))
+            if (!await ServicingGate.WaitAsync(0, ct).ConfigureAwait(false))
             {
                 var other = Volatile.Read(ref _runningScan) ?? "another Windows integrity scan";
                 progress?.Report($"Waiting for {other} to finish before starting.");
@@ -138,7 +138,7 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
         long? nowTickMs = null)
     {
         percent = 0;
-        var match = System.Text.RegularExpressions.Regex.Match(line.Replace("\0", ""), @"(?<![\d.])(\d{1,3}(?:[.,]\d+)?)\s*%");
+        var match = System.Text.RegularExpressions.Regex.Match(line.Replace("\0", ""), @"(?<![\d.])(\d{1,3}(?:[.,]\d+)?)\s*%", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(2));
         if (!match.Success
             || !double.TryParse(match.Groups[1].Value.Replace(',', '.'),
                 System.Globalization.NumberStyles.AllowDecimalPoint,
@@ -191,13 +191,14 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
     internal static string SummarizeCbs(string excerpt)
     {
         var findings = System.Text.RegularExpressions.Regex.Matches(excerpt,
-            @"(?im)\b(?<kind>CSI (?:Payload|Manifest|Metadata) Corrupt(?:ion)?|CBS (?:MUM|CAT) (?:Missing|Corrupt))\s+(?:\([nw]\)\s*)?(?<item>[^\r\n]+)")
+            @"(?im)\b(?<kind>CSI (?:Payload|Manifest|Metadata) Corrupt(?:ion)?|CBS (?:MUM|CAT) (?:Missing|Corrupt))\s+(?:\([nw]\)\s*)?(?<item>[^\r\n]+)",
+            System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(2))
             .Select(match => $"{match.Groups["kind"].Value} · {match.Groups["item"].Value.Trim()}")
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (findings.Count > 0)
             return string.Join("\n", findings.Take(8)) + (findings.Count > 8 ? "\nMore entries are available in the excerpt below." : "");
 
-        var codes = System.Text.RegularExpressions.Regex.Matches(excerpt, @"(?i)\b0x8[0-9a-f]{7}\b")
+        var codes = System.Text.RegularExpressions.Regex.Matches(excerpt, @"(?i)\b0x8[0-9a-f]{7}\b", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(2))
             .Select(match => match.Value).Distinct(StringComparer.OrdinalIgnoreCase).Take(5).ToList();
         return codes.Count > 0
             ? $"CBS recorded servicing errors ({string.Join(", ", codes)}). The excerpt did not identify a specific corrupt file or package."
@@ -221,7 +222,7 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
             var count = stream.ReadAtLeast(bytes, bytes.Length, throwOnEndOfStream: false);
             var lines = System.Text.Encoding.UTF8.GetString(bytes, 0, count).Split('\n', StringSplitOptions.TrimEntries);
             var findings = lines.Where(line =>
-                System.Text.RegularExpressions.Regex.IsMatch(line, @"(?i)\b(?:corrupt(?:ion|ed)?|missing|error|failed|HRESULT)\b")
+                System.Text.RegularExpressions.Regex.IsMatch(line, @"(?i)\b(?:corrupt(?:ion|ed)?|missing|error|failed|HRESULT)\b", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(2))
                 && !line.Contains("No component store corruption", StringComparison.OrdinalIgnoreCase))
                 .Distinct().TakeLast(30).Select(line => line.Length > 500 ? line[..500] + "…" : line).ToList();
             return findings.Count == 0 ? "No matching details in the log excerpt." : string.Join("\n", findings);

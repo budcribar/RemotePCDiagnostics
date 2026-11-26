@@ -240,7 +240,7 @@ public sealed class AgentModeMonitor : IDisposable
         _current = ReadSafe();
         if (!startLoop) return;
         var interval = pollInterval ?? DefaultPollInterval;
-        _ = Task.Run(() => LoopAsync(interval));
+        _ = Task.Run(() => LoopAsync(interval), _cts.Token);
     }
 
     public AgentModeSnapshot Current => Volatile.Read(ref _current);
@@ -253,6 +253,7 @@ public sealed class AgentModeMonitor : IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
         try { _cts.Cancel(); } catch { }
+        try { _cts.Dispose(); } catch { }
     }
 
     private async Task LoopAsync(TimeSpan interval)
@@ -263,7 +264,7 @@ public sealed class AgentModeMonitor : IDisposable
             while (await timer.WaitForNextTickAsync(_cts.Token).ConfigureAwait(false))
                 Publish(ReadSafe());
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
         {
             // Disposed.
         }

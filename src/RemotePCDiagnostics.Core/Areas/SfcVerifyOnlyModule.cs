@@ -19,7 +19,7 @@ public sealed class SfcVerifyOnlyModule(SystemCommandRunner commands) : WindowsI
         var lines = output.Split(['\r', '\n'])
             .Select(l => l.Trim())
             .Where(l => !System.Text.RegularExpressions.Regex.IsMatch(l, @"^Verification\s+\d{1,3}%\s+complete\.?$",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2)))
             .ToList();
         var compact = new List<string>(lines.Count);
         foreach (var line in lines)

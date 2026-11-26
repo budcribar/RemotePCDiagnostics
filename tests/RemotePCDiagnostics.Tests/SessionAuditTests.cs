@@ -108,8 +108,12 @@ public class SessionAuditTests
     public void A_failing_log_never_throws()
     {
         var audit = new SessionAudit(_ => throw new InvalidOperationException());
-        audit.Started(false);
-        audit.Update([Owner(true), Page("r")]);
-        audit.Ended("");
+        var ex = Record.Exception(() =>
+        {
+            audit.Started(false);
+            audit.Update([Owner(true), Page("r")]);
+            audit.Ended("");
+        });
+        Assert.Null(ex);
     }
 }

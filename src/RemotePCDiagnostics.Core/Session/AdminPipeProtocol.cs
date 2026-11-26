@@ -812,7 +812,7 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
             var ping = await client.PingAsync(connectCts.Token).ConfigureAwait(false);
             if (!ping.Ok)
             {
-                client.Dispose();
+                await client.DisposeAsync().ConfigureAwait(false);
                 throw new IOException(ping.Error ?? "Elevated helper rejected the connection.");
             }
             client.HelperPid = ping.HelperPid;
@@ -822,7 +822,7 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         }
         catch
         {
-            pipe.Dispose();
+            await pipe.DisposeAsync().ConfigureAwait(false);
             throw;
         }
     }
@@ -1203,7 +1203,7 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         }
         catch
         {
-            pipe.Dispose();
+            await pipe.DisposeAsync().ConfigureAwait(false);
             throw;
         }
     }
@@ -1451,25 +1451,25 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
                 try
                 {
                     await AdminPipeFraming.WriteFrameAsync(_pipe, new AdminPipeRequest(AdminPipeFraming.OpCancel), CancellationToken.None).ConfigureAwait(false);
-                    await read.WaitAsync(CancelGrace).ConfigureAwait(false);
+                    await read.WaitAsync(CancelGrace, CancellationToken.None).ConfigureAwait(false);
                 }
                 catch
                 {
                     _log?.Warn($"[admin-pipe] Helper didn't answer the cancelled '{request.Op}' in time; dropping the pipe.");
-                    Dispose();
+                    await DisposeAsync().ConfigureAwait(false);
                 }
                 throw;
             }
             catch (TimeoutException)
             {
                 _log?.Warn($"[admin-pipe] Helper didn't answer '{request.Op}' within {wait}; dropping the pipe.");
-                Dispose();
+                await DisposeAsync().ConfigureAwait(false);
                 return null;
             }
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
-            Dispose();
+            await DisposeAsync().ConfigureAwait(false);
             throw;
         }
         finally
@@ -1507,7 +1507,7 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
-            Dispose();
+            await DisposeAsync().ConfigureAwait(false);
             throw;
         }
         finally
@@ -1523,12 +1523,12 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         {
             var wait = TimeSpan.FromMilliseconds(Math.Max(request.TimeoutMs, 0)) + TimeSpan.FromMinutes(1);
             if (await read.WaitAsync(wait).ConfigureAwait(false) is null)
-                Dispose();
+                await DisposeAsync().ConfigureAwait(false);
         }
         catch
         {
             _log?.Warn($"[admin-pipe] No answer to the cancelled '{request.Op}'; dropping the pipe.");
-            Dispose();
+            await DisposeAsync().ConfigureAwait(false);
         }
         finally
         {
@@ -1663,7 +1663,7 @@ public sealed class AdminPipeServer(
             // so a later listen on the same pipe can serve the same session.
             if (ct.IsCancellationRequested)
             {
-                try { _moduleHosts.Cancel(); } catch (ObjectDisposedException) { }
+                try { await _moduleHosts.CancelAsync().ConfigureAwait(false); } catch (ObjectDisposedException) { }
             }
         }
     }
@@ -1809,18 +1809,18 @@ public sealed class AdminPipeServer(
             catch
             {
                 // The client went away (or the helper is stopping): stop the run, and let the loop see the failed read.
-                runCts.Cancel();
+                await runCts.CancelAsync().ConfigureAwait(false);
                 return (await work.ConfigureAwait(false), next);
             }
             if (arrived is null)
             {
-                runCts.Cancel();
+                await runCts.CancelAsync().ConfigureAwait(false);
                 return (await work.ConfigureAwait(false), next);
             }
             if (!string.Equals(arrived.Op, AdminPipeFraming.OpCancel, StringComparison.OrdinalIgnoreCase))
                 return (await work.ConfigureAwait(false), next); // Handled after this one's response, in order.
             log.Info($"[admin-pipe-server] Cancelling '{request.Op}' at the client's request.");
-            runCts.Cancel();
+            await runCts.CancelAsync().ConfigureAwait(false);
             next = AdminPipeFraming.ReadFrameAsync<AdminPipeRequest>(server, ct);
         }
     }
@@ -2510,7 +2510,7 @@ public sealed class AdminPipeServer(
                 try { host.Dispose(); } catch { }
                 try { stream.Dispose(); } catch { }
             }
-        });
+        }, lifetime);
         return Answer(true, pipe: pipeName);
     }
 
@@ -2915,35 +2915,24 @@ public sealed class AdminPipeServer(
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static bool TokenIsAdministrator(WindowsIdentity identity)
     {
-        var addedRef = false;
         var safeToken = identity.AccessToken;
-        try
-        {
-            safeToken.DangerousAddRef(ref addedRef);
-            var tokenHandle = safeToken.DangerousGetHandle();
-            var currentHasAdmin = TokenHasEnabledAdministratorsGroup(tokenHandle);
-            if (currentHasAdmin)
-                return true;
+        var currentHasAdmin = TokenHasEnabledAdministratorsGroup(safeToken);
+        if (currentHasAdmin)
+            return true;
 
-            int? elevationType = GetTokenInformation(safeToken, TokenElevationTypeClass, out var elev, sizeof(int), out _)
-                ? elev
-                : null;
+        int? elevationType = GetTokenInformation(safeToken, TokenElevationTypeClass, out var elev, sizeof(int), out _)
+            ? elev
+            : null;
 
-            bool? linkedHasAdmin = null;
-            if (elevationType == TokenElevationTypeLimited)
-                linkedHasAdmin = TryCheckLinkedTokenHasEnabledAdministratorsGroup(tokenHandle);
+        bool? linkedHasAdmin = null;
+        if (elevationType == TokenElevationTypeLimited)
+            linkedHasAdmin = TryCheckLinkedTokenHasEnabledAdministratorsGroup(safeToken);
 
-            return EvaluateTokenIsAdministrator(currentHasAdmin, elevationType, linkedHasAdmin);
-        }
-        finally
-        {
-            if (addedRef)
-                safeToken.DangerousRelease();
-        }
+        return EvaluateTokenIsAdministrator(currentHasAdmin, elevationType, linkedHasAdmin);
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static bool? TryCheckLinkedTokenHasEnabledAdministratorsGroup(IntPtr tokenHandle)
+    private static bool? TryCheckLinkedTokenHasEnabledAdministratorsGroup(SafeAccessTokenHandle tokenHandle)
     {
         var size = IntPtr.Size;
         var buf = Marshal.AllocHGlobal(size);
@@ -2954,14 +2943,8 @@ public sealed class AdminPipeServer(
             var linkedToken = Marshal.ReadIntPtr(buf);
             if (linkedToken == IntPtr.Zero)
                 return null;
-            try
-            {
-                return TokenHasEnabledAdministratorsGroup(linkedToken);
-            }
-            finally
-            {
-                CloseHandle(linkedToken);
-            }
+            using var linkedSafe = new SafeAccessTokenHandle(linkedToken);
+            return TokenHasEnabledAdministratorsGroup(linkedSafe);
         }
         finally
         {
@@ -2970,7 +2953,7 @@ public sealed class AdminPipeServer(
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static bool TokenHasEnabledAdministratorsGroup(IntPtr tokenHandle)
+    private static bool TokenHasEnabledAdministratorsGroup(SafeAccessTokenHandle tokenHandle)
     {
         GetTokenInformationPtr(tokenHandle, TokenGroupsClass, IntPtr.Zero, 0, out var needed);
         if (needed <= 0)
@@ -3020,7 +3003,7 @@ public sealed class AdminPipeServer(
         out int tokenInformation, int tokenInformationLength, out int returnLength);
 
     [DllImport("advapi32.dll", EntryPoint = "GetTokenInformation", SetLastError = true)]
-    private static extern bool GetTokenInformationPtr(IntPtr tokenHandle, int tokenInformationClass,
+    private static extern bool GetTokenInformationPtr(SafeAccessTokenHandle tokenHandle, int tokenInformationClass,
         IntPtr tokenInformation, int tokenInformationLength, out int returnLength);
 
     internal const uint NoActiveConsoleSessionId = 0xFFFFFFFF;
@@ -3169,6 +3152,7 @@ public sealed class AdminPipeServer(
             return;
         try { _server?.Dispose(); } catch { }
         try { _moduleHosts.Cancel(); } catch { }
+        try { _moduleHosts.Dispose(); } catch { }
     }
 
     public ValueTask DisposeAsync()

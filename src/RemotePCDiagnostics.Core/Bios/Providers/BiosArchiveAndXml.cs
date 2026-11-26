@@ -96,7 +96,7 @@ public static class BiosArchiveAndXml
                 if (total + read > maxBytes || total + read > Array.MaxLength)
                     throw new InvalidDataException($"GZip stream exceeded maximum allowed size of {maxBytes} bytes.");
 
-                ms.Write(buffer, 0, read);
+                await ms.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
                 total += read;
             }
 

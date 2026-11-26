@@ -108,8 +108,8 @@ public sealed class AgentModuleHost(string appFolder, ILogger? log = null, Func<
             log.Info($"[agent-module-host] Relay ended: {failed.Message}");
         // The app closed its end: closing the host's stdin ends it. The host ended: closing the pipe tells the app.
         try { host.Dispose(); } catch { }
-        try { app.Dispose(); } catch { }
-        stop.Cancel();
+        try { await app.DisposeAsync().ConfigureAwait(false); } catch { }
+        await stop.CancelAsync().ConfigureAwait(false);
         try { await Task.WhenAll(fromApp, fromHost).ConfigureAwait(false); } catch { }
         writeGate.Dispose();
     }

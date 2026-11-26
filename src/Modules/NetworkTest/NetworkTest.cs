@@ -107,7 +107,7 @@ public sealed class NetworkTest(
                             List<double> idleSamples = [];
                             if (idleTask is not null)
                             {
-                                idleCts?.Cancel();
+                                if (idleCts is not null) await idleCts.CancelAsync().ConfigureAwait(false);
                                 try { idleSamples = await idleTask.ConfigureAwait(false); }
                                 catch { }
                             }
@@ -165,14 +165,14 @@ public sealed class NetworkTest(
         {
             if (speedTask is not null)
             {
-                if (stopped || hot || failed) speedCts.Cancel();
+                if (stopped || hot || failed) await speedCts.CancelAsync().ConfigureAwait(false);
                 try { await speedTask.ConfigureAwait(false); }
                 catch (OperationCanceledException) { }
                 catch (Exception ex) { log.Warn($"Network test: speed test error: {ex.Message}"); }
             }
             if (idleTask is not null)
             {
-                idleCts?.Cancel();
+                if (idleCts is not null) await idleCts.CancelAsync().ConfigureAwait(false);
                 try { await idleTask.ConfigureAwait(false); } catch { }
             }
             idleCts?.Dispose();
@@ -298,7 +298,7 @@ public sealed class NetworkTest(
         }
         finally
         {
-            probeCts.Cancel();
+            await probeCts.CancelAsync().ConfigureAwait(false);
             try { await probeTask.ConfigureAwait(false); }
             catch (OperationCanceledException) { }
             catch { }

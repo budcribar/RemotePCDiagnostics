@@ -193,7 +193,7 @@ internal static class AgentSelfUpdater
                 {
                     if (File.Exists(exitPath))
                         File.Delete(exitPath);
-                    File.WriteAllText(batchPath, batch, System.Text.Encoding.ASCII);
+                    await File.WriteAllTextAsync(batchPath, batch, System.Text.Encoding.ASCII).ConfigureAwait(false);
                     wrapped = true;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

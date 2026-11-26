@@ -105,7 +105,7 @@ public sealed class WindowsEventLog(SystemCommandRunner commands, Plugins.IHostQ
     }
 
     private static readonly System.Text.RegularExpressions.Regex BidiArtifact =
-        new(@"(?<=^|[\s/(\-.:])\?(?=\d)", System.Text.RegularExpressions.RegexOptions.Compiled);
+        new(@"(?<=^|[\s/(\-.:])\?(?=\d)", System.Text.RegularExpressions.RegexOptions.Compiled, TimeSpan.FromSeconds(2));
 
     /// <summary>
     /// Removes invisible direction marks Windows puts around dates in messages (U+200E etc.). When wevtutil's console

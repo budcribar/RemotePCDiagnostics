@@ -81,7 +81,7 @@ internal static class AgentAdminHost
         var useDotnet = !File.Exists(hostExe) && File.Exists(hostDll);
         if (!File.Exists(hostExe) && !useDotnet)
         {
-            Console.Error.WriteLine($"Could not find RemotePCDiagnostics.Host at '{hostExe}'.");
+            await Console.Error.WriteLineAsync($"Could not find RemotePCDiagnostics.Host at '{hostExe}'.");
             return ExitError;
         }
 
@@ -115,7 +115,10 @@ internal static class AgentAdminHost
             ProcessStartInfo startInfo;
             if (useDotnet)
             {
-                startInfo = new ProcessStartInfo("dotnet")
+                var dotnetExe = Environment.ProcessPath is { Length: > 0 } proc && Path.GetFileNameWithoutExtension(proc).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+                    ? proc
+                    : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
+                startInfo = new ProcessStartInfo(dotnetExe)
                 {
                     WorkingDirectory = AppContext.BaseDirectory,
                     UseShellExecute = false,
@@ -146,13 +149,13 @@ internal static class AgentAdminHost
             catch (Exception ex)
             {
                 log.Error($"[agent-launcher] Failed to start Host process: {ex.Message}");
-                workerCts.Cancel();
+                await workerCts.CancelAsync().ConfigureAwait(false);
                 return ExitError;
             }
 
             if (hostProcess is null)
             {
-                workerCts.Cancel();
+                await workerCts.CancelAsync().ConfigureAwait(false);
                 return ExitError;
             }
 
@@ -200,7 +203,7 @@ internal static class AgentAdminHost
                     }
                     finally
                     {
-                        server.Dispose();
+                        await server.DisposeAsync().ConfigureAwait(false);
                     }
                 });
 
@@ -211,7 +214,7 @@ internal static class AgentAdminHost
                 var exitCode = hostProcess.ExitCode;
                 log.Info($"[agent-launcher] Host exited with code {exitCode}. Stopping background worker...");
 
-                workerCts.Cancel();
+                await workerCts.CancelAsync().ConfigureAwait(false);
                 try { await serverTask.ConfigureAwait(false); } catch { }
 
                 return exitCode;
@@ -252,13 +255,12 @@ internal static class AgentAdminHost
                 Environment.GetEnvironmentVariable(AllowTestParentEnvVar)?.Trim(),
                 "1",
                 StringComparison.OrdinalIgnoreCase);
-#else
-            const bool allowTestParent = false;
-#endif
-
             var expectedClientExe = allowTestParent
                 ? AdminPipeServer.TryQueryProcessImagePath((uint)parentPid)
                 : Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.Host.exe");
+#else
+            var expectedClientExe = Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.Host.exe");
+#endif
 
             var log = CreateFileLogger("RemotePCDiagnostics.Agent.Admin.log");
             IDisposable? sensorProvider = null;
@@ -428,10 +430,10 @@ internal static class AgentAdminHost
             // Fall through to cancel session if parent handle becomes invalid.
         }
 
-        try { cts.Cancel(); } catch { }
+        try { await cts.CancelAsync().ConfigureAwait(false); } catch { }
 
         // Ensure helper never lingers even if an external system repair tool is mid-execution when Host terminates.
-        await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        await Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None).ConfigureAwait(false);
         Environment.Exit(ExitOk);
     }
 

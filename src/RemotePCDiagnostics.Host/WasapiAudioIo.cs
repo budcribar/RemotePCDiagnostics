@@ -442,7 +442,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
             _stop = new CancellationTokenSource();
             var token = _stop.Token;
             _client.Start();
-            _loop = Task.Run(() => { while (!token.IsCancellationRequested) { Drain(); Thread.Sleep(10); } Drain(); });
+            _loop = Task.Run(() => { while (!token.IsCancellationRequested) { Drain(); Thread.Sleep(10); } Drain(); }, token);
         }
 
         private void Drain()
@@ -482,7 +482,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
         {
             if (_stop is null) return;
             _stop.Cancel();
-            try { _loop?.Wait(TimeSpan.FromSeconds(2)); } catch { }
+            try { _loop?.Wait(TimeSpan.FromSeconds(2), CancellationToken.None); } catch { }
             try { _client.Stop(); } catch { }
             _stop.Dispose();
             _stop = null;

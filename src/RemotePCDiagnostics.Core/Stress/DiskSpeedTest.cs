@@ -105,7 +105,7 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
         finally
         {
             st.Phase = DiskSpeedPhase.CleaningUp;
-            monitorStop.Cancel();
+            await monitorStop.CancelAsync().ConfigureAwait(false);
             try { await monitor.ConfigureAwait(false); } catch (OperationCanceledException) { }
             cleaned = DeleteTestFile(path, folder);
         }

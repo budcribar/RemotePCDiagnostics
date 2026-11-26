@@ -259,7 +259,7 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
                 _helperProcess = spawned;
             }
 
-            previous?.Dispose();
+            if (previous is not null) await previous.DisposeAsync().ConfigureAwait(false);
             TryTerminateHelper(previousProc);
 
             client.Disconnected += OnHelperDisconnected;
@@ -483,7 +483,7 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
                 previous = _client;
                 _client = client;
             }
-            previous?.Dispose();
+            if (previous is not null) await previous.DisposeAsync().ConfigureAwait(false);
             client.Disconnected += OnHelperDisconnected;
             _log?.Info($"[elevation] Connected to initial admin pipe '{pipeName}' (helperPid={client.HelperPid}, elevated={client.HelperIsElevated}, restricted={client.Restricted}).");
             NotifyChanged();

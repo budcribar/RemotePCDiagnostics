@@ -73,17 +73,11 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
                 BatteryReader.ProcessorPerformanceNamespace,
                 BatteryReader.ProcessorPerformanceSql);
             using var results = searcher.Get();
-            foreach (System.Management.ManagementObject o in results)
+            using var o = results.OfType<System.Management.ManagementObject>().FirstOrDefault();
+            if (o is not null && o["PercentPerformanceLimit"] is { } raw)
             {
-                using (o)
-                {
-                    if (o["PercentPerformanceLimit"] is { } raw)
-                    {
-                        var val = Convert.ToInt64(raw, System.Globalization.CultureInfo.InvariantCulture);
-                        if (val is >= 1 and <= 100) return (int)val;
-                    }
-                    break;
-                }
+                var val = Convert.ToInt64(raw, System.Globalization.CultureInfo.InvariantCulture);
+                if (val is >= 1 and <= 100) return (int)val;
             }
         }
         catch (Exception ex) { Log("perf limit: " + ex.Message); }

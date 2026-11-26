@@ -1525,7 +1525,7 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
                 if (totalRead > maxBytes)
                     throw new InvalidDataException($"Dell BIOS catalog stream exceeded maximum allowed limit ({maxBytes} bytes).");
 
-                destination.Write(buffer, 0, read);
+                await destination.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
             }
 
             return destination.ToArray();

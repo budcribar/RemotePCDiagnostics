@@ -254,7 +254,7 @@ public sealed class SpeedometerLocalServer : IAsyncDisposable
         _listener.Start();
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
         BaseUri = new Uri($"http://127.0.0.1:{Port}/");
-        _acceptLoop = Task.Run(() => AcceptLoopAsync(_cts.Token));
+        _acceptLoop = Task.Run(() => AcceptLoopAsync(_cts.Token), _cts.Token);
     }
 
     private async Task AcceptLoopAsync(CancellationToken ct)
@@ -366,7 +366,7 @@ public sealed class SpeedometerLocalServer : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        _cts.Cancel();
+        await _cts.CancelAsync().ConfigureAwait(false);
         try { _listener.Stop(); } catch { }
         try { await _acceptLoop.ConfigureAwait(false); } catch { }
         _cts.Dispose();
@@ -521,7 +521,7 @@ public sealed class CdpClient : IAsyncDisposable
             {
                 result = await _ws.ReceiveAsync(buffer, ct).ConfigureAwait(false);
                 if (result.MessageType == WebSocketMessageType.Close) return null;
-                ms.Write(buffer, 0, result.Count);
+                await ms.WriteAsync(buffer.AsMemory(0, result.Count), ct).ConfigureAwait(false);
             } while (!result.EndOfMessage);
 
             using var doc = JsonDocument.Parse(ms.ToArray());

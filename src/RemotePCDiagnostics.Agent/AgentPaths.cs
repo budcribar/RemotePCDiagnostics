@@ -327,11 +327,8 @@ public static class AgentPaths
                 var entryPath = Path.Combine(subDir, "RemotePCDiagnostics.Host.exe");
                 var entryRecordPath = Path.Combine(subDir, AppCache.RecordFileName("RemotePCDiagnostics.Host.exe"));
                 string? zipRecord = null;
-                foreach (var shaFile in Directory.EnumerateFiles(subDir, "*.zip.sha256"))
-                {
+                if (Directory.EnumerateFiles(subDir, "*.zip.sha256").FirstOrDefault() is { } shaFile)
                     zipRecord = SafeReadText(shaFile);
-                    break;
-                }
                 var entryRecord = File.Exists(entryRecordPath) ? SafeReadText(entryRecordPath) : null;
                 folders.Add(new CachedFolder(name, File.Exists(entryPath), zipRecord, entryRecord));
             }
@@ -498,7 +495,7 @@ public static class AgentPaths
             if (!string.Equals(actualZipHash, manifest.Sha256, StringComparison.OrdinalIgnoreCase))
                 return (null, "Downloaded archive SHA-256 did not match the signed release manifest.");
 
-            ZipFile.ExtractToDirectory(tempZip, stagingDir, overwriteFiles: true);
+            await ZipFile.ExtractToDirectoryAsync(tempZip, stagingDir, overwriteFiles: true, ct).ConfigureAwait(false);
             File.Delete(tempZip);
 
             var stagedEntry = Path.Combine(stagingDir, manifest.Entry);
@@ -506,8 +503,8 @@ public static class AgentPaths
                 return (null, $"Extracted release did not contain '{manifest.Entry}'.");
 
             var entrySha = ComputeFileSha256Hex(stagedEntry);
-            File.WriteAllText(Path.Combine(stagingDir, AppCache.RecordFileName(manifest.File)), AppCache.FormatRecord(actualZipHash, manifest.File));
-            File.WriteAllText(Path.Combine(stagingDir, AppCache.RecordFileName(manifest.Entry)), AppCache.FormatRecord(entrySha, manifest.Entry));
+            await File.WriteAllTextAsync(Path.Combine(stagingDir, AppCache.RecordFileName(manifest.File)), AppCache.FormatRecord(actualZipHash, manifest.File), ct).ConfigureAwait(false);
+            await File.WriteAllTextAsync(Path.Combine(stagingDir, AppCache.RecordFileName(manifest.Entry)), AppCache.FormatRecord(entrySha, manifest.Entry), ct).ConfigureAwait(false);
 
             if (Directory.Exists(versionDir))
                 Directory.Delete(versionDir, recursive: true);

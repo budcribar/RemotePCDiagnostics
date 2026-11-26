@@ -97,8 +97,7 @@ public sealed partial class WindowsMemorySystem
                 {
                     if (!Native.DuplicateTokenEx(shellToken, Native.TOKEN_PRIMARY_ACCESS, IntPtr.Zero, Native.SecurityImpersonation, Native.TokenPrimary, out var primary))
                     { log.Warn($"DuplicateTokenEx failed: {Marshal.GetLastWin32Error()}"); return null; }
-                    string? sid;
-                    using (var id = new WindowsIdentity(primary.DangerousGetHandle())) sid = id.User?.Value;
+                    var sid = GetTokenUserSid(primary);
                     using var me = WindowsIdentity.GetCurrent();
                     if (sid is null || sid == "S-1-5-18") { primary.Dispose(); log.Info("Shell runs as SYSTEM or an unknown account"); return null; }
                     return new(primary, sid, string.Equals(me.User?.Value, sid, StringComparison.OrdinalIgnoreCase));
@@ -110,6 +109,23 @@ public sealed partial class WindowsMemorySystem
                 return null;
             }
         }
+
+        private static string? GetTokenUserSid(SafeAccessTokenHandle token)
+        {
+            Native.GetTokenInformation(token, Native.TokenUser, IntPtr.Zero, 0, out var needed);
+            if (needed <= 0) return null;
+            var buf = Marshal.AllocHGlobal(needed);
+            try
+            {
+                if (!Native.GetTokenInformation(token, Native.TokenUser, buf, needed, out _)) return null;
+                var sidPtr = Marshal.ReadIntPtr(buf);
+                return sidPtr == IntPtr.Zero ? null : new SecurityIdentifier(sidPtr).Value;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buf);
+            }
+        }
     }
 
     private static class Native
@@ -117,7 +133,7 @@ public sealed partial class WindowsMemorySystem
         public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
         public const uint TOKEN_ASSIGN_PRIMARY = 0x0001, TOKEN_DUPLICATE = 0x0002, TOKEN_QUERY = 0x0008, TOKEN_ADJUST_DEFAULT = 0x0080, TOKEN_ADJUST_SESSIONID = 0x0100;
         public const uint TOKEN_PRIMARY_ACCESS = TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID;
-        public const int SecurityImpersonation = 2, TokenPrimary = 1;
+        public const int SecurityImpersonation = 2, TokenPrimary = 1, TokenUser = 1;
 
         [DllImport("user32.dll")] public static extern IntPtr GetShellWindow();
         [DllImport("user32.dll", SetLastError = true)] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
@@ -125,5 +141,7 @@ public sealed partial class WindowsMemorySystem
         [DllImport("advapi32.dll", SetLastError = true)] public static extern bool OpenProcessToken(SafeProcessHandle process, uint access, out SafeAccessTokenHandle token);
         [DllImport("advapi32.dll", SetLastError = true)]
         public static extern bool DuplicateTokenEx(SafeAccessTokenHandle existing, uint access, IntPtr attributes, int impersonationLevel, int tokenType, out SafeAccessTokenHandle token);
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool GetTokenInformation(SafeAccessTokenHandle token, int infoClass, IntPtr info, int length, out int returnLength);
     }
 }

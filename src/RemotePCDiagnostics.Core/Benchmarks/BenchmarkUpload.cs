@@ -178,18 +178,15 @@ public static class HardwareIdentityProbe
         {
             using var s = new System.Management.ManagementObjectSearcher("SELECT Manufacturer, Model, SystemSKUNumber, SystemFamily, TotalPhysicalMemory FROM Win32_ComputerSystem");
             using var res = s.Get();
-            foreach (System.Management.ManagementObject o in res)
+            using var o = res.OfType<System.Management.ManagementObject>().FirstOrDefault();
+            if (o is not null)
             {
-                using (o)
-                {
-                    manufacturer = Clean(o["Manufacturer"]);
-                    model = Clean(o["Model"]);
-                    systemSku = Clean(o["SystemSKUNumber"]);
-                    systemFamily = Clean(o["SystemFamily"]);
-                    if (o["TotalPhysicalMemory"] is { } mem)
-                        memoryBytes = Convert.ToDouble(mem, CultureInfo.InvariantCulture);
-                    break;
-                }
+                manufacturer = Clean(o["Manufacturer"]);
+                model = Clean(o["Model"]);
+                systemSku = Clean(o["SystemSKUNumber"]);
+                systemFamily = Clean(o["SystemFamily"]);
+                if (o["TotalPhysicalMemory"] is { } mem)
+                    memoryBytes = Convert.ToDouble(mem, CultureInfo.InvariantCulture);
             }
         }
         catch { }
@@ -198,14 +195,11 @@ public static class HardwareIdentityProbe
         {
             using var s = new System.Management.ManagementObjectSearcher("SELECT Manufacturer, Product FROM Win32_BaseBoard");
             using var res = s.Get();
-            foreach (System.Management.ManagementObject o in res)
+            using var o = res.OfType<System.Management.ManagementObject>().FirstOrDefault();
+            if (o is not null)
             {
-                using (o)
-                {
-                    var mb = $"{Clean(o["Manufacturer"])} {Clean(o["Product"])}".Trim();
-                    if (mb.Length > 0) motherboard = mb;
-                    break;
-                }
+                var mb = $"{Clean(o["Manufacturer"])} {Clean(o["Product"])}".Trim();
+                if (mb.Length > 0) motherboard = mb;
             }
         }
         catch { }
@@ -214,15 +208,9 @@ public static class HardwareIdentityProbe
         {
             using var s = new System.Management.ManagementObjectSearcher("SELECT ChassisTypes FROM Win32_SystemEnclosure");
             using var res = s.Get();
-            foreach (System.Management.ManagementObject o in res)
-            {
-                using (o)
-                {
-                    if (o["ChassisTypes"] is ushort[] types && types.Length > 0)
-                        formFactor = MapChassisType(types[0]);
-                    break;
-                }
-            }
+            using var o = res.OfType<System.Management.ManagementObject>().FirstOrDefault();
+            if (o is not null && o["ChassisTypes"] is ushort[] types && types.Length > 0)
+                formFactor = MapChassisType(types[0]);
         }
         catch { }
 
@@ -327,14 +315,11 @@ public static class HardwareIdentityProbe
         {
             using var s = new System.Management.ManagementObjectSearcher("SELECT Caption, Version FROM Win32_OperatingSystem");
             using var res = s.Get();
-            foreach (System.Management.ManagementObject o in res)
+            using var o = res.OfType<System.Management.ManagementObject>().FirstOrDefault();
+            if (o is not null)
             {
-                using (o)
-                {
-                    var combined = $"{Clean(o["Caption"])} {Clean(o["Version"])}".Trim();
-                    if (combined.Length > 0) os = combined;
-                    break;
-                }
+                var combined = $"{Clean(o["Caption"])} {Clean(o["Version"])}".Trim();
+                if (combined.Length > 0) os = combined;
             }
         }
         catch { }

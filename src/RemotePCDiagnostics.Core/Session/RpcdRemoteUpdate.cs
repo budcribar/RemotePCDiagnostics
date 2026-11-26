@@ -850,10 +850,7 @@ public static class RpcdGitHubRelease
                 return new RpcdReleaseFetch(null, "The GitHub release was not a JSON object.");
             if (root.TryGetProperty("message", out var message) && root.TryGetProperty("documentation_url", out _))
             {
-                var text = message.GetString();
-                return new RpcdReleaseFetch(null, string.IsNullOrWhiteSpace(text)
-                    ? "GitHub did not return that release."
-                    : "GitHub did not return that release.");
+                return new RpcdReleaseFetch(null, "GitHub did not return that release.");
             }
 
             var tag = root.TryGetProperty("tag_name", out var tagEl) ? tagEl.GetString() : fallbackTag;

@@ -762,7 +762,7 @@ public sealed class WindowsMachineTweaks(ILogger? log = null, IProcessLauncher? 
             {
                 try
                 {
-                    await Task.Delay(TempExclusionLifetime).ConfigureAwait(false);
+                    await Task.Delay(TempExclusionLifetime, CancellationToken.None).ConfigureAwait(false);
                     if (await StillExcludedAsync(folder).ConfigureAwait(false))
                     {
                         var removed = await RemoveDefenderExclusionsAsync([folder], [], CancellationToken.None).ConfigureAwait(false);
@@ -770,7 +770,7 @@ public sealed class WindowsMachineTweaks(ILogger? log = null, IProcessLauncher? 
                     }
                 }
                 catch (Exception ex) { Log("Expiring temporary build exclusion failed: " + ex.Message); }
-            });
+            }, CancellationToken.None);
         }
         return added;
     }

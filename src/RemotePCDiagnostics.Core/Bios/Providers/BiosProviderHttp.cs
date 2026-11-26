@@ -622,12 +622,6 @@ public static class BiosProviderHttp
             return false;
         }
 
-        if (resolved is null)
-        {
-            error = "Redirect target resolved to null.";
-            return false;
-        }
-
         if (HasUnsafePathSegments(resolved.AbsoluteUri))
         {
             error = "Redirect target contains unsafe path segments.";

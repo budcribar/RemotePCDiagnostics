@@ -141,7 +141,7 @@ public sealed class WasapiAudioStateSource(ILogger? log = null, TimeSpan? probeT
                 Warn($"probe of '{Safe(() => dev.FriendlyName, "?")}' failed: 0x{hr:X8} {ex.Message}");
                 return (outcome, (int?)hr);
             }
-        });
+        }, ct);
         var finished = await Task.WhenAny(probe, Task.Delay(_probeTimeout, ct)).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
         if (finished == probe) return await probe.ConfigureAwait(false);

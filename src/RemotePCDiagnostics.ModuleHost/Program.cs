@@ -10,7 +10,7 @@ using RemotePCDiagnostics.Core.Plugins;
 // modules that ship with the app and need administrator, the Agent's (the Agent starts this host and relays its lines to the app, which
 // never runs as administrator). A module in user mode asks the app for what needs administrator rights (host queries: "query" lines out,
 // "answer" lines back).
-if (args.Length < 1) { Console.Error.WriteLine("usage: RemotePCDiagnostics.ModuleHost <module.dll> | --shared"); return 2; }
+if (args.Length < 1) { await Console.Error.WriteLineAsync("usage: RemotePCDiagnostics.ModuleHost <module.dll> | --shared"); return 2; }
 
 // The protocol owns stdout; anything the module prints goes to stderr (the app's log).
 var output = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = false };
@@ -62,12 +62,12 @@ if (args[0] == "--shared")
         }
     }
 
-    while (input.ReadLine() is { } line)
+    while (await input.ReadLineAsync() is { } line)
     {
         var request = ModuleHostMessage.Parse(line);
         if (request is null)
         {
-            if (!string.IsNullOrWhiteSpace(line)) Console.Error.WriteLine($"unreadable request ({line.Length} chars) ignored");
+            if (!string.IsNullOrWhiteSpace(line)) await Console.Error.WriteLineAsync($"unreadable request ({line.Length} chars) ignored");
             continue;
         }
         if (request.Type == "exit" && string.IsNullOrEmpty(request.Module))
@@ -100,10 +100,10 @@ else
     SendRaw(new ModuleHostMessage { Type = "ready", Message = module.Name });
 
     var session = new ModuleSession(module, queries, SendRaw);
-    while (input.ReadLine() is { } line)
+    while (await input.ReadLineAsync() is { } line)
     {
         var request = ModuleHostMessage.Parse(line);
-        if (request is null && !string.IsNullOrWhiteSpace(line)) Console.Error.WriteLine($"unreadable request ({line.Length} chars) ignored");
+        if (request is null && !string.IsNullOrWhiteSpace(line)) await Console.Error.WriteLineAsync($"unreadable request ({line.Length} chars) ignored");
         if (request?.Type == "exit")
         {
             session.Shutdown();
@@ -179,11 +179,11 @@ internal sealed class ModuleSession
                         if (previous is not null) await previous.ConfigureAwait(false);
                         try
                         {
-                            var a = await _module.CheckAvailabilityAsync();
+                            var a = await _module.CheckAvailabilityAsync(_sessionCts.Token);
                             _send(new ModuleHostMessage { Type = "availability", Available = a.IsAvailable, Reason = a.Reason });
                         }
                         catch (Exception ex) { _send(new ModuleHostMessage { Type = "availability", Available = false, Reason = ex.Message }); }
-                    });
+                    }, _sessionCts.Token);
                 }
                 break;
             case "refresh":
@@ -243,7 +243,7 @@ internal sealed class ModuleSession
                             SendIfCurrent(new ModuleHostMessage { Type = "result", Status = DiagnosticStatus.Warning, Message = "Cancelled", Cancelled = true });
                         }
                         catch (Exception ex) { SendIfCurrent(new ModuleHostMessage { Type = "error", Message = $"{ex.GetType().Name}: {ex.Message}" }); }
-                    });
+                    }, _sessionCts.Token);
                 }
                 break;
             case "detect":
@@ -252,12 +252,12 @@ internal sealed class ModuleSession
                     try
                     {
                         if (_module is not IDetectableModule detectable) { _send(new ModuleHostMessage { Type = "detection", Reason = "This module doesn't run per device" }); return; }
-                        var d = await detectable.DetectAsync();
+                        var d = await detectable.DetectAsync(_sessionCts.Token);
                         _devices = d.Instances;
                         _send(new ModuleHostMessage { Type = "detection", Reason = d.NotApplicableReason, Instances = [.. d.Instances] });
                     }
                     catch (Exception ex) { _send(new ModuleHostMessage { Type = "detection", Reason = $"Detection failed: {ex.Message}" }); }
-                });
+                }, _sessionCts.Token);
                 break;
             case "call":
                 var call = request;
@@ -274,7 +274,7 @@ internal sealed class ModuleSession
                     catch (OperationCanceledException) when (callCt.IsCancellationRequested) { }
                     catch (NotSupportedException ex) { if (!callCt.IsCancellationRequested) _send(new ModuleHostMessage { Type = "return", Id = call.Id, Ok = false, Error = "unknown", Reason = ex.Message }); }
                     catch (Exception ex) { if (!callCt.IsCancellationRequested) _send(new ModuleHostMessage { Type = "return", Id = call.Id, Ok = false, Error = "failed", Reason = $"{ex.GetType().Name}: {ex.Message}" }); }
-                });
+                }, callCt);
                 break;
             case "stop":
                 CancelRunning();

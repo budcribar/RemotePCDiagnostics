@@ -74,7 +74,7 @@ public static class HardwareSyncService
         var stampPath = Path.Combine(stateFolder, StampFileName);
         try
         {
-            if (File.Exists(stampPath) && string.Equals(File.ReadAllText(stampPath).Trim(), hash, StringComparison.OrdinalIgnoreCase))
+            if (File.Exists(stampPath) && string.Equals((await File.ReadAllTextAsync(stampPath).ConfigureAwait(false)).Trim(), hash, StringComparison.OrdinalIgnoreCase))
                 return HardwareSyncOutcome.Unchanged;
         }
         catch { }
@@ -108,7 +108,7 @@ public static class HardwareSyncService
         try
         {
             Directory.CreateDirectory(stateFolder);
-            File.WriteAllText(stampPath, hash);
+            await File.WriteAllTextAsync(stampPath, hash).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

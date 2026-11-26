@@ -30,7 +30,8 @@ public sealed class DismScanHealthModule(SystemCommandRunner commands) : Windows
     // DISM draws "[====  42.0%  ====]" progress bars into its output; drop those lines.
     protected override string CleanOutput(string output) =>
         System.Text.RegularExpressions.Regex.Replace(output,
-            @"(?m)^[ \t]*\[[= \t]*\d{1,3}(?:[.,]\d+)?%[= \t]*\][ \t]*\r?(?:\n|$)", "").Trim();
+            @"(?m)^[ \t]*\[[= \t]*\d{1,3}(?:[.,]\d+)?%[= \t]*\][ \t]*\r?(?:\n|$)", "",
+            System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(2)).Trim();
 
     protected override (DiagnosticStatus Status, string Summary) Interpret(string output, RemotePCDiagnostics.Core.Osquery.ProcessResult? result)
     {

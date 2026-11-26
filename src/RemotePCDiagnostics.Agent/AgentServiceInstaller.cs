@@ -539,7 +539,7 @@ internal sealed class AgentWindowsService : ServiceBase
                     try { Stop(); } catch { }
                 }
             }
-        });
+        }, _cts.Token);
     }
 
     protected override void OnStop() => StopWorker();
@@ -567,7 +567,7 @@ internal sealed class AgentWindowsService : ServiceBase
         try { _cts?.Cancel(); } catch { }
         if (_workerTask is not null)
         {
-            try { _workerTask.Wait(TimeSpan.FromSeconds(10)); } catch { }
+            try { _workerTask.Wait(TimeSpan.FromSeconds(10), CancellationToken.None); } catch { }
         }
         _cts?.Dispose();
     }

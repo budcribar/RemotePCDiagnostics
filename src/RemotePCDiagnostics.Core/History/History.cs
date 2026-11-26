@@ -441,7 +441,7 @@ public static class HistoryLabels
     public static string Measurement(string name)
     {
         if (Known.TryGetValue(name, out var k)) return k;
-        var words = System.Text.RegularExpressions.Regex.Split(name, "(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+        var words = System.Text.RegularExpressions.Regex.Split(name, "(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(2))
             .Where(w => w.Length > 0).ToList();
         if (words.Count == 0) return name;
         return string.Join(' ', words.Select((w, i) => i == 0 ? char.ToUpperInvariant(w[0]) + w[1..] : w.All(char.IsUpper) && w.Length > 1 ? w : w.ToLowerInvariant()));

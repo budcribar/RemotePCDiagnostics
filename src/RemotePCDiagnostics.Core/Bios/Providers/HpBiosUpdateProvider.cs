@@ -206,12 +206,21 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
                         break;
                 }
 
-                if (response is null || !response.IsSuccessStatusCode)
+                if (response is null)
                 {
                     return BiosProviderHttp.ClassifyHttpStatus(
                         VendorId,
                         DisplayName,
-                        response?.StatusCode ?? HttpStatusCode.NotFound,
+                        HttpStatusCode.NotFound,
+                        $"SystemId {systemId}");
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return BiosProviderHttp.ClassifyHttpStatus(
+                        VendorId,
+                        DisplayName,
+                        response.StatusCode,
                         $"SystemId {systemId}");
                 }
 
@@ -1021,7 +1030,7 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
                 if (totalRead > maxBytes)
                     throw new InvalidDataException($"HP BIOS catalog stream exceeded maximum allowed limit ({maxBytes} bytes).");
 
-                destination.Write(buffer, 0, read);
+                await destination.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
             }
 
             return destination.ToArray();

@@ -370,5 +370,5 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
     /// <summary>Scheme GUID from "powercfg /getactivescheme" output.</summary>
     public static string? ParseSchemeGuid(string? output) =>
-        output is null ? null : Regex.Match(output, "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}") is { Success: true } m ? m.Value : null;
+        output is null ? null : Regex.Match(output, "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", RegexOptions.None, TimeSpan.FromSeconds(2)) is { Success: true } m ? m.Value : null;
 }

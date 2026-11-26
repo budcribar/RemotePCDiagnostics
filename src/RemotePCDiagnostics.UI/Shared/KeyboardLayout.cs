@@ -75,7 +75,7 @@ internal sealed record KeyboardLayout(string Id, string Name, int Width, IReadOn
         {
             if ((manufacturer.Contains(rule.Manufacturer, StringComparison.OrdinalIgnoreCase)
                     || (rule.Manufacturer == "HP" && manufacturer.StartsWith("Hewlett-Packard", StringComparison.OrdinalIgnoreCase)))
-                && Regex.IsMatch(identity, $@"\b{rule.ModelPattern}\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                && Regex.IsMatch(identity, $@"\b{rule.ModelPattern}\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2)))
             {
                 withNumpad = rule.Numpad;
                 break;

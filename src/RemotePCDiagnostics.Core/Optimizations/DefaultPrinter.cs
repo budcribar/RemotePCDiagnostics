@@ -55,7 +55,7 @@ public static class DefaultPrinter
         port is not null && (port.StartsWith("WSD", StringComparison.OrdinalIgnoreCase) || port.StartsWith("IP_", StringComparison.OrdinalIgnoreCase)
             || port.StartsWith(@"\\", StringComparison.Ordinal));
 
-    private static readonly Regex Connection = new(@"^\\\\[^\\,""]+\\[^\\,""]+$", RegexOptions.CultureInvariant);
+    private static readonly Regex Connection = new(@"^\\\\[^\\,""]+\\[^\\,""]+$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
 
     /// <summary>A shared printer connection: "\\server\printer".</summary>
     public static bool IsConnectionName(string? name) => name is not null && Connection.IsMatch(name);

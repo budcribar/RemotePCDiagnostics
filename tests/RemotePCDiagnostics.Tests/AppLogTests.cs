@@ -34,7 +34,8 @@ public class AppLogTests : IDisposable
         var blocker = Path.Combine(_dir, "file");
         Directory.CreateDirectory(_dir);
         File.WriteAllText(blocker, "x");
-        new RollingFileLog(Path.Combine(blocker, "sub", "app.log")).Write("hello");
+        var ex = Record.Exception(() => new RollingFileLog(Path.Combine(blocker, "sub", "app.log")).Write("hello"));
+        Assert.Null(ex);
     }
 
     [Theory]

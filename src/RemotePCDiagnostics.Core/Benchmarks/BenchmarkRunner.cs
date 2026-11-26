@@ -200,7 +200,7 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
                 finally
                 {
                     Interlocked.Exchange(ref windowClosed, 1);
-                    try { sampleCts.Cancel(); } catch (ObjectDisposedException) { }
+                    try { await sampleCts.CancelAsync().ConfigureAwait(false); } catch (ObjectDisposedException) { }
                     try { await samplerTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
                 }
             }

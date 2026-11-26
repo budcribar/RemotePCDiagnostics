@@ -51,12 +51,13 @@ public sealed class PhysicalDiskTestFileSystem(ILogger? log = null) : IDiskTestF
 
     public const string FolderName = "RemotePCDiagnostics.SpeedTest";
 
-    /// <summary>System drive: under the user's temp folder; other drives: a dedicated folder at the drive root.</summary>
+    /// <summary>System drive: under the user's LocalApplicationData folder; other drives: a dedicated folder at the drive root.</summary>
     public string GetTestFolder(TestDrive drive)
     {
-        var temp = Path.GetTempPath();
-        return string.Equals(Path.GetPathRoot(temp), drive.Root, StringComparison.OrdinalIgnoreCase)
-            ? Path.Combine(temp, FolderName)
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return !string.IsNullOrWhiteSpace(localAppData)
+            && string.Equals(Path.GetPathRoot(localAppData), drive.Root, StringComparison.OrdinalIgnoreCase)
+            ? Path.Combine(localAppData, "RemotePCDiagnostics", FolderName)
             : Path.Combine(drive.Root, FolderName);
     }
 

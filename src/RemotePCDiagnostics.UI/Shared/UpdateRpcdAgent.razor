@@ -114,7 +114,7 @@
 
     private async Task PollAsync(IElevatedCommandBridge bridge, string requestId)
     {
-        _poll?.Cancel();
+        if (_poll is not null) await _poll.CancelAsync();
         var cts = new CancellationTokenSource();
         _poll = cts;
         try

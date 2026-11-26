@@ -119,7 +119,10 @@ public static class TempFileCleaner
     public static IReadOnlyList<string> DefaultRoots()
     {
         var roots = new List<string>();
-        var temp = Path.GetTempPath();
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var temp = !string.IsNullOrEmpty(localAppData)
+            ? Path.Combine(localAppData, "Temp")
+            : Environment.GetEnvironmentVariable("TEMP");
         if (!string.IsNullOrEmpty(temp)) roots.Add(temp);
         var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         if (!string.IsNullOrEmpty(windows)) roots.Add(Path.Combine(windows, "Temp"));
