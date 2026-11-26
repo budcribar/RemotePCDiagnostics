@@ -144,7 +144,7 @@ public sealed class RecordingScrubberTests
                     if (key is not null && RecordingScrubber.SensitiveNames.Contains(key) && s.Length > 0 && !s.StartsWith('<')) problems.Add($"{key} = {s}");
                     if (LooksLikeMac(s)) problems.Add($"MAC-like value under {key}: {s}");
                     if (ProfileUser(s) is { } u) problems.Add($"profile path under {key}: {u}");
-                    if (key is "stdOut" && s.TrimStart().StartsWith('[')) Walk(JsonDocument.Parse(s).RootElement, null);
+                    if (key is "stdOut" && JsonRows(s) is { } rows) using (rows) Walk(rows.RootElement, null); // osquery's rows, not a log such as HardeningKitty's "[*] ..." lines
                     break;
             }
         }
@@ -152,6 +152,12 @@ public sealed class RecordingScrubberTests
         var uuid = RecordingLibrary.Load(name).Machine.SmbiosUuid;
         if (uuid.Length > 0 && !uuid.StartsWith('<')) problems.Add($"machine smbiosUuid = {uuid}");
         Assert.True(problems.Count == 0, string.Join("\n", problems));
+    }
+
+    private static JsonDocument? JsonRows(string s)
+    {
+        if (!s.TrimStart().StartsWith('[')) return null;
+        try { return JsonDocument.Parse(s); } catch (JsonException) { return null; }
     }
 
     private static bool LooksLikeMac(string s)
