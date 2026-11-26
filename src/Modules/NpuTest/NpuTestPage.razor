@@ -87,16 +87,27 @@ else
         _ = Diagnostics.RunAsync(m.Name);
     }
 
+    private static string VerdictHeading(NpuVerdict v) => v switch
+    {
+        NpuVerdict.Pass => "Passed",
+        NpuVerdict.SmokeOnly => "Passed (smoke test)",
+        NpuVerdict.NoAdapter => "Driver healthy",
+        NpuVerdict.DriverProblem => "Driver problem",
+        NpuVerdict.WorkloadFailed => "Workload failed",
+        NpuVerdict.TimedOut => "Timed out",
+        NpuVerdict.Mismatch => "Result mismatch",
+        NpuVerdict.Slow => "Slow",
+        NpuVerdict.NoNpu => "No NPU found",
+        _ => v.ToString(),
+    };
+
     private static RenderFragment DeviceCard(NpuDeviceReport d) => __builder =>
     {
         var dot = NpuTestModule.StatusOf(d.Verdict) switch { DiagnosticStatus.Ok => "ok", DiagnosticStatus.Warning => "warning", _ => "error" };
         <div class="card" data-testid="npu-card">
             <div class="card-head"><span class="dot dot-@dot"></span><strong>@d.Device.Name</strong></div>
-            <div class="headline">@(d.Gflops is { } g ? $"{g:0.0} GFLOPS" : d.Verdict.ToString())</div>
+            <div class="headline">@(d.Gflops is { } g ? $"{g:0.0} GFLOPS" : VerdictHeading(d.Verdict))</div>
             <CardList Items="@([ d.Device.Vendor, $"Driver {d.Device.DriverVersion ?? "unknown"}", d.Device.ProblemCode is { } c ? NpuDetection.ProblemText(c) : d.Device.Status ?? "status unknown", d.AverageMs is { } avg ? $"{d.Iterations} runs · {RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(avg)} ms each · first {(d.FirstRunMs is { } first ? RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(first) : "—")} ms{(d.MaxAbsError is { } e ? $" · max error {e:0.##e+0}" : "")}" : null, d.Adapter is { } a ? $"Ran on: {a}" : null, d.Message ])" />
-
-
-
         </div>
     };
 }
