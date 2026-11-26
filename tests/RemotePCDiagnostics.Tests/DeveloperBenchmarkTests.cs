@@ -786,6 +786,92 @@ public sealed class DeveloperBenchmarkTests : IDisposable
         }
     }
 
+    [Fact]
+    public void SdkPin_ReplacesOnlyTheSdkSection_OfAnExistingGlobalJson()
+    {
+        var pinned = DotNetSdkPin.WithSdkPin("""
+            {
+              // test runner only
+              "test": { "runner": "Microsoft.Testing.Platform" },
+              "sdk": { "version": "11.0.100" },
+            }
+            """, 10)!;
+        using var doc = JsonDocument.Parse(pinned);
+        Assert.Equal("Microsoft.Testing.Platform", doc.RootElement.GetProperty("test").GetProperty("runner").GetString());
+        Assert.Equal("10.0.100", doc.RootElement.GetProperty("sdk").GetProperty("version").GetString());
+        Assert.Equal("latestFeature", doc.RootElement.GetProperty("sdk").GetProperty("rollForward").GetString());
+        Assert.Null(DotNetSdkPin.WithSdkPin("[1, 2]", 10));
+        Assert.Null(DotNetSdkPin.WithSdkPin("{ not json", 10));
+    }
+
+    [Fact]
+    public async Task CustomSolution_WithItsOwnGlobalJson_StillBuildsOnThePinnedSdk_AndPutsTheFileBack()
+    {
+        // RemotePCDiagnostics.sln sits next to a global.json that only names the test runner. That file used to stop the pin,
+        // so the "Test on .NET 10 LTS SDK" pass built on .NET 11 again.
+        var repo = Path.Combine(_root, "repo");
+        Directory.CreateDirectory(repo);
+        var sln = Path.Combine(repo, "App.sln");
+        File.WriteAllText(sln, "");
+        const string original = "{\n  \"test\": {\n    \"runner\": \"Microsoft.Testing.Platform\"\n  }\n}\n";
+        var globalJson = Path.Combine(repo, "global.json");
+        File.WriteAllText(globalJson, original);
+        var launcher = new SdkLauncher();
+        var env = new FakeDevEnv { Toolchains = [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "11.0.100", 11)] };
+
+        var res = await new DeveloperBuildRunner(env, launcher, tempRootOverride: _root).RunCSharpCleanBuildAsync(
+            new DeveloperBuildOptions(ColdRepeats: 1, WarmWarmups: 0, WarmRepeats: 1, AllowHyperfine: false, TargetDotNetSdkMajor: 10, CustomSolutionPath: sln));
+
+        Assert.True(res.Succeeded, res.Note);
+        Assert.Equal(10, res.ToolchainMajor);
+        Assert.Equal("10.0.404", res.ToolchainVersion);
+        Assert.Contains("\"test\"", launcher.GlobalJsonAtVersion);
+        Assert.Equal(original, File.ReadAllText(globalJson));
+    }
+
+    [Fact]
+    public async Task PinnedSdk_ThatDotnetDoesNotPick_FailsInsteadOfMeasuringAnotherSdk()
+    {
+        var repo = Path.Combine(_root, "repo-11");
+        Directory.CreateDirectory(repo);
+        var sln = Path.Combine(repo, "App.sln");
+        File.WriteAllText(sln, "");
+        var launcher = new SdkLauncher { Only11 = true };
+        var env = new FakeDevEnv { Toolchains = [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "11.0.100", 11)] };
+
+        var res = await new DeveloperBuildRunner(env, launcher, tempRootOverride: _root).RunCSharpCleanBuildAsync(
+            new DeveloperBuildOptions(ColdRepeats: 1, WarmWarmups: 0, WarmRepeats: 1, AllowHyperfine: false, TargetDotNetSdkMajor: 10, CustomSolutionPath: sln));
+
+        Assert.False(res.Succeeded);
+        Assert.Contains("11.0.100 instead of the .NET 10 SDK", res.Note);
+        Assert.False(File.Exists(Path.Combine(repo, "global.json")));
+        Assert.DoesNotContain(launcher.Commands, c => c.StartsWith("build", StringComparison.Ordinal));
+    }
+
+    /// <summary>Answers dotnet --version the way the host does: from the sdk section of global.json in the working directory.</summary>
+    private sealed class SdkLauncher : IProcessLauncher
+    {
+        public bool Only11 { get; init; }
+        public string? GlobalJsonAtVersion { get; private set; }
+        public List<string> Commands { get; } = [];
+
+        public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct = default) =>
+            RunAsync(fileName, arguments, timeout, ct, null);
+
+        public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct, string? workingDirectory)
+        {
+            Commands.Add(string.Join(' ', arguments));
+            if (arguments is ["--version"])
+            {
+                var path = Path.Combine(workingDirectory ?? "", "global.json");
+                GlobalJsonAtVersion = File.Exists(path) ? File.ReadAllText(path) : null;
+                var pinned10 = GlobalJsonAtVersion?.Contains("\"10.0.100\"", StringComparison.Ordinal) == true;
+                return Task.FromResult(new ProcessResult(0, pinned10 && !Only11 ? "10.0.404\r\n" : "11.0.100\r\n", ""));
+            }
+            return Task.FromResult(new ProcessResult(0, "ok", ""));
+        }
+    }
+
     private sealed class RecordingLauncher : IProcessLauncher
     {
         public List<string?> Directories { get; } = [];
