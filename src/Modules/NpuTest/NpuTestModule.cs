@@ -17,8 +17,8 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : OnDemandModu
     public const int MatrixSize = 256;
     public const int MaxMatrixSize = NpuTestLimits.MaxMatrixSize;
     public const int MaxIterations = 100_000;
-    /// <summary>Largest allowed |device − CPU| per element (float32, K=256, inputs in [-1,1]).</summary>
-    public const double MaxAbsError = 1e-2;
+    /// <summary>Largest allowed |device − CPU| per element (K=256, inputs in [-1,1]; allows native FP16/BF16 NPU accumulation while still catching corrupted/zero/NaN outputs).</summary>
+    public const double MaxAbsError = 0.25;
     /// <summary>Device slower than the single-thread CPU reference by more than this = Warning.</summary>
     public const double SlowFactor = 20;
 
