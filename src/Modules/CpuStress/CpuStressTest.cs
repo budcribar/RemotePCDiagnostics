@@ -7,7 +7,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// against a value precomputed before load. A sampler watches time, stop requests and CPU temperature
 /// (<see cref="ISensorProvider"/>, aborting at <see cref="SensorLevel.Critical"/>) and records throughput to detect slowing.
 /// When there is one worker per logical processor, each worker is pinned to its own processor (<see cref="ICpuPinning"/>), so a wrong
-/// checksum or a slow worker names the core it came from.
+/// checksum names the core it came from, and the per-processor work is kept in the report and the log.
 /// </summary>
 public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock = null, ICpuWorkload? workload = null, ILogger? log = null, StressCleanup? cleanup = null, ICpuPinning? pinning = null)
 {
@@ -106,7 +106,6 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
         var report = new CpuStressReport(outcome, ran, duration, threads, Interlocked.Read(ref chunks), errs, maxTemp, early, late, sensorsOk, perCpu);
         log.Info($"CPU stress: done outcome={outcome} ran={ran} chunks={report.ChunksDone} errors={errs} maxTemp={maxTemp} early={early:0.0}/s late={late:0.0}/s samples={samples.Count} pinned={perCpu?.Count ?? 0}/{threads}");
         if (perCpu is not null) log.Info("CPU stress: per cpu chunks/errors " + string.Join(" ", perCpu.Select(p => $"{p.Cpu}:{p.Chunks}/{p.Errors}")));
-        if (report.SlowNote is { } slow) log.Warn($"CPU stress: {slow}");
         return report;
     }
 

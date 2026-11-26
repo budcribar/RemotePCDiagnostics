@@ -33,11 +33,6 @@ public sealed record CpuStressReport(
     long ChunksDone, long Errors, double? MaxCpuTemperatureC, double? EarlyThroughput, double? LateThroughput,
     bool SensorsAvailable, IReadOnlyList<CpuProcessorResult>? Processors = null) : IStressReport
 {
-    /// <summary>A pinned processor counts as slow below this fraction of the median work of its own kind of core.</summary>
-    public const double SlowRatio = 0.7;
-    /// <summary>Fewer chunks than this per processor (median) is too short a run to call any processor slow.</summary>
-    public const long MinChunksForSlow = 50;
-
     [JsonIgnore] public RunEnd RunEnd => Outcome == CpuStressOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
     [JsonIgnore] public DiagnosticStatus Status => CpuStressModule.ToStatus(Outcome);
     [JsonIgnore] public bool IsOverheated => Outcome == CpuStressOutcome.Overheated;
@@ -78,36 +73,6 @@ public sealed record CpuStressReport(
             if (cores <= 3) return $"They came from {Join(bad.Select(Describe).ToList())}.";
             return $"They came from {cores} different cores, which points to heat, power or overclocking rather than one bad core.";
         }
-    }
-
-    /// <summary>Processors that did far less work than the others of their kind (pinned runs only). Informational: never fails the test.</summary>
-    public IReadOnlyList<CpuProcessorResult> SlowProcessors() => FindSlow(Processors);
-
-    /// <summary>One line for the result card naming the slow processors, or null.</summary>
-    public string? SlowNote
-    {
-        get
-        {
-            var slow = SlowProcessors();
-            if (slow.Count == 0) return null;
-            var names = slow.Count <= 3 ? Join(slow.Select(Describe).ToList()) : $"{slow.Count} processor threads";
-            return $"{char.ToUpperInvariant(names[0])}{names[1..]} did much less work than similar cores";
-        }
-    }
-
-    public static IReadOnlyList<CpuProcessorResult> FindSlow(IReadOnlyList<CpuProcessorResult>? processors)
-    {
-        if (processors is not { Count: > 1 }) return [];
-        var slow = new List<CpuProcessorResult>();
-        foreach (var kind in processors.GroupBy(p => p.EfficiencyClass))
-        {
-            var sorted = kind.Select(p => p.Chunks).Order().ToList();
-            if (sorted.Count < 2) continue;
-            var median = sorted.Count % 2 == 1 ? sorted[sorted.Count / 2] : (sorted[sorted.Count / 2 - 1] + sorted[sorted.Count / 2]) / 2.0;
-            if (median < MinChunksForSlow) continue;
-            slow.AddRange(kind.Where(p => p.Chunks < median * SlowRatio));
-        }
-        return slow.OrderBy(p => p.Cpu).ToList();
     }
 
     /// <summary>"CPU 5 (core 3)", with ", an efficiency core" on a hybrid CPU.</summary>

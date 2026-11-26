@@ -95,7 +95,6 @@ public class CpuPinningTests
         Assert.Equal(0, pinning.Pins);
         Assert.Null(r.Processors);
         Assert.Null(r.FaultyNote);
-        Assert.Null(r.SlowNote);
     }
 
     [Fact]
@@ -108,31 +107,11 @@ public class CpuPinningTests
     }
 
     [Fact]
-    public void SlowProcessor_IsComparedWithItsOwnKindOfCore()
+    public void ErrorsOnAnEfficiencyCore_SayWhichKind()
     {
-        // Hybrid: CPUs 0-3 performance (class 1), 4-7 efficiency (class 0). Efficiency cores are naturally slower: not flagged.
-        // CPU 2 did 60% of its peers' work: flagged. CPU 6 did 75% of the efficiency median: not flagged (above 70%).
-        var cpus = new[] { 1000L, 1000, 600, 1000, 500, 500, 375, 500 }
-            .Select((c, i) => new CpuProcessorResult(i, i, i < 4 ? (byte)1 : (byte)0, c, 0)).ToList();
-        var r = new CpuStressReport(CpuStressOutcome.Passed, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1), 8, cpus.Sum(c => c.Chunks), 0, null, null, null, false, cpus);
-        Assert.Equal([2], r.SlowProcessors().Select(p => p.Cpu));
-        Assert.Equal("CPU 2 (core 2) did much less work than similar cores", r.SlowNote);
-        Assert.Equal(CpuStressOutcome.Passed, r.Outcome);
-    }
-
-    [Fact]
-    public void SlowEfficiencyCore_IsLabelled()
-    {
-        var cpus = new[] { 1000L, 1000, 500, 200, 500 }.Select((c, i) => new CpuProcessorResult(i, i, i < 2 ? (byte)1 : (byte)0, c, 0)).ToList();
-        var r = new CpuStressReport(CpuStressOutcome.Passed, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1), 5, 3200, 0, null, null, null, false, cpus);
-        Assert.Equal("CPU 3 (core 3, an efficiency core) did much less work than similar cores", r.SlowNote);
-    }
-
-    [Fact]
-    public void ShortRun_NeverCallsAProcessorSlow()
-    {
-        var cpus = new[] { 40L, 40, 5, 40 }.Select((c, i) => new CpuProcessorResult(i, i, 0, c, 0)).ToList();
-        Assert.Empty(CpuStressReport.FindSlow(cpus));
+        var cpus = new[] { 0L, 0, 0, 2 }.Select((e, i) => new CpuProcessorResult(i, i, i < 2 ? (byte)1 : (byte)0, 100, e)).ToList();
+        var r = new CpuStressReport(CpuStressOutcome.ComputationErrors, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1), 4, 400, 2, null, null, null, false, cpus);
+        Assert.Equal("All of them came from CPU 3 (core 3, an efficiency core), which points to that core.", r.FaultyNote);
     }
 
     [Fact]
