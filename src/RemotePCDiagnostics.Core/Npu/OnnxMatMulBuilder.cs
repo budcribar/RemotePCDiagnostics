@@ -14,17 +14,24 @@ public static class OnnxMatMulBuilder
     private const long OpsetVersion = 17;
     private const int TensorDataTypeFloat = 1;
 
-    public static byte[] BuildFloat32MatMul(int matrixSize)
+    public static byte[] BuildFloat32MatMul(int matrixSize, int chainDepth = 1)
     {
         if (matrixSize <= 0) throw new ArgumentOutOfRangeException(nameof(matrixSize));
+        if (chainDepth <= 0) throw new ArgumentOutOfRangeException(nameof(chainDepth));
 
-        var node = EncodeMessage(w =>
+        var nodes = new List<byte[]>(chainDepth);
+        for (int i = 0; i < chainDepth; i++)
         {
-            WriteString(w, 1, "A");       // NodeProto.input
-            WriteString(w, 1, "B");       // NodeProto.input
-            WriteString(w, 2, "C");       // NodeProto.output
-            WriteString(w, 4, "MatMul");  // NodeProto.op_type
-        });
+            var inA = i == 0 ? "A" : $"T{i}";
+            var outC = i == chainDepth - 1 ? "C" : $"T{i + 1}";
+            nodes.Add(EncodeMessage(w =>
+            {
+                WriteString(w, 1, inA);       // NodeProto.input
+                WriteString(w, 1, "B");       // NodeProto.input
+                WriteString(w, 2, outC);      // NodeProto.output
+                WriteString(w, 4, "MatMul");  // NodeProto.op_type
+            }));
+        }
 
         var inputA = EncodeMatrixValueInfo("A", matrixSize);
         var inputB = EncodeMatrixValueInfo("B", matrixSize);
@@ -32,7 +39,8 @@ public static class OnnxMatMulBuilder
 
         var graph = EncodeMessage(w =>
         {
-            WriteBytes(w, 1, node);             // GraphProto.node
+            foreach (var node in nodes)
+                WriteBytes(w, 1, node);         // GraphProto.node
             WriteString(w, 2, "npu_matmul");    // GraphProto.name
             WriteBytes(w, 11, inputA);          // GraphProto.input
             WriteBytes(w, 11, inputB);          // GraphProto.input
