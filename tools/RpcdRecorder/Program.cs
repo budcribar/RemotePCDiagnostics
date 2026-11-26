@@ -4,6 +4,8 @@
 //   dotnet run --project tools/RpcdRecorder -- --out <folder>   (from an admin prompt, as the Agent runs) [--osquery <path to osqueryi.exe>] [--note "text"]
 //
 // v9 (Nov 26): also records Security Center's antivirus list and WMI error probes (ErrorProbes), and WMI errors carry their code.
+// v10 (Nov 26): also records what the Agent's alerts read (the watched events of the last 30 days, free space, memory, power) and one
+// security audit run (HardeningKitty, as the Agent runs it), for the Agent's replay tests. The audit takes a few minutes.
 //
 // Each check runs twice: once on the new WMI path and once on the old osquery / powercfg / PowerShell path, so the tests can check the two agree.
 
@@ -22,6 +24,10 @@ var osqueryPath = Arg("--osquery") ?? Environment.GetEnvironmentVariable(Osquery
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "RemotePCDiagnostics", "tools", "osquery", "osqueryi.exe"),
         Path.Combine(AppContext.BaseDirectory, OsqueryRunner.RelativePath));
 var note = Arg("--note");
+var hardeningKitty = Arg("--hardeningkitty") ?? FirstExisting(
+    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "RemotePCDiagnostics", SecurityAuditModule.RelativeFolder, SecurityAuditModule.ManifestFile),
+    Path.Combine(AppContext.BaseDirectory, SecurityAuditModule.RelativeFolder, SecurityAuditModule.ManifestFile),
+    Path.Combine(Environment.CurrentDirectory, "HardeningKitty", SecurityAuditModule.ManifestFile));
 
 if (!OperatingSystem.IsWindows()) { Console.Error.WriteLine("Run this on the Windows PC to record."); return 2; }
 // The app reads WMI through the Agent, which runs as administrator: record from an admin prompt so the answers match.
@@ -96,6 +102,37 @@ foreach (var (label, module) in checks)
                 Console.WriteLine($"      {string.Join(": ", row.Values)}");
         }
 }
+
+// What the Agent's alerts read: each watched channel's events (30 days rather than the Agent's 1-day catch-up, for more to replay), then
+// the levels. Event messages are scrubbed like everything else.
+var alerts = new RecordingAlertReadings(new RemotePCDiagnostics.Agent.WindowsAlertReadings(), recorder);
+foreach (var channel in RemotePCDiagnostics.Core.Alerts.AlertRules.EventIds.Keys)
+{
+    var r = await alerts.ReadAsync(RemotePCDiagnostics.Core.Alerts.AlertReadings.Events(channel), 0, TimeSpan.FromDays(30), CancellationToken.None);
+    Console.WriteLine($"  Alerts {channel} events: {r.Error ?? $"{r.Rows?.Count} in 30 days"}");
+}
+foreach (var level in new[] { RemotePCDiagnostics.Core.Alerts.AlertReadings.Disks, RemotePCDiagnostics.Core.Alerts.AlertReadings.Memory, RemotePCDiagnostics.Core.Alerts.AlertReadings.Power })
+{
+    var r = await alerts.ReadAsync(level, 0, TimeSpan.Zero, CancellationToken.None);
+    Console.WriteLine($"  Alerts {level}: {r.Error ?? $"{r.Rows?.Count} row(s)"}");
+}
+
+// One security audit, as the Agent runs it (administrator, the report in a temp folder removed afterwards).
+if (File.Exists(hardeningKitty))
+{
+    Console.WriteLine("  Security audit: running HardeningKitty (a few minutes)…");
+    var reportPath = SecurityAuditModule.DefaultReportPath();
+    try
+    {
+        var run = await SecurityAuditModule.RunProcessAsync(new SystemProcessLauncher(), SystemCommandRunner.PowerShell, hardeningKitty, reportPath,
+            TimeSpan.FromMinutes(10), CancellationToken.None);
+        foreach (var call in SecurityAuditRecording.Calls(run)) recorder.Add(call);
+        Console.WriteLine($"  Security audit: exit {run.Process.ExitCode}, report {(run.ReportCsv is { } csv ? $"{HardeningKittyCsv.Parse(csv).Count} findings" : "not made")}");
+    }
+    catch (Exception ex) { Console.WriteLine($"  Security audit: failed ({ex.Message})"); }
+    finally { try { Directory.Delete(Path.GetDirectoryName(reportPath)!, recursive: true); } catch { } }
+}
+else Console.WriteLine($"  Security audit: HardeningKitty not found ({hardeningKitty}); not recorded. Pass --hardeningkitty <path to HardeningKitty.psd1>.");
 
 // WMI reads meant to fail (a class, a namespace, a property that don't exist), so the fault-injection tests answer with this PC's real errors.
 await ErrorProbes.RunAsync(wmi);

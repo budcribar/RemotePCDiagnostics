@@ -1,0 +1,132 @@
+{
+  "moduleName": "SecurityAudit",
+  "status": "Warning",
+  "message": "1 failed, 1 warning, 2 passed",
+  "report": {
+    "findings": [
+      {
+        "id": "1100",
+        "category": "Account Policies",
+        "name": "Account lockout threshold",
+        "severity": "Medium",
+        "currentValue": "0",
+        "recommendedValue": "10",
+        "outcome": "Failed",
+        "needsAdmin": false,
+        "outcomeText": "Failed",
+        "severityText": "Medium",
+        "homeRelevant": true,
+        "explanation": "This setting differs from the recommendation and weakens this PC's security. Consider changing it."
+      },
+      {
+        "id": "1101",
+        "category": "User Rights Assignment",
+        "name": "Access this computer from the network",
+        "severity": "Passed",
+        "currentValue": "Administrators",
+        "recommendedValue": "Administrators",
+        "outcome": "Passed",
+        "needsAdmin": false,
+        "outcomeText": "Passed",
+        "severityText": "Passed",
+        "homeRelevant": false,
+        "explanation": "This setting matches the recommended value."
+      },
+      {
+        "id": "1102",
+        "category": "Windows Defender",
+        "name": "Real-time protection",
+        "severity": "Passed",
+        "currentValue": "0",
+        "recommendedValue": "0",
+        "outcome": "Passed",
+        "needsAdmin": false,
+        "outcomeText": "Passed",
+        "severityText": "Passed",
+        "homeRelevant": false,
+        "explanation": "This setting matches the recommended value."
+      },
+      {
+        "id": "1103",
+        "category": "PowerShell",
+        "name": "PowerShell v2 is disabled",
+        "severity": "Low",
+        "currentValue": "1",
+        "recommendedValue": "0",
+        "outcome": "Warning",
+        "needsAdmin": false,
+        "outcomeText": "Warning",
+        "severityText": "Low",
+        "homeRelevant": true,
+        "explanation": "This setting differs from the recommendation. The risk is low, but consider changing it."
+      }
+    ],
+    "homePc": false,
+    "shown": [
+      {
+        "id": "1100",
+        "category": "Account Policies",
+        "name": "Account lockout threshold",
+        "severity": "Medium",
+        "currentValue": "0",
+        "recommendedValue": "10",
+        "outcome": "Failed",
+        "needsAdmin": false,
+        "outcomeText": "Failed",
+        "severityText": "Medium",
+        "homeRelevant": true,
+        "explanation": "This setting differs from the recommendation and weakens this PC's security. Consider changing it."
+      },
+      {
+        "id": "1101",
+        "category": "User Rights Assignment",
+        "name": "Access this computer from the network",
+        "severity": "Passed",
+        "currentValue": "Administrators",
+        "recommendedValue": "Administrators",
+        "outcome": "Passed",
+        "needsAdmin": false,
+        "outcomeText": "Passed",
+        "severityText": "Passed",
+        "homeRelevant": false,
+        "explanation": "This setting matches the recommended value."
+      },
+      {
+        "id": "1102",
+        "category": "Windows Defender",
+        "name": "Real-time protection",
+        "severity": "Passed",
+        "currentValue": "0",
+        "recommendedValue": "0",
+        "outcome": "Passed",
+        "needsAdmin": false,
+        "outcomeText": "Passed",
+        "severityText": "Passed",
+        "homeRelevant": false,
+        "explanation": "This setting matches the recommended value."
+      },
+      {
+        "id": "1103",
+        "category": "PowerShell",
+        "name": "PowerShell v2 is disabled",
+        "severity": "Low",
+        "currentValue": "1",
+        "recommendedValue": "0",
+        "outcome": "Warning",
+        "needsAdmin": false,
+        "outcomeText": "Warning",
+        "severityText": "Low",
+        "homeRelevant": true,
+        "explanation": "This setting differs from the recommendation. The risk is low, but consider changing it."
+      }
+    ],
+    "hidden": 0,
+    "passed": 2,
+    "warnings": 1,
+    "failed": 1,
+    "notChecked": 0,
+    "highRisk": 0,
+    "status": "Warning",
+    "summary": "1 failed, 1 warning, 2 passed"
+  }
+}

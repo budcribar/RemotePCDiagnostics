@@ -20,6 +20,11 @@ It writes `<folder>/<product id>-<date>/` with:
 Since v9 it also records Security Center's antivirus list and a few WMI reads meant to fail (`ErrorProbes`: a class, a namespace and a
 property that don't exist), so the fault-injection tests answer with the errors that PC's WMI really gives.
 
+Since v10 it also records what the Agent itself reads for its alerts (the watched System and Application events of the last 30 days, free
+space on each fixed drive, memory commit charge and power: `IAlertReadings`) and one security audit run as the Agent makes it (HardeningKitty's
+output and report: `SecurityAuditRecording`). `AgentAlertsReplayTests` and `SecurityAuditReplayTests` replay them, with each reading broken
+in turn. The audit takes a few minutes, and needs HardeningKitty: the installed app's copy, one next to the recorder, or `--hardeningkitty`.
+
 The PC name, user names and serial numbers are replaced with placeholders (`<pc:…>`, `<user:…>`, `<serial:…>`) before the files are
 written, and so is the SMBIOS UUID. Even so, a recording lists the PC's hardware and software, so real recordings stay out of this public
 repo: they are kept in the private Admin repo under `test-data/rpcd-recordings`. Point `RPD_RECORDINGS_DIR` at that folder.

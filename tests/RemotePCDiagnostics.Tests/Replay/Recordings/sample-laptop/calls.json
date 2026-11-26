@@ -1373,6 +1373,152 @@
       "file": "powercfg /batteryreport /xml",
       "stdOut": "<?xml version=\"1.0\" encoding=\"utf-8\"?><BatteryReport xmlns=\"http://schemas.microsoft.com/battery/2012\"><SystemInformation><ComputerName>SAMPLE-PC</ComputerName><PlatformRole>Mobile</PlatformRole><ConnectedStandby>1</ConnectedStandby></SystemInformation><Batteries><Battery><Id>SAMPLE-BAT</Id><SerialNumber>&lt;serial:5a5a5a&gt;</SerialNumber><Chemistry>LiP</Chemistry><DesignCapacity>57000</DesignCapacity><FullChargeCapacity>53000</FullChargeCapacity><CycleCount>48</CycleCount></Battery></Batteries><RecentUsage><UsageEntry Timestamp=\"2026-11-21T06:00:00Z\" LocalTimestamp=\"2026-11-20T23:00:00\" Duration=\"153000000000\" Ac=\"0\" EntryType=\"ConnectedStandby\" ChargeCapacity=\"40000\" Discharge=\"1590\" FullChargeCapacity=\"53000\" IsNextOnBattery=\"1\" /><UsageEntry Timestamp=\"2026-11-22T05:00:00Z\" LocalTimestamp=\"2026-11-21T22:00:00\" Duration=\"306000000000\" Ac=\"0\" EntryType=\"ConnectedStandby\" ChargeCapacity=\"38000\" Discharge=\"5830\" FullChargeCapacity=\"53000\" IsNextOnBattery=\"1\" /><UsageEntry Timestamp=\"2026-11-22T16:00:00Z\" LocalTimestamp=\"2026-11-22T09:00:00\" Duration=\"0\" Ac=\"1\" EntryType=\"ReportGenerated\" ChargeCapacity=\"32000\" Discharge=\"0\" FullChargeCapacity=\"53000\" IsNextOnBattery=\"0\" /></RecentUsage><EnergyDrains /></BatteryReport>",
       "hasRows": false
+    },
+    {
+      "kind": "alerts",
+      "namespace": "alerts",
+      "query": "events System",
+      "rows": [
+        {
+          "Provider": "Microsoft-Windows-Kernel-Power",
+          "EventId": 41,
+          "RecordId": 90001,
+          "TimeUtc": "2026-11-21T03:12:00.0000000+00:00",
+          "Properties": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ],
+          "Message": "The system has rebooted without cleanly shutting down first."
+        },
+        {
+          "Provider": "Microsoft-Windows-WindowsUpdateClient",
+          "EventId": 20,
+          "RecordId": 90002,
+          "TimeUtc": "2026-11-21T18:40:00.0000000+00:00",
+          "Properties": [
+            "0x80070643",
+            "2026-11 Security Update for Sample Laptop (KB5099999)",
+            "{0F0E0D0C-0000-4000-8000-000000000001}"
+          ],
+          "Message": "Installation Failure: Windows failed to install the following update with error 0x80070643."
+        },
+        {
+          "Provider": "disk",
+          "EventId": 153,
+          "RecordId": 90003,
+          "TimeUtc": "2026-11-22T10:05:00.0000000+00:00",
+          "Properties": [
+            "\\Device\\Harddisk0\\DR0",
+            "0x10"
+          ],
+          "Message": "The IO operation at logical block address 0x1234 for Disk 0 was retried."
+        }
+      ],
+      "hasRows": true
+    },
+    {
+      "kind": "alerts",
+      "namespace": "alerts",
+      "query": "events Application",
+      "rows": [
+        {
+          "Provider": "Application Error",
+          "EventId": 1000,
+          "RecordId": 50001,
+          "TimeUtc": "2026-11-22T12:00:00.0000000+00:00",
+          "Properties": [
+            "SampleApp.exe",
+            "1.0.0.0"
+          ],
+          "Message": "Faulting application name: SampleApp.exe, version: 1.0.0.0"
+        },
+        {
+          "Provider": "Application Error",
+          "EventId": 1000,
+          "RecordId": 50002,
+          "TimeUtc": "2026-11-22T13:00:00.0000000+00:00",
+          "Properties": [
+            "SampleApp.exe",
+            "1.0.0.0"
+          ],
+          "Message": "Faulting application name: SampleApp.exe, version: 1.0.0.0"
+        },
+        {
+          "Provider": "Application Error",
+          "EventId": 1000,
+          "RecordId": 50003,
+          "TimeUtc": "2026-11-22T14:00:00.0000000+00:00",
+          "Properties": [
+            "SampleApp.exe",
+            "1.0.0.0"
+          ],
+          "Message": "Faulting application name: SampleApp.exe, version: 1.0.0.0"
+        }
+      ],
+      "hasRows": true
+    },
+    {
+      "kind": "alerts",
+      "namespace": "alerts",
+      "query": "disks",
+      "rows": [
+        {
+          "Drive": "C:",
+          "FreeGb": 3.4,
+          "TotalGb": 237.5
+        },
+        {
+          "Drive": "D:",
+          "FreeGb": 410.2,
+          "TotalGb": 931.5
+        }
+      ],
+      "hasRows": true
+    },
+    {
+      "kind": "alerts",
+      "namespace": "alerts",
+      "query": "memory",
+      "rows": [
+        {
+          "CommitPercent": 72.5
+        }
+      ],
+      "hasRows": true
+    },
+    {
+      "kind": "alerts",
+      "namespace": "alerts",
+      "query": "power",
+      "rows": [
+        {
+          "OnBattery": false,
+          "Percent": 81,
+          "Charging": true,
+          "HasBattery": true
+        }
+      ],
+      "hasRows": true
+    },
+    {
+      "kind": "process",
+      "file": "powershell.exe",
+      "args": [
+        "<security audit>"
+      ],
+      "exitCode": 0,
+      "stdOut": "",
+      "stdErr": ""
+    },
+    {
+      "kind": "file",
+      "file": "security audit report",
+      "stdOut": "ID,Category,Name,Severity,Result,Recommended,TestResult,SeverityFinding\r\n1100,Account Policies,Account lockout threshold,Medium,0,10,Failed,Medium\r\n1101,User Rights Assignment,Access this computer from the network,Passed,Administrators,Administrators,Passed,Passed\r\n1102,Windows Defender,Real-time protection,Passed,0,0,Passed,Passed\r\n1103,PowerShell,PowerShell v2 is disabled,Low,1,0,Failed,Low\r\n"
     }
   ]
 }

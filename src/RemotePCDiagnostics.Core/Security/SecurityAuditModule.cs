@@ -262,7 +262,7 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
     public static string FormatDuration(TimeSpan t) =>
         t.TotalMinutes >= 1 ? AreaModuleBase.Plural((int)Math.Round(t.TotalMinutes), "minute") : AreaModuleBase.Plural((int)Math.Max(1, Math.Round(t.TotalSeconds)), "second");
 
-    private static string DefaultReportPath() =>
+    public static string DefaultReportPath() =>
         Path.Combine(Path.GetTempPath(), "RemotePCDiagnostics", "hk-" + Guid.NewGuid().ToString("N"), "report.csv");
 
     private void TryDelete(string dir)
