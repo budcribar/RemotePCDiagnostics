@@ -62,6 +62,9 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 {
     public const string NotUndoableNote = "Installed updates, uninstalled programs, removed apps without a Microsoft Store listing, and deleted temporary files, caches or Recycle Bin items can't be put back; undo lists them as left as is. "
         + "Removed Microsoft Store apps marked \"undo reinstalls from Store\" are reinstalled from the Store for the signed-in account (needs internet; their settings and data aren't restored).";
+    /// <summary>The update lock an undo holds. Tests pass their own.</summary>
+    public RemotePCDiagnostics.Agent.Core.UpdateBusyHold UpdateLock { get; init; } = RemotePCDiagnostics.Agent.Core.UpdateBusyHold.App;
+
     private void Log(string m) => log.Info("[undo] " + m);
     private void LogError(string m) => log.Error("[undo] " + m);
 
@@ -94,8 +97,10 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
     private async Task<UndoAllResult> UndoRecordsAsync(IReadOnlyList<ChangeRecord> records, string actionTitle, string actor, CancellationToken ct)
     {
-        // An RPCD update waits while this runs (see UpdateBusyLock).
-        using var busy = RemotePCDiagnostics.Agent.Core.UpdateBusyHold.App.Enter();
+        // An RPCD update waits while this runs (see UpdateBusyLock), and an update about to install refuses it.
+        using var busy = UpdateLock.TryEnter();
+        if (busy is null)
+            return new UndoAllResult(records.Select(c => new UndoItemResult(c, false, RemotePCDiagnostics.Agent.Core.UpdateBusyHold.UpdateStartingMessage)).ToList());
         var results = new List<UndoItemResult>();
         foreach (var c in records)
         {
@@ -128,9 +133,11 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
     /// </summary>
     public async Task<UndoItemResult?> UndoChangeAsync(Guid id, string actor, CancellationToken ct = default)
     {
-        // An RPCD update waits while this runs (see UpdateBusyLock).
-        using var busy = RemotePCDiagnostics.Agent.Core.UpdateBusyHold.App.Enter();
+        // An RPCD update waits while this runs (see UpdateBusyLock), and an update about to install refuses it.
         if (journal.All.FirstOrDefault(x => x.Id == id) is not { } c) return null;
+        using var busy = UpdateLock.TryEnter();
+        if (busy is null)
+            return new UndoItemResult(c, false, RemotePCDiagnostics.Agent.Core.UpdateBusyHold.UpdateStartingMessage);
         UndoItemResult r;
         try { r = await UndoOneAsync(c, ct).ConfigureAwait(false); }
         catch (Exception ex) when (ex is not OperationCanceledException)

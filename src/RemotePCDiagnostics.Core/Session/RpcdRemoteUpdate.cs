@@ -9,6 +9,8 @@ namespace RemotePCDiagnostics.Core.Session;
 public static class RpcdUpdateStages
 {
     public const string Idle = "idle";
+    /// <summary>The PC was busy when the update was asked for. The agent starts it when the PC is free. Not terminal.</summary>
+    public const string Waiting = "waiting";
     public const string Checking = "checking";
     public const string Refused = "refused";
     public const string AlreadyUpToDate = "already_up_to_date";
@@ -20,8 +22,10 @@ public static class RpcdUpdateStages
     public const string Failed = "failed";
     /// <summary>The app reached the target and the installed agent service did not. Terminal. Not a success.</summary>
     public const string AgentNotUpdated = "agent_not_updated";
+    /// <summary>A technician stopped an update while it was waiting. Nothing was installed. Terminal.</summary>
+    public const string Cancelled = "cancelled";
 
-    public static bool IsTerminal(string? stage) => stage is Refused or AlreadyUpToDate or Succeeded or Failed or AgentNotUpdated;
+    public static bool IsTerminal(string? stage) => stage is Refused or AlreadyUpToDate or Succeeded or Failed or AgentNotUpdated or Cancelled;
 }
 
 /// <summary>
@@ -118,6 +122,16 @@ public sealed class RpcdUpdateSession
     /// <summary>How long an <c>installing</c> status may sit unchanged, after this process is no longer running Setup, before it is a failure.</summary>
     public static readonly TimeSpan InstallGiveUp = TimeSpan.FromMinutes(20);
 
+    /// <summary>How long a hub update waits for the PC to be free before it gives up.</summary>
+    public static readonly TimeSpan WaitLimit = TimeSpan.FromMinutes(30);
+    /// <summary>How often the waiting process refreshes the status, so another process can tell it is still alive.</summary>
+    public static readonly TimeSpan WaitHeartbeat = TimeSpan.FromSeconds(30);
+    /// <summary>A waiting status older than this belongs to an agent process that ended (a restart) and nothing is waiting any more.</summary>
+    public static readonly TimeSpan WaitStale = TimeSpan.FromMinutes(2);
+
+    public const string WaitingDetail =
+        "Waiting for Remote PC Diagnostics to finish what it is doing (a check, fix, undo, service workflow, stress test or benchmark). The update starts when it is done.";
+
     public const string ApprovalRequired = "Technician approval is required before Remote PC Diagnostics can be updated on this PC.";
     private readonly object _gate = new();
     private readonly Action<RpcdUpdateStatus>? _onStatus;
@@ -176,7 +190,11 @@ public sealed class RpcdUpdateSession
     /// only through the status file the caller persisted). A non-empty <see cref="RpcdUpdateRequest.BusyReason"/> refuses. For a hub
     /// command the agent fills it from the update lock (see <c>UpdateBusyLock</c>), so a hub command cannot claim the PC is idle.
     /// </summary>
-    public bool TryBegin(RpcdUpdateRequest request, DateTimeOffset utcNow, out RpcdUpdateStatus status)
+    /// <param name="waitIfBusy">
+    /// When the request is busy, accept it in <see cref="RpcdUpdateStages.Waiting"/> instead of refusing. The caller then waits for the
+    /// PC to be free and calls <see cref="TryLeaveWaiting"/> before <see cref="ExecuteAsync"/>.
+    /// </param>
+    public bool TryBegin(RpcdUpdateRequest request, DateTimeOffset utcNow, out RpcdUpdateStatus status, bool waitIfBusy = false)
     {
         var requestId = Guid.NewGuid().ToString("N");
         var channel = RpcdGitHubRelease.NormalizeChannel(request.Channel);
@@ -201,7 +219,8 @@ public sealed class RpcdUpdateSession
         // One lock from the in-progress check to the checking status, so two requests at once cannot both start.
         lock (_gate)
         {
-            if (_status is { Terminal: false } && utcNow - _status.UpdatedUtc < InstallGiveUp)
+            if (_status is { Terminal: false } && utcNow - _status.UpdatedUtc < InstallGiveUp
+                && !(_status.Stage == RpcdUpdateStages.Waiting && utcNow - _status.UpdatedUtc > WaitStale))
             {
                 status = Refused("An RPCD update is already in progress.", persist: false);
                 return false;
@@ -225,8 +244,23 @@ public sealed class RpcdUpdateSession
 
             if (!string.IsNullOrWhiteSpace(request.BusyReason))
             {
-                status = Refused(request.BusyReason.Trim(), persist: true);
-                return false;
+                if (!waitIfBusy)
+                {
+                    status = Refused(request.BusyReason.Trim(), persist: true);
+                    return false;
+                }
+                status = Set(new RpcdUpdateStatus
+                {
+                    RequestId = requestId,
+                    Stage = RpcdUpdateStages.Waiting,
+                    Channel = channel,
+                    Detail = WaitingDetail,
+                    ApprovedBy = approvedBy,
+                    Terminal = false,
+                    UpdatedUtc = utcNow,
+                    OwnerPid = _ownerPid,
+                });
+                return true;
             }
 
             status = Set(new RpcdUpdateStatus
@@ -244,6 +278,81 @@ public sealed class RpcdUpdateSession
             return true;
         }
     }
+
+    /// <summary>
+    /// Refreshes a waiting update so other processes see it is alive. False when it is no longer waiting (cancelled, or replaced).
+    /// </summary>
+    public bool TouchWaiting(string requestId, DateTimeOffset utcNow, TimeSpan waited)
+    {
+        lock (_gate)
+        {
+            if (!IsWaiting(_status, requestId))
+                return false;
+            var minutes = (int)waited.TotalMinutes;
+            var detail = minutes < 1 ? WaitingDetail : $"{WaitingDetail} Waiting {minutes} min so far.";
+            SetNoLock(_status! with { Detail = detail, UpdatedUtc = utcNow });
+        }
+        PersistCurrent();
+        return true;
+    }
+
+    /// <summary>
+    /// Moves a waiting update on to <see cref="RpcdUpdateStages.Checking"/> once the caller holds the update lock. False when it was
+    /// cancelled meanwhile: the caller must then release the lock and not install.
+    /// </summary>
+    public bool TryLeaveWaiting(string requestId, DateTimeOffset utcNow)
+    {
+        lock (_gate)
+        {
+            if (!IsWaiting(_status, requestId))
+                return false;
+            SetNoLock(_status! with
+            {
+                Stage = RpcdUpdateStages.Checking,
+                Detail = "Checking the official GitHub release...",
+                UpdatedUtc = utcNow,
+            });
+        }
+        PersistCurrent();
+        return true;
+    }
+
+    /// <summary>Ends a waiting update without installing: the wait limit passed. False when it was no longer waiting.</summary>
+    public bool GiveUpWaiting(string requestId, DateTimeOffset utcNow)
+    {
+        var error = $"Remote PC Diagnostics was still busy after {(int)WaitLimit.TotalMinutes} minutes, so the update was not started. Try again when it is free.";
+        lock (_gate)
+        {
+            if (!IsWaiting(_status, requestId))
+                return false;
+            SetNoLock(_status! with { Stage = RpcdUpdateStages.Refused, Terminal = true, Error = error, Detail = error, UpdatedUtc = utcNow });
+        }
+        PersistCurrent();
+        return true;
+    }
+
+    /// <summary>
+    /// Cancels the update named by <paramref name="requestId"/> (empty = the current one) while it is waiting. Returns the status after
+    /// the call, or null when there is no update. An update past waiting is not stopped; its status is returned unchanged.
+    /// </summary>
+    public RpcdUpdateStatus? CancelWaiting(string? requestId, DateTimeOffset utcNow)
+    {
+        lock (_gate)
+        {
+            if (_status is null)
+                return null;
+            if (!string.IsNullOrWhiteSpace(requestId) && !string.Equals(_status.RequestId, requestId.Trim(), StringComparison.Ordinal))
+                return null;
+            if (_status.Stage != RpcdUpdateStages.Waiting || _status.Terminal)
+                return _status;
+            const string error = "The update was cancelled while it was waiting. Nothing was installed.";
+            SetNoLock(_status with { Stage = RpcdUpdateStages.Cancelled, Terminal = true, Error = error, Detail = error, UpdatedUtc = utcNow });
+        }
+        return PersistCurrent();
+    }
+
+    private static bool IsWaiting(RpcdUpdateStatus? status, string requestId) =>
+        status is { Stage: RpcdUpdateStages.Waiting, Terminal: false } && string.Equals(status.RequestId, requestId, StringComparison.Ordinal);
 
     public async Task ExecuteAsync(RpcdUpdateRequest request, RpcdUpdateRun run, CancellationToken ct)
     {
@@ -526,6 +635,21 @@ public sealed class RpcdUpdateSession
         catch { /* Persistence must not hide the status from the caller. */ }
         return status;
     }
+
+    private void SetNoLock(RpcdUpdateStatus status) => _status = status;
+
+    private RpcdUpdateStatus? PersistCurrent()
+    {
+        RpcdUpdateStatus? status;
+        lock (_gate)
+            status = _status;
+        if (status is not null)
+        {
+            try { _onStatus?.Invoke(status); }
+            catch { /* Persistence must not hide the status from the caller. */ }
+        }
+        return status;
+    }
 }
 
 /// <param name="AgentMsiUrl">The Agent MSI from the same release, when one was published with a trusted checksum.</param>
@@ -633,6 +757,12 @@ public static class RpcdGitHubRelease
     /// </summary>
     public static RpcdUpdateStatus Reconcile(RpcdUpdateStatus status, string? installedVersion, DateTimeOffset utcNow, TimeSpan giveUp, string? installedAgentVersion = null)
     {
+        // The waiting process refreshes its status every WaitHeartbeat. One that stopped doing so ended (an agent restart).
+        if (status is { Terminal: false, Stage: RpcdUpdateStages.Waiting } && utcNow - status.UpdatedUtc > RpcdUpdateSession.WaitStale)
+        {
+            const string error = "The agent restarted while the update was waiting for the PC to be free. Nothing was installed. Ask for the update again.";
+            return status with { Stage = RpcdUpdateStages.Failed, Terminal = true, Error = error, Detail = error, UpdatedUtc = utcNow };
+        }
         if (status.Terminal || status.Stage is not (RpcdUpdateStages.Installing or RpcdUpdateStages.Relaunching))
             return status;
         if (InstalledMatches(installedVersion, status.NewVersion ?? "", status.OldVersion))

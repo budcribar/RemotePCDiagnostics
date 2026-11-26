@@ -263,13 +263,133 @@ public class RpcdRemoteUpdaterTests
     }
 
     /// <param name="lockName">The update lock to use. Null gives each updater a lock that is always free.</param>
-    private static RpcdRemoteUpdater NewUpdater(string dir, HttpClient http, string? installedVersion = null, string? lockName = null) => new(
+    private static RpcdRemoteUpdater NewUpdater(string dir, HttpClient http, string? installedVersion = null, string? lockName = null,
+        TimeSpan? waitLimit = null, TimeSpan? waitHeartbeat = null) => new(
         installedVersion: () => installedVersion ?? "1.2.0",
         relaunchArguments: () => null,
         log: null,
         http: http,
         stagingDirectory: dir,
-        holdUpdateLock: lockName is null ? () => new FreeLock() : () => UpdateBusyLock.TryHold(TimeSpan.Zero, lockName));
+        holdUpdateLock: lockName is null ? () => new FreeLock() : () => UpdateBusyLock.TryHold(TimeSpan.FromMilliseconds(50), lockName),
+        waitLimit: waitLimit,
+        waitHeartbeat: waitHeartbeat);
+
+    private static RpcdUpdateStatus WaitFor(RpcdRemoteUpdater updater, string requestId, Func<RpcdUpdateStatus, bool> done)
+    {
+        RpcdUpdateStatus? status = null;
+        Assert.True(SpinWait.SpinUntil(() => (status = updater.Current(requestId)) is { } s && done(s), TimeSpan.FromSeconds(10)),
+            $"status stayed {status?.Stage}");
+        return status!;
+    }
+
+    [Fact]
+    public void A_hub_update_waits_while_the_app_is_busy_and_starts_when_it_is_free()
+    {
+        var dir = TempDir();
+        var name = "rpcd-test-" + Guid.NewGuid().ToString("N");
+        var asked = 0;
+        using var http = new HttpClient(new Stub(() => { Interlocked.Increment(ref asked); return new HttpResponseMessage(HttpStatusCode.NotFound); }));
+        using var service = NewUpdater(dir, http, lockName: name);
+        var app = new UpdateBusyHold(() => UpdateBusyLock.TryHold(TimeSpan.Zero, name));
+
+        var check = app.Enter();
+        var waiting = service.Start(Approved, relaunch: null, waitIfBusy: true);
+        Assert.Equal(RpcdUpdateStages.Waiting, waiting.Stage);
+        Assert.False(waiting.Terminal);
+        Assert.Equal(RpcdUpdateStages.Waiting, service.Current(waiting.RequestId)!.Stage);
+        Thread.Sleep(300);
+        Assert.Equal(0, Volatile.Read(ref asked)); // nothing downloaded while busy
+
+        // A second request is refused while the first one waits.
+        var second = service.Start(Approved, relaunch: null, waitIfBusy: true);
+        Assert.Equal(RpcdUpdateStages.Refused, second.Stage);
+        Assert.Contains("already in progress", second.Error);
+
+        check.Dispose();
+        var after = WaitFor(service, waiting.RequestId, s => s.Stage != RpcdUpdateStages.Waiting && s.Stage != RpcdUpdateStages.Checking);
+        Assert.Equal(RpcdUpdateStages.Failed, after.Stage); // the stub has no release, which proves the update went on past waiting
+        Assert.True(Volatile.Read(ref asked) > 0);
+
+        // Fixes may take the lock again once the update is done with it.
+        Assert.True(SpinWait.SpinUntil(() => { using var h = app.TryEnter(); return h is not null; }, TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public void A_waiting_update_can_be_cancelled_and_never_installs()
+    {
+        var dir = TempDir();
+        var name = "rpcd-test-" + Guid.NewGuid().ToString("N");
+        var asked = 0;
+        using var http = new HttpClient(new Stub(() => { Interlocked.Increment(ref asked); return new HttpResponseMessage(HttpStatusCode.NotFound); }));
+        using var service = NewUpdater(dir, http, lockName: name);
+        var app = new UpdateBusyHold(() => UpdateBusyLock.TryHold(TimeSpan.Zero, name));
+
+        using (app.Enter())
+        {
+            var waiting = service.Start(Approved, relaunch: null, waitIfBusy: true);
+            Assert.Null(service.Cancel("not-this-one"));
+            var cancelled = service.Cancel(waiting.RequestId);
+            Assert.NotNull(cancelled);
+            Assert.Equal(RpcdUpdateStages.Cancelled, cancelled!.Stage);
+            Assert.True(cancelled.Terminal);
+        }
+
+        Thread.Sleep(500);
+        Assert.Equal(0, Volatile.Read(ref asked));
+        Assert.True(SpinWait.SpinUntil(() => { using var h = app.TryEnter(); return h is not null; }, TimeSpan.FromSeconds(5)),
+            "the cancelled update must not keep the lock");
+        var next = service.Start(Approved, relaunch: null, waitIfBusy: true);
+        Assert.NotEqual(RpcdUpdateStages.Refused, next.Stage);
+    }
+
+    [Fact]
+    public void A_waiting_update_gives_up_after_the_wait_limit()
+    {
+        var dir = TempDir();
+        var name = "rpcd-test-" + Guid.NewGuid().ToString("N");
+        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
+        using var service = NewUpdater(dir, http, lockName: name, waitLimit: TimeSpan.FromMilliseconds(600), waitHeartbeat: TimeSpan.FromMilliseconds(100));
+        var app = new UpdateBusyHold(() => UpdateBusyLock.TryHold(TimeSpan.Zero, name));
+
+        using (app.Enter())
+        {
+            var waiting = service.Start(Approved, relaunch: null, waitIfBusy: true);
+            var done = WaitFor(service, waiting.RequestId, s => s.Terminal);
+            Assert.Equal(RpcdUpdateStages.Refused, done.Stage);
+            Assert.Contains("still busy", done.Error);
+        }
+    }
+
+    [Fact]
+    public void The_app_s_own_update_request_still_refuses_while_busy()
+    {
+        var dir = TempDir();
+        var name = "rpcd-test-" + Guid.NewGuid().ToString("N");
+        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
+        using var service = NewUpdater(dir, http, lockName: name);
+        var app = new UpdateBusyHold(() => UpdateBusyLock.TryHold(TimeSpan.Zero, name));
+        using (app.Enter())
+        {
+            var refused = service.Start(Approved, relaunch: null);
+            Assert.Equal(RpcdUpdateStages.Refused, refused.Stage);
+        }
+    }
+
+    [Fact]
+    public void Fixes_are_refused_while_an_update_holds_the_lock()
+    {
+        var name = "rpcd-test-" + Guid.NewGuid().ToString("N");
+        var app = new UpdateBusyHold(() => UpdateBusyLock.TryHold(TimeSpan.Zero, name));
+        using (UpdateBusyLock.TryHold(TimeSpan.Zero, name))
+        {
+            Assert.Null(app.TryEnter());
+            Assert.False(app.IsHeld);
+        }
+        using var fix = app.TryEnter();
+        Assert.NotNull(fix);
+        using var overlapping = app.TryEnter(); // a second piece of work shares the hold
+        Assert.NotNull(overlapping);
+    }
 
     [Fact]
     public void Old_update_packages_are_deleted_and_recent_ones_kept()

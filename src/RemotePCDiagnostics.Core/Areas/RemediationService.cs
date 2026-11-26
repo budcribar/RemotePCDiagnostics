@@ -1022,6 +1022,9 @@ public sealed class RemediationService(
     // ---- One fix at a time, kept running when its page is left ------------------------------------------------------------
 
     private FixRun? _running;
+
+    /// <summary>The update lock a fix holds. Tests pass their own.</summary>
+    public RemotePCDiagnostics.Agent.Core.UpdateBusyHold UpdateLock { get; init; } = RemotePCDiagnostics.Agent.Core.UpdateBusyHold.App;
     private FixRunResult? _lastRun;
     private CancellationTokenSource? _runCts;
     private int _runSeq;
@@ -1044,6 +1047,10 @@ public sealed class RemediationService(
     /// </summary>
     public async Task<RemediationResult> RunTrackedAsync(AreaAction action, string origin)
     {
+        // Holds the update lock for the whole fix, and refuses when an RPCD update already holds it: Setup would close the app mid-fix.
+        using var updateLock = UpdateLock.TryEnter();
+        if (updateLock is null)
+            return new(false, RemotePCDiagnostics.Agent.Core.UpdateBusyHold.UpdateStartingMessage);
         CancellationTokenSource cts;
         lock (_gate)
         {
