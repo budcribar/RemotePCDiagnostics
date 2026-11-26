@@ -1,10 +1,10 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using System.Text;
 using System.Text.RegularExpressions;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Session;
+using static RemotePCDiagnostics.Core.Bios.BiosProviderCommon;
 
 namespace RemotePCDiagnostics.Core.Bios;
 
@@ -20,7 +20,6 @@ public sealed partial class WindowsUpdateBiosProvider : IBiosUpdateProvider
     public const string ProviderVendorId = "windows-update";
 
     private static readonly TimeSpan DefaultInstallTimeout = TimeSpan.FromMinutes(10);
-    private static readonly IEqualityComparer<(int IsNewerRank, string ClassKey)> BucketKeyComparer = new BucketKeyEqualityComparer();
 
     private static readonly HashSet<string> NonFirmwareDriverClasses = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -141,11 +140,6 @@ public sealed partial class WindowsUpdateBiosProvider : IBiosUpdateProvider
     [GeneratedRegex(@"^(?:UEFI\s+Version|BIOS\s+Version|Firmware\s+Version|Version|Ver\.?|Rev\.?|UEFI|BIOS|v(?=\d|\s|[:\-]))\s*[:\-]?\s*", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex LeadingVersionPrefixRegex();
 
-    [GeneratedRegex(@"^([A-Za-z]+)[\.\-\s_]*(\d+(?:\.\d+)*)$", RegexOptions.CultureInvariant)]
-    private static partial Regex PrefixNumericRegex();
-
-    [GeneratedRegex(@"\d+", RegexOptions.CultureInvariant)]
-    private static partial Regex DigitRunsRegex();
 
     private readonly IBiosWindowsUpdateClient _wuaClient;
     private readonly Func<DateTimeOffset> _now;
@@ -786,99 +780,69 @@ public sealed partial class WindowsUpdateBiosProvider : IBiosUpdateProvider
         return true;
     }
 
-    internal static List<WuaCandidate> OrderCandidates(IReadOnlyList<WuaCandidate> candidates)
-    {
-        var bucketMaxDates = new Dictionary<(int IsNewerRank, string ClassKey), DateOnly?>(BucketKeyComparer);
-
-        foreach (var cand in candidates)
-        {
-            var newerRank = cand.IsNewer ? 0 : 1;
-            var key = (newerRank, cand.ParsedVersion.ClassKey);
-            if (!bucketMaxDates.TryGetValue(key, out var existingMax)
-                || (cand.Update.ReleaseDate.HasValue && (!existingMax.HasValue || cand.Update.ReleaseDate.Value > existingMax.Value)))
+    internal static List<WuaCandidate> OrderCandidates(IReadOnlyList<WuaCandidate> candidates) =>
+        BiosProviderCommon.OrderCandidates(
+            candidates,
+            getPrefRank: static c => c.IsNewer ? 0 : 1,
+            getClassKey: static c => c.ParsedVersion.ClassKey,
+            getReleaseDate: static c => c.Update.ReleaseDate,
+            compareWithinClass: static (a, b) => CompareWithinClass(a.ParsedVersion, b.ParsedVersion),
+            compareTieBreakers: static (a, b) =>
             {
-                bucketMaxDates[key] = cand.Update.ReleaseDate;
-            }
-        }
+                var dateCmp = CompareNullableDateDescending(a.Update.ReleaseDate, b.Update.ReleaseDate);
+                if (dateCmp != 0)
+                    return dateCmp;
 
-        var ordered = new List<WuaCandidate>(candidates);
-        ordered.Sort((a, b) =>
-        {
-            var aNewerRank = a.IsNewer ? 0 : 1;
-            var bNewerRank = b.IsNewer ? 0 : 1;
-            var newerCmp = aNewerRank.CompareTo(bNewerRank);
-            if (newerCmp != 0)
-                return newerCmp;
+                var sevCmp = b.Update.Severity.CompareTo(a.Update.Severity);
+                if (sevCmp != 0)
+                    return sevCmp;
 
-            var bucketDateCmp = CompareNullableDateDescending(
-                bucketMaxDates[(aNewerRank, a.ParsedVersion.ClassKey)],
-                bucketMaxDates[(bNewerRank, b.ParsedVersion.ClassKey)]);
-            if (bucketDateCmp != 0)
-                return bucketDateCmp;
+                var titleCmp = StringComparer.OrdinalIgnoreCase.Compare(a.Update.Title, b.Update.Title);
+                if (titleCmp != 0)
+                    return titleCmp;
 
-            var classCmp = StringComparer.OrdinalIgnoreCase.Compare(a.ParsedVersion.ClassKey, b.ParsedVersion.ClassKey);
-            if (classCmp != 0)
-                return classCmp;
+                titleCmp = StringComparer.Ordinal.Compare(a.Update.Title, b.Update.Title);
+                if (titleCmp != 0)
+                    return titleCmp;
 
-            var verCmp = CompareWithinClass(b.ParsedVersion, a.ParsedVersion);
-            if (verCmp != 0)
-                return verCmp;
+                var idCmp = StringComparer.OrdinalIgnoreCase.Compare(a.CanonicalId, b.CanonicalId);
+                if (idCmp != 0)
+                    return idCmp;
 
-            var dateCmp = CompareNullableDateDescending(a.Update.ReleaseDate, b.Update.ReleaseDate);
-            if (dateCmp != 0)
-                return dateCmp;
+                idCmp = StringComparer.Ordinal.Compare(a.CanonicalId, b.CanonicalId);
+                if (idCmp != 0)
+                    return idCmp;
 
-            var sevCmp = b.Update.Severity.CompareTo(a.Update.Severity);
-            if (sevCmp != 0)
-                return sevCmp;
+                var rawIdCmp = StringComparer.Ordinal.Compare(a.Update.UpdateId ?? "", b.Update.UpdateId ?? "");
+                if (rawIdCmp != 0)
+                    return rawIdCmp;
 
-            var titleCmp = StringComparer.OrdinalIgnoreCase.Compare(a.Update.Title, b.Update.Title);
-            if (titleCmp != 0)
-                return titleCmp;
+                var rawVerCmp = StringComparer.Ordinal.Compare(a.Update.Version ?? "", b.Update.Version ?? "");
+                if (rawVerCmp != 0)
+                    return rawVerCmp;
 
-            titleCmp = StringComparer.Ordinal.Compare(a.Update.Title, b.Update.Title);
-            if (titleCmp != 0)
-                return titleCmp;
+                var sizeCmp = CompareNullableLongDescending(a.Update.SizeBytes, b.Update.SizeBytes);
+                if (sizeCmp != 0)
+                    return sizeCmp;
 
-            var idCmp = StringComparer.OrdinalIgnoreCase.Compare(a.CanonicalId, b.CanonicalId);
-            if (idCmp != 0)
-                return idCmp;
+                var rebootCmp = b.Update.RebootRequired.CompareTo(a.Update.RebootRequired);
+                if (rebootCmp != 0)
+                    return rebootCmp;
 
-            idCmp = StringComparer.Ordinal.Compare(a.CanonicalId, b.CanonicalId);
-            if (idCmp != 0)
-                return idCmp;
+                var classMetaCmp = StringComparer.Ordinal.Compare(a.Update.DriverClass ?? "", b.Update.DriverClass ?? "");
+                if (classMetaCmp != 0)
+                    return classMetaCmp;
 
-            var rawIdCmp = StringComparer.Ordinal.Compare(a.Update.UpdateId ?? "", b.Update.UpdateId ?? "");
-            if (rawIdCmp != 0)
-                return rawIdCmp;
+                var modelMetaCmp = StringComparer.Ordinal.Compare(a.Update.DriverModel ?? "", b.Update.DriverModel ?? "");
+                if (modelMetaCmp != 0)
+                    return modelMetaCmp;
 
-            var rawVerCmp = StringComparer.Ordinal.Compare(a.Update.Version ?? "", b.Update.Version ?? "");
-            if (rawVerCmp != 0)
-                return rawVerCmp;
-
-            var sizeCmp = CompareNullableLongDescending(a.Update.SizeBytes, b.Update.SizeBytes);
-            if (sizeCmp != 0)
-                return sizeCmp;
-
-            var rebootCmp = b.Update.RebootRequired.CompareTo(a.Update.RebootRequired);
-            if (rebootCmp != 0)
-                return rebootCmp;
-
-            var classMetaCmp = StringComparer.Ordinal.Compare(a.Update.DriverClass ?? "", b.Update.DriverClass ?? "");
-            if (classMetaCmp != 0)
-                return classMetaCmp;
-
-            var modelMetaCmp = StringComparer.Ordinal.Compare(a.Update.DriverModel ?? "", b.Update.DriverModel ?? "");
-            if (modelMetaCmp != 0)
-                return modelMetaCmp;
-
-            var aCats = a.Update.Categories is { Count: > 0 } ? string.Join("\u001F", a.Update.Categories) : "";
-            var bCats = b.Update.Categories is { Count: > 0 } ? string.Join("\u001F", b.Update.Categories) : "";
-            return StringComparer.Ordinal.Compare(aCats, bCats);
-        });
-
-        return ordered;
-    }
+                var aCats = a.Update.Categories is { Count: > 0 } ? string.Join("\u001F", a.Update.Categories) : "";
+                var bCats = b.Update.Categories is { Count: > 0 } ? string.Join("\u001F", b.Update.Categories) : "";
+                return StringComparer.Ordinal.Compare(aCats, bCats);
+            },
+            comparePrefRankFirst: true,
+            prefRankDescending: false);
 
     private static int CompareWithinClass(WuaParsedVersion a, WuaParsedVersion b)
     {
@@ -892,253 +856,8 @@ public sealed partial class WindowsUpdateBiosProvider : IBiosUpdateProvider
         };
     }
 
-    private static string BuildBijectiveSkeleton(string value)
-    {
-        var sb = new StringBuilder(value.Length + 8);
-        var inDigits = false;
-        foreach (var c in value)
-        {
-            if (char.IsAsciiDigit(c))
-            {
-                if (!inDigits)
-                {
-                    sb.Append('#');
-                    inDigits = true;
-                }
-            }
-            else
-            {
-                inDigits = false;
-                if (c == '\\')
-                    sb.Append(@"\\");
-                else if (c == '#')
-                    sb.Append(@"\#");
-                else
-                    sb.Append(c);
-            }
-        }
-
-        return sb.ToString();
-    }
-
-    private static bool IsDottedNumeric(string value)
-    {
-        var parts = value.Split('.');
-        return parts.Length > 0 && parts.All(p => p.Length > 0 && p.All(char.IsAsciiDigit));
-    }
-
-    private static bool TryParseDottedInt64(string dotted, out long[] segments)
-    {
-        var parts = dotted.Split('.');
-        segments = new long[parts.Length];
-        for (var i = 0; i < parts.Length; i++)
-        {
-            if (!long.TryParse(parts[i], NumberStyles.None, CultureInfo.InvariantCulture, out segments[i]))
-            {
-                segments = [];
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static int CompareNumericSegmentArrays(long[] a, long[] b)
-    {
-        var len = Math.Max(a.Length, b.Length);
-        for (var i = 0; i < len; i++)
-        {
-            var av = i < a.Length ? a[i] : 0L;
-            var bv = i < b.Length ? b[i] : 0L;
-            if (av != bv)
-                return av.CompareTo(bv);
-        }
-
-        return 0;
-    }
-
-    private static int CompareFixedLengthArrays(long[] a, long[] b)
-    {
-        var len = Math.Min(a.Length, b.Length);
-        for (var i = 0; i < len; i++)
-        {
-            if (a[i] != b[i])
-                return a[i].CompareTo(b[i]);
-        }
-
-        return a.Length.CompareTo(b.Length);
-    }
-
-    private static int CompareNullableDateDescending(DateOnly? a, DateOnly? b)
-    {
-        if (a.HasValue && b.HasValue)
-            return b.Value.CompareTo(a.Value);
-        if (b.HasValue)
-            return 1;
-        if (a.HasValue)
-            return -1;
-        return 0;
-    }
-
-    private static int CompareNullableLongDescending(long? a, long? b)
-    {
-        if (a.HasValue && b.HasValue)
-            return b.Value.CompareTo(a.Value);
-        if (b.HasValue)
-            return 1;
-        if (a.HasValue)
-            return -1;
-        return 0;
-    }
-
-    // -------------------------------------------------------------------------
-    // SerialNumber redaction
-    // -------------------------------------------------------------------------
-
     private void LogWarn(string message, string? serialNumber) =>
         _log?.Warn(RedactText(message, serialNumber));
-
-    private static BiosLatestInfo RedactLatestInfo(BiosLatestInfo info, string? serialNumber)
-    {
-        var secret = serialNumber?.Trim();
-        if (string.IsNullOrEmpty(secret) || secret.Length < 3)
-            return info;
-
-        var safeLatestVersion = info.LatestVersion is not null ? RedactText(info.LatestVersion, secret) : null;
-        var safeMessage = info.Message is not null ? RedactText(info.Message, secret) : null;
-        var safeSummary = info.ReleaseSummary is not null ? RedactText(info.ReleaseSummary, secret) : null;
-        var safePackageId = info.PackageId is not null ? RedactText(info.PackageId, secret) : null;
-
-        IReadOnlyDictionary<string, string>? safeMeta = info.Metadata;
-        var metaChanged = false;
-        if (info.Metadata is not null && info.Metadata.Count > 0)
-        {
-            var dict = new Dictionary<string, string>(info.Metadata.Count, StringComparer.OrdinalIgnoreCase);
-            foreach (var kv in info.Metadata)
-            {
-                var redactedVal = RedactText(kv.Value, secret);
-                if (!ReferenceEquals(redactedVal, kv.Value))
-                    metaChanged = true;
-                dict[kv.Key] = redactedVal;
-            }
-
-            if (metaChanged)
-                safeMeta = dict;
-        }
-
-        if (ReferenceEquals(safeLatestVersion, info.LatestVersion)
-            && ReferenceEquals(safeMessage, info.Message)
-            && ReferenceEquals(safeSummary, info.ReleaseSummary)
-            && ReferenceEquals(safePackageId, info.PackageId)
-            && !metaChanged)
-        {
-            return info;
-        }
-
-        return info with
-        {
-            LatestVersion = safeLatestVersion,
-            Message = safeMessage,
-            ReleaseSummary = safeSummary,
-            PackageId = safePackageId,
-            Metadata = safeMeta,
-        };
-    }
-
-    private static string RedactText(string value, string? serialNumber)
-    {
-        if (string.IsNullOrEmpty(value))
-            return value;
-
-        var secret = serialNumber?.Trim();
-        if (string.IsNullOrEmpty(secret) || secret.Length < 3)
-            return value;
-
-        var result = BiosInstallerRunner.RedactSerialNumber(value, secret);
-
-        var escaped = Uri.EscapeDataString(secret);
-        if (!string.Equals(escaped, secret, StringComparison.OrdinalIgnoreCase))
-            result = result.Replace(escaped, "[REDACTED]", StringComparison.OrdinalIgnoreCase);
-
-        var formEncoded = escaped.Replace("%20", "+", StringComparison.Ordinal);
-        if (!string.Equals(formEncoded, escaped, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(formEncoded, secret, StringComparison.OrdinalIgnoreCase))
-        {
-            result = result.Replace(formEncoded, "[REDACTED]", StringComparison.OrdinalIgnoreCase);
-        }
-
-        var spaceEncoded = secret.Replace(" ", "%20", StringComparison.Ordinal);
-        if (!string.Equals(spaceEncoded, secret, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(spaceEncoded, escaped, StringComparison.OrdinalIgnoreCase))
-        {
-            result = result.Replace(spaceEncoded, "[REDACTED]", StringComparison.OrdinalIgnoreCase);
-        }
-
-        var spacePlusEncoded = secret.Replace(" ", "+", StringComparison.Ordinal);
-        if (!string.Equals(spacePlusEncoded, secret, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(spacePlusEncoded, formEncoded, StringComparison.OrdinalIgnoreCase))
-        {
-            result = result.Replace(spacePlusEncoded, "[REDACTED]", StringComparison.OrdinalIgnoreCase);
-        }
-
-        var doubleEscaped = Uri.EscapeDataString(escaped);
-        if (!string.Equals(doubleEscaped, escaped, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(doubleEscaped, secret, StringComparison.OrdinalIgnoreCase))
-        {
-            result = result.Replace(doubleEscaped, "[REDACTED]", StringComparison.OrdinalIgnoreCase);
-        }
-
-        try
-        {
-            var decodedSecret = Uri.UnescapeDataString(secret);
-            if (decodedSecret.Length >= 3
-                && !string.Equals(decodedSecret, secret, StringComparison.OrdinalIgnoreCase))
-            {
-                result = result.Replace(decodedSecret, "[REDACTED]", StringComparison.OrdinalIgnoreCase);
-            }
-        }
-        catch (UriFormatException)
-        {
-            // Ignore non-percent-encoded serials.
-        }
-
-        return result;
-    }
-
-    // -------------------------------------------------------------------------
-    // Internal types
-    // -------------------------------------------------------------------------
-
-    private sealed class RedactingLogger(ILogger inner, string? serialNumber) : ILogger
-    {
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => inner.BeginScope(state);
-
-        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => inner.IsEnabled(logLevel);
-
-        public void Log<TState>(
-            Microsoft.Extensions.Logging.LogLevel logLevel,
-            Microsoft.Extensions.Logging.EventId eventId,
-            TState state,
-            Exception? exception,
-            Func<TState, Exception?, string> formatter)
-        {
-            ArgumentNullException.ThrowIfNull(formatter);
-            var formatted = RedactText(formatter(state, exception), serialNumber);
-            inner.Log(logLevel, eventId, formatted, exception: null, static (msg, _) => msg);
-        }
-    }
-
-    private sealed class RedactingProgress(IProgress<BiosInstallProgress> inner, string? serialNumber) : IProgress<BiosInstallProgress>
-    {
-        public void Report(BiosInstallProgress value)
-        {
-            if (value is null)
-                return;
-
-            var safeDetail = RedactText(value.Detail ?? "", serialNumber);
-            inner.Report(ReferenceEquals(safeDetail, value.Detail) ? value : value with { Detail = safeDetail });
-        }
-    }
 
     internal enum VersionClass
     {
@@ -1164,15 +883,6 @@ public sealed partial class WindowsUpdateBiosProvider : IBiosUpdateProvider
         WuaParsedVersion ParsedVersion,
         bool IsNewer);
 
-    private sealed class BucketKeyEqualityComparer : IEqualityComparer<(int IsNewerRank, string ClassKey)>
-    {
-        public bool Equals((int IsNewerRank, string ClassKey) x, (int IsNewerRank, string ClassKey) y) =>
-            x.IsNewerRank == y.IsNewerRank
-            && StringComparer.OrdinalIgnoreCase.Equals(x.ClassKey, y.ClassKey);
-
-        public int GetHashCode((int IsNewerRank, string ClassKey) obj) =>
-            HashCode.Combine(obj.IsNewerRank, StringComparer.OrdinalIgnoreCase.GetHashCode(obj.ClassKey));
-    }
 }
 
 /// <summary>

@@ -80,7 +80,7 @@ public sealed partial class WindowsMemorySystem
         public bool IsCurrentProcessUser { get; }
 
         private SignedInUser(SafeAccessTokenHandle token, string sid, bool current) { _token = token; Sid = sid; IsCurrentProcessUser = current; }
-        public void Dispose() => _token.Dispose();
+        void IDisposable.Dispose() => _token.Dispose();
 
         public static SignedInUser? Open(ILogger? log)
         {

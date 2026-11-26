@@ -79,22 +79,36 @@ public static class WorkflowExport
         finishedAt = s.FinishedUtc?.ToString("O"),
         restartRequestedAt = s.RestartRequestedUtc?.ToString("O"),
         restarts = s.Restarts.Count,
-        checks = s.Stage == WorkflowStage.Checking
-            ? checks.Select(c => new
-            {
-                id = V(c.Id),
-                title = V(c.Title),
-                status = c.Status.ToString().ToLowerInvariant(),
-                message = T(c.Message),
-                step = c.HasProgress ? c.Step : (int?)null,
-                total = c.HasProgress ? c.Total : (int?)null,
-            }).ToList()
-            : null,
+        checks = s.Stage == WorkflowStage.Checking ? BuildCheckItems(checks) : null,
         findings = s.Findings.Take(MaxLines).Select(T).OfType<string>().ToList(),
         recommendations = s.Recommendations.Take(MaxLines).Select(T).OfType<string>().ToList(),
         notOffered = s.NotOffered.Take(MaxLines).Select(T).OfType<string>().ToList(),
         approvedCount = s.Fixes.Count(f => s.IsApproved(f.Id)),
-        fixes = s.Fixes.Take(MaxFixes).Select(f => new
+        fixes = BuildFixItems(s, openAreas),
+        outcomes = BuildOutcomeItems(s),
+        repairs = BuildRepairItems(s),
+        signIn = s.Stage == WorkflowStage.Review
+            ? new { automatic = signIn.Automatic, restartSignOn = signIn.RestartSignOn, canStart = signIn.CanStart }
+            : null,
+        reportSaved = s.ReportPath is not null ? true : (bool?)null,
+        changes = Finished(s) ? Changes(s) : null,
+        canChange = Finished(s) ? canChange : (bool?)null,
+        changeMessage = T(changeMessage),
+    };
+
+    private static object BuildCheckItems(IReadOnlyList<WorkflowCheckItem> checks) =>
+        checks.Select(c => new
+        {
+            id = V(c.Id),
+            title = V(c.Title),
+            status = c.Status.ToString().ToLowerInvariant(),
+            message = T(c.Message),
+            step = c.HasProgress ? c.Step : (int?)null,
+            total = c.HasProgress ? c.Total : (int?)null,
+        }).ToList();
+
+    private static object BuildFixItems(WorkflowState s, IReadOnlyCollection<string> openAreas) =>
+        s.Fixes.Take(MaxFixes).Select(f => new
         {
             id = f.Id,
             title = V(f.Title),
@@ -108,15 +122,19 @@ public static class WorkflowExport
             needsAdmin = f.NeedsAdmin ? true : (bool?)null,
             undo = f.Undo.ToString().ToLowerInvariant(),
             approved = s.IsApproved(f.Id),
-        }).ToList(),
-        outcomes = s.Outcomes.Take(MaxFixes).Select(o => new
+        }).ToList();
+
+    private static object BuildOutcomeItems(WorkflowState s) =>
+        s.Outcomes.Take(MaxFixes).Select(o => new
         {
             fixId = o.FixId,
             title = V(o.Title),
             outcome = o.Skipped ? "skipped" : o.Success ? "succeeded" : "failed",
             message = T(o.Message),
-        }).ToList(),
-        repairs = s.RepairFindings.Take(MaxLines).Select(r => new
+        }).ToList();
+
+    private static object BuildRepairItems(WorkflowState s) =>
+        s.RepairFindings.Take(MaxLines).Select(r => new
         {
             id = V(r.Id),
             title = V(r.Title),
@@ -124,13 +142,5 @@ public static class WorkflowExport
             summary = T(r.Summary),
             rebootRequired = r.RebootRequired ? true : (bool?)null,
             afterRestart = r.AfterRestart ? true : (bool?)null,
-        }).ToList(),
-        signIn = s.Stage == WorkflowStage.Review
-            ? new { automatic = signIn.Automatic, restartSignOn = signIn.RestartSignOn, canStart = signIn.CanStart }
-            : null,
-        reportSaved = s.ReportPath is not null ? true : (bool?)null,
-        changes = Finished(s) ? Changes(s) : null,
-        canChange = Finished(s) ? canChange : (bool?)null,
-        changeMessage = T(changeMessage),
-    };
+        }).ToList();
 }

@@ -31,26 +31,38 @@ public sealed record CrashDumpSummary(
     public string FormatText()
     {
         var sb = new StringBuilder();
-        var kindLabel = Kind switch
-        {
-            CrashDumpKind.Kernel64 => "Kernel crash dump (64-bit)",
-            CrashDumpKind.Kernel32 => "Kernel crash dump (32-bit)",
-            CrashDumpKind.UserMinidump => "User-mode minidump (MDMP)",
-            _ => "Crash dump",
-        };
-        sb.AppendLine($"Dump format: {kindLabel}" + (DumpType is not null ? $" ({DumpType})" : ""));
+        sb.AppendLine($"Dump format: {FormatKindLabel()}" + (DumpType is not null ? $" ({DumpType})" : ""));
 
-        var sysParts = new List<string>();
-        if (!string.IsNullOrEmpty(Architecture)) sysParts.Add(Architecture);
-        if (OsBuild is > 0) sysParts.Add($"OS build {OsBuild.Value}");
-        if (ProcessorCount is > 0) sysParts.Add($"{ProcessorCount.Value} logical processors");
-        if (sysParts.Count > 0) sb.AppendLine("System: " + string.Join(" · ", sysParts));
-
+        AppendSystemLine(sb);
         if (CrashTimeUtc is { } t)
             sb.AppendLine($"Crash time: {t.ToLocalTime():g} ({t:u})");
         if (Uptime is { } up && up > TimeSpan.Zero)
             sb.AppendLine($"System uptime before crash: {FormatUptime(up)}");
 
+        AppendCrashDetails(sb);
+        AppendModuleDetails(sb);
+        return sb.ToString().TrimEnd();
+    }
+
+    private string FormatKindLabel() => Kind switch
+    {
+        CrashDumpKind.Kernel64 => "Kernel crash dump (64-bit)",
+        CrashDumpKind.Kernel32 => "Kernel crash dump (32-bit)",
+        CrashDumpKind.UserMinidump => "User-mode minidump (MDMP)",
+        _ => "Crash dump",
+    };
+
+    private void AppendSystemLine(StringBuilder sb)
+    {
+        var sysParts = new List<string>();
+        if (!string.IsNullOrEmpty(Architecture)) sysParts.Add(Architecture);
+        if (OsBuild is > 0) sysParts.Add($"OS build {OsBuild.Value}");
+        if (ProcessorCount is > 0) sysParts.Add($"{ProcessorCount.Value} logical processors");
+        if (sysParts.Count > 0) sb.AppendLine("System: " + string.Join(" · ", sysParts));
+    }
+
+    private void AppendCrashDetails(StringBuilder sb)
+    {
         if (BugCheckCode is { } bc)
         {
             sb.AppendLine($"BugCheck stop code: {BsodHistoryModule.FormatStopCode(bc)}");
@@ -64,7 +76,10 @@ public sealed record CrashDumpSummary(
             if (ExceptionAddress is { } addr and > 0)
                 sb.AppendLine($"Faulting address: 0x{addr:x16}");
         }
+    }
 
+    private void AppendModuleDetails(StringBuilder sb)
+    {
         if (!string.IsNullOrEmpty(FaultingModule))
         {
             var ver = string.IsNullOrEmpty(FaultingModuleVersion) ? "" : $" (v{FaultingModuleVersion})";
@@ -73,8 +88,6 @@ public sealed record CrashDumpSummary(
 
         if (!string.IsNullOrEmpty(ProcessModule) && !string.Equals(ProcessModule, FaultingModule, StringComparison.OrdinalIgnoreCase))
             sb.AppendLine($"Process image: {ProcessModule}");
-
-        return sb.ToString().TrimEnd();
     }
 
     public string ShortSummary()
@@ -230,78 +243,96 @@ public static class CrashDumpParser
             ? DateTimeOffset.FromUnixTimeSeconds(timestamp)
             : null;
 
-        var arch = "";
-        uint? osBuild = null;
-        int? procs = null;
-        uint? exceptionCode = null;
-        ulong? exceptionAddress = null;
-        uint moduleStreamRva = 0, moduleStreamSize = 0;
-
-        if (numStreams > 0 && numStreams <= 256 && dirRva + (long)numStreams * 12 <= stream.Length)
-        {
-            var dirBuf = new byte[numStreams * 12];
-            stream.Position = dirRva;
-            if (ReadExact(stream, dirBuf) == dirBuf.Length)
-            {
-                Span<byte> sys = stackalloc byte[20];
-                Span<byte> ex = stackalloc byte[32];
-                for (var i = 0; i < numStreams; i++)
-                {
-                    var entry = dirBuf.AsSpan(i * 12, 12);
-                    var streamType = BinaryPrimitives.ReadUInt32LittleEndian(entry[0..]);
-                    var dataSize = BinaryPrimitives.ReadUInt32LittleEndian(entry[4..]);
-                    var rva = BinaryPrimitives.ReadUInt32LittleEndian(entry[8..]);
-                    if (rva == 0 || dataSize == 0 || rva + (long)dataSize > stream.Length) continue;
-
-                    if (streamType == StreamSystemInfo && dataSize >= 20)
-                    {
-                        stream.Position = rva;
-                        if (ReadExact(stream, sys) == 20)
-                        {
-                            arch = FormatProcessorArchitecture(BinaryPrimitives.ReadUInt16LittleEndian(sys[0..]));
-                            procs = sys[6] > 0 ? sys[6] : null;
-                            var build = BinaryPrimitives.ReadUInt32LittleEndian(sys[16..]);
-                            if (build > 0) osBuild = build;
-                        }
-                    }
-                    else if (streamType == StreamException && dataSize >= 32)
-                    {
-                        stream.Position = rva;
-                        if (ReadExact(stream, ex) == 32)
-                        {
-                            var code = BinaryPrimitives.ReadUInt32LittleEndian(ex[8..]);
-                            var addr = BinaryPrimitives.ReadUInt64LittleEndian(ex[24..]);
-                            if (code != 0) exceptionCode = code;
-                            if (addr != 0) exceptionAddress = addr;
-                        }
-                    }
-                    else if (streamType == StreamModuleList && dataSize >= 4)
-                    {
-                        moduleStreamRva = rva;
-                        moduleStreamSize = dataSize;
-                    }
-                }
-            }
-        }
+        var streams = ReadMinidumpDirectory(stream, numStreams, dirRva);
 
         string? faultingModule = null, faultingVersion = null, processModule = null;
-        if (moduleStreamRva > 0 && moduleStreamSize >= 4)
+        if (streams.ModuleStreamRva > 0 && streams.ModuleStreamSize >= 4)
         {
-            ReadMinidumpModules(stream, moduleStreamRva, moduleStreamSize, exceptionAddress,
+            ReadMinidumpModules(stream, streams.ModuleStreamRva, streams.ModuleStreamSize, streams.ExceptionAddress,
                 out processModule, out faultingModule, out faultingVersion);
         }
 
         return new CrashDumpSummary(
             Kind: CrashDumpKind.UserMinidump,
-            Architecture: arch,
-            OsBuild: osBuild,
-            ProcessorCount: procs,
+            Architecture: streams.Architecture,
+            OsBuild: streams.OsBuild,
+            ProcessorCount: streams.ProcessorCount,
             CrashTimeUtc: crashTime,
-            ExceptionCode: exceptionCode,
-            ExceptionAddress: exceptionAddress,
+            ExceptionCode: streams.ExceptionCode,
+            ExceptionAddress: streams.ExceptionAddress,
             FaultingModule: faultingModule,
             FaultingModuleVersion: faultingVersion,
             ProcessModule: processModule);
+    }
+
+    private sealed class MinidumpStreamsInfo
+    {
+        public string Architecture = "";
+        public uint? OsBuild;
+        public int? ProcessorCount;
+        public uint? ExceptionCode;
+        public ulong? ExceptionAddress;
+        public uint ModuleStreamRva;
+        public uint ModuleStreamSize;
+    }
+
+    private static MinidumpStreamsInfo ReadMinidumpDirectory(Stream stream, uint numStreams, uint dirRva)
+    {
+        var info = new MinidumpStreamsInfo();
+        if (numStreams == 0 || numStreams > 256 || dirRva + (long)numStreams * 12 > stream.Length)
+            return info;
+
+        var dirBuf = new byte[numStreams * 12];
+        stream.Position = dirRva;
+        if (ReadExact(stream, dirBuf) != dirBuf.Length)
+            return info;
+
+        for (var i = 0; i < numStreams; i++)
+            ProcessMinidumpStreamEntry(stream, dirBuf.AsSpan(i * 12, 12), info);
+
+        return info;
+    }
+
+    private static void ProcessMinidumpStreamEntry(Stream stream, ReadOnlySpan<byte> entry, MinidumpStreamsInfo info)
+    {
+        var streamType = BinaryPrimitives.ReadUInt32LittleEndian(entry[0..]);
+        var dataSize = BinaryPrimitives.ReadUInt32LittleEndian(entry[4..]);
+        var rva = BinaryPrimitives.ReadUInt32LittleEndian(entry[8..]);
+        if (rva == 0 || dataSize == 0 || rva + (long)dataSize > stream.Length) return;
+
+        if (streamType == StreamSystemInfo && dataSize >= 20)
+            ReadSystemInfoStream(stream, rva, info);
+        else if (streamType == StreamException && dataSize >= 32)
+            ReadExceptionStream(stream, rva, info);
+        else if (streamType == StreamModuleList && dataSize >= 4)
+        {
+            info.ModuleStreamRva = rva;
+            info.ModuleStreamSize = dataSize;
+        }
+    }
+
+    private static void ReadSystemInfoStream(Stream stream, uint rva, MinidumpStreamsInfo info)
+    {
+        Span<byte> sys = stackalloc byte[20];
+        stream.Position = rva;
+        if (ReadExact(stream, sys) != 20) return;
+
+        info.Architecture = FormatProcessorArchitecture(BinaryPrimitives.ReadUInt16LittleEndian(sys[0..]));
+        info.ProcessorCount = sys[6] > 0 ? sys[6] : null;
+        var build = BinaryPrimitives.ReadUInt32LittleEndian(sys[16..]);
+        if (build > 0) info.OsBuild = build;
+    }
+
+    private static void ReadExceptionStream(Stream stream, uint rva, MinidumpStreamsInfo info)
+    {
+        Span<byte> ex = stackalloc byte[32];
+        stream.Position = rva;
+        if (ReadExact(stream, ex) != 32) return;
+
+        var code = BinaryPrimitives.ReadUInt32LittleEndian(ex[8..]);
+        var addr = BinaryPrimitives.ReadUInt64LittleEndian(ex[24..]);
+        if (code != 0) info.ExceptionCode = code;
+        if (addr != 0) info.ExceptionAddress = addr;
     }
 
     private static void ReadMinidumpModules(
@@ -331,31 +362,36 @@ public static class CrashDumpParser
             var nameRva = BinaryPrimitives.ReadUInt32LittleEndian(m[20..]);
 
             if (i == 0)
-            {
-                var full = ReadMinidumpString(stream, nameRva);
-                if (!string.IsNullOrWhiteSpace(full))
-                    processModule = Path.GetFileName(full.Replace('\\', '/'));
-            }
+                processModule = ReadMinidumpModuleFileName(stream, nameRva);
 
-            if (faultingModule is null && exceptionAddress is { } addr && addr >= baseAddr && addr < baseAddr + imageSize)
+            if (faultingModule is null && ContainsAddress(exceptionAddress, baseAddr, imageSize))
             {
-                var full = ReadMinidumpString(stream, nameRva);
-                if (!string.IsNullOrWhiteSpace(full))
-                    faultingModule = Path.GetFileName(full.Replace('\\', '/'));
-                // VS_FIXEDFILEINFO starts at offset 24; dwFileVersionMS at +8 (32), dwFileVersionLS at +12 (36)
-                var sig = BinaryPrimitives.ReadUInt32LittleEndian(m[24..]);
-                if (sig == 0xFEEF04BD)
-                {
-                    var ms = BinaryPrimitives.ReadUInt32LittleEndian(m[32..]);
-                    var ls = BinaryPrimitives.ReadUInt32LittleEndian(m[36..]);
-                    if (ms != 0 || ls != 0)
-                        faultingVersion = $"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}";
-                }
+                faultingModule = ReadMinidumpModuleFileName(stream, nameRva);
+                faultingVersion = TryReadFixedFileVersion(m);
             }
 
             if (processModule is not null && (exceptionAddress is null || faultingModule is not null))
                 break;
         }
+    }
+
+    private static bool ContainsAddress(ulong? exceptionAddress, ulong baseAddr, uint imageSize) =>
+        exceptionAddress is { } addr && addr >= baseAddr && addr < baseAddr + imageSize;
+
+    private static string? ReadMinidumpModuleFileName(Stream stream, uint nameRva)
+    {
+        var full = ReadMinidumpString(stream, nameRva);
+        return string.IsNullOrWhiteSpace(full) ? null : Path.GetFileName(full.Replace('\\', '/'));
+    }
+
+    private static string? TryReadFixedFileVersion(ReadOnlySpan<byte> moduleEntry)
+    {
+        // VS_FIXEDFILEINFO starts at offset 24; dwFileVersionMS at +8 (32), dwFileVersionLS at +12 (36)
+        if (BinaryPrimitives.ReadUInt32LittleEndian(moduleEntry[24..]) != 0xFEEF04BD)
+            return null;
+        var ms = BinaryPrimitives.ReadUInt32LittleEndian(moduleEntry[32..]);
+        var ls = BinaryPrimitives.ReadUInt32LittleEndian(moduleEntry[36..]);
+        return ms != 0 || ls != 0 ? $"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}" : null;
     }
 
     private static string? ReadMinidumpString(Stream stream, uint rva)

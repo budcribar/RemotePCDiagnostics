@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Xml;
+using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Bios;
 
@@ -631,7 +632,530 @@ public static class BiosProviderHttp
         return TryValidateHttpsUrl(resolved.AbsoluteUri, allowedHostSuffixes, out nextUri, out error);
     }
 
-    private static bool IsSafeRawRedirectLocation(string candidate, out string error)
+    internal static bool TryValidateVendorUrl(string? rawUrl, IReadOnlyList<string> allowedHostSuffixes, out Uri uri)
+    {
+        uri = null!;
+        if (string.IsNullOrWhiteSpace(rawUrl))
+            return false;
+
+        var trimmed = rawUrl.Trim();
+        if (trimmed.StartsWith("//", StringComparison.Ordinal))
+            return false;
+
+        if (!TryValidateHttpsUrl(trimmed, allowedHostSuffixes, out var parsed, out _))
+            return false;
+
+        if (HasUnsafePathSegments(trimmed, rejectAtSign: true))
+            return false;
+
+        uri = parsed;
+        return true;
+    }
+
+    internal static async Task<HttpResponseMessage> GetVendorUrlWithSafeRedirectsAsync(
+        HttpClient httpClient,
+        string initialUrl,
+        IReadOnlyList<string> allowedHostSuffixes,
+        string vendorLabel,
+        string? acceptHeader,
+        CancellationToken ct,
+        int maxRedirects = DefaultMaxRedirects,
+        string? disallowedUrlMessage = null,
+        Action<Uri, bool>? validateUri = null)
+    {
+        if (!TryValidateVendorUrl(initialUrl, allowedHostSuffixes, out var current))
+            throw new InvalidOperationException(disallowedUrlMessage ?? $"Disallowed {vendorLabel} catalog URL.");
+
+        validateUri?.Invoke(current, false);
+
+        var visited = new HashSet<string>(StringComparer.Ordinal) { current.AbsoluteUri };
+
+        for (var hop = 0; hop <= maxRedirects; hop++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, current);
+            if (!string.IsNullOrWhiteSpace(acceptHeader))
+                request.Headers.Accept.ParseAdd(acceptHeader);
+
+            var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if (!IsRedirectStatusCode(response.StatusCode))
+            {
+                var effectiveUri = current;
+                if (response.RequestMessage?.RequestUri is { } finalUri)
+                {
+                    if (!finalUri.IsAbsoluteUri
+                        || !TryValidateVendorUrl(finalUri.AbsoluteUri, allowedHostSuffixes, out var validatedFinal)
+                        || (!string.IsNullOrWhiteSpace(finalUri.OriginalString)
+                            && !TryValidateVendorUrl(finalUri.OriginalString, allowedHostSuffixes, out _)))
+                    {
+                        response.Dispose();
+                        throw new InvalidOperationException("Rejected redirect target: final response URL failed vendor HTTPS/domain/path validation.");
+                    }
+
+                    effectiveUri = validatedFinal;
+                }
+
+                if (validateUri is not null)
+                {
+                    try
+                    {
+                        validateUri(effectiveUri, true);
+                    }
+                    catch
+                    {
+                        response.Dispose();
+                        throw;
+                    }
+                }
+
+                return response;
+            }
+
+            string? rawNonValidated = null;
+            if (response.Headers.NonValidated.TryGetValues("Location", out var rawLocs))
+            {
+                var count = 0;
+                foreach (var val in rawLocs)
+                {
+                    count++;
+                    if (count > 1)
+                    {
+                        response.Dispose();
+                        throw new InvalidOperationException("Rejected ambiguous redirect with multiple Location headers.");
+                    }
+
+                    rawNonValidated = val;
+                }
+            }
+
+            var locationUri = response.Headers.Location;
+            response.Dispose();
+
+            if (hop == maxRedirects)
+                throw new InvalidOperationException($"Exceeded maximum redirect limit ({maxRedirects}).");
+
+            if (!TryResolveSafeVendorRedirectTarget(current, rawNonValidated, locationUri, allowedHostSuffixes, out var nextUri))
+                throw new InvalidOperationException("Rejected redirect target: failed vendor HTTPS/domain/path validation.");
+
+            validateUri?.Invoke(nextUri, true);
+
+            if (!visited.Add(nextUri.AbsoluteUri))
+                throw new InvalidOperationException("Redirect loop detected.");
+
+            current = nextUri;
+        }
+
+        throw new InvalidOperationException($"Exceeded maximum redirect limit ({maxRedirects}).");
+    }
+
+    internal static bool ValidateStagingDirectorySafe(string stagingDir, out string error)
+    {
+        error = "";
+        try
+        {
+            var fullStaging = Path.TrimEndingDirectorySeparator(Path.GetFullPath(stagingDir));
+            if (string.IsNullOrWhiteSpace(fullStaging))
+            {
+                error = "Staging directory path is invalid.";
+                return false;
+            }
+
+            if (IsSymlinkOrReparsePath(fullStaging))
+            {
+                error = "Staging directory is a symbolic link or reparse point.";
+                return false;
+            }
+
+            if (HasSymlinkOrReparseAncestorOrSelf(fullStaging))
+            {
+                error = "Staging directory has a symbolic link or reparse point ancestor.";
+                return false;
+            }
+
+            if (File.Exists(fullStaging))
+            {
+                error = "Staging directory path collides with an existing file.";
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"Staging directory path is invalid: {ex.Message}";
+            return false;
+        }
+    }
+
+    internal static async Task<BiosVerifiedPackageResult> DownloadAndVerifyVendorPackageAsync(
+        string vendorId,
+        IBiosSignatureVerifier signatureVerifier,
+        Func<string, CancellationToken, Task<HttpResponseMessage>> getPackageAsync,
+        BiosInstallRequest request,
+        string stagingDir,
+        string fileName,
+        IProgress<BiosInstallProgress>? progress,
+        ILogger? log,
+        CancellationToken ct,
+        long maxBytes = DefaultMaxDownloadBytes)
+    {
+        var downloadUrl = request.Target.DownloadUrl!;
+        var finalPath = Path.Combine(stagingDir, fileName);
+        var partPath = $"{finalPath}.{Guid.NewGuid():N}.part";
+        var createdPart = false;
+        var moved = false;
+        var keepFile = false;
+
+        try
+        {
+            if (IsSymlinkOrReparsePath(stagingDir)
+                || HasSymlinkOrReparseAncestorOrSelf(stagingDir)
+                || File.Exists(stagingDir)
+                || IsSymlinkOrReparsePath(finalPath)
+                || Directory.Exists(finalPath)
+                || IsSymlinkOrReparsePath(partPath))
+            {
+                const string symMsg = "Staging directory or target package file is a symbolic link, reparse point, or conflicting directory.";
+                log?.Warn($"[{vendorId}] {symMsg}");
+                return BiosVerifiedPackageResult.Fail(symMsg);
+            }
+
+            Directory.CreateDirectory(stagingDir);
+
+            if (IsSymlinkOrReparsePath(stagingDir)
+                || HasSymlinkOrReparseAncestorOrSelf(stagingDir)
+                || IsSymlinkOrReparsePath(finalPath)
+                || Directory.Exists(finalPath)
+                || IsSymlinkOrReparsePath(partPath))
+            {
+                const string symMsg = "Staging directory or target package file became a symbolic link, reparse point, or conflicting directory.";
+                log?.Warn($"[{vendorId}] {symMsg}");
+                return BiosVerifiedPackageResult.Fail(symMsg);
+            }
+
+            progress?.Report(new BiosInstallProgress(BiosInstallStage.Downloading, 0, $"Downloading {fileName}..."));
+
+            using var response = await getPackageAsync(downloadUrl, ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                var err = $"Download failed with HTTP {(int)response.StatusCode} ({response.StatusCode}).";
+                log?.Warn($"[{vendorId}] BIOS package download failed: {err}");
+                return BiosVerifiedPackageResult.Fail(err);
+            }
+
+            var contentLength = response.Content.Headers.ContentLength;
+            if (contentLength is > 0 && contentLength.Value > maxBytes)
+            {
+                var err = $"Package size ({contentLength.Value} bytes) exceeds maximum allowed limit ({maxBytes} bytes).";
+                log?.Warn($"[{vendorId}] BIOS package download failed: {err}");
+                return BiosVerifiedPackageResult.Fail(err);
+            }
+
+            if (IsSymlinkOrReparsePath(stagingDir)
+                || HasSymlinkOrReparseAncestorOrSelf(stagingDir)
+                || IsSymlinkOrReparsePath(finalPath)
+                || Directory.Exists(finalPath)
+                || IsSymlinkOrReparsePath(partPath))
+            {
+                const string symMsg = "Target package file or .part path is a symbolic link, reparse point, or conflicting directory.";
+                log?.Warn($"[{vendorId}] {symMsg}");
+                return BiosVerifiedPackageResult.Fail(symMsg);
+            }
+
+            long downloaded = 0;
+            var lastPercent = 0;
+
+            await using (var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
+            await using (var dest = new FileStream(partPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, CopyBufferSize, useAsync: true))
+            {
+                createdPart = true;
+                var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
+                try
+                {
+                    while (true)
+                    {
+                        var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
+                        if (read == 0)
+                            break;
+
+                        downloaded += read;
+                        if (downloaded > maxBytes)
+                        {
+                            var err = $"Downloaded package exceeded maximum allowed size ({maxBytes} bytes).";
+                            log?.Warn($"[{vendorId}] BIOS package download failed: {err}");
+                            return BiosVerifiedPackageResult.Fail(err);
+                        }
+
+                        await dest.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+
+                        if (contentLength is > 0)
+                        {
+                            var percent = (int)Math.Clamp(downloaded * 100L / contentLength.Value, 0L, 100L);
+                            if (percent > lastPercent)
+                            {
+                                lastPercent = percent;
+                                progress?.Report(new BiosInstallProgress(BiosInstallStage.Downloading, percent, $"Downloading {fileName} ({percent}%)..."));
+                            }
+                        }
+                    }
+
+                    await dest.FlushAsync(ct).ConfigureAwait(false);
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(buffer);
+                }
+            }
+
+            if (downloaded == 0)
+            {
+                const string emptyErr = "Downloaded package is empty (0 bytes).";
+                log?.Warn($"[{vendorId}] BIOS package download failed: {emptyErr}");
+                return BiosVerifiedPackageResult.Fail(emptyErr);
+            }
+
+            if (IsSymlinkOrReparsePath(stagingDir)
+                || HasSymlinkOrReparseAncestorOrSelf(stagingDir)
+                || IsSymlinkOrReparsePath(finalPath)
+                || Directory.Exists(finalPath)
+                || IsSymlinkOrReparsePath(partPath))
+            {
+                const string symMsg = "Target package file or .part path became a symbolic link, reparse point, or conflicting directory.";
+                log?.Warn($"[{vendorId}] {symMsg}");
+                return BiosVerifiedPackageResult.Fail(symMsg);
+            }
+
+            if (lastPercent < 100)
+                progress?.Report(new BiosInstallProgress(BiosInstallStage.Downloading, 100, $"Downloaded {fileName}."));
+
+            moved = await MoveIntoPlaceOrReuseIdenticalAsync(partPath, finalPath, ct).ConfigureAwait(false);
+
+            if (request.VerifyHash && !string.IsNullOrWhiteSpace(request.Target.Sha256))
+            {
+                progress?.Report(new BiosInstallProgress(BiosInstallStage.Verifying, 0, "Verifying package SHA-256 digest..."));
+
+                var (valid, actual) = await BiosPackageVerifier.VerifyFileSha256Async(
+                    finalPath,
+                    request.Target.Sha256,
+                    ct).ConfigureAwait(false);
+
+                if (!valid)
+                {
+                    log?.Warn($"[{vendorId}] BIOS package SHA-256 mismatch (actual={actual}). Deleting unverified file.");
+                    return BiosVerifiedPackageResult.Fail("Downloaded BIOS package failed SHA-256 verification.", actual);
+                }
+
+                keepFile = true;
+                progress?.Report(new BiosInstallProgress(BiosInstallStage.Verifying, 100, "Package SHA-256 verified."));
+                return BiosVerifiedPackageResult.Ok(
+                    finalPath,
+                    downloaded,
+                    actualSha256: actual,
+                    verifiedBySha256: true);
+            }
+
+            progress?.Report(new BiosInstallProgress(BiosInstallStage.Verifying, 0, "Verifying package Authenticode signature..."));
+
+            var allowedSigners = BiosAgentInstallModes.AllowedSignerOrganizationsForVendor(vendorId);
+            var signed = allowedSigners.Count > 0
+                && await signatureVerifier.VerifyAuthenticodeAsync(finalPath, allowedSigners, ct).ConfigureAwait(false);
+            if (!signed)
+            {
+                log?.Warn($"[{vendorId}] BIOS package failed Authenticode signature verification. Deleting unverified file.");
+                return BiosVerifiedPackageResult.Fail("Downloaded BIOS package failed Authenticode signature verification.");
+            }
+
+            keepFile = true;
+            progress?.Report(new BiosInstallProgress(BiosInstallStage.Verifying, 100, "Package Authenticode signature verified."));
+            return BiosVerifiedPackageResult.Ok(
+                finalPath,
+                downloaded,
+                verifiedByAuthenticode: true);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            const string err = "Package download timed out.";
+            log?.Warn($"[{vendorId}] BIOS package download failed: {err}");
+            return BiosVerifiedPackageResult.Fail(err);
+        }
+        catch (InvalidOperationException ex)
+        {
+            log?.Warn($"[{vendorId}] BIOS package download failed: {ex.Message}");
+            return BiosVerifiedPackageResult.Fail(ex.Message);
+        }
+        catch (HttpRequestException ex)
+        {
+            var err = $"Network error while downloading package: {ex.Message}";
+            log?.Warn($"[{vendorId}] BIOS package download failed: {err}");
+            return BiosVerifiedPackageResult.Fail(err);
+        }
+        catch (SocketException ex)
+        {
+            var err = $"Socket error while downloading package: {ex.Message}";
+            log?.Warn($"[{vendorId}] BIOS package download failed: {err}");
+            return BiosVerifiedPackageResult.Fail(err);
+        }
+        catch (IOException ex)
+        {
+            var err = $"I/O error while downloading package: {ex.Message}";
+            log?.Warn($"[{vendorId}] BIOS package download failed: {err}");
+            return BiosVerifiedPackageResult.Fail(err);
+        }
+        finally
+        {
+            if (createdPart && !moved)
+                TryDeleteFile(partPath);
+            if (moved && !keepFile)
+                TryDeleteFile(finalPath);
+        }
+    }
+
+    internal static bool TryResolveSafeVendorRedirectTarget(
+        Uri current,
+        string? rawLocation,
+        Uri? locationUri,
+        IReadOnlyList<string> allowedHostSuffixes,
+        out Uri nextUri)
+    {
+        nextUri = null!;
+        var originalFromUri = locationUri?.OriginalString?.Trim();
+        var raw = !string.IsNullOrWhiteSpace(originalFromUri)
+            ? originalFromUri
+            : rawLocation?.Trim();
+        if (string.IsNullOrWhiteSpace(raw) || raw.Length > MaxUrlLength)
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(rawLocation)
+            && !IsSafeRawRedirectLocation(rawLocation.Trim(), out _, rejectAtSign: true))
+        {
+            return false;
+        }
+
+        if (!IsSafeRawRedirectLocation(raw, out _, rejectAtSign: true))
+            return false;
+
+        Uri? resolved;
+        if (raw.StartsWith('/'))
+        {
+            if (!Uri.TryCreate(raw, UriKind.Relative, out var rel) || !Uri.TryCreate(current, rel, out resolved))
+                return false;
+        }
+        else if (locationUri is { IsAbsoluteUri: true })
+        {
+            resolved = locationUri;
+        }
+        else if (Uri.TryCreate(raw, UriKind.Absolute, out var absUri))
+        {
+            resolved = absUri;
+        }
+        else if (Uri.TryCreate(raw, UriKind.Relative, out var relUri))
+        {
+            if (!Uri.TryCreate(current, relUri, out resolved))
+                return false;
+        }
+        else
+        {
+            return false;
+        }
+
+        return TryValidateVendorUrl(resolved.AbsoluteUri, allowedHostSuffixes, out nextUri);
+    }
+
+    internal static async Task<byte[]> ReadBoundedBytesAsync(
+        HttpContent content,
+        long maxBytes,
+        string label,
+        CancellationToken ct,
+        int maxInitialCapacity = 256 * 1024)
+    {
+        var contentLength = content.Headers.ContentLength;
+        if (contentLength.HasValue && contentLength.Value > maxBytes)
+            throw new InvalidDataException($"{label} ({contentLength.Value} bytes) exceeds maximum allowed limit ({maxBytes} bytes).");
+
+        var initialCap = contentLength is > 0
+            ? (int)Math.Min(contentLength.Value, maxInitialCapacity)
+            : 4096;
+
+        using var ms = new MemoryStream(initialCap);
+        await using var stream = await content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
+        long totalRead = 0;
+
+        try
+        {
+            while (true)
+            {
+                var read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
+                if (read == 0)
+                    break;
+
+                totalRead += read;
+                if (totalRead > maxBytes)
+                    throw new InvalidDataException($"{label} exceeded maximum allowed size ({maxBytes} bytes).");
+
+                await ms.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+
+        return ms.ToArray();
+    }
+
+    internal static async Task<JsonDocument> ReadBoundedJsonDocumentAsync(
+        HttpContent content,
+        long maxBytes,
+        string vendorLabel,
+        CancellationToken ct,
+        int maxInitialCapacity = 256 * 1024)
+    {
+        var label = $"{vendorLabel} BIOS catalog response";
+        var rawBytes = await ReadBoundedBytesAsync(content, maxBytes, label, ct, maxInitialCapacity).ConfigureAwait(false);
+
+        if (rawBytes.Length == 0)
+            throw new InvalidDataException($"{label} body is empty.");
+
+        var offset = 0;
+        var length = rawBytes.Length;
+
+        if (length >= 3 && rawBytes[0] == 0xEF && rawBytes[1] == 0xBB && rawBytes[2] == 0xBF)
+        {
+            offset = 3;
+            length -= 3;
+        }
+
+        var hasNonWhitespace = false;
+        for (var i = offset; i < offset + length; i++)
+        {
+            var b = rawBytes[i];
+            if (b is not ((byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n'))
+            {
+                hasNonWhitespace = true;
+                break;
+            }
+        }
+
+        if (!hasNonWhitespace)
+            throw new InvalidDataException($"{label} body is empty or whitespace.");
+
+        return JsonDocument.Parse(
+            new ReadOnlyMemory<byte>(rawBytes, offset, length),
+            new JsonDocumentOptions
+            {
+                MaxDepth = 64,
+                CommentHandling = JsonCommentHandling.Disallow,
+                AllowTrailingCommas = false,
+            });
+    }
+
+    internal static bool IsSafeRawRedirectLocation(string candidate, out string error, bool rejectAtSign = false)
     {
         error = "";
         if (candidate.Length == 0 || candidate.Length > MaxUrlLength)
@@ -664,7 +1188,7 @@ public static class BiosProviderHttp
             return false;
         }
 
-        if (HasUnsafeRedirectLocationPath(candidate))
+        if (HasUnsafeRedirectLocationPath(candidate, rejectAtSign))
         {
             error = "Redirect Location header contains disallowed path traversal or encoded separators.";
             return false;
@@ -673,12 +1197,12 @@ public static class BiosProviderHttp
         return true;
     }
 
-    private static bool HasUnsafeRedirectLocationPath(string rawLocation)
+    internal static bool HasUnsafeRedirectLocationPath(string rawLocation, bool rejectAtSign = false)
     {
         var queryOrFragIdx = rawLocation.IndexOfAny(['?', '#']);
         var beforeQuery = queryOrFragIdx >= 0 ? rawLocation[..queryOrFragIdx] : rawLocation;
         if (beforeQuery.IndexOf("://", StringComparison.Ordinal) >= 0)
-            return HasUnsafePathSegments(rawLocation);
+            return HasUnsafePathSegments(rawLocation, rejectAtSign);
 
         var pathPart = beforeQuery.TrimStart('/');
         if (pathPart.Length == 0)
@@ -689,14 +1213,14 @@ public static class BiosProviderHttp
             if (seg.Length == 0)
                 continue;
 
-            if (IsUnsafePathSegment(seg))
+            if (IsUnsafePathSegment(seg, rejectAtSign))
                 return true;
         }
 
         return false;
     }
 
-    internal static bool HasUnsafePathSegments(string url)
+    internal static bool HasUnsafePathSegments(string url, bool rejectAtSign = false)
     {
         var schemeSep = url.IndexOf("://", StringComparison.Ordinal);
         if (schemeSep < 0)
@@ -720,14 +1244,14 @@ public static class BiosProviderHttp
             if (seg.Length == 0)
                 continue;
 
-            if (IsUnsafePathSegment(seg))
+            if (IsUnsafePathSegment(seg, rejectAtSign))
                 return true;
         }
 
         return false;
     }
 
-    private static bool IsUnsafePathSegment(string segment)
+    internal static bool IsUnsafePathSegment(string segment, bool rejectAtSign = false)
     {
         var current = segment;
         for (var round = 0; round < 5; round++)
@@ -746,7 +1270,7 @@ public static class BiosProviderHttp
             for (var i = 0; i < current.Length; i++)
             {
                 var c = current[i];
-                if (char.IsControl(c) || c is '/' or '\\' or '?' or '#')
+                if (char.IsControl(c) || c is '/' or '\\' or '?' or '#' || (rejectAtSign && c == '@'))
                     return true;
 
                 if (c == '%')
@@ -853,7 +1377,7 @@ public static class BiosProviderHttp
         return client;
     }
 
-    private static void TryDeleteFile(string path)
+    internal static void TryDeleteFile(string path)
     {
         try
         {
@@ -866,7 +1390,7 @@ public static class BiosProviderHttp
         }
     }
 
-    private static void TryDeleteDirectoryIfEmpty(string dir)
+    internal static void TryDeleteDirectoryIfEmpty(string dir)
     {
         try
         {
@@ -876,6 +1400,19 @@ public static class BiosProviderHttp
         catch
         {
             // Best-effort cleanup of empty temporary staging directory.
+        }
+    }
+
+    internal static void TryDeleteDirectoryRecursive(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
+            // Best-effort cleanup of temporary staging directory.
         }
     }
 }

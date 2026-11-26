@@ -24,7 +24,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
     private void LogWarn(string m) => log.Warn("Audio: " + m);
 
     /// <summary>What a test changed on one endpoint so it could be heard, to put back afterwards.</summary>
-    private sealed record LevelChange(MMDevice Device, string What, bool WasMuted, float? PreviousLevel);
+    private sealed record LevelChange(MMDevice Endpoint, string What, bool WasMuted, float? PreviousLevel);
 
     /// <summary>Unmutes the endpoint and raises its level to <paramref name="setTo"/> when below <paramref name="minLevel"/>, for the test only:
     /// <see cref="RestoreLevels"/> puts both back. Null when nothing was changed.</summary>
@@ -67,7 +67,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
                 : c.WasMuted ? "muted" : $"at {c.PreviousLevel:P0} volume";
             try
             {
-                var vol = c.Device.AudioEndpointVolume;
+                var vol = c.Endpoint.AudioEndpointVolume;
                 if (c.PreviousLevel is { } level) vol.MasterVolumeLevelScalar = level;
                 if (c.WasMuted) vol.Mute = true;
                 notes.Add($"The {c.What.ToLowerInvariant()} was {found}. It was changed for the test and put back afterwards.");
@@ -115,23 +115,23 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
         catch { return false; }
     }
 
-    public Task<PlayCaptureResult> PlayAndCaptureAsync(PlayCaptureRequest r, CancellationToken ct) => Task.Run(async () =>
+    public Task<PlayCaptureResult> PlayAndCaptureAsync(PlayCaptureRequest request, CancellationToken ct) => Task.Run(async () =>
     {
         try
         {
             using var en = new MMDeviceEnumerator();
-            using var outDev = Device(en, r.OutputId, DataFlow.Render);
-            using var inDev = Device(en, r.InputId, DataFlow.Capture);
+            using var outDev = Device(en, request.OutputId, DataFlow.Render);
+            using var inDev = Device(en, request.InputId, DataFlow.Capture);
             var speakerChange = EnsureAudible(outDev, "Speaker", 0.5f, 0.5f);
             var micChange = EnsureAudible(inDev, "Microphone", 0.6f, 0.8f);
             string? note = null;
             try
             {
-            var toneTime = TimeSpan.FromSeconds((double)r.Tone.Length / r.SampleRate);
+            var toneTime = TimeSpan.FromSeconds((double)request.Tone.Length / request.SampleRate);
 
             async Task<Capture?> PlayWith(bool mic, bool loop)
             {
-                using var micCap = mic ? Capture.Open(inDev, loopback: false, raw: r.RequestRawMic, log) : null;
+                using var micCap = mic ? Capture.Open(inDev, loopback: false, raw: request.RequestRawMic, log) : null;
                 Capture? loopCap = null;
                 if (loop)
                 {
@@ -141,16 +141,16 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
                 try
                 {
                     micCap?.Start(); loopCap?.Start();
-                    await Task.Delay(r.LeadIn, ct).ConfigureAwait(false);
+                    await Task.Delay(request.LeadIn, ct).ConfigureAwait(false);
                     var pos = 0;
-                    await PlayAsync(outDev, r.SampleRate, span =>
+                    await PlayAsync(outDev, request.SampleRate, span =>
                     {
-                        var n = Math.Min(span.Length, r.Tone.Length - pos);
-                        r.Tone.AsSpan(pos, n).CopyTo(span);
+                        var n = Math.Min(span.Length, request.Tone.Length - pos);
+                        request.Tone.AsSpan(pos, n).CopyTo(span);
                         pos += n;
                         return n;
                     }, toneTime + TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
-                    await Task.Delay(r.Tail, ct).ConfigureAwait(false);
+                    await Task.Delay(request.Tail, ct).ConfigureAwait(false);
                     micCap?.Stop(); loopCap?.Stop();
                     if (mic) { _micRaw = micCap!.RawApplied; _mic = micCap.Samples(); _micRate = micCap.SampleRate; }
                     return loopCap;
@@ -159,7 +159,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
             }
 
             Capture? lc;
-            if (r.HalfDuplex)
+            if (request.HalfDuplex)
             {
                 // One recording at a time: loopback pass, then microphone pass (two tone plays).
                 lc = await PlayWith(mic: false, loop: true).ConfigureAwait(false);
@@ -180,23 +180,23 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
         catch (Exception ex) when (ex is not OperationCanceledException) { throw Map(ex); }
     }, ct);
 
-    public Task<int> PlayOnChannelAsync(PlayChannelRequest r, CancellationToken ct) => Task.Run(async () =>
+    public Task<int> PlayOnChannelAsync(PlayChannelRequest request, CancellationToken ct) => Task.Run(async () =>
     {
         try
         {
             // Mute and volume are left as they are: the person should hear what an app would (a muted speaker is the finding).
             using var en = new MMDeviceEnumerator();
-            using var outDev = Device(en, r.OutputId, DataFlow.Render);
+            using var outDev = Device(en, request.OutputId, DataFlow.Render);
             var pos = 0;
-            var only = r.Channel == AudioChannel.Left ? 0 : 1;
-            var channels = await PlayAsync(outDev, r.SampleRate, span =>
+            var only = request.Channel == AudioChannel.Left ? 0 : 1;
+            var channels = await PlayAsync(outDev, request.SampleRate, span =>
             {
-                var n = Math.Min(span.Length, r.Tone.Length - pos);
-                r.Tone.AsSpan(pos, n).CopyTo(span);
+                var n = Math.Min(span.Length, request.Tone.Length - pos);
+                request.Tone.AsSpan(pos, n).CopyTo(span);
                 pos += n;
                 return n;
-            }, TimeSpan.FromSeconds((double)r.Tone.Length / r.SampleRate) + TimeSpan.FromSeconds(2), ct, only).ConfigureAwait(false);
-            Log($"test sound on the {r.Channel.ToString().ToLowerInvariant()} channel of '{outDev.FriendlyName}' ({channels} channels)");
+            }, TimeSpan.FromSeconds((double)request.Tone.Length / request.SampleRate) + TimeSpan.FromSeconds(2), ct, only).ConfigureAwait(false);
+            Log($"test sound on the {request.Channel.ToString().ToLowerInvariant()} channel of '{outDev.FriendlyName}' ({channels} channels)");
             return channels;
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { throw Map(ex); }
@@ -207,13 +207,13 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
     private int _micRate;
     private bool _micRaw;
 
-    public Task<MonitorResult> MonitorAsync(MonitorRequest r, CancellationToken ct) => Task.Run(async () =>
+    public Task<MonitorResult> MonitorAsync(MonitorRequest request, CancellationToken ct) => Task.Run(async () =>
     {
         try
         {
             using var en = new MMDeviceEnumerator();
-            using var outDev = Device(en, r.OutputId, DataFlow.Render);
-            using var inDev = Device(en, r.InputId, DataFlow.Capture);
+            using var outDev = Device(en, request.OutputId, DataFlow.Render);
+            using var inDev = Device(en, request.InputId, DataFlow.Capture);
             var speakerChange = EnsureAudible(outDev, "Speaker", 0.5f, 0.5f);
             var micChange = EnsureAudible(inDev, "Microphone", 0.6f, 0.8f);
             try
@@ -222,13 +222,13 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, stop.Token);
             var queue = new ConcurrentQueue<float[]>();
             var stoppedEarly = false;
-            var keep = r.HalfDuplex ? new List<float[]>() : null;
+            var keep = request.HalfDuplex ? new List<float[]>() : null;
             var micRate = 0;
-            using var mic = Capture.Open(inDev, loopback: false, raw: r.RequestRawMic, log, block =>
+            using var mic = Capture.Open(inDev, loopback: false, raw: request.RequestRawMic, log, block =>
             {
-                var blockGain = r.ProcessBlock(block, micRate);
-                var gain = r.HalfDuplex ? 1.0f : AudioMath.ClampMonitorGain(blockGain);
-                if (!r.HalfDuplex && gain <= 0) { stoppedEarly = true; try { stop.Cancel(); } catch { } return; }
+                var blockGain = request.ProcessBlock(block, micRate);
+                var gain = request.HalfDuplex ? 1.0f : AudioMath.ClampMonitorGain(blockGain);
+                if (!request.HalfDuplex && gain <= 0) { stoppedEarly = true; try { stop.Cancel(); } catch { } return; }
                 var scaled = new float[block.Length];
                 for (var i = 0; i < block.Length; i++) scaled[i] = block[i] * gain;
                 if (keep is not null) keep.Add(scaled);
@@ -236,9 +236,9 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
             }, keepSamples: false);
             micRate = mic.SampleRate;
             mic.Start();
-            if (r.HalfDuplex)
+            if (request.HalfDuplex)
             {
-                try { await Task.Delay(r.Duration, linked.Token).ConfigureAwait(false); } catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                try { await Task.Delay(request.Duration, linked.Token).ConfigureAwait(false); } catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
                 mic.Stop();
                 ct.ThrowIfCancellationRequested();
                 var all = keep!.SelectMany(b => b).ToArray();
@@ -250,7 +250,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
                     all.AsSpan(pos, n).CopyTo(span);
                     pos += n;
                     return n;
-                }, r.Duration + TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+                }, request.Duration + TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
             }
             else
             {
@@ -293,7 +293,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
                             span[i] = v;
                         }
                         return span.Length;
-                    }, r.Duration, linked.Token).ConfigureAwait(false);
+                    }, request.Duration, linked.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
                 mic.Stop();

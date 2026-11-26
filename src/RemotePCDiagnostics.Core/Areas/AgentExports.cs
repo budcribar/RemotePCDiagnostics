@@ -101,7 +101,7 @@ public static class AgentExports
 
     /// <summary>Everything running in the app at one moment, wherever it was started, for <see cref="Activity"/>.</summary>
     public sealed record ActivitySnapshot(
-        IReadOnlyList<RunningCheck> Checks,
+        IReadOnlyList<RunningCheck> RunningChecks,
         SequenceRun? Sequence = null,
         StressSuiteProgress? StressSuite = null,
         FixRun? Fix = null,
@@ -127,7 +127,7 @@ public static class AgentExports
     public static string? UpdateBlockReason(ActivitySnapshot s)
     {
         var reasons = new List<string>();
-        var blockingChecks = s.Checks.Where(c => !c.BackgroundAutoRun).ToList();
+        var blockingChecks = s.RunningChecks.Where(c => !c.BackgroundAutoRun).ToList();
         if (blockingChecks.Count == 1)
             reasons.Add($"A check is running ({blockingChecks[0].Id}).");
         else if (blockingChecks.Count > 1)
@@ -161,51 +161,62 @@ public static class AgentExports
         var workflow = s.Workflow is { } w && WorkflowRunning(w) ? w : null;
         var stress = s.StressSuite is { Finished: false } p ? p : null;
         var benchmark = s.BenchmarkRunning is not null || s.BenchmarkSettling;
-        var busy = s.Checks.Count > 0 || s.Sequence is not null || stress is not null || s.Fix is not null || benchmark
+        var busy = s.RunningChecks.Count > 0 || s.Sequence is not null || stress is not null || s.Fix is not null || benchmark
             || workflow is { Busy: true };
         return new
         {
             schema = SchemaVersion,
             busy,
-            checks = s.Checks.Select(c => new
-            {
-                id = V(c.Id),
-                title = V(c.Title),
-                runId = c.RunId?.ToString(),
-                progress = c.Progress is { } cp ? new { step = cp.Step, total = cp.Total, message = T(cp.Message) } : null,
-            }).ToList(),
-            sequence = s.Sequence is { } q ? new
-            {
-                kind = q.Group == CheckGroup.Stress ? "stress-tests" : q.RunAll ? "run-all" : "checks",
-                index = q.Progress?.Index,
-                total = q.Progress?.Total,
-                current = V(q.Progress?.Current),
-                remaining = q.Remaining.Select(V).OfType<string>().ToList(),
-            } : null,
-            stressSuite = stress is null ? null : new
-            {
-                mode = stress.Mode.ToString().ToLowerInvariant(),
-                index = stress.Index,
-                total = stress.Total,
-                current = V(stress.CurrentDisplayName),
-                remaining = stress.Steps.Where(step => step.State == StressSuiteStepState.Pending).Select(step => V(step.ModuleName)).OfType<string>().ToList(),
-            },
-            fix = s.Fix is { } f ? new
-            {
-                kind = f.Action.Kind.ToString(),
-                target = V(f.Action.Target),
-                title = V(f.Title),
-                origin = f.Origin,
-                startedAt = f.StartedUtc,
-                progress = V(f.Progress),
-            } : null,
+            checks = s.RunningChecks.Select(BuildRunningCheckActivity).ToList(),
+            sequence = BuildSequenceActivity(s.Sequence),
+            stressSuite = BuildStressSuiteActivity(stress),
+            fix = BuildFixActivity(s.Fix),
             workflow = workflow is null ? null : new { stage = workflow.Stage.ToString(), busy = workflow.Busy, status = T(workflow.Status) },
-            benchmark = benchmark ? new
-            {
-                phase = s.BenchmarkRunning is { } b ? (b == BenchmarkPhase.Before ? "running-before" : "running-after") : "settling",
-                progress = T(s.BenchmarkProgress),
-            } : null,
+            benchmark = BuildBenchmarkActivity(benchmark, s.BenchmarkRunning, s.BenchmarkProgress),
         };
+    }
+
+    private static object BuildRunningCheckActivity(RunningCheck c) => new
+    {
+        id = V(c.Id),
+        title = V(c.Title),
+        runId = c.RunId?.ToString(),
+        progress = c.Progress is { } cp ? new { step = cp.Step, total = cp.Total, message = T(cp.Message) } : null,
+    };
+
+    private static object? BuildSequenceActivity(SequenceRun? q) => q is null ? null : new
+    {
+        kind = q.Group == CheckGroup.Stress ? "stress-tests" : q.RunAll ? "run-all" : "checks",
+        index = q.Progress?.Index,
+        total = q.Progress?.Total,
+        current = V(q.Progress?.Current),
+        remaining = q.Remaining.Select(V).OfType<string>().ToList(),
+    };
+
+    private static object? BuildStressSuiteActivity(StressSuiteProgress? stress) => stress is null ? null : new
+    {
+        mode = stress.Mode.ToString().ToLowerInvariant(),
+        index = stress.Index,
+        total = stress.Total,
+        current = V(stress.CurrentDisplayName),
+        remaining = stress.Steps.Where(step => step.State == StressSuiteStepState.Pending).Select(step => V(step.ModuleName)).OfType<string>().ToList(),
+    };
+
+    private static object? BuildFixActivity(FixRun? f) => f is null ? null : new
+    {
+        kind = f.Action.Kind.ToString(),
+        target = V(f.Action.Target),
+        title = V(f.Title),
+        origin = f.Origin,
+        startedAt = f.StartedUtc,
+        progress = V(f.Progress),
+    };
+
+    private static object? BuildBenchmarkActivity(bool active, BenchmarkPhase? running, string? progress)
+    {
+        if (!active) return null;
+        var phase = running is { } b ? (b == BenchmarkPhase.Before ? "running-before" : "running-after") : "settling";
+        return new { phase, progress = T(progress) };
     }
 
     // ---- Checks list ----------------------------------------------------------------------------------------------------
@@ -531,13 +542,7 @@ public static class AgentExports
         IReadOnlyList<BenchmarkTestChoice>? tests = null) => new
     {
         schema = SchemaVersion,
-        phase = running is { } p ? (p == BenchmarkPhase.Before ? "running-before" : "running-after")
-            : settling ? "settling"
-            : beforePendingRestart ? "restart-pending-before"
-            : afterPendingRestart ? "restart-pending-after"
-            : before is null ? "no-baseline"
-            : after is null ? "baseline-ready"
-            : "compared",
+        phase = ResolveBenchmarkPhase(running, settling, beforePendingRestart, afterPendingRestart, before, after),
         progress = T(progress),
         message = T(message),
         settings = new
@@ -573,7 +578,23 @@ public static class AgentExports
         overallPercent = before is not null && after is not null ? comparison.OverallPercent : null,
         overall = before is not null && after is not null ? T(comparison.OverallText) : null,
         warnings = comparison.Warnings.Select(T).OfType<string>().ToList(),
-        deltas = before is not null && after is not null
+        deltas = BuildBenchmarkDeltas(before, after, comparison),
+        developer = BuildDeveloperBenchmarkSection(detectedToolchains, devDrivePrecheck, lastAvComparison, lastDevDriveComparison),
+    };
+
+    private static string ResolveBenchmarkPhase(
+        BenchmarkPhase? running, bool settling, bool beforePendingRestart, bool afterPendingRestart, BenchmarkRun? before, BenchmarkRun? after)
+    {
+        if (running is { } p) return p == BenchmarkPhase.Before ? "running-before" : "running-after";
+        if (settling) return "settling";
+        if (beforePendingRestart) return "restart-pending-before";
+        if (afterPendingRestart) return "restart-pending-after";
+        if (before is null) return "no-baseline";
+        return after is null ? "baseline-ready" : "compared";
+    }
+
+    private static object? BuildBenchmarkDeltas(BenchmarkRun? before, BenchmarkRun? after, BenchmarkComparison comparison) =>
+        before is not null && after is not null
             ? comparison.Deltas.Select(d => new
             {
                 kind = d.Info.Kind.ToString(),
@@ -587,49 +608,63 @@ public static class AgentExports
                 change = T(d.ChangeSummary),
                 note = T(d.Note),
             }).ToList()
-            : null,
-        developer = detectedToolchains is { Count: > 0 } || lastAvComparison is not null || lastDevDriveComparison is not null
-            ? new
+            : null;
+
+    private static object? BuildDeveloperBenchmarkSection(
+        IReadOnlyList<DetectedToolchain>? detectedToolchains,
+        DevDrivePrecheckResult? devDrivePrecheck,
+        DeveloperBuildResult? lastAvComparison,
+        DevDriveComparisonResult? lastDevDriveComparison)
+    {
+        if (detectedToolchains is not { Count: > 0 } && lastAvComparison is null && lastDevDriveComparison is null)
+            return null;
+
+        return new
+        {
+            busyWarning = DeveloperScoring.BusyPcWarning,
+            toolchains = (detectedToolchains ?? []).Select(t => new { language = t.Language.ToString(), name = V(t.DisplayName), version = V(t.Version) }).ToList(),
+            csharpUnavailableReason = T(CSharpUnavailableReason(detectedToolchains)),
+            antivirusComparison = BuildAvComparison(lastAvComparison),
+            devDrivePrecheck = devDrivePrecheck is null ? null : new
             {
-                busyWarning = DeveloperScoring.BusyPcWarning,
-                toolchains = (detectedToolchains ?? []).Select(t => new { language = t.Language.ToString(), name = V(t.DisplayName), version = V(t.Version) }).ToList(),
-                csharpUnavailableReason = T(CSharpUnavailableReason(detectedToolchains)),
-                antivirusComparison = lastAvComparison is null ? null : new
-                {
-                    language = lastAvComparison.Language.ToString(),
-                    pinId = V(lastAvComparison.PinId),
-                    coldMedianSeconds = lastAvComparison.ColdMedianSeconds,
-                    warmMedianSeconds = lastAvComparison.WarmMedianSeconds,
-                    warmExcludedMedianSeconds = lastAvComparison.WarmExcludedMedianSeconds,
-                    restoreSeconds = lastAvComparison.RestoreSeconds,
-                    antivirusCostSeconds = lastAvComparison.AntivirusCostSeconds,
-                    antivirusCostPercent = lastAvComparison.AntivirusCostPercent,
-                    band = lastAvComparison.Band.ToString(),
-                    note = T(lastAvComparison.Note),
-                    toolExitCode = lastAvComparison.ToolExitCode,
-                },
-                devDrivePrecheck = devDrivePrecheck is null ? null : new
-                {
-                    eligible = devDrivePrecheck.Eligible,
-                    reason = T(devDrivePrecheck.Reason),
-                    requiresExplicitApproval = true,
-                },
-                devDriveComparison = lastDevDriveComparison is null ? null : new
-                {
-                    succeeded = lastDevDriveComparison.Succeeded,
-                    order = V(lastDevDriveComparison.Order),
-                    ntfsColdMedianSeconds = lastDevDriveComparison.NtfsColdMedianSeconds,
-                    ntfsWarmMedianSeconds = lastDevDriveComparison.NtfsWarmMedianSeconds,
-                    devDriveColdMedianSeconds = lastDevDriveComparison.DevDriveColdMedianSeconds,
-                    devDriveWarmMedianSeconds = lastDevDriveComparison.DevDriveWarmMedianSeconds,
-                    coldPercentFaster = lastDevDriveComparison.ColdPercentFaster,
-                    warmPercentFaster = lastDevDriveComparison.WarmPercentFaster,
-                    defenderPerformanceModeActive = lastDevDriveComparison.DefenderPerformanceModeActive,
-                    note = T(lastDevDriveComparison.Note),
-                },
-            }
-            : null,
-    };
+                eligible = devDrivePrecheck.Eligible,
+                reason = T(devDrivePrecheck.Reason),
+                requiresExplicitApproval = true,
+            },
+            devDriveComparison = BuildDevDriveComparison(lastDevDriveComparison),
+        };
+    }
+
+    private static object? BuildAvComparison(DeveloperBuildResult? lastAvComparison) =>
+        lastAvComparison is null ? null : new
+        {
+            language = lastAvComparison.Language.ToString(),
+            pinId = V(lastAvComparison.PinId),
+            coldMedianSeconds = lastAvComparison.ColdMedianSeconds,
+            warmMedianSeconds = lastAvComparison.WarmMedianSeconds,
+            warmExcludedMedianSeconds = lastAvComparison.WarmExcludedMedianSeconds,
+            restoreSeconds = lastAvComparison.RestoreSeconds,
+            antivirusCostSeconds = lastAvComparison.AntivirusCostSeconds,
+            antivirusCostPercent = lastAvComparison.AntivirusCostPercent,
+            band = lastAvComparison.Band.ToString(),
+            note = T(lastAvComparison.Note),
+            toolExitCode = lastAvComparison.ToolExitCode,
+        };
+
+    private static object? BuildDevDriveComparison(DevDriveComparisonResult? lastDevDriveComparison) =>
+        lastDevDriveComparison is null ? null : new
+        {
+            succeeded = lastDevDriveComparison.Succeeded,
+            order = V(lastDevDriveComparison.Order),
+            ntfsColdMedianSeconds = lastDevDriveComparison.NtfsColdMedianSeconds,
+            ntfsWarmMedianSeconds = lastDevDriveComparison.NtfsWarmMedianSeconds,
+            devDriveColdMedianSeconds = lastDevDriveComparison.DevDriveColdMedianSeconds,
+            devDriveWarmMedianSeconds = lastDevDriveComparison.DevDriveWarmMedianSeconds,
+            coldPercentFaster = lastDevDriveComparison.ColdPercentFaster,
+            warmPercentFaster = lastDevDriveComparison.WarmPercentFaster,
+            defenderPerformanceModeActive = lastDevDriveComparison.DefenderPerformanceModeActive,
+            note = T(lastDevDriveComparison.Note),
+        };
 
     private static string? CSharpUnavailableReason(IReadOnlyList<DetectedToolchain>? toolchains)
     {

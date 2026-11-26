@@ -92,7 +92,7 @@ public sealed class ProcessMemTestHelperLauncher(string? directory = null, ILogg
 
     private sealed class Proc(Process p) : IMemTestHelperProcess
     {
-        public Task<string?> ReadLineAsync(CancellationToken ct) => p.StandardOutput.ReadLineAsync(ct).AsTask();
+        public Task<string?> ReadLineAsync(CancellationToken cancellationToken) => p.StandardOutput.ReadLineAsync(cancellationToken).AsTask();
         public void Kill() { try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch (Exception) { } }
         public int? ExitCode { get { try { return p.HasExited ? p.ExitCode : null; } catch (Exception) { return null; } } }
         public void Dispose() { try { Kill(); } finally { p.Dispose(); } }

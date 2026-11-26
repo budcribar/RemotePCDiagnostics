@@ -23,54 +23,9 @@ public static class FileManagerLauncher
 
         try
         {
-            if (OperatingSystem.IsWindows())
-            {
-                var explorer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
-                if (File.Exists(path))
-                {
-                    using var p = Process.Start(new ProcessStartInfo(explorer, $"/select,\"{path}\"") { UseShellExecute = true });
-                    return true;
-                }
-                if (Directory.Exists(path))
-                {
-                    using var p = Process.Start(new ProcessStartInfo(explorer, $"\"{path}\"") { UseShellExecute = true });
-                    return true;
-                }
-                var dir = Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
-                {
-                    using var p = Process.Start(new ProcessStartInfo(explorer, $"\"{dir}\"") { UseShellExecute = true });
-                    return true;
-                }
-                return false;
-            }
-
-            if (OperatingSystem.IsMacOS())
-            {
-                const string openExe = "/usr/bin/open";
-                if (File.Exists(path))
-                {
-                    using var p = Process.Start(new ProcessStartInfo(openExe, $"-R \"{path}\"") { UseShellExecute = true });
-                    return true;
-                }
-                var target = Directory.Exists(path) ? path : Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(target) && Directory.Exists(target))
-                {
-                    using var p = Process.Start(new ProcessStartInfo(openExe, $"\"{target}\"") { UseShellExecute = true });
-                    return true;
-                }
-                return false;
-            }
-
-            if (OperatingSystem.IsLinux())
-            {
-                var dir = Directory.Exists(path) ? path : Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
-                {
-                    using var p = Process.Start(new ProcessStartInfo("/usr/bin/xdg-open", $"\"{dir}\"") { UseShellExecute = true });
-                    return true;
-                }
-            }
+            if (OperatingSystem.IsWindows()) return RevealWindows(path);
+            if (OperatingSystem.IsMacOS()) return RevealMacOS(path);
+            if (OperatingSystem.IsLinux()) return RevealLinux(path);
         }
         catch
         {
@@ -78,5 +33,39 @@ public static class FileManagerLauncher
         }
 
         return false;
+    }
+
+    private static bool RevealWindows(string path)
+    {
+        var explorer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+        if (File.Exists(path)) return StartShell(explorer, $"/select,\"{path}\"");
+        var dir = ResolveExistingDirectory(path);
+        return dir is not null && StartShell(explorer, $"\"{dir}\"");
+    }
+
+    private static bool RevealMacOS(string path)
+    {
+        const string openExe = "/usr/bin/open";
+        if (File.Exists(path)) return StartShell(openExe, $"-R \"{path}\"");
+        var dir = ResolveExistingDirectory(path);
+        return dir is not null && StartShell(openExe, $"\"{dir}\"");
+    }
+
+    private static bool RevealLinux(string path)
+    {
+        var dir = ResolveExistingDirectory(path);
+        return dir is not null && StartShell("/usr/bin/xdg-open", $"\"{dir}\"");
+    }
+
+    private static string? ResolveExistingDirectory(string path)
+    {
+        var candidate = Directory.Exists(path) ? path : Path.GetDirectoryName(path);
+        return !string.IsNullOrEmpty(candidate) && Directory.Exists(candidate) ? candidate : null;
+    }
+
+    private static bool StartShell(string fileName, string arguments)
+    {
+        using var p = Process.Start(new ProcessStartInfo(fileName, arguments) { UseShellExecute = true });
+        return true;
     }
 }

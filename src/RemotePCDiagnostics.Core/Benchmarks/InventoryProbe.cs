@@ -64,7 +64,7 @@ public static partial class InventoryProbe
         var count = 0;
         using var searcher = new ManagementObjectSearcher("SELECT PathName FROM Win32_Service WHERE StartMode = 'Auto'");
         using var results = searcher.Get();
-        foreach (ManagementObject o in results)
+        foreach (ManagementBaseObject o in results)
         {
             ct.ThrowIfCancellationRequested();
             using (o)

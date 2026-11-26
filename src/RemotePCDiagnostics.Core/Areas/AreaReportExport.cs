@@ -61,24 +61,28 @@ public static class AreaReportExport
         Text(service.StartType, MaxValueLength),
         options.CanStart, options.CanStop, options.CanRestart, options.IsProtected);
 
-    private static IReadOnlyList<ExportedAction>? Actions(IReadOnlyList<AreaAction>? actions) =>
-        actions is { Count: > 0 }
-            ? actions.Select(a => new ExportedAction(a.Kind.ToString(), Text(a.Target, MaxValueLength) ?? "",
-                Text(a.TargetLabel, MaxValueLength), Text(a.ButtonText, MaxValueLength) ?? "", Text(a.CurrentSetting, MaxValueLength))
-            {
-                Risk = FixTraits.Risk(a.Kind),
-                Undo = FixTraits.Undo(a.Kind),
-                ReadOnly = RemediationService.IsReadOnly(a.Kind) ? true : null,
-                Slow = FixTraits.Slow(a.Kind) ? true : null,
-                MayNeedRestart = FixTraits.MayNeedRestart(a.Kind) ? true : null,
-                RestartsPc = a.Kind == RemediationKind.ScheduleCleanRestart ? true : null,
-                Choices = a.Choices?.Select(c => new ExportedChoice(Text(c.Id, MaxValueLength) ?? "", Text(c.Label, MaxValueLength) ?? "",
-                    Text(c.Detail, MaxValueLength), Text(c.DisabledReason, MaxValueLength)) { Selected = c.Selected ? true : null }).ToList(),
-                Option = a.Option is { } o ? new ExportedOption(Text(o.Label, MaxValueLength) ?? "", o.Suffix, o.DefaultOn) : null,
-                Consent = Text(a.Consent, MaxValueLength),
-                EmptyChoicesText = a.Choices is { Count: 0 } ? Text(a.EmptyChoicesText, MaxValueLength) : null,
-            }).ToList()
-            : null;
+    private static IReadOnlyList<ExportedAction>? BuildActions(IReadOnlyList<AreaAction>? actions) =>
+        actions is { Count: > 0 } ? actions.Select(BuildAction).ToList() : null;
+
+    private static ExportedAction BuildAction(AreaAction a) =>
+        new(a.Kind.ToString(), Text(a.Target, MaxValueLength) ?? "",
+            Text(a.TargetLabel, MaxValueLength), Text(a.ButtonText, MaxValueLength) ?? "", Text(a.CurrentSetting, MaxValueLength))
+        {
+            Risk = FixTraits.Risk(a.Kind),
+            Undo = FixTraits.Undo(a.Kind),
+            ReadOnly = RemediationService.IsReadOnly(a.Kind) ? true : null,
+            Slow = FixTraits.Slow(a.Kind) ? true : null,
+            MayNeedRestart = FixTraits.MayNeedRestart(a.Kind) ? true : null,
+            RestartsPc = a.Kind == RemediationKind.ScheduleCleanRestart ? true : null,
+            Choices = BuildChoices(a.Choices),
+            Option = a.Option is { } o ? new ExportedOption(Text(o.Label, MaxValueLength) ?? "", o.Suffix, o.DefaultOn) : null,
+            Consent = Text(a.Consent, MaxValueLength),
+            EmptyChoicesText = a.Choices is { Count: 0 } ? Text(a.EmptyChoicesText, MaxValueLength) : null,
+        };
+
+    private static IReadOnlyList<ExportedChoice>? BuildChoices(IReadOnlyList<AreaChoice>? choices) =>
+        choices?.Select(c => new ExportedChoice(Text(c.Id, MaxValueLength) ?? "", Text(c.Label, MaxValueLength) ?? "",
+            Text(c.Detail, MaxValueLength), Text(c.DisabledReason, MaxValueLength)) { Selected = c.Selected ? true : null }).ToList();
 
     public const int MaxReviewedRows = 50;
 
@@ -104,7 +108,7 @@ public static class AreaReportExport
         return new ExportedCard(
             Text(card.Id, MaxValueLength) ?? "",
             Text(card.Title, MaxValueLength) ?? "",
-            Level(card.Level),
+            FormatLevel(card.Level),
             Text(card.Headline, MaxTextLength),
             Text(card.Meta, MaxTextLength),
             Text(card.Note, MaxTextLength),
@@ -120,7 +124,7 @@ public static class AreaReportExport
             card.Rows.Count(row => row.Level is AreaLevel.Warning or AreaLevel.Error),
             rows)
         {
-            Actions = Actions(card.Actions),
+            Actions = BuildActions(card.Actions),
             RunCheck = card.RunCheck is { } link ? new ExportedCheckLink(link.CheckId, link.ButtonText) : null,
             OpenPage = card.OpenPage is { } page ? new ExportedPageLink(page.Path, page.ButtonText) : null,
             ListedRowCount = attention.Count,
@@ -133,18 +137,18 @@ public static class AreaReportExport
     {
         var attention = row.Level is AreaLevel.Warning or AreaLevel.Error;
         return new ExportedRow(
-            Level(row.Level),
+            FormatLevel(row.Level),
             Text(row.Key, MaxValueLength),
             row.Values.Select(v => Text(v, MaxValueLength) ?? "").ToList(),
             attention ? Text(row.Detail, MaxTextLength) : null,
             row.HangOccurrences is { Count: > 0 } hangs ? hangs.Count : null)
         {
-            Actions = Actions(row.Actions),
-            ReviewId = ReviewId(row),
+            Actions = BuildActions(row.Actions),
+            RowReviewId = ReviewId(row),
         };
     }
 
-    private static string Level(AreaLevel level) => level switch
+    private static string FormatLevel(AreaLevel level) => level switch
     {
         AreaLevel.Ok => "ok",
         AreaLevel.Warning => "warning",
@@ -212,7 +216,8 @@ public static class AreaReportExport
         public IReadOnlyList<ExportedAction>? Actions { get; init; }
 
         /// <summary>Set on a row that can be marked as reviewed (or, in <c>ReviewedRows</c>, put back).</summary>
-        public string? ReviewId { get; init; }
+        [JsonPropertyName("reviewId")]
+        public string? RowReviewId { get; init; }
     }
 
     /// <summary>A one-click fix as the page offers it. Kind is a <see cref="RemediationKind"/> name.</summary>

@@ -47,13 +47,14 @@ public sealed class WorkflowService(
     }
     private CancellationTokenSource? _cts;
     private readonly List<WorkflowCheckItem> _checkItems = [];
+    private System.Collections.Immutable.ImmutableArray<WorkflowCheckItem> _checkItemsSnapshot = [];
     private bool _workflowBusy;
     private bool _changeQueueBusy;
     private readonly List<QueuedPostRunChange> _changeQueue = [];
     private string? _activeChangeKey;
     private readonly HashSet<string> _completedChangeKeys = new(StringComparer.OrdinalIgnoreCase);
 
-    public IReadOnlyList<WorkflowCheckItem> CheckItems { get { lock (_gate) return _checkItems.ToList(); } }
+    public IReadOnlyList<WorkflowCheckItem> CheckItems { get { lock (_gate) return _checkItemsSnapshot; } }
     public int CompletedChecksCount => CheckItems.Count(c => c.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error);
     public int TotalChecksCount => CheckItems.Count;
 
@@ -78,7 +79,11 @@ public sealed class WorkflowService(
         lock (_gate)
         {
             var idx = _checkItems.FindIndex(x => x.Id == id);
-            if (idx >= 0) _checkItems[idx] = change(_checkItems[idx]);
+            if (idx >= 0)
+            {
+                _checkItems[idx] = change(_checkItems[idx]);
+                _checkItemsSnapshot = [.. _checkItems];
+            }
         }
     }
     private TaskCompletionSource? _resuming;
@@ -144,6 +149,7 @@ public sealed class WorkflowService(
                 _checkItems.Add(new("MemoryScan", "Memory, startup & apps", DiagnosticStatus.NotRun, "Waiting…", 0, 5));
                 _checkItems.Add(new("StorageScan", "Storage caches & leftovers", DiagnosticStatus.NotRun, "Waiting…", 0, Storage.StorageCleanupCatalog.All.Count + 3));
             }
+            _checkItemsSnapshot = [.. _checkItems];
         }
         Save(_ => new WorkflowState { Stage = WorkflowStage.Checking, Actor = Actor });
         try
@@ -595,6 +601,7 @@ public sealed class WorkflowService(
         lock (_gate)
         {
             _checkItems.Clear();
+            _checkItemsSnapshot = [];
             _completedChangeKeys.Clear();
         }
         Save(_ => new WorkflowState());

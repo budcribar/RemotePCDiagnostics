@@ -100,7 +100,7 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
                 BatteryReader.StatusSql);
             using var results = searcher.Get();
             var sawAny = false;
-            foreach (System.Management.ManagementObject o in results)
+            foreach (System.Management.ManagementBaseObject o in results)
             {
                 using (o)
                 {

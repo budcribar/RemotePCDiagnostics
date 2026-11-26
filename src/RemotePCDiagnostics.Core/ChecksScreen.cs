@@ -117,8 +117,9 @@ public sealed class ChecksScreenState
     private readonly Dictionary<string, string?> _runLabels = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _cts;
     private readonly List<Workflow.WorkflowCheckItem> _checkItems = [];
+    private System.Collections.Immutable.ImmutableArray<Workflow.WorkflowCheckItem> _checkItemsSnapshot = [];
 
-    public IReadOnlyList<Workflow.WorkflowCheckItem> CheckItems { get { lock (_gate) return _checkItems.ToList(); } }
+    public IReadOnlyList<Workflow.WorkflowCheckItem> CheckItems { get { lock (_gate) return _checkItemsSnapshot; } }
     public int CompletedChecksCount => CheckItems.Count(c => c.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error);
     public int TotalChecksCount => CheckItems.Count;
 
@@ -143,7 +144,7 @@ public sealed class ChecksScreenState
         lock (_gate)
         {
             if (RunningGroup == CheckGroup.Checks && _checkItems.Count > 0)
-                return _checkItems.ToList();
+                return _checkItemsSnapshot;
         }
         return ChecksModules.Select(m =>
         {
@@ -164,7 +165,11 @@ public sealed class ChecksScreenState
         lock (_gate)
         {
             var idx = _checkItems.FindIndex(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
-            if (idx >= 0) _checkItems[idx] = change(_checkItems[idx]);
+            if (idx >= 0)
+            {
+                _checkItems[idx] = change(_checkItems[idx]);
+                _checkItemsSnapshot = [.. _checkItems];
+            }
         }
     }
 
@@ -172,13 +177,11 @@ public sealed class ChecksScreenState
 
     private readonly Preferences.PreferencesService? _prefs;
 
-    private readonly ResultStore _store;
     private readonly Optimizations.MemorySuggestionService? _memory;
 
     public ChecksScreenState(DiagnosticsService diag, ResultStore store, Preferences.PreferencesService? prefs = null, Optimizations.MemorySuggestionService? memory = null)
     {
         _diag = diag;
-        _store = store;
         _memory = memory;
         _prefs = prefs;
         var saved = prefs?.Current;
@@ -196,7 +199,9 @@ public sealed class ChecksScreenState
         foreach (var r in store.Snapshot.Values) OnResult(r);
     }
 
-    public IReadOnlyList<IDiagnosticModule> ChecksModules => _diag.Modules.Where(m => m.IncludeInRunAll).ToList();
+    public IReadOnlyList<IDiagnosticModule> ChecksModules => GetChecksModules();
+
+    private IReadOnlyList<IDiagnosticModule> GetChecksModules() => _diag.Modules.Where(m => m.IncludeInRunAll).ToList();
 
     private static readonly HashSet<string> ExcludedFromStress = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -208,20 +213,19 @@ public sealed class ChecksScreenState
     /// <summary>Stress tests page: automated hardware stress tests in suite order, then automated on-demand scans (e.g. NPU, DISM, SFC).
     /// Interactive media tests (audio, webcam) are on the interactive tests page.</summary>
     /// <remarks>Built from the catalog: stress tests in suite order, then on-demand tests by group and order.</remarks>
-    public IReadOnlyList<IDiagnosticModule> StressModules
+    public IReadOnlyList<IDiagnosticModule> StressModules => GetStressModules();
+
+    private IReadOnlyList<IDiagnosticModule> GetStressModules()
     {
-        get
-        {
-            var order = _diag.StressOrder.ToList();
-            var listed = _diag.Modules.Select(m => (Module: m, Descriptor: _diag.Catalog.Get(m.Id)))
-                .Where(x => x.Descriptor is { OnStressPage: true } && !ExcludedFromStress.Contains(x.Module.Name)).ToList();
-            var stress = listed.Where(x => x.Descriptor!.Kind == ModuleKind.StressTest)
-                .OrderBy(x => order.FindIndex(n => string.Equals(n, x.Module.Name, StringComparison.OrdinalIgnoreCase)) is var i and >= 0 ? i : int.MaxValue)
-                .ThenBy(x => ModuleGroups.Rank(x.Descriptor!.Group)).ThenBy(x => x.Descriptor!.Order);
-            var onDemand = listed.Where(x => x.Descriptor!.Kind == ModuleKind.OnDemand)
-                .OrderBy(x => ModuleGroups.Rank(x.Descriptor!.Group)).ThenBy(x => x.Descriptor!.Order);
-            return stress.Concat(onDemand).Select(x => x.Module).ToList();
-        }
+        var order = _diag.StressOrder.ToList();
+        var listed = _diag.Modules.Select(m => (Module: m, Descriptor: _diag.Catalog.Get(m.Id)))
+            .Where(x => x.Descriptor is { OnStressPage: true } && !ExcludedFromStress.Contains(x.Module.Name)).ToList();
+        var stress = listed.Where(x => x.Descriptor!.Kind == ModuleKind.StressTest)
+            .OrderBy(x => order.FindIndex(n => string.Equals(n, x.Module.Name, StringComparison.OrdinalIgnoreCase)) is var i and >= 0 ? i : int.MaxValue)
+            .ThenBy(x => ModuleGroups.Rank(x.Descriptor!.Group)).ThenBy(x => x.Descriptor!.Order);
+        var onDemand = listed.Where(x => x.Descriptor!.Kind == ModuleKind.OnDemand)
+            .OrderBy(x => ModuleGroups.Rank(x.Descriptor!.Group)).ThenBy(x => x.Descriptor!.Order);
+        return stress.Concat(onDemand).Select(x => x.Module).ToList();
     }
 
     /// <summary>On-demand tests (e.g. NPU, SFC/DISM): listed with the stress tests but never part of the stress run,
@@ -377,6 +381,7 @@ public sealed class ChecksScreenState
                     _checkItems.Add(new("MemoryScan", "Memory, startup & apps", DiagnosticStatus.NotRun, "Waiting…", 0, 5));
                     _checkItems.Add(new("StorageScan", "Storage caches & leftovers", DiagnosticStatus.NotRun, "Waiting…", 0, Storage.StorageCleanupCatalog.All.Count + 3));
                 }
+                _checkItemsSnapshot = [.. _checkItems];
             }
             if (selected.Count == 0) return;
             RunningGroup = g;
@@ -461,7 +466,7 @@ public sealed class ChecksScreenState
         }
         finally
         {
-            lock (_gate) { RunningGroup = null; Progress = null; IsRunAll = false; _runSteps = []; _cts = null; if (g == CheckGroup.Checks) _checkItems.Clear(); LastRunNote = errors.Count == 0 ? null : string.Join(" ", errors); }
+            lock (_gate) { RunningGroup = null; Progress = null; IsRunAll = false; _runSteps = []; _cts = null; if (g == CheckGroup.Checks) { _checkItems.Clear(); _checkItemsSnapshot = []; } LastRunNote = errors.Count == 0 ? null : string.Join(" ", errors); }
             cts.Dispose();
             Raise();
         }

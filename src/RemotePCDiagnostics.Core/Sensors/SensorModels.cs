@@ -134,7 +134,8 @@ public sealed record SensorReport(SensorSnapshot Snapshot, IReadOnlyList<SensorG
     }
 
     /// <summary>Groups with at least one reading; empty groups are hidden on the page.</summary>
-    public IReadOnlyList<SensorGroup> VisibleGroups => Groups.Where(g => g.Readings.Count > 0).ToList();
+    public IReadOnlyList<SensorGroup> VisibleGroups => GetVisibleGroups();
+    private IReadOnlyList<SensorGroup> GetVisibleGroups() => Groups.Where(g => g.Readings.Count > 0).ToList();
 
     /// <summary>Friendly line listing groups this PC doesn't report, or null when none (or all) are missing.</summary>
     public string? MissingText

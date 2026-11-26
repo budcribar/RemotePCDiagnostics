@@ -32,7 +32,15 @@ public static class StressExport
         mode = mode == StressSuiteMode.Extended ? "extended" : "short",
         minutesPerTest = StressSuiteDurations.PerTest(mode).TotalMinutes,
         running,
-        progress = running && progress is { Finished: false } p
+        progress = BuildProgress(running, progress),
+        lastSuite = BuildLastSuite(last),
+        note = AreaReportExport.Text(lastRunNote, AreaReportExport.MaxTextLength),
+        selectedCheckIds = tests.Where(t => t.Selected).Select(t => t.CheckId).ToList(),
+        tests = tests.Select(BuildTestItem).ToList(),
+    };
+
+    private static object? BuildProgress(bool running, StressSuiteProgress? progress) =>
+        running && progress is { Finished: false } p
             ? new
             {
                 index = p.Index,
@@ -41,8 +49,10 @@ public static class StressExport
                 headline = AreaReportExport.Text(p.Headline, AreaReportExport.MaxTextLength),
                 steps = Steps(p.Steps),
             }
-            : null,
-        lastSuite = last is null ? null : new
+            : null;
+
+    private static object? BuildLastSuite(StressSuiteResult? last) =>
+        last is null ? null : new
         {
             mode = last.Mode == StressSuiteMode.Extended ? "extended" : "short",
             outcome = last.Outcome switch
@@ -53,33 +63,31 @@ public static class StressExport
             },
             message = AreaReportExport.Text(last.Message, AreaReportExport.MaxTextLength),
             steps = Steps(last.Steps),
-        },
-        note = AreaReportExport.Text(lastRunNote, AreaReportExport.MaxTextLength),
-        selectedCheckIds = tests.Where(t => t.Selected).Select(t => t.CheckId).ToList(),
-        tests = tests.Select(t =>
+        };
+
+    private static object BuildTestItem(Test t)
+    {
+        var r = t.Result;
+        var kind = CheckRows.KindOf(r);
+        var finished = kind is not (RowKind.NotRun or RowKind.Running);
+        var report = r.Report() as IStressReport;
+        return new
         {
-            var r = t.Result;
-            var kind = CheckRows.KindOf(r);
-            var finished = kind is not (RowKind.NotRun or RowKind.Running);
-            var report = r.Report() as IStressReport;
-            return new
-            {
-                checkId = t.CheckId,
-                name = AreaReportExport.Text(t.Name, AreaReportExport.MaxValueLength),
-                selected = t.Selected,
-                state = kind.ToString().ToLowerInvariant(),
-                runId = r.RunId,
-                completedAt = finished ? r.Timestamp.ToString("O") : null,
-                runLabel = finished ? AreaReportExport.Text(t.RunLabel, AreaReportExport.MaxValueLength) : null,
-                message = AreaReportExport.Text(r.Message, AreaReportExport.MaxTextLength),
-                headline = finished ? AreaReportExport.Text(report?.Headline, AreaReportExport.MaxTextLength) : null,
-                overheated = finished && report is { IsOverheated: true } ? true : (bool?)null,
-                stoppedByUser = finished && (r.Cancelled || report is { IsStoppedByUser: true }) ? true : (bool?)null,
-                couldNotRun = finished && report is { IsCouldNotRun: true } ? true : (bool?)null,
-                unavailable = finished && report is { IsUnavailable: true } ? true : (bool?)null,
-            };
-        }).ToList(),
-    };
+            checkId = t.CheckId,
+            name = AreaReportExport.Text(t.Name, AreaReportExport.MaxValueLength),
+            selected = t.Selected,
+            state = kind.ToString().ToLowerInvariant(),
+            runId = r.RunId,
+            completedAt = finished ? r.Timestamp.ToString("O") : null,
+            runLabel = finished ? AreaReportExport.Text(t.RunLabel, AreaReportExport.MaxValueLength) : null,
+            message = AreaReportExport.Text(r.Message, AreaReportExport.MaxTextLength),
+            headline = finished ? AreaReportExport.Text(report?.Headline, AreaReportExport.MaxTextLength) : null,
+            overheated = finished && report is { IsOverheated: true } ? true : (bool?)null,
+            stoppedByUser = finished && (r.Cancelled || report is { IsStoppedByUser: true }) ? true : (bool?)null,
+            couldNotRun = finished && report is { IsCouldNotRun: true } ? true : (bool?)null,
+            unavailable = finished && report is { IsUnavailable: true } ? true : (bool?)null,
+        };
+    }
 
     private static object Steps(IReadOnlyList<StressSuiteStep> steps) => steps.Select(s => new
     {

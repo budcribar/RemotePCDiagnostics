@@ -30,7 +30,7 @@ public static class KeyMetricText
     /// <summary>"87%", "412.5 GB", "72°C", "318" (no unit).</summary>
     public static string Value(double value, string unit)
     {
-        var n = Math.Abs(value) >= 100 || value == Math.Round(value) ? value.ToString("#,0", CultureInfo.CurrentCulture) : value.ToString("#,0.#", CultureInfo.CurrentCulture);
+        var n = Math.Abs(value) >= 100 || Math.Abs(value - Math.Round(value)) < double.Epsilon ? value.ToString("#,0", CultureInfo.CurrentCulture) : value.ToString("#,0.#", CultureInfo.CurrentCulture);
         return unit.Length == 0 ? n : unit is "%" or "°C" ? n + unit : n + " " + unit;
     }
 }

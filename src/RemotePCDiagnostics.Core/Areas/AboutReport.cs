@@ -240,7 +240,7 @@ public static class AboutReport
             AllowedServiceStatus(input.AgentServiceStatus),
             input.AgentConnected,
             ModeFor(input.SessionMode),
-            new AboutShop(AgentLayout.NormalizeShopGroup(input.ShopGroup), Public(input.ShopName, 120), AgentId(input.AgentId)),
+            new AboutShop(AgentLayout.NormalizeShopGroup(input.ShopGroup), Public(input.ShopName, 120), NormalizeAgentId(input.AgentId)),
             Public(input.MachineName, 80),
             Public(input.OsVersion, 200),
             MaskInstallPath(input.InstallPath, input.UserName, input.UserProfile),
@@ -256,7 +256,7 @@ public static class AboutReport
             ? text : null;
     }
 
-    private static string? AgentId(string? value) =>
+    private static string? NormalizeAgentId(string? value) =>
         Guid.TryParse(value, out var id) && id != Guid.Empty ? id.ToString("D") : null;
 
     /// <summary>Drops blank text, shop API keys and URLs so a secret cannot ride along in a name or a version.</summary>

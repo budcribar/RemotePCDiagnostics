@@ -11,7 +11,7 @@ namespace RemotePCDiagnostics.Host;
 internal sealed class SystemAwake : IDisposable
 {
     private const int PowerRequestSystemRequired = 1;
-    private const uint SimpleReasonString = 0x1;
+    private const uint SimpleReasonStringFlag = 0x1;
     private static readonly IntPtr InvalidHandle = new(-1);
 
     private readonly object _gate = new();
@@ -30,7 +30,7 @@ internal sealed class SystemAwake : IDisposable
             {
                 if (_request == IntPtr.Zero)
                 {
-                    var context = new REASON_CONTEXT { Version = 0, Flags = SimpleReasonString, SimpleReasonString = reason };
+                    var context = new REASON_CONTEXT { Version = 0, Flags = SimpleReasonStringFlag, SimpleReasonString = reason };
                     var handle = PowerCreateRequest(ref context);
                     if (handle == IntPtr.Zero || handle == InvalidHandle) return false;
                     _request = handle;

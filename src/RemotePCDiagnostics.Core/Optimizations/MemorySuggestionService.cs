@@ -259,8 +259,10 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
     /// <summary>Disk space freed by storage cleanups this session.</summary>
     public long StorageFreedBytes { get; private set; }
     private readonly SemaphoreSlim _storageGate = new(1, 1);
-    public IReadOnlyList<UndoEntry> Undos { get { lock (_gate) return _undo.ToList(); } }
-    public IReadOnlyList<SuggestionResult> Recent { get { lock (_gate) return _recent.ToList(); } }
+    private System.Collections.Immutable.ImmutableArray<UndoEntry> _undosSnapshot = [];
+    private System.Collections.Immutable.ImmutableArray<SuggestionResult> _recentSnapshot = [];
+    public IReadOnlyList<UndoEntry> Undos { get { lock (_gate) return _undosSnapshot; } }
+    public IReadOnlyList<SuggestionResult> Recent { get { lock (_gate) return _recentSnapshot; } }
     public SuggestionResult? ResultFor(string id) { lock (_gate) return _results.GetValueOrDefault(id); }
     public UndoEntry? UndoFor(string id) { lock (_gate) return _undo.LastOrDefault(u => u.Id == id); }
 
@@ -451,13 +453,13 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
         }
         if (outcome.Success)
         {
-            lock (_gate) _undo.Remove(u);
+            lock (_gate) { _undo.Remove(u); _undosSnapshot = [.. _undo]; }
             if (JournalKind(u.Type) is { } jk) try { journal?.RemoveLatest(jk, u.Target); } catch { }
         }
         var r = new SuggestionResult(u.Id, outcome.Success, (outcome.Success ? "Undone: " : "") + outcome.Message, DateTime.Now, Action: u.Type, Undone: true, DiskRestored: outcome.Success && outcome.DiskRestored);
         // History pairs an undo with the fix it reverses by the suggestion ID, and matches this event to the live record by its message.
         Event(outcome.Success ? LogLevel.Information : LogLevel.Warning, $"Memory suggestion undone\r\nActor: {Actor}\r\nSuggestion: {u.Id}\r\nAction: {u.Type}\r\nTarget: {u.Target}\r\n{(r.DiskRestored ? "Disk restored: Yes\r\n" : "")}Result: {(outcome.Success ? "Success" : "Failed")}\r\nMessage: {r.Message}");
-        lock (_gate) { _results[u.Id] = r; _recent.Insert(0, r); }
+        lock (_gate) { _results[u.Id] = r; _recent.Insert(0, r); _recentSnapshot = [.. _recent]; }
         await ScanAsync(ct).ConfigureAwait(false);
         return r;
     }
@@ -473,6 +475,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             _results[id] = r;
             _recent.Insert(0, r);
             if (_recent.Count > 20) _recent.RemoveAt(_recent.Count - 1);
+            _recentSnapshot = [.. _recent];
         }
         // History reads the exact amounts from these lines, never from the message text.
         var inv = System.Globalization.CultureInfo.InvariantCulture;
@@ -487,7 +490,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
 
     private void Event(LogLevel l, string text) { try { events?.Invoke(l, text); } catch (Exception ex) { LogWarn("Event write failed: " + ex.Message); } }
 
-    private void AddUndo(UndoEntry u) { lock (_gate) { _undo.RemoveAll(x => x.Id == u.Id && x.Type == u.Type); _undo.Add(u); } }
+    private void AddUndo(UndoEntry u) { lock (_gate) { _undo.RemoveAll(x => x.Id == u.Id && x.Type == u.Type); _undo.Add(u); _undosSnapshot = [.. _undo]; } }
 
     /// <summary>Hands one clicked action to its suggestion family.</summary>
     private async Task<ActionOutcome> PerformAsync(MemorySuggestion s, MemoryAction a, CancellationToken ct)

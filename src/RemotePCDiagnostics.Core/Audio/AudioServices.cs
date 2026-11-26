@@ -27,7 +27,7 @@ public static class AudioServices
     {
         ServiceState State(string name);
         bool IsDisabled(string name);
-        void Start(string name);
+        void StartService(string name);
         /// <summary>Stops the service and the services that depend on it.</summary>
         void Stop(string name);
         bool WaitFor(string name, ServiceState state, TimeSpan timeout);
@@ -51,7 +51,7 @@ public static class AudioServices
             if (state == ServiceState.NotFound) return $"{Label(name)} isn't installed on this PC.";
             if (state == ServiceState.Running) continue;
             if (host.IsDisabled(name)) return $"{Label(name)} is disabled. Set it to Automatic first.";
-            if (state == ServiceState.Stopped) host.Start(name);
+            if (state == ServiceState.Stopped) host.StartService(name);
             if (!host.WaitFor(name, ServiceState.Running, Wait)) return $"{Label(name)} didn't start within 15 seconds.";
         }
         return null;
@@ -93,7 +93,7 @@ public static class AudioServices
             return sc.StartType == ServiceStartMode.Disabled;
         }
 
-        public void Start(string name) { using var sc = new ServiceController(name); sc.Start(); }
+        public void StartService(string name) { using var sc = new ServiceController(name); sc.Start(); }
         public void Stop(string name) { using var sc = new ServiceController(name); sc.Stop(stopDependentServices: true); }
 
         public bool WaitFor(string name, ServiceState state, TimeSpan timeout)

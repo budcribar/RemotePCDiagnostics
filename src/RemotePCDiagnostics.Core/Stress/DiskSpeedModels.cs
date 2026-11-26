@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text.Json.Serialization;
 
 namespace RemotePCDiagnostics.Core.Stress;
@@ -10,7 +11,7 @@ public enum DiskSpeedPhase { Preparing, SequentialWrite, SequentialRead, RandomW
 public sealed record DiskSpeedOptions
 {
     public const long MB = 1024L * 1024, GB = 1024 * MB;
-    public static readonly TimeSpan[] DurationChoices = new[] { 1, 2, 5, 10 }.Select(m => TimeSpan.FromMinutes(m)).ToArray();
+    public static readonly ImmutableArray<TimeSpan> DurationChoices = [.. new[] { 1, 2, 5, 10 }.Select(m => TimeSpan.FromMinutes(m))];
     public static readonly long[] SizeChoices = [256 * MB, 512 * MB, 1 * GB, 4 * GB];
     public static TimeSpan MaxDuration => DurationChoices[^1];
 

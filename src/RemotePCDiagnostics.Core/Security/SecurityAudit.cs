@@ -42,7 +42,8 @@ public sealed record SecurityAuditReport(IReadOnlyList<AuditFinding> Findings, s
     public bool HomePc => Profile is { Managed: false };
 
     /// <summary>The findings the counts and the page show: on a home PC only the <see cref="AuditFinding.HomeRelevant"/> ones.</summary>
-    public IReadOnlyList<AuditFinding> Shown => HomePc ? Findings.Where(f => f.HomeRelevant).ToList() : Findings;
+    public IReadOnlyList<AuditFinding> Shown => GetShown();
+    private IReadOnlyList<AuditFinding> GetShown() => HomePc ? Findings.Where(f => f.HomeRelevant).ToList() : Findings;
 
     /// <summary>Enterprise-only findings left out on a home PC.</summary>
     public int Hidden => Findings.Count - Shown.Count;

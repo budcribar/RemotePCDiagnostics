@@ -99,7 +99,7 @@ else
                 {
                     var c = col;
                     <th @key="c" class="sortable-th" scope="col" aria-sort="@(_sort.Col == c ? (_sort.Desc ? "descending" : "ascending") : "none")"
-                        data-testid="audit-th-@c.ToString().ToLowerInvariant()"><button type="button" class="th-btn" @onclick="() => _sort = AuditSort.Toggle(_sort, c)">@title<span class="sort-arrow" aria-hidden="true">@(_sort.Col == c ? (_sort.Desc ? " ▼" : " ▲") : "")</span></button></th>
+                        data-testid="audit-th-@c.ToString().ToLowerInvariant()"><button type="button" class="th-btn" @onclick="() => ToggleSort(c)">@title<span class="sort-arrow" aria-hidden="true">@(_sort.Col == c ? (_sort.Desc ? " ▼" : " ▲") : "")</span></button></th>
                 }
             </tr>
             @foreach (var f in rows)
@@ -141,6 +141,7 @@ else
     private AuditFinding? _open;
     // Static so the chosen sort survives re-runs, live updates and navigation.
     private static (AuditColumn Col, bool Desc) _sort = AuditSort.Default;
+    private static void ToggleSort(AuditColumn col) => _sort = AuditSort.Toggle(_sort, col);
     private DateTimeOffset _started;
     private System.Threading.Timer? _tick;
 

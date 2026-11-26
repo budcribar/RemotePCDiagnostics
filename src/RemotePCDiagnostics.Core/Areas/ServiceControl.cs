@@ -102,12 +102,13 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
     public const int MaxRecent = 20;
     public TimeSpan Timeout { get; } = timeout ?? TimeSpan.FromSeconds(30);
     private readonly List<ServiceActionRecord> _recent = [];
+    private volatile IReadOnlyList<ServiceActionRecord> _recentSnapshot = [];
     private readonly object _gate = new();
 
     /// <summary>Raised after every action (success or failure), e.g. to notify the local user about a remote action.</summary>
     public event Action<ServiceActionRecord>? ActionCompleted;
 
-    public IReadOnlyList<ServiceActionRecord> Recent { get { lock (_gate) return _recent.ToList(); } }
+    public IReadOnlyList<ServiceActionRecord> Recent => _recentSnapshot;
 
     public string Actor => ServiceActor.From(session);
 
@@ -129,24 +130,13 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
     public ServiceActionPlan Plan(ServiceInfo s, ServiceAction action)
     {
         var opts = OptionsFor(s);
-        var allowed = action == ServiceAction.Start ? opts.CanStart : action == ServiceAction.Stop ? opts.CanStop : opts.CanRestart;
+        var allowed = IsActionAllowed(opts, action);
         var what = s.Description.Length > 0 ? $"{s.Label}: {s.Description}" : $"{s.Label} is a Windows service.";
-        IReadOnlyList<DependentService> deps = [];
-        if (action != ServiceAction.Start)
-        {
-            try { deps = backend.GetRunningDependents(s.Name); }
-            catch (Exception ex) { LogError($"GetRunningDependents({s.Name}) failed: {ex}"); }
-        }
-        var happen = action switch
-        {
-            ServiceAction.Start => $"Windows will start {s.Label}.",
-            ServiceAction.Stop => $"Windows will stop {s.Label}. Anything that relies on it may stop working until it is started again or the PC restarts.",
-            _ => $"Windows will stop {s.Label} and then start it again. Anything that relies on it may pause briefly.",
-        };
-        string? warning = deps.Count == 0 ? null : action == ServiceAction.Stop
-            ? $"These running services depend on it and will also be stopped: {string.Join(", ", deps.Select(d => d.Label))}."
-            : $"These running services depend on it and will be stopped and started again: {string.Join(", ", deps.Select(d => d.Label))}.";
-        if (!allowed) warning = Optimizations.MemorySuggestionEngine.IsVisualStudioCollector(s.Name) ? "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector." : opts.IsProtected ? $"{s.Label} is protected by Windows and can't be changed from here." : $"{s.Label} can't be {Past(action)} right now.";
+        var deps = GetRunningDependentsSafe(s.Name, action);
+        var happen = DescribeAction(s.Label, action);
+        var warning = allowed
+            ? BuildDependentsWarning(deps, action)
+            : BuildRefusalMessage(s, opts, action);
         return new(action, $"{Verb(action)} {s.Label}?", what, happen, deps, warning, allowed);
     }
 
@@ -154,55 +144,119 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
     {
         var actor = Actor;
         Log($"{actor} requested {action} of '{s.Name}' ({s.Label})");
+        (s, var opts, var allowed) = RefreshOptionsIfStale(s, action);
+
         ServiceActionResult result;
         IReadOnlyList<DependentService> journaledStoppedDeps = [];
         var journalParentStopped = false;
-        var opts = OptionsFor(s);
-        var allowed = action == ServiceAction.Start ? opts.CanStart : action == ServiceAction.Stop ? opts.CanStop : opts.CanRestart;
-        if (!allowed && !opts.IsProtected && StatusText(SafeState(s.Name)) is { Length: > 0 } live && live != s.Status)
-        {
-            s = s with { Status = live };
-            opts = OptionsFor(s);
-            allowed = action == ServiceAction.Start ? opts.CanStart : action == ServiceAction.Stop ? opts.CanStop : opts.CanRestart;
-        }
         if (!allowed)
         {
             Log($"Refused {action} of '{s.Name}': protected={opts.IsProtected} status={s.Status} startType={s.StartType}");
-            result = new(false, Optimizations.MemorySuggestionEngine.IsVisualStudioCollector(s.Name) ? "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector." : opts.IsProtected ? $"{s.Label} is protected by Windows and can't be {Past(action)} from here." : $"{s.Label} can't be {Past(action)} right now.", SafeState(s.Name));
+            result = new(false, BuildRefusalMessage(s, opts, action, forExecution: true), SafeState(s.Name));
         }
         else
         {
             (result, journaledStoppedDeps, journalParentStopped) = await RunAsync(s, action, ct).ConfigureAwait(false);
         }
-        if (journal is not null)
+
+        RecordJournalEntries(s, action, actor, result.Success, journalParentStopped, journaledStoppedDeps);
+        RecordRecentAction(s, action, actor, result);
+        return result;
+    }
+
+    private static bool IsActionAllowed(ServiceControlOptions opts, ServiceAction action) => action switch
+    {
+        ServiceAction.Start => opts.CanStart,
+        ServiceAction.Stop => opts.CanStop,
+        _ => opts.CanRestart,
+    };
+
+    private IReadOnlyList<DependentService> GetRunningDependentsSafe(string serviceName, ServiceAction action)
+    {
+        if (action == ServiceAction.Start) return [];
+        try { return backend.GetRunningDependents(serviceName); }
+        catch (Exception ex) { LogError($"GetRunningDependents({serviceName}) failed: {ex}"); return []; }
+    }
+
+    private static string DescribeAction(string label, ServiceAction action) => action switch
+    {
+        ServiceAction.Start => $"Windows will start {label}.",
+        ServiceAction.Stop => $"Windows will stop {label}. Anything that relies on it may stop working until it is started again or the PC restarts.",
+        _ => $"Windows will stop {label} and then start it again. Anything that relies on it may pause briefly.",
+    };
+
+    private static string? BuildDependentsWarning(IReadOnlyList<DependentService> deps, ServiceAction action)
+    {
+        if (deps.Count == 0) return null;
+        var names = string.Join(", ", deps.Select(d => d.Label));
+        return action == ServiceAction.Stop
+            ? $"These running services depend on it and will also be stopped: {names}."
+            : $"These running services depend on it and will be stopped and started again: {names}.";
+    }
+
+    private static string BuildRefusalMessage(ServiceInfo s, ServiceControlOptions opts, ServiceAction action, bool forExecution = false)
+    {
+        if (Optimizations.MemorySuggestionEngine.IsVisualStudioCollector(s.Name))
+            return "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector.";
+        if (opts.IsProtected)
+            return forExecution
+                ? $"{s.Label} is protected by Windows and can't be {Past(action)} from here."
+                : $"{s.Label} is protected by Windows and can't be changed from here.";
+        return $"{s.Label} can't be {Past(action)} right now.";
+    }
+
+    private (ServiceInfo Service, ServiceControlOptions Options, bool Allowed) RefreshOptionsIfStale(ServiceInfo s, ServiceAction action)
+    {
+        var opts = OptionsFor(s);
+        var allowed = IsActionAllowed(opts, action);
+        if (!allowed && !opts.IsProtected && StatusText(SafeState(s.Name)) is { Length: > 0 } live && live != s.Status)
         {
-            try
-            {
-                var nowUtc = DateTimeOffset.UtcNow;
-                if (action == ServiceAction.Start && result.Success)
-                {
-                    journal.Add(new(Guid.NewGuid(), nowUtc, Changes.ChangeKind.ServiceRunning, s.Name, "Stopped", $"{s.Label} started", actor));
-                }
-                else if (journalParentStopped || journaledStoppedDeps.Count > 0)
-                {
-                    // Reverse order so UndoAllAsync (which replays last-added first) starts the parent first, then direct dependents, then leaf dependents.
-                    foreach (var d in Enumerable.Reverse(journaledStoppedDeps))
-                        journal.Add(new(Guid.NewGuid(), nowUtc, Changes.ChangeKind.ServiceRunning, d.Name, "Running", $"{d.Label} stopped (depends on {s.Label})", actor));
-                    if (journalParentStopped)
-                        journal.Add(new(Guid.NewGuid(), nowUtc, Changes.ChangeKind.ServiceRunning, s.Name, "Running", $"{s.Label} stopped", actor));
-                }
-            }
-            catch { }
+            s = s with { Status = live };
+            opts = OptionsFor(s);
+            allowed = IsActionAllowed(opts, action);
         }
+        return (s, opts, allowed);
+    }
+
+    private void RecordJournalEntries(
+        ServiceInfo s,
+        ServiceAction action,
+        string actor,
+        bool success,
+        bool journalParentStopped,
+        IReadOnlyList<DependentService> journaledStoppedDeps)
+    {
+        if (journal is null) return;
+        try
+        {
+            var nowUtc = DateTimeOffset.UtcNow;
+            if (action == ServiceAction.Start && success)
+            {
+                journal.Add(new(Guid.NewGuid(), nowUtc, Changes.ChangeKind.ServiceRunning, s.Name, "Stopped", $"{s.Label} started", actor));
+                return;
+            }
+            if (!journalParentStopped && journaledStoppedDeps.Count == 0) return;
+
+            // Reverse order so UndoAllAsync (which replays last-added first) starts the parent first, then direct dependents, then leaf dependents.
+            foreach (var d in Enumerable.Reverse(journaledStoppedDeps))
+                journal.Add(new(Guid.NewGuid(), nowUtc, Changes.ChangeKind.ServiceRunning, d.Name, "Running", $"{d.Label} stopped (depends on {s.Label})", actor));
+            if (journalParentStopped)
+                journal.Add(new(Guid.NewGuid(), nowUtc, Changes.ChangeKind.ServiceRunning, s.Name, "Running", $"{s.Label} stopped", actor));
+        }
+        catch { }
+    }
+
+    private void RecordRecentAction(ServiceInfo s, ServiceAction action, string actor, ServiceActionResult result)
+    {
         var rec = new ServiceActionRecord(DateTime.Now, actor, action, s.Name, s.Label, result.Success, result.Message);
         lock (_gate)
         {
             _recent.Insert(0, rec);
             if (_recent.Count > MaxRecent) _recent.RemoveAt(_recent.Count - 1);
+            _recentSnapshot = _recent.ToArray();
         }
         Log($"AUDIT when={rec.When:O} actor='{actor}' action={action} service='{s.Name}' success={result.Success} newState={result.NewState} message='{result.Message}'");
         try { ActionCompleted?.Invoke(rec); } catch (Exception ex) { LogError($"ActionCompleted handler failed: {ex}"); }
-        return result;
     }
 
     private ServiceState SafeState(string name)
@@ -222,51 +276,15 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
             if (action is ServiceAction.Stop or ServiceAction.Restart)
             {
                 step = "stop";
-                backend.Stop(s.Name);
-                if (!await backend.WaitForStateAsync(s.Name, ServiceState.Stopped, Timeout, ct).ConfigureAwait(false))
-                {
-                    LogWarn($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to stop");
-                    return (new(false, $"Couldn't {verb} {s.Label}: it didn't respond in time.", SafeState(s.Name)), [], false);
-                }
+                var stopFailure = await StopServiceAsync(s, verb, ct).ConfigureAwait(false);
+                if (stopFailure is not null) return (stopFailure, [], false);
                 stopped = true;
             }
             if (action is ServiceAction.Start or ServiceAction.Restart)
             {
                 step = "start";
-                backend.Start(s.Name);
-                if (!await backend.WaitForStateAsync(s.Name, ServiceState.Running, Timeout, ct).ConfigureAwait(false))
-                {
-                    LogWarn($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to start");
-                    return (new(false, $"Couldn't {verb} {s.Label}: it didn't respond in time.", SafeState(s.Name)),
-                        stopped ? deps : [], stopped);
-                }
-                if (action == ServiceAction.Restart)
-                {
-                    var failedDeps = new List<DependentService>();
-                    foreach (var d in deps)
-                    {
-                        try
-                        {
-                            backend.Start(d.Name);
-                            if (!await backend.WaitForStateAsync(d.Name, ServiceState.Running, Timeout, ct).ConfigureAwait(false))
-                            {
-                                LogWarn($"Timed out after {Timeout.TotalSeconds:0}s waiting for dependent '{d.Name}' to start");
-                                failedDeps.Add(d);
-                            }
-                        }
-                        catch (Exception ex) when (ex is not OperationCanceledException)
-                        {
-                            LogError($"Restarting dependent '{d.Name}' failed: {ex}");
-                            failedDeps.Add(d);
-                        }
-                    }
-                    if (failedDeps.Count > 0)
-                    {
-                        var names = string.Join(", ", failedDeps.Select(d => d.Label));
-                        return (new(false, $"{s.Label} restarted, but couldn't start dependent {(failedDeps.Count == 1 ? "service" : "services")}: {names}.", SafeState(s.Name)),
-                            failedDeps, false);
-                    }
-                }
+                var startOutcome = await StartAndRecoverDependentsAsync(s, action, verb, deps, stopped, ct).ConfigureAwait(false);
+                if (startOutcome is not null) return startOutcome.Value;
             }
             return (new(true, $"{s.Label} {Past(action)}", SafeState(s.Name)),
                 action == ServiceAction.Stop ? deps : [], action == ServiceAction.Stop);
@@ -274,17 +292,85 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         catch (OperationCanceledException)
         {
             Log($"{action} of '{s.Name}' cancelled during {step}");
+            var leftStopped = stopped && step == "start";
             return (new(false, $"Stopped waiting for {s.Label}. Windows may still finish the change in the background.", SafeState(s.Name)),
-                stopped && step == "start" ? deps : [], stopped && step == "start");
+                leftStopped ? deps : [], leftStopped);
         }
         catch (Exception ex)
         {
-            LogError($"{action} of '{s.Name}' failed during {step}: {ex}");
-            var why = s.IsDisabled && step == "start" ? "it's turned off (disabled)." : "Windows didn't allow it.";
-            if (ex is AdminRequiredException) why = ex.Message;
-            return (new(false, $"Couldn't {verb} {s.Label}: {why}", SafeState(s.Name)),
-                stopped && step == "start" ? deps : [], stopped && step == "start");
+            return HandleRunException(s, action, verb, step, deps, stopped, ex);
         }
+    }
+
+    private async Task<ServiceActionResult?> StopServiceAsync(ServiceInfo s, string verb, CancellationToken ct)
+    {
+        backend.Stop(s.Name);
+        if (await backend.WaitForStateAsync(s.Name, ServiceState.Stopped, Timeout, ct).ConfigureAwait(false))
+            return null;
+        LogWarn($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to stop");
+        return new(false, $"Couldn't {verb} {s.Label}: it didn't respond in time.", SafeState(s.Name));
+    }
+
+    private async Task<(ServiceActionResult Result, IReadOnlyList<DependentService> StoppedDeps, bool ParentStopped)?> StartAndRecoverDependentsAsync(
+        ServiceInfo s, ServiceAction action, string verb, IReadOnlyList<DependentService> deps, bool stopped, CancellationToken ct)
+    {
+        backend.Start(s.Name);
+        if (!await backend.WaitForStateAsync(s.Name, ServiceState.Running, Timeout, ct).ConfigureAwait(false))
+        {
+            LogWarn($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to start");
+            return (new(false, $"Couldn't {verb} {s.Label}: it didn't respond in time.", SafeState(s.Name)),
+                stopped ? deps : [], stopped);
+        }
+
+        if (action != ServiceAction.Restart) return null;
+
+        var failedDeps = await RestartDependentsAsync(deps, ct).ConfigureAwait(false);
+        if (failedDeps.Count == 0) return null;
+
+        var names = string.Join(", ", failedDeps.Select(d => d.Label));
+        var noun = failedDeps.Count == 1 ? "service" : "services";
+        return (new(false, $"{s.Label} restarted, but couldn't start dependent {noun}: {names}.", SafeState(s.Name)),
+            failedDeps, false);
+    }
+
+    private async Task<List<DependentService>> RestartDependentsAsync(IReadOnlyList<DependentService> deps, CancellationToken ct)
+    {
+        var failedDeps = new List<DependentService>();
+        foreach (var d in deps)
+        {
+            if (!await TryStartDependentAsync(d, ct).ConfigureAwait(false))
+                failedDeps.Add(d);
+        }
+        return failedDeps;
+    }
+
+    private async Task<bool> TryStartDependentAsync(DependentService d, CancellationToken ct)
+    {
+        try
+        {
+            backend.Start(d.Name);
+            if (await backend.WaitForStateAsync(d.Name, ServiceState.Running, Timeout, ct).ConfigureAwait(false))
+                return true;
+            LogWarn($"Timed out after {Timeout.TotalSeconds:0}s waiting for dependent '{d.Name}' to start");
+            return false;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogError($"Restarting dependent '{d.Name}' failed: {ex}");
+            return false;
+        }
+    }
+
+    private (ServiceActionResult Result, IReadOnlyList<DependentService> StoppedDeps, bool ParentStopped) HandleRunException(
+        ServiceInfo s, ServiceAction action, string verb, string step, IReadOnlyList<DependentService> deps, bool stopped, Exception ex)
+    {
+        LogError($"{action} of '{s.Name}' failed during {step}: {ex}");
+        var why = ex is AdminRequiredException
+            ? ex.Message
+            : s.IsDisabled && step == "start" ? "it's turned off (disabled)." : "Windows didn't allow it.";
+        var leftStopped = stopped && step == "start";
+        return (new(false, $"Couldn't {verb} {s.Label}: {why}", SafeState(s.Name)),
+            leftStopped ? deps : [], leftStopped);
     }
 
     /// <summary>Friendly status word for a live state (matches <see cref="ServiceInfo.FriendlyStatus"/>).</summary>

@@ -61,49 +61,52 @@ public sealed class DriveHealthHistoryStore(string? path = null, ILogger? log = 
                 var key = StableIdentityKey(d);
                 if (string.IsNullOrWhiteSpace(key)) continue;
 
-                if (!data.TryGetValue(key, out var list))
-                {
-                    // Check if existing records were saved under d.RawId
-                    if (!string.IsNullOrWhiteSpace(d.RawId) && data.Remove(d.RawId, out var legacyList))
-                    {
-                        list = legacyList;
-                        data[key] = list;
-                    }
-                    else
-                    {
-                        list = [];
-                        data[key] = list;
-                    }
-                }
-
-                // If recorded very recently (< 1 minute), update the latest if it matches identity, instead of creating duplicate points
-                if (list.Count > 0 && MatchesIdentity(list[^1], d) && Math.Abs((now - list[^1].When).TotalMinutes) < 1)
-                {
-                    list[^1] = ToRecord(d, now);
-                }
-                else
-                {
-                    list.Add(ToRecord(d, now));
-                    if (list.Count > MaxHistoryPerDrive)
-                    {
-                        list.RemoveRange(0, list.Count - MaxHistoryPerDrive);
-                    }
-                }
+                var list = GetOrCreateDriveHistory(data, key, d.RawId);
+                AppendDriveRecord(list, d, now);
                 modified = true;
             }
 
             if (modified && path is not null)
-            {
-                try
-                {
-                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                    File.WriteAllText(path, JsonSerializer.Serialize(data));
-                }
-                catch (Exception ex)
-                {
-                    log.Info($"[drive-history] save failed: {ex.Message}");
-                }
-            }
+                SaveHistoryLocked(data);
+        }
+    }
+
+    private static List<DriveHealthRecord> GetOrCreateDriveHistory(
+        Dictionary<string, List<DriveHealthRecord>> data, string key, string rawId)
+    {
+        if (data.TryGetValue(key, out var list))
+            return list;
+
+        // Check if existing records were saved under d.RawId
+        list = !string.IsNullOrWhiteSpace(rawId) && data.Remove(rawId, out var legacyList) ? legacyList : [];
+        data[key] = list;
+        return list;
+    }
+
+    private static void AppendDriveRecord(List<DriveHealthRecord> list, DriveHealth d, DateTimeOffset now)
+    {
+        // If recorded very recently (< 1 minute), update the latest if it matches identity, instead of creating duplicate points
+        if (list.Count > 0 && MatchesIdentity(list[^1], d) && Math.Abs((now - list[^1].When).TotalMinutes) < 1)
+        {
+            list[^1] = ToRecord(d, now);
+            return;
+        }
+
+        list.Add(ToRecord(d, now));
+        if (list.Count > MaxHistoryPerDrive)
+            list.RemoveRange(0, list.Count - MaxHistoryPerDrive);
+    }
+
+    private void SaveHistoryLocked(Dictionary<string, List<DriveHealthRecord>> data)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path!)!);
+            File.WriteAllText(path!, JsonSerializer.Serialize(data));
+        }
+        catch (Exception ex)
+        {
+            log.Info($"[drive-history] save failed: {ex.Message}");
         }
     }
 
@@ -125,19 +128,7 @@ public sealed class DriveHealthHistoryStore(string? path = null, ILogger? log = 
 
     public DriveTrendAnalysis AnalyzeTrend(string rawId, DriveHealth current, DateTimeOffset now)
     {
-        IReadOnlyList<DriveHealthRecord> history;
-        lock (_gate)
-        {
-            var data = LoadLocked();
-            var key = StableIdentityKey(current);
-            if (data.TryGetValue(key, out var list))
-                history = list.ToList();
-            else if (data.TryGetValue(rawId, out var rawList))
-                history = rawList.ToList();
-            else
-                history = [];
-        }
-
+        var history = ReadHistoryForDrive(rawId, current);
         // Match a stable device identity before comparing readings:
         // Exclude records from different physical drives (different serial, different identity, or reset power-on hours).
         var matched = history.Where(h => MatchesIdentity(h, current)).ToList();
@@ -164,49 +155,11 @@ public sealed class DriveHealthHistoryStore(string? path = null, ILogger? log = 
         long readDelta = (current.ReadErrors ?? 0) - (prev.ReadErrors ?? 0);
         long writeDelta = (current.WriteErrors ?? 0) - (prev.WriteErrors ?? 0);
         int wearDelta = (current.Wear ?? 0) - (prev.Wear ?? 0);
-
-        // Degradation criteria:
-        // 1. Any increase in uncorrected read errors
-        // 2. Any increase in uncorrected write errors
-        // 3. Significant unexpected wear jump (>= 5%)
-        // 4. Windows health degraded from Healthy to Warning/Unhealthy
-        bool statusDegraded = prev.Health.Equals("Healthy", StringComparison.OrdinalIgnoreCase) &&
-                              (current.Health.Equals("Warning", StringComparison.OrdinalIgnoreCase) ||
-                               current.Health.Equals("Unhealthy", StringComparison.OrdinalIgnoreCase));
-
+        bool statusDegraded = IsStatusDegraded(prev.Health, current.Health);
         bool isDegrading = readDelta > 0 || writeDelta > 0 || wearDelta >= 5 || statusDegraded;
 
-        string summary;
-        if (readDelta > 0 && writeDelta > 0)
-        {
-            summary = $"Degrading: read errors increased by +{readDelta} and write errors by +{writeDelta} since {prev.When:MMM d, yyyy}";
-        }
-        else if (readDelta > 0)
-        {
-            summary = $"Degrading: uncorrected read errors increased by +{readDelta} since {prev.When:MMM d, yyyy}";
-        }
-        else if (writeDelta > 0)
-        {
-            summary = $"Degrading: uncorrected write errors increased by +{writeDelta} since {prev.When:MMM d, yyyy}";
-        }
-        else if (statusDegraded)
-        {
-            summary = $"Degrading: Windows reported status dropped from Healthy to {current.Health} since {prev.When:MMM d, yyyy}";
-        }
-        else if (wearDelta >= 5)
-        {
-            summary = $"Wear increased by {wearDelta}% since {prev.When:MMM d, yyyy}";
-        }
-        else
-        {
-            int totalVisits = prior.Count + 1;
-            summary = $"Stable across {totalVisits} checks since {first.When:MMM d, yyyy}";
-        }
-
-        // Build history table for drawer detail
-        var detailLines = prior.Take(5).Select(h =>
-            $"{h.When:yyyy-MM-dd HH:mm} · Status: {h.Health} · Temp: {(h.TemperatureC is > 0 ? $"{h.TemperatureC}°C" : "n/a")} · Wear: {(h.Wear is not null ? $"{h.Wear}%" : "n/a")} · Read err: {h.ReadErrors ?? 0} · Write err: {h.WriteErrors ?? 0}");
-        string detail = string.Join("\n", detailLines);
+        var summary = BuildTrendSummary(readDelta, writeDelta, wearDelta, statusDegraded, current.Health, prev.When, first.When, prior.Count + 1);
+        var detail = FormatHistoryDetail(prior);
 
         return new DriveTrendAnalysis(
             HasHistory: true,
@@ -219,6 +172,47 @@ public sealed class DriveHealthHistoryStore(string? path = null, ILogger? log = 
             IsDegrading: isDegrading,
             SummaryText: summary,
             HistoryDetail: detail);
+    }
+
+    private IReadOnlyList<DriveHealthRecord> ReadHistoryForDrive(string rawId, DriveHealth current)
+    {
+        lock (_gate)
+        {
+            var data = LoadLocked();
+            var key = StableIdentityKey(current);
+            if (data.TryGetValue(key, out var list)) return list.ToList();
+            if (data.TryGetValue(rawId, out var rawList)) return rawList.ToList();
+            return [];
+        }
+    }
+
+    private static bool IsStatusDegraded(string previousHealth, string currentHealth) =>
+        previousHealth.Equals("Healthy", StringComparison.OrdinalIgnoreCase)
+        && (currentHealth.Equals("Warning", StringComparison.OrdinalIgnoreCase)
+            || currentHealth.Equals("Unhealthy", StringComparison.OrdinalIgnoreCase));
+
+    private static string BuildTrendSummary(
+        long readDelta, long writeDelta, int wearDelta, bool statusDegraded,
+        string currentHealth, DateTimeOffset prevWhen, DateTimeOffset firstWhen, int totalVisits)
+    {
+        if (readDelta > 0 && writeDelta > 0)
+            return $"Degrading: read errors increased by +{readDelta} and write errors by +{writeDelta} since {prevWhen:MMM d, yyyy}";
+        if (readDelta > 0)
+            return $"Degrading: uncorrected read errors increased by +{readDelta} since {prevWhen:MMM d, yyyy}";
+        if (writeDelta > 0)
+            return $"Degrading: uncorrected write errors increased by +{writeDelta} since {prevWhen:MMM d, yyyy}";
+        if (statusDegraded)
+            return $"Degrading: Windows reported status dropped from Healthy to {currentHealth} since {prevWhen:MMM d, yyyy}";
+        if (wearDelta >= 5)
+            return $"Wear increased by {wearDelta}% since {prevWhen:MMM d, yyyy}";
+        return $"Stable across {totalVisits} checks since {firstWhen:MMM d, yyyy}";
+    }
+
+    private static string FormatHistoryDetail(List<DriveHealthRecord> prior)
+    {
+        var detailLines = prior.Take(5).Select(h =>
+            $"{h.When:yyyy-MM-dd HH:mm} · Status: {h.Health} · Temp: {(h.TemperatureC is > 0 ? $"{h.TemperatureC}°C" : "n/a")} · Wear: {(h.Wear is not null ? $"{h.Wear}%" : "n/a")} · Read err: {h.ReadErrors ?? 0} · Write err: {h.WriteErrors ?? 0}");
+        return string.Join("\n", detailLines);
     }
 
     public static string StableIdentityKey(DriveHealth d) =>

@@ -137,22 +137,7 @@ public sealed class SystemCommandRunner(
         var elevated = _isProcessElevated();
 
         if (!elevated && elevatedBridge is { IsConnected: true } bridge)
-        {
-            ProcessResult pr;
-            try
-            {
-                pr = await bridge.RunAgentScriptAsync(script, effectiveTimeout, ct, outputLine).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (AdminRequiredException ex) { Write($"[admin-helper] {label}: {ex.Message}"); return AgentFailed(ex.Message); }
-            catch (Exception ex)
-            {
-                Write($"[admin-helper] {label} failed: {ex.Message}");
-                return AgentFailed("The Agent couldn't make this change. " + ElevationService.AdminRepairHint);
-            }
-            Write($"[admin-helper] {label} exit={pr.ExitCode} timedOut={pr.TimedOut} ms={sw.ElapsedMilliseconds} stderr=\"{pr.StdErr.Trim()}\"");
-            return pr.TimedOut ? null : pr;
-        }
+            return await RunViaElevatedBridgeAsync(bridge, script, effectiveTimeout, label, sw, ct, outputLine).ConfigureAwait(false);
 
         if (!elevated && !IsScripted)
         {
@@ -166,15 +151,48 @@ public sealed class SystemCommandRunner(
             return AgentFailed(refusal ?? "That change isn't allowed.");
         }
         if (plan.Native is { } native)
-        {
-            // A scripted launcher (tests) makes these changes itself when it can; one that can't answers like an Agent that isn't there.
-            var ops = nativeOps ?? _launcher as IAgentNativeOps ?? (IsScripted ? null : WindowsAgentNativeOps.Instance);
-            if (ops is null) return AgentFailed("The Agent isn't connected. " + ElevationService.AdminRepairHint);
-            var pr = await AgentNativeRunner.RunAsync(ops, native, effectiveTimeout, ct).ConfigureAwait(false);
-            Write($"{label} exit={pr.ExitCode} timedOut={pr.TimedOut} ms={sw.ElapsedMilliseconds} stderr=\"{pr.StdErr.Trim()}\"");
-            return pr.TimedOut ? null : pr;
-        }
+            return await RunNativePlanAsync(native, effectiveTimeout, label, sw, ct).ConfigureAwait(false);
         return await RunAsync(PowerShell, PowerShellArgs(plan.Script!), timeout, ct, outputLine).ConfigureAwait(false);
+    }
+
+    private async Task<ProcessResult?> RunViaElevatedBridgeAsync(
+        IElevatedCommandBridge bridge,
+        AdminPipeScript script,
+        TimeSpan effectiveTimeout,
+        string label,
+        System.Diagnostics.Stopwatch sw,
+        CancellationToken ct,
+        Action<string>? outputLine)
+    {
+        ProcessResult pr;
+        try
+        {
+            pr = await bridge.RunAgentScriptAsync(script, effectiveTimeout, ct, outputLine).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (AdminRequiredException ex) { Write($"[admin-helper] {label}: {ex.Message}"); return AgentFailed(ex.Message); }
+        catch (Exception ex)
+        {
+            Write($"[admin-helper] {label} failed: {ex.Message}");
+            return AgentFailed("The Agent couldn't make this change. " + ElevationService.AdminRepairHint);
+        }
+        Write($"[admin-helper] {label} exit={pr.ExitCode} timedOut={pr.TimedOut} ms={sw.ElapsedMilliseconds} stderr=\"{pr.StdErr.Trim()}\"");
+        return pr.TimedOut ? null : pr;
+    }
+
+    private async Task<ProcessResult?> RunNativePlanAsync(
+        AgentNativeAction native,
+        TimeSpan effectiveTimeout,
+        string label,
+        System.Diagnostics.Stopwatch sw,
+        CancellationToken ct)
+    {
+        // A scripted launcher (tests) makes these changes itself when it can; one that can't answers like an Agent that isn't there.
+        var ops = nativeOps ?? _launcher as IAgentNativeOps ?? (IsScripted ? null : WindowsAgentNativeOps.Instance);
+        if (ops is null) return AgentFailed("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+        var pr = await AgentNativeRunner.RunAsync(ops, native, effectiveTimeout, ct).ConfigureAwait(false);
+        Write($"{label} exit={pr.ExitCode} timedOut={pr.TimedOut} ms={sw.ElapsedMilliseconds} stderr=\"{pr.StdErr.Trim()}\"");
+        return pr.TimedOut ? null : pr;
     }
 
     private void LogResult(string prefix, string fileName, IReadOnlyList<string> arguments, ProcessResult pr, long elapsedMs)

@@ -780,7 +780,6 @@
     private bool _isRemoteDisplay;
     private bool _hasRemoteSession;
     private bool _technicianHasControl;
-    private bool _localHasControl = true;
     private bool _isBatchRunning;
     private CancellationTokenSource? _batchCts;
 
@@ -811,7 +810,6 @@
         _isRemoteDisplay = info.IsRemoteDisplay;
         _hasRemoteSession = info.HasRemoteSession;
         _technicianHasControl = info.TechnicianHasControl;
-        _localHasControl = info.LocalHasControl;
         InvokeAsync(StateHasChanged);
     }
 

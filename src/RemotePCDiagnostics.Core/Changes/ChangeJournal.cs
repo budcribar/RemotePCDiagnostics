@@ -77,8 +77,11 @@ public class MemoryChangeJournal : IChangeJournal
 {
     protected readonly object Gate = new();
     protected readonly List<ChangeRecord> Items = [];
+    private System.Collections.Immutable.ImmutableArray<ChangeRecord> _snapshot = [];
     public event Action? Changed;
-    public IReadOnlyList<ChangeRecord> All { get { lock (Gate) return Items.ToList(); } }
+    public IReadOnlyList<ChangeRecord> All { get { lock (Gate) return _snapshot; } }
+
+    protected void RefreshSnapshot() => _snapshot = [.. Items];
 
     public void Add(ChangeRecord r)
     {
@@ -87,12 +90,13 @@ public class MemoryChangeJournal : IChangeJournal
             // Only the oldest "before" matters for a target: undoing must return to the state before this app touched it.
             if (Items.Any(x => x.Kind == r.Kind && string.Equals(x.Target, r.Target, StringComparison.OrdinalIgnoreCase))) return;
             Items.Add(r);
+            RefreshSnapshot();
             Persist();
         }
         Raise();
     }
 
-    public void Remove(Guid id) { lock (Gate) { Items.RemoveAll(x => x.Id == id); Persist(); } Raise(); }
+    public void Remove(Guid id) { lock (Gate) { Items.RemoveAll(x => x.Id == id); RefreshSnapshot(); Persist(); } Raise(); }
 
     public void RemoveLatest(ChangeKind kind, string target)
     {
@@ -101,6 +105,7 @@ public class MemoryChangeJournal : IChangeJournal
             var i = Items.FindLastIndex(x => x.Kind == kind && string.Equals(x.Target, target, StringComparison.OrdinalIgnoreCase));
             if (i < 0) return;
             Items.RemoveAt(i);
+            RefreshSnapshot();
             Persist();
         }
         Raise();
@@ -131,6 +136,7 @@ public sealed class FileChangeJournal : MemoryChangeJournal
                 var bootCutoff = CurrentBootUtc().AddMinutes(-1);
                 var kept = loaded.Where(x => !(x.Kind == ChangeKind.ServiceRunning && x.TimeUtc < bootCutoff)).ToList();
                 Items.AddRange(kept);
+                RefreshSnapshot();
                 if (kept.Count != loaded.Count) Persist();
             }
         }

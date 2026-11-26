@@ -180,24 +180,19 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
     public static string? WheaComponentHint(WinEvent e)
     {
         var text = e.Message + " " + string.Join(" ", e.NamedData.Select(kv => $"{kv.Key}:{kv.Value}"));
-        if (text.Contains("PCI Express Root Port", StringComparison.OrdinalIgnoreCase))
-            return "PCI Express Root Port";
-        if (text.Contains("PCI Express", StringComparison.OrdinalIgnoreCase) || text.Contains("PCIe", StringComparison.OrdinalIgnoreCase))
-            return "PCI Express Device";
-        if (text.Contains("NVMe", StringComparison.OrdinalIgnoreCase))
-            return "NVMe Storage";
-        if (text.Contains("Memory", StringComparison.OrdinalIgnoreCase) || e.EventId == 46)
-            return "Memory";
-        if (text.Contains("Processor Core", StringComparison.OrdinalIgnoreCase) || e.EventId is 18 or 19)
-            return text.Contains("Cache", StringComparison.OrdinalIgnoreCase) ? "Processor Core / Cache" : "Processor Core";
-        if (text.Contains("Cache", StringComparison.OrdinalIgnoreCase))
-            return "Processor Cache";
-        if (text.Contains("Northbridge", StringComparison.OrdinalIgnoreCase) || e.EventId == 20)
-            return "Processor / Northbridge";
-        if (e.NamedData.TryGetValue("Component", out var comp) && !string.IsNullOrWhiteSpace(comp))
-            return comp.Trim();
-        return null;
+        if (ContainsIgnoreCase(text, "PCI Express Root Port")) return "PCI Express Root Port";
+        if (ContainsIgnoreCase(text, "PCI Express") || ContainsIgnoreCase(text, "PCIe")) return "PCI Express Device";
+        if (ContainsIgnoreCase(text, "NVMe")) return "NVMe Storage";
+        if (ContainsIgnoreCase(text, "Memory") || e.EventId == 46) return "Memory";
+        if (ContainsIgnoreCase(text, "Processor Core") || e.EventId is 18 or 19)
+            return ContainsIgnoreCase(text, "Cache") ? "Processor Core / Cache" : "Processor Core";
+        if (ContainsIgnoreCase(text, "Cache")) return "Processor Cache";
+        if (ContainsIgnoreCase(text, "Northbridge") || e.EventId == 20) return "Processor / Northbridge";
+        return e.NamedData.TryGetValue("Component", out var comp) && !string.IsNullOrWhiteSpace(comp) ? comp.Trim() : null;
     }
+
+    private static bool ContainsIgnoreCase(string text, string token) =>
+        text.Contains(token, StringComparison.OrdinalIgnoreCase);
 
     private static AreaRow WheaRow(WinEvent e, bool recent)
     {
@@ -235,80 +230,121 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
         var powerLosses = events.Where(IsPowerLossEvent).OrderByDescending(e => e.Time).ToList();
         var wheaEvents = events.Where(IsWheaEvent).OrderByDescending(e => e.Time).ToList();
 
-        bool Recent(DateTimeOffset t) => t >= cutoff;
-        var recentBsods = bsods.Count(e => Recent(e.Time));
+        var recentBsods = bsods.Count(e => e.Time >= cutoff);
         // One bad shutdown logs both Event 41 (at the next boot) and Event 6008: count incidents, not events.
         var incidents = PowerLossIncidents(powerLosses);
-        var recentPower = incidents.Count(t => Recent(t));
+        var recentPower = incidents.Count(t => t >= cutoff);
         var uncorrectedWhea = wheaEvents.Count(IsUncorrectedWheaEvent);
-        var recentWhea = wheaEvents.Count(e => Recent(e.Time));
+        var recentWhea = wheaEvents.Count(e => e.Time >= cutoff);
 
-        var bsodLevel = recentBsods >= 2 ? AreaLevel.Error : recentBsods == 1 ? AreaLevel.Warning : bsods.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok;
-        var powerLevel = recentPower > 0 ? AreaLevel.Warning : powerLosses.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok;
-        var wheaLevel = uncorrectedWhea > 0 ? AreaLevel.Error : recentWhea > 0 ? AreaLevel.Warning : wheaEvents.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok;
+        var bsodLevel = EvaluateBsodLevel(bsods.Count, recentBsods);
+        var powerLevel = EvaluatePowerLevel(powerLosses.Count, recentPower);
+        var wheaLevel = EvaluateWheaLevel(wheaEvents.Count, recentWhea, uncorrectedWhea);
 
-        string[] eventCols = ["When", "Type", "Details"];
         var cards = new List<AreaCard>
         {
-            new("bsods", "Blue screen crashes (BSOD)", bsodLevel,
-                bsods.Count == 0 ? "None" : Plural(bsods.Count, "blue screen"),
-                bsods.FirstOrDefault() is { } b ? $"Latest: {WindowsEventLog.FormatTime(b.Time)}" : $"In the last {Days} days",
-                eventCols,
-                bsods.Select(e => BlueScreenRow(e, Recent(e.Time), dmpList)).ToList(),
-                EmptyText: $"No blue screen crashes were recorded in the last {Days} days."),
-
-            new("power", "Unexpected power losses & resets", powerLevel,
-                incidents.Count == 0 ? "None" : Plural(incidents.Count, "unexpected restart"),
-                powerLosses.FirstOrDefault() is { } p ? $"Latest: {WindowsEventLog.FormatTime(p.Time)}" : $"In the last {Days} days",
-                eventCols,
-                RestartGroups(powerLosses).ToList().SelectMany(group =>
-                {
-                    var keys = group.Select(EventReviews.Key).ToList();
-                    return group.Select(e => RestartRow(e, Recent(e.Time), keys));
-                }).ToList(),
-                EmptyText: $"All shutdowns and restarts in the last {Days} days were clean.",
-                Note: "Event 41 happens when the PC loses power, is forced off by holding the power button, or resets before Windows can write a crash log."),
-
-            new("whea", "Hardware error events (WHEA)", wheaLevel,
-                wheaEvents.Count == 0 ? "None"
-                    : uncorrectedWhea > 0
-                        ? Plural(uncorrectedWhea, "uncorrected error") + (wheaEvents.Count > uncorrectedWhea ? $" ({wheaEvents.Count} total)" : "")
-                        : Plural(wheaEvents.Count, "corrected warning"),
-                wheaEvents.FirstOrDefault() is { } w ? $"Latest: {WindowsEventLog.FormatTime(w.Time)}" : $"In the last {Days} days",
-                ["When", "Severity", "Details"],
-                wheaEvents.Select(e => WheaRow(e, Recent(e.Time))).ToList(),
-                EmptyText: $"No WHEA hardware error events were recorded in the last {Days} days.",
-                Note: "WHEA-Logger records CPU core/cache, memory, and PCIe hardware faults reported directly by the processor or chipset."),
-
-            new("minidumps", "Crash dump files", dmpList.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok,
-                dmpList.Count == 0 ? "None on disk" : Plural(dmpList.Count, "dump file"),
-                dmpList.FirstOrDefault() is { } d ? $"Latest: {d.FileName} ({WindowsEventLog.FormatTime(d.Created)})" : @"C:\Windows\Minidump",
-                ["When", "File", "Size"],
-                dmpList.Select(f => DumpRow(f, bsods)).ToList(),
-                EmptyText: @"No dumps were found in C:\Windows\Minidump or at C:\Windows\MEMORY.DMP.",
-                Note: "Expand a dump and choose Analyze dump to run Windows Debugging Tools. Analysis may download public symbols from Microsoft."),
+            BuildBsodCard(bsods, bsodLevel, cutoff, dmpList),
+            BuildPowerLossCard(powerLosses, incidents, powerLevel, cutoff),
+            BuildWheaCard(wheaEvents, uncorrectedWhea, wheaLevel, cutoff),
+            BuildMinidumpsCard(dmpList, bsods),
         };
 
-        string summary;
-        if (bsods.Count == 0 && powerLosses.Count == 0 && wheaEvents.Count == 0)
-            summary = $"No blue screens or unexpected restarts in the last {Days} days";
-        else
-        {
-            var parts = new List<string>();
-            if (bsods.Count > 0) parts.Add(Plural(bsods.Count, "blue screen"));
-            if (incidents.Count > 0) parts.Add(Plural(incidents.Count, "unexpected restart"));
-            if (wheaEvents.Count > 0)
-                parts.Add(uncorrectedWhea > 0
-                    ? Plural(uncorrectedWhea, "uncorrected WHEA hardware error")
-                    : Plural(wheaEvents.Count, "WHEA hardware warning"));
-            var noneRecent = recentBsods == 0 && recentPower == 0 && recentWhea == 0 && uncorrectedWhea == 0;
-            summary = $"{string.Join(", ", parts)} in the last {Days} days" + (noneRecent ? $" (none in the last {RecentDays} days)" : "");
-        }
-
-        var status = (bsodLevel == AreaLevel.Error || wheaLevel == AreaLevel.Error) ? DiagnosticStatus.Error
-            : (bsodLevel == AreaLevel.Warning || powerLevel == AreaLevel.Warning || wheaLevel == AreaLevel.Warning) ? DiagnosticStatus.Warning
-            : DiagnosticStatus.Ok;
+        var summary = BuildSummary(bsods.Count, powerLosses.Count, incidents.Count, wheaEvents.Count, uncorrectedWhea, recentBsods, recentPower, recentWhea);
+        var status = DetermineOverallStatus(bsodLevel, powerLevel, wheaLevel);
         return new(cards, summary, status);
+    }
+
+    private static AreaLevel EvaluateBsodLevel(int total, int recent)
+    {
+        if (recent >= 2) return AreaLevel.Error;
+        if (recent == 1) return AreaLevel.Warning;
+        return total > 0 ? AreaLevel.Neutral : AreaLevel.Ok;
+    }
+
+    private static AreaLevel EvaluatePowerLevel(int total, int recent)
+    {
+        if (recent > 0) return AreaLevel.Warning;
+        return total > 0 ? AreaLevel.Neutral : AreaLevel.Ok;
+    }
+
+    private static AreaLevel EvaluateWheaLevel(int total, int recent, int uncorrected)
+    {
+        if (uncorrected > 0) return AreaLevel.Error;
+        if (recent > 0) return AreaLevel.Warning;
+        return total > 0 ? AreaLevel.Neutral : AreaLevel.Ok;
+    }
+
+    private static AreaCard BuildBsodCard(List<WinEvent> bsods, AreaLevel level, DateTimeOffset cutoff, IReadOnlyList<MinidumpFile> dmpList) =>
+        new("bsods", "Blue screen crashes (BSOD)", level,
+            bsods.Count == 0 ? "None" : Plural(bsods.Count, "blue screen"),
+            LatestMeta(bsods),
+            ["When", "Type", "Details"],
+            bsods.Select(e => BlueScreenRow(e, e.Time >= cutoff, dmpList)).ToList(),
+            EmptyText: $"No blue screen crashes were recorded in the last {Days} days.");
+
+    private static AreaCard BuildPowerLossCard(List<WinEvent> powerLosses, IReadOnlyList<DateTimeOffset> incidents, AreaLevel level, DateTimeOffset cutoff) =>
+        new("power", "Unexpected power losses & resets", level,
+            incidents.Count == 0 ? "None" : Plural(incidents.Count, "unexpected restart"),
+            LatestMeta(powerLosses),
+            ["When", "Type", "Details"],
+            RestartGroups(powerLosses).ToList().SelectMany(group =>
+            {
+                var keys = group.Select(EventReviews.Key).ToList();
+                return group.Select(e => RestartRow(e, e.Time >= cutoff, keys));
+            }).ToList(),
+            EmptyText: $"All shutdowns and restarts in the last {Days} days were clean.",
+            Note: "Event 41 happens when the PC loses power, is forced off by holding the power button, or resets before Windows can write a crash log.");
+
+    private static AreaCard BuildWheaCard(List<WinEvent> wheaEvents, int uncorrectedWhea, AreaLevel level, DateTimeOffset cutoff)
+    {
+        var headline = wheaEvents.Count == 0
+            ? "None"
+            : uncorrectedWhea > 0
+                ? Plural(uncorrectedWhea, "uncorrected error") + (wheaEvents.Count > uncorrectedWhea ? $" ({wheaEvents.Count} total)" : "")
+                : Plural(wheaEvents.Count, "corrected warning");
+
+        return new("whea", "Hardware error events (WHEA)", level,
+            headline,
+            LatestMeta(wheaEvents),
+            ["When", "Severity", "Details"],
+            wheaEvents.Select(e => WheaRow(e, e.Time >= cutoff)).ToList(),
+            EmptyText: $"No WHEA hardware error events were recorded in the last {Days} days.",
+            Note: "WHEA-Logger records CPU core/cache, memory, and PCIe hardware faults reported directly by the processor or chipset.");
+    }
+
+    private static AreaCard BuildMinidumpsCard(IReadOnlyList<MinidumpFile> dmpList, List<WinEvent> bsods) =>
+        new("minidumps", "Crash dump files", dmpList.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok,
+            dmpList.Count == 0 ? "None on disk" : Plural(dmpList.Count, "dump file"),
+            dmpList.FirstOrDefault() is { } d ? $"Latest: {d.FileName} ({WindowsEventLog.FormatTime(d.Created)})" : @"C:\Windows\Minidump",
+            ["When", "File", "Size"],
+            dmpList.Select(f => DumpRow(f, bsods)).ToList(),
+            EmptyText: @"No dumps were found in C:\Windows\Minidump or at C:\Windows\MEMORY.DMP.",
+            Note: "Expand a dump and choose Analyze dump to run Windows Debugging Tools. Analysis may download public symbols from Microsoft.");
+
+    private static string LatestMeta(IReadOnlyList<WinEvent> list) =>
+        list.FirstOrDefault() is { } e ? $"Latest: {WindowsEventLog.FormatTime(e.Time)}" : $"In the last {Days} days";
+
+    private static string BuildSummary(int bsodCount, int powerCount, int incidentCount, int wheaCount, int uncorrectedWhea, int recentBsods, int recentPower, int recentWhea)
+    {
+        if (bsodCount == 0 && powerCount == 0 && wheaCount == 0)
+            return $"No blue screens or unexpected restarts in the last {Days} days";
+
+        var parts = new List<string>();
+        if (bsodCount > 0) parts.Add(Plural(bsodCount, "blue screen"));
+        if (incidentCount > 0) parts.Add(Plural(incidentCount, "unexpected restart"));
+        if (wheaCount > 0)
+            parts.Add(uncorrectedWhea > 0
+                ? Plural(uncorrectedWhea, "uncorrected WHEA hardware error")
+                : Plural(wheaCount, "WHEA hardware warning"));
+        var noneRecent = recentBsods == 0 && recentPower == 0 && recentWhea == 0 && uncorrectedWhea == 0;
+        return $"{string.Join(", ", parts)} in the last {Days} days" + (noneRecent ? $" (none in the last {RecentDays} days)" : "");
+    }
+
+    private static DiagnosticStatus DetermineOverallStatus(AreaLevel bsodLevel, AreaLevel powerLevel, AreaLevel wheaLevel)
+    {
+        if (bsodLevel == AreaLevel.Error || wheaLevel == AreaLevel.Error) return DiagnosticStatus.Error;
+        if (bsodLevel == AreaLevel.Warning || powerLevel == AreaLevel.Warning || wheaLevel == AreaLevel.Warning) return DiagnosticStatus.Warning;
+        return DiagnosticStatus.Ok;
     }
 
     /// <summary>Events logged within this window of each other belong to the same unexpected shutdown.</summary>

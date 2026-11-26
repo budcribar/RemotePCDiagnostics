@@ -14,9 +14,9 @@
     private string _log = "";
     private DotNetObjectReference<SpikePanel>? _self;
 
-    protected override async Task OnAfterRenderAsync(bool first)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!first) return;
+        if (!firstRender) return;
         _self = DotNetObjectReference.Create(this);
         await JS.InvokeVoidAsync("spike.listen", _self);
         await Post(new { type = "ready", pid = Environment.ProcessId, integrity = Token.Integrity, admin = Token.IsAdmin, at = DateTimeOffset.Now });

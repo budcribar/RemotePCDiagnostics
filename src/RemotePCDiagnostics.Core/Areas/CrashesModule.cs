@@ -268,63 +268,64 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         var isHang = !isCrash && WerHangEventNames.Contains(eventName);
         if (!isCrash && !isHang) return null;
 
-        var p1 = e.DataAt(5, "P1");
-        var p2 = e.DataAt(6, "P2");
-        var p3 = e.DataAt(7, "P3");
-        var p4 = e.DataAt(8, "P4");
-        var p5 = e.DataAt(9, "P5");
-        var p6 = e.DataAt(10, "P6");
-        var p7 = e.DataAt(11, "P7");
+        var fields = ParseWerFields(e, eventName, isCrash, isHang);
+        if (string.IsNullOrWhiteSpace(fields.App)) return null;
+
         var bucket = e.DataAt(0, "Bucket");
         var reportId = e.DataAt(19, "ReportId");
+        var metadata = BuildWerMetadata(fields.Version, eventName, bucket, fields.HangType, reportId);
 
-        string app, version, part = "", code = "", package = "", hangType = "";
+        return new(e.Time, fields.App, fields.Version, isCrash, fields.Part, e.ShortMessage)
+        {
+            Hang = isCrash ? null : new(e.Time, fields.App, "", fields.Package, fields.HangType, reportId),
+            ReviewKey = EventReviews.Key(e),
+            ReportId = reportId,
+            Code = fields.Code,
+            Metadata = metadata
+        };
+    }
+
+    private readonly record struct WerFields(string App, string Version, string Part, string Code, string Package, string HangType);
+
+    private static WerFields ParseWerFields(WinEvent e, string eventName, bool isCrash, bool isHang)
+    {
+        var p1 = e.DataAt(5, "P1");
+        var p2 = e.DataAt(6, "P2");
         if (eventName.StartsWith("Mo", StringComparison.OrdinalIgnoreCase))
+            return ParseMoWerFields(e, p1, p2, isCrash);
+        if (eventName.Equals("CLR20r3", StringComparison.OrdinalIgnoreCase))
+            return new(p1, p2, e.DataAt(13, "P9"), "", "", "");
+        if (eventName.Equals("StowedException", StringComparison.OrdinalIgnoreCase))
+            return new(p1.Split('_')[0], p2, e.DataAt(7, "P3"), "", p1.Contains('_') ? p1 : "", "");
+        if (isHang)
         {
-            package = p1;
-            app = p2.StartsWith("praid:", StringComparison.OrdinalIgnoreCase) && p2.Length > 6
-                ? p2[6..]
-                : p1.Split('_')[0];
-            version = p3;
-            if (isCrash)
-            {
-                if (p4.Contains('.')) part = p4;
-                if (LooksHexCode(p7)) code = NormalizeHexCode(p7);
-            }
-            else
-            {
-                hangType = p6 == "2097152" ? "Quiesce" : p6;
-            }
+            var p5 = e.DataAt(9, "P5");
+            return new(p1, p2, "", "", "", p5 == "2097152" ? "Quiesce" : p5);
         }
-        else if (eventName.Equals("CLR20r3", StringComparison.OrdinalIgnoreCase))
-        {
-            app = p1;
-            version = p2;
-            part = e.DataAt(13, "P9");
-        }
-        else if (eventName.Equals("StowedException", StringComparison.OrdinalIgnoreCase))
-        {
-            package = p1.Contains('_') ? p1 : "";
-            app = p1.Split('_')[0];
-            version = p2;
-            part = p3;
-        }
-        else if (isHang)
-        {
-            app = p1;
-            version = p2;
-            hangType = p5 == "2097152" ? "Quiesce" : p5;
-        }
-        else
-        {
-            app = p1;
-            version = p2;
-            part = p4;
-            if (LooksHexCode(p7)) code = NormalizeHexCode(p7);
-        }
+        var p7 = e.DataAt(11, "P7");
+        return new(p1, p2, e.DataAt(8, "P4"), LooksHexCode(p7) ? NormalizeHexCode(p7) : "", "", "");
+    }
 
-        if (string.IsNullOrWhiteSpace(app)) return null;
+    private static WerFields ParseMoWerFields(WinEvent e, string p1, string p2, bool isCrash)
+    {
+        var app = p2.StartsWith("praid:", StringComparison.OrdinalIgnoreCase) && p2.Length > 6
+            ? p2[6..]
+            : p1.Split('_')[0];
+        var version = e.DataAt(7, "P3");
+        if (!isCrash)
+        {
+            var p6 = e.DataAt(10, "P6");
+            return new(app, version, "", "", p1, p6 == "2097152" ? "Quiesce" : p6);
+        }
+        var p4 = e.DataAt(8, "P4");
+        var p7 = e.DataAt(11, "P7");
+        var part = p4.Contains('.') ? p4 : "";
+        var code = LooksHexCode(p7) ? NormalizeHexCode(p7) : "";
+        return new(app, version, part, code, p1, "");
+    }
 
+    private static string BuildWerMetadata(string version, string eventName, string bucket, string hangType, string reportId)
+    {
         var metadata = new[]
         {
             string.IsNullOrWhiteSpace(version) ? null : $"Program version: {version}",
@@ -333,15 +334,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             string.IsNullOrWhiteSpace(hangType) ? null : $"Freeze type: {hangType}",
             string.IsNullOrWhiteSpace(reportId) ? null : $"Report ID: {reportId}"
         }.Where(line => line is not null);
-
-        return new(e.Time, app, version, isCrash, part, e.ShortMessage)
-        {
-            Hang = isCrash ? null : new(e.Time, app, "", package, hangType, reportId),
-            ReviewKey = EventReviews.Key(e),
-            ReportId = reportId,
-            Code = code,
-            Metadata = string.Join("\n", metadata)
-        };
+        return string.Join("\n", metadata);
     }
 
     private static bool LooksHexCode(string value)
@@ -358,8 +351,32 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
     public static AreaReport Build(IReadOnlyList<WinEvent> events, DateTimeOffset? now = null)
     {
         var cutoff = (now ?? ReportClock.Now).AddDays(-RecentDays);
-        var primary = events.Where(e => e.EventId is 1000 or 1002).Select(ToIncident).ToList();
+        var all = CollectIncidents(events);
+        AttachRuntimeErrors(all, events);
 
+        var recent = all.Where(i => i.Time >= cutoff).ToList();
+        var older = all.Count - recent.Count;
+        var repeatApp = recent.Where(i => i.IsCrash).GroupBy(i => i.App, StringComparer.OrdinalIgnoreCase).FirstOrDefault(g => g.Count() >= RepeatCrashes);
+        var crashes = all.Where(i => i.IsCrash).ToList();
+        var hangs = all.Where(i => !i.IsCrash).ToList();
+        var byApp = all.GroupBy(i => i.App, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(g => g.Count()).ThenByDescending(g => g.Max(i => i.Time)).ToList();
+        var top = byApp.FirstOrDefault();
+
+        var cards = new List<AreaCard>
+        {
+            BuildCrashesCard(crashes, repeatApp, cutoff),
+            BuildHangsCard(hangs, cutoff),
+            BuildAppsCard(byApp, top),
+        };
+        var summary = BuildReportSummary(all.Count, recent.Count, older, crashes.Count, hangs.Count, repeatApp, top);
+        var status = repeatApp is not null ? DiagnosticStatus.Error : recent.Count > 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
+        return new(cards, summary, status);
+    }
+
+    private static List<Incident> CollectIncidents(IReadOnlyList<WinEvent> events)
+    {
+        var primary = events.Where(e => e.EventId is 1000 or 1002).Select(ToIncident).ToList();
         // Append WER-only Event 1001 incidents that don't duplicate an Event 1000/1002 (or another Event 1001 with the same ReportId).
         var knownReportIds = new HashSet<string>(
             primary.Select(i => i.ReportId).Where(id => !string.IsNullOrWhiteSpace(id)),
@@ -369,24 +386,34 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         {
             if (!string.IsNullOrWhiteSpace(wer.ReportId) && !knownReportIds.Add(wer.ReportId))
                 continue;
-            if (primary.Any(p => p.IsCrash == wer.IsCrash
-                && (p.Time - wer.Time).Duration() <= TimeSpan.FromSeconds(10)
-                && AppsMatch(p, wer)))
+            if (IsDuplicateOfPrimary(primary, wer))
                 continue;
             all.Add(wer);
         }
         all.Sort((a, b) => b.Time.CompareTo(a.Time));
+        return all;
+    }
 
+    private static bool IsDuplicateOfPrimary(List<Incident> primary, Incident wer) =>
+        primary.Any(p => p.IsCrash == wer.IsCrash
+            && (p.Time - wer.Time).Duration() <= TimeSpan.FromSeconds(10)
+            && AppsMatch(p, wer));
+
+    private static bool AppsMatch(Incident primaryIncident, Incident werIncident)
+    {
+        if (string.Equals(primaryIncident.App, werIncident.App, StringComparison.OrdinalIgnoreCase))
+            return true;
+        return !string.IsNullOrWhiteSpace(primaryIncident.Hang?.Package)
+            && !string.IsNullOrWhiteSpace(werIncident.Hang?.Package)
+            && string.Equals(primaryIncident.Hang.Package, werIncident.Hang.Package, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void AttachRuntimeErrors(List<Incident> all, IReadOnlyList<WinEvent> events)
+    {
         var runtime = events.Where(e => e.EventId == 1026 && e.Provider.Equals(".NET Runtime", StringComparison.OrdinalIgnoreCase))
-            .Select(e =>
-            {
-                var lines = (e.Data.FirstOrDefault() ?? e.Message).Split('\n', StringSplitOptions.TrimEntries);
-                const string appPrefix = "Application: ", errorPrefix = "Exception Info: ";
-                var app = lines.FirstOrDefault(line => line.StartsWith(appPrefix, StringComparison.Ordinal))?[appPrefix.Length..];
-                var error = lines.FirstOrDefault(line => line.StartsWith(errorPrefix, StringComparison.Ordinal))?[errorPrefix.Length..];
-                var stack = string.Join("\n", lines.Where(line => line.StartsWith("at ", StringComparison.Ordinal)).Take(5));
-                return (e.Time, App: app, Error: error, Stack: stack);
-            }).Where(e => e.App is not null && e.Error is not null).ToList();
+            .Select(ParseRuntimeError)
+            .Where(e => e.App is not null && e.Error is not null)
+            .ToList();
 
         var matches = from index in Enumerable.Range(0, all.Count)
                       where all[index].IsCrash && all[index].Time != default
@@ -404,170 +431,231 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             matchedCrashes.Add(index);
             all[index] = all[index] with { RuntimeError = entry.value.Error, Stack = entry.value.Stack };
         }
+    }
 
-        static bool AppsMatch(Incident primaryIncident, Incident werIncident)
-        {
-            if (string.Equals(primaryIncident.App, werIncident.App, StringComparison.OrdinalIgnoreCase))
-                return true;
-            if (!string.IsNullOrWhiteSpace(primaryIncident.Hang?.Package)
-                && !string.IsNullOrWhiteSpace(werIncident.Hang?.Package)
-                && string.Equals(primaryIncident.Hang.Package, werIncident.Hang.Package, StringComparison.OrdinalIgnoreCase))
-                return true;
-            return false;
-        }
+    private static (DateTimeOffset Time, string? App, string? Error, string Stack) ParseRuntimeError(WinEvent e)
+    {
+        var lines = (e.Data.FirstOrDefault() ?? e.Message).Split('\n', StringSplitOptions.TrimEntries);
+        const string appPrefix = "Application: ", errorPrefix = "Exception Info: ";
+        var app = lines.FirstOrDefault(line => line.StartsWith(appPrefix, StringComparison.Ordinal))?[appPrefix.Length..];
+        var error = lines.FirstOrDefault(line => line.StartsWith(errorPrefix, StringComparison.Ordinal))?[errorPrefix.Length..];
+        var stack = string.Join("\n", lines.Where(line => line.StartsWith("at ", StringComparison.Ordinal)).Take(5));
+        return (e.Time, app, error, stack);
+    }
 
-        bool Recent(Incident i) => i.Time >= cutoff;
-        var recent = all.Where(Recent).ToList();
-        var older = all.Count - recent.Count;
-        var repeatApp = recent.Where(i => i.IsCrash).GroupBy(i => i.App, StringComparer.OrdinalIgnoreCase).FirstOrDefault(g => g.Count() >= RepeatCrashes);
-        var crashes = all.Where(i => i.IsCrash).ToList();
-        var hangs = all.Where(i => !i.IsCrash).ToList();
-        string[] cols = ["When", "App", "Type", "Version", "Details"];
-        AreaRow Row(Incident i) => new(i.IsCrash && Recent(i) ? AreaLevel.Warning : AreaLevel.Neutral,
+    private static AreaRow BuildIncidentRow(Incident i, DateTimeOffset cutoff) =>
+        new(i.IsCrash && i.Time >= cutoff ? AreaLevel.Warning : AreaLevel.Neutral,
             [WindowsEventLog.FormatTime(i.Time), i.App, i.IsCrash ? "Crash" : "Freeze", i.Version, i.Details],
             [AreaSort.TimeKey(i.Time), null, null, null, null], Detail: i.Expanded,
             ReviewKeys: i.ReviewKey is { } key ? [key] : null,
             EvidenceOccurrences: i.Evidence is { } ev ? [ev] : null);
 
-        var byApp = all.GroupBy(i => i.App, StringComparer.OrdinalIgnoreCase)
-            .OrderByDescending(g => g.Count()).ThenByDescending(g => g.Max(i => i.Time)).ToList();
-        var top = byApp.FirstOrDefault();
-        var cards = new List<AreaCard>
+    private static AreaCard BuildCrashesCard(List<Incident> crashes, IGrouping<string, Incident>? repeatApp, DateTimeOffset cutoff)
+    {
+        var hasRecent = crashes.Any(i => i.Time >= cutoff);
+        var level = repeatApp is not null ? AreaLevel.Error : hasRecent ? AreaLevel.Warning : crashes.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok;
+        return new("crashes", "Apps that closed unexpectedly", level,
+            crashes.Count == 0 ? "None" : AreaModuleBase.Plural(crashes.Count, "crash", "crashes"),
+            crashes.FirstOrDefault() is { } c ? $"Latest: {c.App}, {WindowsEventLog.FormatTime(c.Time)}" : $"In the last {Days} days",
+            ["When", "App", "Type", "Version", "Details"],
+            crashes.Select(i => BuildIncidentRow(i, cutoff)).ToList())
         {
-            new("crashes", "Apps that closed unexpectedly", repeatApp is not null ? AreaLevel.Error : crashes.Any(Recent) ? AreaLevel.Warning : crashes.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok,
-                crashes.Count == 0 ? "None" : AreaModuleBase.Plural(crashes.Count, "crash", "crashes"),
-                crashes.FirstOrDefault() is { } c ? $"Latest: {c.App}, {WindowsEventLog.FormatTime(c.Time)}" : $"In the last {Days} days",
-                cols, crashes.Select(Row).ToList())
-                { EventCount = crashes.Count, WindowDays = Days, RecentEventCount = crashes.Count(Recent), RecentWindowDays = RecentDays },
-            new(HangsCardId, "Apps that stopped responding", hangs.Any(Recent) ? AreaLevel.Warning : hangs.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok,
-                hangs.Count == 0 ? "None" : AreaModuleBase.Plural(hangs.Count, "time"),
-                hangs.FirstOrDefault() is { } h ? $"Latest: {h.App}, {WindowsEventLog.FormatTime(h.Time)}" : $"In the last {Days} days",
-                [.. cols, "Count"], hangs.GroupBy(i => (i.Hang!.Path.Length > 0 ? i.Hang.Path : i.App) + "\n" + i.Hang.Package,
-                    StringComparer.OrdinalIgnoreCase).Select(g =>
-                {
-                    var latest = g.First();
-                    var row = Row(latest);
-                    var occurrences = g.Select(i => i.Hang!).ToList();
-                    var package = latest.Hang!.Package;
-                    var detail = string.Join("\n\n", g.Select(i => $"{WindowsEventLog.FormatTime(i.Time)}\n{i.Expanded}"));
-                    return row with
-                    {
-                        Values = [row.Values[0], package.Length == 0 ? latest.App : $"{latest.App} · {package.Split('_')[0]}",
-                            row.Values[2], row.Values[3], row.Values[4], g.Count().ToString()],
-                        Detail = package.Length == 0 ? detail : $"Recorded package: {package}\n\n{detail}",
-                        ReviewKeys = g.Select(i => i.ReviewKey).OfType<string>().ToList(),
-                        HangOccurrences = occurrences
-                    };
-                }).OrderByDescending(row => row.HangOccurrences!.Count).ToList())
-                { EventCount = hangs.Count, WindowDays = Days, RecentEventCount = hangs.Count(Recent), RecentWindowDays = RecentDays },
-            new("apps", "Most affected apps", top is null ? AreaLevel.Ok : AreaLevel.Neutral,
-                top is null ? "No problems recorded" : top.Key, top is null ? $"In the last {Days} days" : $"{AreaModuleBase.Plural(top.Count(), "problem")} in the last {Days} days",
-                ["App", "Crashes", "Freezes", "Last time"],
-                byApp.Select(g => new AreaRow(AreaLevel.Neutral, [g.Key, g.Count(i => i.IsCrash).ToString(), g.Count(i => !i.IsCrash).ToString(), WindowsEventLog.FormatTime(g.Max(i => i.Time))],
-                    [null, null, null, AreaSort.TimeKey(g.Max(i => i.Time))], Detail: AppDetails(g),
-                    ReviewKeys: g.Select(i => i.ReviewKey).OfType<string>().ToList(),
-                    EvidenceOccurrences: g.Select(i => i.Evidence ?? i.Hang).OfType<HangOccurrence>().ToList())).ToList(), PreserveRowOrder: true),
+            EventCount = crashes.Count,
+            WindowDays = Days,
+            RecentEventCount = crashes.Count(i => i.Time >= cutoff),
+            RecentWindowDays = RecentDays
         };
-        var summary = all.Count == 0 ? $"No app crashes in the last {Days} days"
-            : recent.Count == 0 ? $"No crashes in the last {RecentDays} days ({older} older)"
-            : repeatApp is not null ? $"{repeatApp.Key} crashed {repeatApp.Count()} times in the last {RecentDays} days"
-            : $"{AreaModuleBase.Plural(crashes.Count, "crash", "crashes")}, {AreaModuleBase.Plural(hangs.Count, "freeze")} in the last {Days} days · most: {top!.Key}";
-        var status = repeatApp is not null ? DiagnosticStatus.Error : recent.Count > 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
-        return new(cards, summary, status);
     }
+
+    private static AreaCard BuildHangsCard(List<Incident> hangs, DateTimeOffset cutoff)
+    {
+        var hasRecent = hangs.Any(i => i.Time >= cutoff);
+        var level = hasRecent ? AreaLevel.Warning : hangs.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok;
+        var rows = hangs
+            .GroupBy(i => (i.Hang!.Path.Length > 0 ? i.Hang.Path : i.App) + "\n" + i.Hang.Package, StringComparer.OrdinalIgnoreCase)
+            .Select(g => BuildGroupedHangRow(g, cutoff))
+            .OrderByDescending(row => row.HangOccurrences!.Count)
+            .ToList();
+        return new(HangsCardId, "Apps that stopped responding", level,
+            hangs.Count == 0 ? "None" : AreaModuleBase.Plural(hangs.Count, "time"),
+            hangs.FirstOrDefault() is { } h ? $"Latest: {h.App}, {WindowsEventLog.FormatTime(h.Time)}" : $"In the last {Days} days",
+            ["When", "App", "Type", "Version", "Details", "Count"],
+            rows)
+        {
+            EventCount = hangs.Count,
+            WindowDays = Days,
+            RecentEventCount = hangs.Count(i => i.Time >= cutoff),
+            RecentWindowDays = RecentDays
+        };
+    }
+
+    private static AreaRow BuildGroupedHangRow(IGrouping<string, Incident> g, DateTimeOffset cutoff)
+    {
+        var latest = g.First();
+        var row = BuildIncidentRow(latest, cutoff);
+        var occurrences = g.Select(i => i.Hang!).ToList();
+        var package = latest.Hang!.Package;
+        var detail = string.Join("\n\n", g.Select(i => $"{WindowsEventLog.FormatTime(i.Time)}\n{i.Expanded}"));
+        return row with
+        {
+            Values =
+            [
+                row.Values[0],
+                package.Length == 0 ? latest.App : $"{latest.App} · {package.Split('_')[0]}",
+                row.Values[2], row.Values[3], row.Values[4], g.Count().ToString()
+            ],
+            Detail = package.Length == 0 ? detail : $"Recorded package: {package}\n\n{detail}",
+            ReviewKeys = g.Select(i => i.ReviewKey).OfType<string>().ToList(),
+            HangOccurrences = occurrences
+        };
+    }
+
+    private static AreaCard BuildAppsCard(List<IGrouping<string, Incident>> byApp, IGrouping<string, Incident>? top) =>
+        new("apps", "Most affected apps", top is null ? AreaLevel.Ok : AreaLevel.Neutral,
+            top is null ? "No problems recorded" : top.Key,
+            top is null ? $"In the last {Days} days" : $"{AreaModuleBase.Plural(top.Count(), "problem")} in the last {Days} days",
+            ["App", "Crashes", "Freezes", "Last time"],
+            byApp.Select(g => new AreaRow(AreaLevel.Neutral,
+                [g.Key, g.Count(i => i.IsCrash).ToString(), g.Count(i => !i.IsCrash).ToString(), WindowsEventLog.FormatTime(g.Max(i => i.Time))],
+                [null, null, null, AreaSort.TimeKey(g.Max(i => i.Time))],
+                Detail: AppDetails(g),
+                ReviewKeys: g.Select(i => i.ReviewKey).OfType<string>().ToList(),
+                EvidenceOccurrences: g.Select(i => i.Evidence ?? i.Hang).OfType<HangOccurrence>().ToList())).ToList(),
+            PreserveRowOrder: true);
+
+    private static string BuildReportSummary(
+        int totalCount, int recentCount, int older, int crashCount, int hangCount,
+        IGrouping<string, Incident>? repeatApp, IGrouping<string, Incident>? top)
+    {
+        if (totalCount == 0) return $"No app crashes in the last {Days} days";
+        if (recentCount == 0) return $"No crashes in the last {RecentDays} days ({older} older)";
+        if (repeatApp is not null) return $"{repeatApp.Key} crashed {repeatApp.Count()} times in the last {RecentDays} days";
+        return $"{AreaModuleBase.Plural(crashCount, "crash", "crashes")}, {AreaModuleBase.Plural(hangCount, "freeze")} in the last {Days} days · most: {top!.Key}";
+    }
+
     public async Task<string> FindHangEvidenceAsync(IReadOnlyList<HangOccurrence> occurrences, CancellationToken ct)
     {
         const int maxOccurrences = 20;
         var selected = occurrences.Where(h => h.Time != default).Distinct().OrderByDescending(h => h.Time)
             .Take(maxOccurrences).OrderBy(h => h.Time).ToList();
-        var windows = new List<(DateTimeOffset Start, DateTimeOffset End)>();
-        var changeWindows = new List<(DateTimeOffset Start, DateTimeOffset End)>();
-        foreach (var incident in selected)
-        {
-            var start = incident.Time.AddMinutes(-5);
-            var end = incident.Time.AddMinutes(5);
-            if (windows.Count > 0 && start <= windows[^1].End)
-                windows[^1] = (windows[^1].Start, end);
-            else
-                windows.Add((start, end));
-
-            var changeStart = incident.Time.AddHours(-24);
-            if (changeWindows.Count > 0 && changeStart <= changeWindows[^1].End)
-                changeWindows[^1] = (changeWindows[^1].Start, end);
-            else
-                changeWindows.Add((changeStart, end));
-        }
+        var (windows, changeWindows) = MergeEvidenceWindows(selected);
 
         var reportIds = selected.Select(h => Guid.TryParse(h.ReportId, out var id) ? id : Guid.Empty)
             .Where(id => id != Guid.Empty).ToHashSet();
         var lines = new List<string> { "Historical timeline. Nearby events are timestamp matches only." };
         foreach (var (start, end) in windows)
-        {
-            var time = $"TimeCreated[@SystemTime >= '{start.UtcDateTime:O}' and @SystemTime <= '{end.UtcDateTime:O}']";
-            var appQuery = $"*[System[{time} and (EventID=1000 or EventID=1001 or EventID=1002 or Level=1 or Level=2)]]";
-            var systemQuery = $"*[System[{time} and (Level=1 or Level=2 or Level=3 or Provider[@Name='Microsoft-Windows-WindowsUpdateClient' or @Name='Microsoft-Windows-Kernel-PnP'])]]";
-            var storageQuery = $"*[System[{time} and Provider[@Name='disk' or @Name='Ntfs' or @Name='Microsoft-Windows-Ntfs' or @Name='Microsoft-Windows-StorPort' or @Name='stornvme' or @Name='storahci' or @Name='iaStorAC' or @Name='iaStorVD' or @Name='volmgr'] and (Level=1 or Level=2 or Level=3 or EventID=7 or EventID=11 or EventID=15 or EventID=51 or EventID=129 or EventID=153 or EventID=157)]]";
-            var serviceQuery = $"*[System[{time} and Provider[@Name='Service Control Manager'] and (EventID=7000 or EventID=7001 or EventID=7009 or EventID=7011 or EventID=7022 or EventID=7023 or EventID=7024)]]";
-            var memoryQuery = $"*[System[{time} and ((Provider[@Name='Microsoft-Windows-Resource-Exhaustion-Detector'] and EventID=2004) or (Provider[@Name='Application Popup'] and EventID=26) or Provider[@Name='Microsoft-Windows-MemoryDiagnostics-Results'] or Provider[@Name='Microsoft-Windows-Kernel-Memory'])]]";
-            var storageTask = _log.QueryAsync("System", storageQuery, 20, ct);
-            var serviceTask = _log.QueryAsync("System", serviceQuery, 20, ct);
-            var memoryTask = _log.QueryAsync("System", memoryQuery, 20, ct);
-            var appTask = _log.QueryAsync("Application", appQuery, 60, ct);
-            var systemTask = _log.QueryAsync("System", systemQuery, 60, ct);
-            await Task.WhenAll(appTask, systemTask, storageTask, serviceTask, memoryTask).ConfigureAwait(false);
-            var app = await appTask;
-            var system = await systemTask;
-
-            lines.Add($"\n{WindowsEventLog.FormatTime(start)} to {WindowsEventLog.FormatTime(end)}");
-            AddFollowUp("Storage stalls and file-system events", await storageTask);
-            AddFollowUp("Service startup, dependency, and timeout events", await serviceTask);
-            AddFollowUp("Memory pressure and low-memory events", await memoryTask);
-
-            if (app is null || system is null) lines.Add("Some event logs could not be read.");
-            var related = (app ?? []).Concat(system ?? [])
-                .Select(e => (Event: e, Exact: e.EventId == 1001 &&
-                    (e.Data.Any(value => Guid.TryParse(value, out var id) && reportIds.Contains(id)) ||
-                     reportIds.Any(id => e.Message.Contains(id.ToString(), StringComparison.OrdinalIgnoreCase)))))
-                .OrderByDescending(item => item.Exact).ThenBy(item => item.Event.Time).Take(20).ToList();
-            if (related.Count == 0) lines.Add("No matching log entries found in this window.");
-            foreach (var (e, exact) in related)
-            {
-                var message = exact && e.Message.Length > 0 ? e.Message : e.ShortMessage;
-                lines.Add($"{(exact ? "Matching report ID" : "Nearby event")} · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId}\n{message}");
-            }
-        }
+            await AppendHangWindowEvidenceAsync(lines, start, end, reportIds, ct).ConfigureAwait(false);
         foreach (var (start, end) in changeWindows)
-        {
-            var time = $"TimeCreated[@SystemTime >= '{start.UtcDateTime:O}' and @SystemTime <= '{end.UtcDateTime:O}']";
-            var updateQuery = $"*[System[{time} and Provider[@Name='Microsoft-Windows-WindowsUpdateClient'] and (EventID=19 or EventID=20 or EventID=43 or EventID=44)]]";
-            var installQuery = $"*[System[{time} and Provider[@Name='MsiInstaller'] and (EventID=1033 or EventID=1034 or EventID=11707 or EventID=11708)]]";
-            var updateTask = _log.QueryAsync("System", updateQuery, 15, ct);
-            var installTask = _log.QueryAsync("Application", installQuery, 15, ct);
-            await Task.WhenAll(updateTask, installTask).ConfigureAwait(false);
-            var updates = await updateTask;
-            var installs = await installTask;
-            lines.Add($"\nRecent Windows Update and app install activity ({WindowsEventLog.FormatTime(start)} to {WindowsEventLog.FormatTime(end)})");
-            if (updates is null && installs is null) lines.Add("Could not read this event query.");
-            else
-            {
-                var changes = (updates ?? []).Concat(installs ?? []).OrderBy(e => e.Time).Take(15).ToList();
-                if (changes.Count == 0) lines.Add("No Windows Update or MSI installer events in this window.");
-                else foreach (var e in changes)
-                    lines.Add($"Nearby event · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId} · {e.ShortMessage}");
-            }
-        }
+            await AppendChangeWindowEvidenceAsync(lines, start, end, ct).ConfigureAwait(false);
+
         if (occurrences.Count > maxOccurrences) lines.Add($"Timeline limited to the {maxOccurrences} latest incidents.");
         lines.Add("Historical disk latency and wait-chain measurements were not collected by this lookup.");
         return string.Join("\n", lines);
+    }
 
-        void AddFollowUp(string title, IReadOnlyList<WinEvent>? events)
+    private static (List<(DateTimeOffset Start, DateTimeOffset End)> Windows, List<(DateTimeOffset Start, DateTimeOffset End)> ChangeWindows)
+        MergeEvidenceWindows(List<HangOccurrence> selected)
+    {
+        var windows = new List<(DateTimeOffset Start, DateTimeOffset End)>();
+        var changeWindows = new List<(DateTimeOffset Start, DateTimeOffset End)>();
+        foreach (var incident in selected)
         {
-            lines.Add(title);
-            if (events is null) lines.Add("Could not read this event query.");
-            else if (events.Count == 0) lines.Add("No matching events in this window.");
-            else foreach (var e in events.OrderBy(e => e.Time))
-                lines.Add($"Nearby event · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId} · {e.ShortMessage}");
+            var end = incident.Time.AddMinutes(5);
+            AddMergedWindow(windows, incident.Time.AddMinutes(-5), end);
+            AddMergedWindow(changeWindows, incident.Time.AddHours(-24), end);
         }
+        return (windows, changeWindows);
+    }
+
+    private static void AddMergedWindow(List<(DateTimeOffset Start, DateTimeOffset End)> windows, DateTimeOffset start, DateTimeOffset end)
+    {
+        if (windows.Count > 0 && start <= windows[^1].End)
+            windows[^1] = (windows[^1].Start, end);
+        else
+            windows.Add((start, end));
+    }
+
+    private async Task AppendHangWindowEvidenceAsync(
+        List<string> lines, DateTimeOffset start, DateTimeOffset end, HashSet<Guid> reportIds, CancellationToken ct)
+    {
+        var time = $"TimeCreated[@SystemTime >= '{start.UtcDateTime:O}' and @SystemTime <= '{end.UtcDateTime:O}']";
+        var appQuery = $"*[System[{time} and (EventID=1000 or EventID=1001 or EventID=1002 or Level=1 or Level=2)]]";
+        var systemQuery = $"*[System[{time} and (Level=1 or Level=2 or Level=3 or Provider[@Name='Microsoft-Windows-WindowsUpdateClient' or @Name='Microsoft-Windows-Kernel-PnP'])]]";
+        var storageQuery = $"*[System[{time} and Provider[@Name='disk' or @Name='Ntfs' or @Name='Microsoft-Windows-Ntfs' or @Name='Microsoft-Windows-StorPort' or @Name='stornvme' or @Name='storahci' or @Name='iaStorAC' or @Name='iaStorVD' or @Name='volmgr'] and (Level=1 or Level=2 or Level=3 or EventID=7 or EventID=11 or EventID=15 or EventID=51 or EventID=129 or EventID=153 or EventID=157)]]";
+        var serviceQuery = $"*[System[{time} and Provider[@Name='Service Control Manager'] and (EventID=7000 or EventID=7001 or EventID=7009 or EventID=7011 or EventID=7022 or EventID=7023 or EventID=7024)]]";
+        var memoryQuery = $"*[System[{time} and ((Provider[@Name='Microsoft-Windows-Resource-Exhaustion-Detector'] and EventID=2004) or (Provider[@Name='Application Popup'] and EventID=26) or Provider[@Name='Microsoft-Windows-MemoryDiagnostics-Results'] or Provider[@Name='Microsoft-Windows-Kernel-Memory'])]]";
+        var storageTask = _log.QueryAsync("System", storageQuery, 20, ct);
+        var serviceTask = _log.QueryAsync("System", serviceQuery, 20, ct);
+        var memoryTask = _log.QueryAsync("System", memoryQuery, 20, ct);
+        var appTask = _log.QueryAsync("Application", appQuery, 60, ct);
+        var systemTask = _log.QueryAsync("System", systemQuery, 60, ct);
+        await Task.WhenAll(appTask, systemTask, storageTask, serviceTask, memoryTask).ConfigureAwait(false);
+
+        lines.Add($"\n{WindowsEventLog.FormatTime(start)} to {WindowsEventLog.FormatTime(end)}");
+        AppendFollowUpSection(lines, "Storage stalls and file-system events", await storageTask);
+        AppendFollowUpSection(lines, "Service startup, dependency, and timeout events", await serviceTask);
+        AppendFollowUpSection(lines, "Memory pressure and low-memory events", await memoryTask);
+
+        var app = await appTask;
+        var system = await systemTask;
+        if (app is null || system is null) lines.Add("Some event logs could not be read.");
+        var related = (app ?? []).Concat(system ?? [])
+            .Select(e => (Event: e, Exact: IsExactReportMatch(e, reportIds)))
+            .OrderByDescending(item => item.Exact).ThenBy(item => item.Event.Time).Take(20).ToList();
+        if (related.Count == 0) lines.Add("No matching log entries found in this window.");
+        foreach (var (e, exact) in related)
+        {
+            var message = exact && e.Message.Length > 0 ? e.Message : e.ShortMessage;
+            lines.Add($"{(exact ? "Matching report ID" : "Nearby event")} · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId}\n{message}");
+        }
+    }
+
+    private static bool IsExactReportMatch(WinEvent e, HashSet<Guid> reportIds) =>
+        e.EventId == 1001 &&
+        (e.Data.Any(value => Guid.TryParse(value, out var id) && reportIds.Contains(id)) ||
+         reportIds.Any(id => e.Message.Contains(id.ToString(), StringComparison.OrdinalIgnoreCase)));
+
+    private async Task AppendChangeWindowEvidenceAsync(List<string> lines, DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
+    {
+        var time = $"TimeCreated[@SystemTime >= '{start.UtcDateTime:O}' and @SystemTime <= '{end.UtcDateTime:O}']";
+        var updateQuery = $"*[System[{time} and Provider[@Name='Microsoft-Windows-WindowsUpdateClient'] and (EventID=19 or EventID=20 or EventID=43 or EventID=44)]]";
+        var installQuery = $"*[System[{time} and Provider[@Name='MsiInstaller'] and (EventID=1033 or EventID=1034 or EventID=11707 or EventID=11708)]]";
+        var updateTask = _log.QueryAsync("System", updateQuery, 15, ct);
+        var installTask = _log.QueryAsync("Application", installQuery, 15, ct);
+        await Task.WhenAll(updateTask, installTask).ConfigureAwait(false);
+        var updates = await updateTask;
+        var installs = await installTask;
+        lines.Add($"\nRecent Windows Update and app install activity ({WindowsEventLog.FormatTime(start)} to {WindowsEventLog.FormatTime(end)})");
+        if (updates is null && installs is null)
+        {
+            lines.Add("Could not read this event query.");
+            return;
+        }
+        var changes = (updates ?? []).Concat(installs ?? []).OrderBy(e => e.Time).Take(15).ToList();
+        if (changes.Count == 0)
+        {
+            lines.Add("No Windows Update or MSI installer events in this window.");
+            return;
+        }
+        foreach (var e in changes)
+            lines.Add($"Nearby event · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId} · {e.ShortMessage}");
+    }
+
+    private static void AppendFollowUpSection(List<string> lines, string title, IReadOnlyList<WinEvent>? events)
+    {
+        lines.Add(title);
+        if (events is null)
+        {
+            lines.Add("Could not read this event query.");
+            return;
+        }
+        if (events.Count == 0)
+        {
+            lines.Add("No matching events in this window.");
+            return;
+        }
+        foreach (var e in events.OrderBy(e => e.Time))
+            lines.Add($"Nearby event · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId} · {e.ShortMessage}");
     }
 
     private static string AppDetails(IEnumerable<Incident> incidents)

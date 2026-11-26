@@ -301,7 +301,7 @@ public sealed partial class DefaultBiosInstallSafetyProbe : IBiosInstallSafetyPr
                 $"SELECT DriveLetter, ProtectionStatus, ConversionStatus FROM Win32_EncryptableVolume WHERE DriveLetter = '{systemDrive}'");
             using var searcher = new ManagementObjectSearcher(scope, query);
             using var results = searcher.Get();
-            foreach (ManagementObject mo in results)
+            foreach (var mo in results.OfType<ManagementObject>())
             {
                 using (mo)
                 {

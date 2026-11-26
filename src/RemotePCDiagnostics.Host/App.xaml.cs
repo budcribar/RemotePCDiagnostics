@@ -81,7 +81,7 @@ public partial class App : Application
     /// <summary>Process exit codes (also used by --undo-all).</summary>
     public const int ExitOk = 0, ExitUndoPartial = 1, ExitAlreadyRunning = 2, ExitNotAdmin = 5; // 5: --undo-all couldn't start the Agent
     private const string InstanceMutexName = @"Global\RemotePCDiagnostics.Host";
-    private static Mutex? _instance;
+    private Mutex? _instance;
 
     public static bool IsAdministrator() =>
         RemotePCDiagnostics.Core.Session.ElevationService.DetectProcessElevated();

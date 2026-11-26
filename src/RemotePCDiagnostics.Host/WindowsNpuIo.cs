@@ -34,7 +34,7 @@ public sealed class WindowsNpuIo(ILogger? log = null) : INpuIo
         using (var q = new ManagementObjectSearcher(new ManagementScope(@"root\cimv2"),
             new ObjectQuery("SELECT DeviceID, Name, PNPClass, ClassGuid, Manufacturer, Status, ConfigManagerErrorCode, HardwareID FROM Win32_PnPEntity"), opts))
         {
-            foreach (ManagementObject o in q.Get())
+            foreach (ManagementBaseObject o in q.Get())
                 using (o)
                 {
                     var r = new PnpRow(o["DeviceID"] as string, o["Name"] as string, o["PNPClass"] as string, o["ClassGuid"] as string, o["Manufacturer"] as string,
@@ -47,7 +47,7 @@ public sealed class WindowsNpuIo(ILogger? log = null) : INpuIo
             if (rows[i].DeviceId is not { } id) continue;
             using var d = new ManagementObjectSearcher(new ManagementScope(@"root\cimv2"),
                 new ObjectQuery($"SELECT DriverVersion FROM Win32_PnPSignedDriver WHERE DeviceID = '{id.Replace("\\", "\\\\").Replace("'", "\\'")}'"), opts);
-            foreach (ManagementObject o in d.Get()) using (o) { if (o["DriverVersion"] is string v) rows[i] = rows[i] with { DriverVersion = v }; }
+            foreach (ManagementBaseObject o in d.Get()) using (o) { if (o["DriverVersion"] is string v) rows[i] = rows[i] with { DriverVersion = v }; }
         }
         return rows;
     }

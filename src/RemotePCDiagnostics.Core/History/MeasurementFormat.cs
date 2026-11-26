@@ -71,7 +71,7 @@ public static class MeasurementFormat
         if (double.IsNaN(value) || double.IsInfinity(value)) return value.ToString(culture);
         var a = Math.Abs(value);
         string format;
-        if (a >= 100 || a == 0 || value == Math.Floor(value)) format = grouping ? "#,0" : "0";
+        if (a >= 100 || a < double.Epsilon || Math.Abs(value - Math.Floor(value)) < double.Epsilon) format = grouping ? "#,0" : "0";
         else if (a >= 10) format = "0.#";
         else if (a >= 1) format = "0.##";
         else

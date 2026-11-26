@@ -345,11 +345,7 @@ public sealed class RebootResumeCoordinator(
         }
 
         // Re-run ResourceHogsModule first so the UI and store have fresh post-reboot process/uptime cards.
-        if (diagnostics is not null)
-        {
-            try { await diagnostics.RunAsync(ModuleSlugs.ResourceHogs, ct: ct).ConfigureAwait(false); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"Post-reboot ResourceHogs refresh failed: {ex.Message}"); }
-        }
+        await RefreshResourceHogsBestEffortAsync(diagnostics, ct).ConfigureAwait(false);
 
         var post = postBaselineOverride ?? await CaptureBaselineAsync(ct).ConfigureAwait(false);
 
@@ -358,13 +354,7 @@ public sealed class RebootResumeCoordinator(
         var uptime = TimeSpan.FromSeconds(post.UptimeSeconds > 0 ? post.UptimeSeconds : Environment.TickCount64 / 1000);
         if (!SessionLaunchOptions.RestartedSince(pending, now, uptime))
         {
-            // Still counting down (the app itself was restarted in the meantime): leave everything for the start after the reboot.
-            // Long past the countdown: the restart was called off outside the app, so the resume entry must not fire at a later sign-in.
-            if (now - pending.InitiatedAtUtc > AbandonedAfter)
-            {
-                await CancelPendingRebootAsync(ct).ConfigureAwait(false);
-                Log("The scheduled restart did not happen; cleared the saved session and the resume entry.");
-            }
+            await CancelIfAbandonedAsync(pending, now, ct).ConfigureAwait(false);
             return null;
         }
 
@@ -372,24 +362,7 @@ public sealed class RebootResumeCoordinator(
 
         var freedMem = Math.Max(0, pending.PreUsedMemoryBytes - post.UsedMemoryBytes);
         var reducedProcs = Math.Max(0, pending.PreProcessCount - post.ProcessCount);
-
-        var sessionNote = pending.Mode == SessionMode.Remote && pending.SessionId != Guid.Empty
-            ? $"resumed remote session {pending.SessionId.ToString("D")[..8]}…"
-            : "resumed session";
-
-        var memComparison = pending.PreUsedMemoryBytes > 0 || post.UsedMemoryBytes > 0
-            ? freedMem > 0
-                ? $"Process memory dropped from {HardwareInventory.FormatBytes(pending.PreUsedMemoryBytes)} to {HardwareInventory.FormatBytes(post.UsedMemoryBytes)} (freed about {HardwareInventory.FormatBytes(freedMem)} of RAM)"
-                : $"Process memory after reboot is {HardwareInventory.FormatBytes(post.UsedMemoryBytes)} (was {HardwareInventory.FormatBytes(pending.PreUsedMemoryBytes)} before reboot)"
-            : "System memory refreshed";
-
-        var procComparison = pending.PreProcessCount > 0 || post.ProcessCount > 0
-            ? reducedProcs > 0
-                ? $" and running processes dropped from {pending.PreProcessCount} to {post.ProcessCount} ({reducedProcs} fewer background processes)."
-                : $" across {post.ProcessCount} running processes (was {pending.PreProcessCount})."
-            : ".";
-
-        var summary = $"Clean restart completed ({sessionNote}). {memComparison}{procComparison}";
+        var summary = FormatPostRebootSummary(pending, post, freedMem, reducedProcs);
 
         var rec = remediation.RecordCompleted(
             pending.Actor,
@@ -404,6 +377,52 @@ public sealed class RebootResumeCoordinator(
 
         Log($"Completed post-reboot comparison: freedMem={freedMem} reducedProcs={reducedProcs} summary='{summary}'");
         return new(pending, post, freedMem, reducedProcs, summary, rec);
+    }
+
+    private async Task RefreshResourceHogsBestEffortAsync(DiagnosticsService? diagnostics, CancellationToken ct)
+    {
+        if (diagnostics is null) return;
+        try { await diagnostics.RunAsync(ModuleSlugs.ResourceHogs, ct: ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"Post-reboot ResourceHogs refresh failed: {ex.Message}"); }
+    }
+
+    private async Task CancelIfAbandonedAsync(PendingRebootState pending, DateTimeOffset now, CancellationToken ct)
+    {
+        // Still counting down (the app itself was restarted in the meantime): leave everything for the start after the reboot.
+        // Long past the countdown: the restart was called off outside the app, so the resume entry must not fire at a later sign-in.
+        if (now - pending.InitiatedAtUtc > AbandonedAfter)
+        {
+            await CancelPendingRebootAsync(ct).ConfigureAwait(false);
+            Log("The scheduled restart did not happen; cleared the saved session and the resume entry.");
+        }
+    }
+
+    private static string FormatPostRebootSummary(
+        PendingRebootState pending, ResourceBaselineSnapshot post, long freedMem, int reducedProcs)
+    {
+        var sessionNote = pending.Mode == SessionMode.Remote && pending.SessionId != Guid.Empty
+            ? $"resumed remote session {pending.SessionId.ToString("D")[..8]}…"
+            : "resumed session";
+
+        var memComparison = FormatMemoryComparison(pending.PreUsedMemoryBytes, post.UsedMemoryBytes, freedMem);
+        var procComparison = FormatProcessComparison(pending.PreProcessCount, post.ProcessCount, reducedProcs);
+        return $"Clean restart completed ({sessionNote}). {memComparison}{procComparison}";
+    }
+
+    private static string FormatMemoryComparison(long preBytes, long postBytes, long freedMem)
+    {
+        if (preBytes <= 0 && postBytes <= 0) return "System memory refreshed";
+        return freedMem > 0
+            ? $"Process memory dropped from {HardwareInventory.FormatBytes(preBytes)} to {HardwareInventory.FormatBytes(postBytes)} (freed about {HardwareInventory.FormatBytes(freedMem)} of RAM)"
+            : $"Process memory after reboot is {HardwareInventory.FormatBytes(postBytes)} (was {HardwareInventory.FormatBytes(preBytes)} before reboot)";
+    }
+
+    private static string FormatProcessComparison(int preCount, int postCount, int reducedProcs)
+    {
+        if (preCount <= 0 && postCount <= 0) return ".";
+        return reducedProcs > 0
+            ? $" and running processes dropped from {preCount} to {postCount} ({reducedProcs} fewer background processes)."
+            : $" across {postCount} running processes (was {preCount}).";
     }
 
     public void SavePendingState(PendingRebootState state)

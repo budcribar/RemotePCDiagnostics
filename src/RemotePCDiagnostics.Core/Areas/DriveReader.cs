@@ -27,35 +27,47 @@ public static class DriveReader
         var disks = await wmi.QueryAsync(StorageNamespace, DiskSql, ct).ConfigureAwait(false);
         if (!disks.Success) return null;
         // Letters are best-effort: without them the drives are still listed.
-        var parts = await wmi.QueryAsync(StorageNamespace, PartitionSql, ct).ConfigureAwait(false);
-        var letters = new Dictionary<long, SortedSet<char>>();
-        foreach (var p in parts.Rows ?? [])
-            if (p.Long("DiskNumber") is { } n and >= 0 && Letter(p) is { } l)
-                (letters.TryGetValue(n, out var set) ? set : letters[n] = []).Add(l);
+        var letters = await ReadPartitionLettersAsync(wmi, ct).ConfigureAwait(false);
 
         var list = new List<DriveHealth>();
         foreach (var d in disks.Rows!)
-        {
-            var id = d.Str("DeviceId").Trim();
-            var objectId = d.Str("ObjectId");
-            WmiRow? counter = null;
-            if (objectId.Length > 0)
-            {
-                var c = await wmi.QueryAsync(StorageNamespace, CounterSql(objectId), ct).ConfigureAwait(false);
-                counter = c.Rows is { Count: > 0 } rows ? rows[0] : null;
-            }
-            var diskLetters = long.TryParse(id, out var num) && letters.TryGetValue(num, out var ls) ? new string([.. ls]) : "";
-            var spindle = d.Long("SpindleSpeed") is > 0 and < 0xFFFFFFFF and <= int.MaxValue and var rpm ? (int)rpm : (int?)null;
-            list.Add(new DriveHealth(
-                Name: d.Str("FriendlyName").Trim(), Serial: d.Str("SerialNumber").Trim(),
-                MediaType: MediaType(d.Long("MediaType")), BusType: BusType(d.Long("BusType")), Health: Health(d.Long("HealthStatus")),
-                Operational: Operational(d), SizeBytes: d.Long("Size") is > 0 and var size ? size : null,
-                TemperatureC: Range(counter?.Long("Temperature"), 1, 150), Wear: Range(counter?.Long("Wear"), 0, 100),
-                ReadErrors: NonNegative(counter?.Long("ReadErrorsUncorrected")), WriteErrors: NonNegative(counter?.Long("WriteErrorsUncorrected")),
-                PowerOnHours: NonNegative(counter?.Long("PowerOnHours")), Letters: diskLetters, UniqueId: d.Str("UniqueId").Trim(),
-                SpindleSpeedRpm: spindle));
-        }
+            list.Add(await ReadSingleDriveAsync(wmi, d, letters, ct).ConfigureAwait(false));
         return list;
+    }
+
+    private static async Task<Dictionary<long, SortedSet<char>>> ReadPartitionLettersAsync(IWmiSource wmi, CancellationToken ct)
+    {
+        var parts = await wmi.QueryAsync(StorageNamespace, PartitionSql, ct).ConfigureAwait(false);
+        var letters = new Dictionary<long, SortedSet<char>>();
+        foreach (var p in parts.Rows ?? [])
+        {
+            if (p.Long("DiskNumber") is { } n and >= 0 && Letter(p) is { } l)
+                (letters.TryGetValue(n, out var set) ? set : letters[n] = []).Add(l);
+        }
+        return letters;
+    }
+
+    private static async Task<DriveHealth> ReadSingleDriveAsync(
+        IWmiSource wmi, WmiRow d, Dictionary<long, SortedSet<char>> letters, CancellationToken ct)
+    {
+        var id = d.Str("DeviceId").Trim();
+        var objectId = d.Str("ObjectId");
+        WmiRow? counter = null;
+        if (objectId.Length > 0)
+        {
+            var c = await wmi.QueryAsync(StorageNamespace, CounterSql(objectId), ct).ConfigureAwait(false);
+            counter = c.Rows is { Count: > 0 } rows ? rows[0] : null;
+        }
+        var diskLetters = long.TryParse(id, out var num) && letters.TryGetValue(num, out var ls) ? new string([.. ls]) : "";
+        var spindle = d.Long("SpindleSpeed") is > 0 and < 0xFFFFFFFF and <= int.MaxValue and var rpm ? (int)rpm : (int?)null;
+        return new DriveHealth(
+            Name: d.Str("FriendlyName").Trim(), Serial: d.Str("SerialNumber").Trim(),
+            MediaType: MediaType(d.Long("MediaType")), BusType: BusType(d.Long("BusType")), Health: Health(d.Long("HealthStatus")),
+            Operational: Operational(d), SizeBytes: d.Long("Size") is > 0 and var size ? size : null,
+            TemperatureC: Range(counter?.Long("Temperature"), 1, 150), Wear: Range(counter?.Long("Wear"), 0, 100),
+            ReadErrors: NonNegative(counter?.Long("ReadErrorsUncorrected")), WriteErrors: NonNegative(counter?.Long("WriteErrorsUncorrected")),
+            PowerOnHours: NonNegative(counter?.Long("PowerOnHours")), Letters: diskLetters, UniqueId: d.Str("UniqueId").Trim(),
+            SpindleSpeedRpm: spindle);
     }
 
     /// <summary>A drive letter, as WMI's char16 arrives (a one-letter string, or its code).</summary>

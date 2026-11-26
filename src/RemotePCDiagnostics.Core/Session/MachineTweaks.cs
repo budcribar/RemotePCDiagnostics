@@ -665,7 +665,7 @@ public sealed class WindowsMachineTweaks(ILogger? log = null, IProcessLauncher? 
                     using (var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_PageFileSetting"))
                     using (var results = searcher.Get())
                     {
-                        foreach (ManagementObject o in results)
+                        foreach (var o in results.OfType<ManagementObject>())
                         {
                             if (existing is null && string.Equals(o["Name"] as string, row.Name, StringComparison.OrdinalIgnoreCase)) existing = o;
                             else o.Dispose();
@@ -697,7 +697,7 @@ public sealed class WindowsMachineTweaks(ILogger? log = null, IProcessLauncher? 
     {
         using var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_ComputerSystem");
         using var results = searcher.Get();
-        foreach (ManagementObject cs in results)
+        foreach (var cs in results.OfType<ManagementObject>())
             using (cs) { cs["AutomaticManagedPagefile"] = automatic; cs.Put(); }
     }
 

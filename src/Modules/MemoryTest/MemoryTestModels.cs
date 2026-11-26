@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text.Json.Serialization;
 
 namespace RemotePCDiagnostics.Core.Stress;
@@ -9,7 +10,7 @@ public enum MemoryTestOutcome { Passed, MemoryErrors, StoppedByUser, Overheated,
 
 public sealed record MemoryTestOptions
 {
-    public static readonly TimeSpan[] DurationChoices = new[] { 1, 2, 5, 10, 20, 30 }.Select(m => TimeSpan.FromMinutes(m)).ToArray();
+    public static readonly ImmutableArray<TimeSpan> DurationChoices = [.. new[] { 1, 2, 5, 10, 20, 30 }.Select(m => TimeSpan.FromMinutes(m))];
     public static TimeSpan MaxDuration => DurationChoices[^1];
     public static TimeSpan DefaultDuration(MemoryTestMode m) => m == MemoryTestMode.Quick ? TimeSpan.FromMinutes(2) : TimeSpan.FromMinutes(10);
 

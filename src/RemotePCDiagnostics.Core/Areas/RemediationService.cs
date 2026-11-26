@@ -100,16 +100,14 @@ public sealed class RemediationService(
     public const string BalancedPlanGuid = "381b4222-f694-41f0-9685-ff5bb260df2e";
 
     private readonly List<RemediationRecord> _recent = [];
+    private volatile IReadOnlyList<RemediationRecord> _recentSnapshot = [];
     private readonly object _gate = new();
 
     public RebootResumeCoordinator RebootResume { get; } = rebootResume ?? new RebootResumeCoordinator(commands, log: log);
 
     public event Action<RemediationRecord>? ActionCompleted;
 
-    public IReadOnlyList<RemediationRecord> Recent
-    {
-        get { lock (_gate) return _recent.ToList(); }
-    }
+    public IReadOnlyList<RemediationRecord> Recent => _recentSnapshot;
 
     public string Actor => ServiceActor.From(session);
 
@@ -125,377 +123,338 @@ public sealed class RemediationService(
     public RemediationPlan Plan(AreaAction action)
     {
         var label = string.IsNullOrWhiteSpace(action.TargetLabel) ? action.Target : action.TargetLabel;
-        return action.Kind switch
-        {
-            // 1. Drivers & Windows Updates
-            RemediationKind.CheckAndInstallDriverUpdates => new(
-                action,
-                "Check & install driver updates?",
-                "Searches Windows Update for pending hardware driver updates for this PC.",
-                "If driver updates are available, Windows will download and install them (or open Optional Driver Updates if confirmation is needed).",
-                "Installing display or network drivers may briefly flicker the screen or reconnect the network.",
-                true),
-
-            RemediationKind.CheckAndInstallWindowsUpdates => new(
-                action,
-                "Check & install Windows updates?",
-                "Searches Windows Update for pending security and quality updates.",
-                "Windows will scan for pending updates and start downloading and installing them.",
-                "Some updates may require a restart after installation finishes.",
-                true),
-
-            RemediationKind.RestartDevice => new(
-                action,
-                $"Restart {label}?",
-                $"Resets hardware device '{label}' in Device Manager via pnputil.",
-                "Windows will stop and restart the device driver without rebooting the PC.",
-                AdminNote("If this is a network or display device, it may briefly disconnect or flicker."),
-                !string.IsNullOrWhiteSpace(action.Target)),
-
-            RemediationKind.EnableDevice => new(
-                action,
-                $"Enable {label}?",
-                $"Re-enables disabled device '{label}' in Device Manager via pnputil.",
-                "Windows will enable the device and load its driver.",
-                AdminNote(),
-                !string.IsNullOrWhiteSpace(action.Target)),
-
-            RemediationKind.ScanHardwareChanges => new(
-                action,
-                "Scan for hardware changes?",
-                "Triggers a Plug and Play device rescan across the system.",
-                "Windows will check all buses for newly connected or reset hardware devices.",
-                null,
-                true),
-
-            // 2. Performance, Power Plan & Uptime
-            RemediationKind.SetBalancedPowerPlan => new(
-                action,
-                "Switch to Balanced power plan?",
-                "The PC is currently using a Power Saver scheme that caps CPU clock speeds.",
-                "Windows will activate the standard Balanced power plan immediately so the processor can boost to full speed when needed.",
-                null,
-                true),
-
-            RemediationKind.DisableFastStartup => new(
-                action,
-                "Turn off Windows Fast Startup?",
-                "Fast Startup (Hiberboot) saves kernel state to disk on Shut Down instead of performing a full reset, which can cause multi-week uptimes and driver quirks.",
-                "Sets HiberbootEnabled = 0 in the Windows registry so every Shut Down performs a clean boot.",
-                AdminNote(),
-                true),
-
-            RemediationKind.ScheduleCleanRestart => new(
-                action,
-                session?.Mode == SessionMode.Remote
-                    ? "Schedule a clean PC restart in 60 seconds (and auto-resume this remote session)?"
-                    : "Schedule a clean PC restart in 60 seconds?",
-                "Records current memory and process usage, registers a sign-in task to relaunch Remote PC Diagnostics into the same session, and restarts the PC in 60 seconds. Where Windows allows it, the same user is signed back in automatically with the screen locked.",
-                session?.Mode == SessionMode.Remote
-                    ? "After the PC reboots and signs back in, Remote PC Diagnostics will automatically reconnect to this exact remote session link, re-measure running resources, and log the RAM/process reduction in History."
-                    : "After the PC reboots and signs back in, Remote PC Diagnostics will automatically relaunch, re-measure running resources, and log the RAM/process reduction in History.",
-                session?.Mode == SessionMode.Remote
-                    ? "Remote mode: the connection will pause while Windows restarts and automatically resume once the user signs back in. Make sure any unsaved documents are saved."
-                    : "Make sure any unsaved documents are saved before restarting.",
-                true),
-
-            RemediationKind.CancelScheduledRestart => new(
-                action,
-                "Cancel scheduled restart?",
-                "Aborts a pending timed Windows shutdown or restart and clears the post-reboot auto-resume entry.",
-                "Runs 'shutdown /a' and removes the pending sign-in task so the PC stays on.",
-                null,
-                true),
-
-            RemediationKind.EndProcessGroup => PlanEndProcess(action, label),
-
-            RemediationKind.DisableDeviceWake => new(
-                action,
-                $"Stop {label} from waking the PC?",
-                $"'{label}' is allowed to wake this PC from sleep. A mouse nudged in a bag or a network adapter often wakes a PC by itself and drains the battery.",
-                $"Runs 'powercfg /devicedisablewake' for this one device. The PC then stays asleep when the device is used; the power button (and the lid, on a laptop) still wake it. Undo lets the device wake the PC again.",
-                DeviceWake.IsProtectedBusOrHub(action.Target)
-                    ? "Stopping wake on a USB hub, controller, or composite device can disconnect keyboards, mice, or docks plugged into it (Code 43). Disable wake on an individual device instead."
-                    : DeviceWake.IsSafeName(action.Target) ? AdminNote() : "This isn't a device name this app can change.",
-                DeviceWake.CanDisableWake(action.Target)),
-
-            RemediationKind.DisableWakeTimer => new(
-                action,
-                $"Stop {label} from waking the PC?",
-                $"Scheduled task '{action.Target}' has a wake timer set so it can wake this PC from sleep.",
-                $"Turns off 'Wake the computer to run this task' (WakeToRun) on '{action.Target}'. The task still runs normally when the PC is awake. Undo turns WakeToRun back on.",
-                DeviceWake.IsSafeTaskPath(action.Target) ? AdminNote() : "This isn't a scheduled task path this app can change.",
-                DeviceWake.IsSafeTaskPath(action.Target)),
-
-            // 3. Network & Connectivity Fixes
-            RemediationKind.DisableSystemProxy => new(
-                action,
-                "Disable Windows system HTTP proxy?",
-                "A system-wide proxy is currently enabled in Windows Internet Settings.",
-                "Turns off ProxyEnable for the current Windows user so browsers and apps connect directly to the internet.",
-                "If this PC is on a corporate network that requires a proxy server, disabling it may block web access.",
-                true),
-
-            RemediationKind.FlushDnsAndRenewIp => new(
-                action,
-                "Flush DNS cache & renew IP address?",
-                "Clears stale DNS records and refreshes the DHCP lease on active network adapters.",
-                "Runs 'ipconfig /flushdns' and 'ipconfig /renew'.",
-                session?.Mode == SessionMode.Remote
-                    ? "Running in Remote mode: renewing the IP lease may briefly pause this remote session for a few seconds."
-                    : null,
-                true),
-
-            RemediationKind.SetPublicDns => new(
-                action,
-                $"Use Cloudflare & Google DNS on {label}?",
-                $"Configures adapter '{label}' to use fast, reliable public DNS servers (1.1.1.1 and 8.8.8.8).",
-                "Updates the IPv4 DNS server addresses on this adapter.",
-                AdminNote(),
-                !string.IsNullOrWhiteSpace(action.Target)),
-
-            RemediationKind.ResetDhcpDns => new(
-                action,
-                $"Reset DNS to automatic (DHCP) on {label}?",
-                (action.CurrentSetting is { Length: > 0 } dns ? $"Current DNS servers on {label} at last check: {DnsSpeedTest.FormatServers(dns)}. " : "") +
-                $"Restores automatic DNS settings on adapter '{label}'.",
-                "Clears custom static DNS server addresses so Windows uses the DNS provided by the router/DHCP.",
-                AdminNote(),
-                !string.IsNullOrWhiteSpace(action.Target)),
-
-            // 4. Storage & Disk Space Cleanup
-            RemediationKind.CleanTempFiles => new(
-                action,
-                "Clean up temporary files & Recycle Bin?",
-                "Removes unlocked temporary files in %TEMP%, C:\\Windows\\Temp (older than 24 hours), and empties the Recycle Bin.",
-                "Frees disk space without touching personal documents, downloads, or active app files.",
-                null,
-                true),
-
-            RemediationKind.DeleteDuplicateFiles => PlanDeleteDuplicates(action),
-
-            RemediationKind.DeleteLargeFile => PlanDeleteLargeFile(action),
-
-            RemediationKind.OptimizeSsd => new(
-                action,
-                $"Optimize / Retrim {label}?",
-                "Sends TRIM / ReTrim optimization commands to the solid-state drive so it can maintain peak write speeds.",
-                DriveLetters(action.Target) is { Length: > 0 } dl ? $"Runs 'Optimize-Volume -DriveLetter {string.Join(",", dl.ToCharArray())} -ReTrim'." : "Nothing will run.",
-                DriveLetters(action.Target).Length > 0 ? AdminNote() : "This drive has no drive letter to optimize.",
-                DriveLetters(action.Target).Length > 0),
-
-            // 5. Windows repair
-            RemediationKind.RepairComponentStore => new(
-                action,
-                "Repair the Windows component store (DISM RestoreHealth)?",
-                "Repairs corruption DISM found in the Windows component store (the copies Windows uses to fix its own files)."
-                    + (action.Target == "needs-source" ? " DISM reported the store cannot be repaired from local files: this needs Windows Update (internet) or a matching installation source." : ""),
-                "Runs 'dism.exe /English /Online /Cleanup-Image /RestoreHealth' (10–30 minutes; may download files from Windows Update). Not undoable.",
-                AdminNote(),
-                true),
-
-            RemediationKind.RepairSystemFiles => new(
-                action,
-                "Repair protected system files (SFC /scannow)?",
-                "Replaces corrupt or changed protected Windows files with good copies from the component store.",
-                "Runs 'sfc.exe /scannow' (10–20 minutes), after DISM RestoreHealth when both run. Not undoable.",
-                AdminNote(),
-                true),
-
-            RemediationKind.AnalyzeComponentStore => new(
-                action,
-                "Analyze the Windows component store?",
-                "Measures the component store (WinSxS) and reports whether a cleanup is recommended.",
-                "Runs 'dism.exe /English /Online /Cleanup-Image /AnalyzeComponentStore' (a few minutes). Changes nothing on the PC.",
-                AdminNote(),
-                true),
-
-            RemediationKind.CleanUpComponentStore => new(
-                action,
-                "Clean up the Windows component store?",
-                "Removes older versions of Windows components that newer updates have replaced.",
-                "Runs 'dism.exe /English /Online /Cleanup-Image /StartComponentCleanup' (10–30 minutes). Installed updates can still be uninstalled afterwards. Not undoable.",
-                AdminNote("Restart the PC afterwards, before repairing the store again."),
-                true),
-
-            RemediationKind.RepairComponentStoreFromImage => new(
-                action,
-                "Repair the Windows component store from a Windows image?",
-                $"Repairs the component store from '{label}' instead of Windows Update, for when Windows Update doesn't have the files.",
-                "Finds the image of this PC's Windows edition, then runs 'dism.exe /English /Online /Cleanup-Image /RestoreHealth /Source:… /LimitAccess' (10–30 minutes). Not undoable.",
-                WindowsRepair.IsImagePath(action.Target)
-                    ? AdminNote("The image must be the same Windows version and edition as this PC; another version usually fails.")
-                    : "This isn't a Windows image file (.wim or .esd) this app can use.",
-                WindowsRepair.IsImagePath(action.Target)),
-
-            RemediationKind.InstallUpdate => new(
-                action,
-                $"Install {label}?",
-                "Installs this one update from Windows Update and leaves the other pending updates alone.",
-                "Windows downloads the update if needed and installs it. Not undoable from here.",
-                Guid.TryParse(action.Target, out _) ? "The update may need a restart to finish. A display or network driver may briefly flicker the screen or reconnect the network."
-                    : "This update has no Windows Update ID.",
-                Guid.TryParse(action.Target, out _)),
-
-            RemediationKind.ApplySecuritySetting => Security.SecurityFixes.Find(action.Target) is { } sf
-                ? new(action, $"{sf.ButtonText}?", sf.WhatItIs, sf.WhatHappens, sf.Caveat, true)
-                : new(action, action.ButtonText, "", "This setting isn't one this app changes.", "This setting isn't one this app changes.", Allowed: false),
-
-            RemediationKind.InstallBiosUpdate => new(
-                action,
-                string.IsNullOrWhiteSpace(label)
-                    ? "Update BIOS to latest version?"
-                    : $"Update BIOS to {(label.StartsWith("BIOS ", StringComparison.OrdinalIgnoreCase) ? label[5..].Trim() : label)}?",
-                "Downloads, verifies, and stages the official vendor BIOS/UEFI firmware update for this PC.",
-                "Checks AC power, battery level, and BitLocker prerequisites, suspends BitLocker for one reboot if active, verifies the signed vendor package, stages the BIOS update, then restarts the PC in 60 seconds to apply it. The app (and a remote session) reconnects after Windows signs back in. Not undoable.",
-                bios is null
-                    ? "BIOS update service is not available in this session."
-                    : AdminNote("Requires AC power. Save open work first: the PC restarts by itself to flash the firmware. Do not turn off or unplug the PC while the BIOS update is applying."),
-                bios is not null),
-
-            RemediationKind.OpenSettings => new(
-                action,
-                $"Open {label}?",
-                "Windows requires changing this setting directly in its own settings screen.",
-                $"Opens {label} on this PC. Make the change there, then re-run this check to verify.",
-                openUri is null
-                    ? "Opening Windows settings is not available in this session."
-                    : !Optimizations.MemoryCommandAllowlist.IsAllowedSettingsUri(action.Target)
-                        ? "This settings link isn't allowed."
-                        : null,
-                openUri is not null && Optimizations.MemoryCommandAllowlist.IsAllowedSettingsUri(action.Target)),
-
-            RemediationKind.EnableStorageSense => new(
-                action,
-                "Turn on Windows Storage Sense?",
-                "Windows Storage Sense automatically cleans temporary files and old Recycle Bin items so the system drive doesn't silently fill up.",
-                string.IsNullOrWhiteSpace(action.Target)
-                    ? "Sets HKCU StoragePolicy\\01 = 1 while preserving your existing schedule and retention choices (Windows defaults apply to unset values). Undo restores the setting, but cannot recover files Windows has already deleted."
-                    : $"Sets HKCU StoragePolicy\\01 = 1. {action.Target}",
-                "Undo restores the Storage Sense setting, but cannot recover files Windows has already deleted.",
-                true),
-
-            RemediationKind.ResetMaxProcessorState => new(
-                action,
-                "Set maximum processor state on AC to 100%?",
-                "The active power scheme currently limits maximum processor state on AC below 100%.",
-                "Sets the active scheme's AC Maximum processor state (PROCTHROTTLEMAX) to 100% and reapplies it if still active. Undo puts the previous value back on that scheme without switching plans.",
-                null,
-                true),
-
-            RemediationKind.MovePackageCacheToDevDrive => DevDrivePackageCaches.TryParseActionTarget(action.Target, out var cacheSpec, out var cacheFolder)
-                ? new(
-                    action,
-                    $"Use Dev Drive for {cacheSpec.ToolName} cache?",
-                    $"Redirects {cacheSpec.EnvVar} to your Dev Drive ({cacheFolder}) so package restores benefit from Dev Drive performance mode.",
-                    $"Sets your user environment variable {cacheSpec.EnvVar} to {cacheFolder} and creates the folder. The existing cache stays on C: (use Storage cleanup to reclaim it if desired). Restart any open terminals and IDEs for the new path to take effect. Undo restores or removes the environment variable.",
-                    null,
-                    true)
-                : new(action, action.ButtonText, "", "This cache target isn't on the allowlist.", "This cache target isn't on the allowlist.", Allowed: false),
-
-            RemediationKind.CreatePersistentDevDrive => new(
-                action,
-                "Create persistent Dev Drive (50 GB ReFS)?",
-                "Creates a dynamically expanding 50 GB ReFS Dev Drive VHDX with Defender Performance Mode so builds and package caches run faster.",
-                "Mounts a persistent Dev Drive via the elevated Agent and grants your account modify permissions. Undo detaches and removes the VHDX.",
-                AdminNote("Requires Windows 11 with Dev Drive support and at least 50 GB free on the system drive."),
-                true),
-
-            RemediationKind.InstallDotNetSdk => IsAllowedDotNetSdkPackage(action.Target)
-                ? new(
-                    action,
-                    $"Install {DotNetSdkDisplayName(action.Target)} (side-by-side)?",
-                    $"Installs {DotNetSdkDisplayName(action.Target)} alongside your existing SDKs via winget ({action.Target}).",
-                    "Runs winget install silently for the official Microsoft package. Existing SDKs remain installed and global.json-pinned repos stay on their pinned version.",
-                    "Requires internet access and winget (App Installer). Can be uninstalled later from Windows Installed Apps.",
-                    true)
-                : new(action, action.ButtonText, "", "This .NET SDK package isn't on the allowlist.", "This .NET SDK package isn't on the allowlist.", Allowed: false),
-
-            RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint
-                or RemediationKind.EnableAudioEndpoint or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements
-                or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy or RemediationKind.CloseAudioHolder
-                or RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic
-                or RemediationKind.EvenAudioBalance => PlanAudio(action, label),
-
-            _ => new(action, action.ButtonText, "", "", null, true),
-        };
+        return PlanCore(action, label)
+            ?? PlanStorageAndRepair(action, label)
+            ?? PlanSettingsAndDev(action, label)
+            ?? (IsAudioKind(action.Kind) ? PlanAudio(action, label) : new(action, action.ButtonText, "", "", null, true));
     }
+
+    private RemediationPlan? PlanCore(AreaAction action, string label) => action.Kind switch
+    {
+        RemediationKind.CheckAndInstallDriverUpdates => new(action, "Check & install driver updates?",
+            "Searches Windows Update for pending hardware driver updates for this PC.",
+            "If driver updates are available, Windows will download and install them (or open Optional Driver Updates if confirmation is needed).",
+            "Installing display or network drivers may briefly flicker the screen or reconnect the network.", true),
+        RemediationKind.CheckAndInstallWindowsUpdates => new(action, "Check & install Windows updates?",
+            "Searches Windows Update for pending security and quality updates.",
+            "Windows will scan for pending updates and start downloading and installing them.",
+            "Some updates may require a restart after installation finishes.", true),
+        RemediationKind.RestartDevice => new(action, $"Restart {label}?",
+            $"Resets hardware device '{label}' in Device Manager via pnputil.",
+            "Windows will stop and restart the device driver without rebooting the PC.",
+            AdminNote("If this is a network or display device, it may briefly disconnect or flicker."),
+            !string.IsNullOrWhiteSpace(action.Target)),
+        RemediationKind.EnableDevice => new(action, $"Enable {label}?",
+            $"Re-enables disabled device '{label}' in Device Manager via pnputil.",
+            "Windows will enable the device and load its driver.", AdminNote(),
+            !string.IsNullOrWhiteSpace(action.Target)),
+        RemediationKind.ScanHardwareChanges => new(action, "Scan for hardware changes?",
+            "Triggers a Plug and Play device rescan across the system.",
+            "Windows will check all buses for newly connected or reset hardware devices.", null, true),
+        RemediationKind.SetBalancedPowerPlan => new(action, "Switch to Balanced power plan?",
+            "The PC is currently using a Power Saver scheme that caps CPU clock speeds.",
+            "Windows will activate the standard Balanced power plan immediately so the processor can boost to full speed when needed.", null, true),
+        RemediationKind.DisableFastStartup => new(action, "Turn off Windows Fast Startup?",
+            "Fast Startup (Hiberboot) saves kernel state to disk on Shut Down instead of performing a full reset, which can cause multi-week uptimes and driver quirks.",
+            "Sets HiberbootEnabled = 0 in the Windows registry so every Shut Down performs a clean boot.", AdminNote(), true),
+        RemediationKind.ScheduleCleanRestart => PlanScheduleCleanRestart(action),
+        RemediationKind.CancelScheduledRestart => new(action, "Cancel scheduled restart?",
+            "Aborts a pending timed Windows shutdown or restart and clears the post-reboot auto-resume entry.",
+            "Runs 'shutdown /a' and removes the pending sign-in task so the PC stays on.", null, true),
+        RemediationKind.EndProcessGroup => PlanEndProcess(action, label),
+        RemediationKind.DisableDeviceWake => PlanDisableDeviceWake(action, label),
+        RemediationKind.DisableWakeTimer => new(action, $"Stop {label} from waking the PC?",
+            $"Scheduled task '{action.Target}' has a wake timer set so it can wake this PC from sleep.",
+            $"Turns off 'Wake the computer to run this task' (WakeToRun) on '{action.Target}'. The task still runs normally when the PC is awake. Undo turns WakeToRun back on.",
+            DeviceWake.IsSafeTaskPath(action.Target) ? AdminNote() : "This isn't a scheduled task path this app can change.",
+            DeviceWake.IsSafeTaskPath(action.Target)),
+        RemediationKind.DisableSystemProxy => new(action, "Disable Windows system HTTP proxy?",
+            "A system-wide proxy is currently enabled in Windows Internet Settings.",
+            "Turns off ProxyEnable for the current Windows user so browsers and apps connect directly to the internet.",
+            "If this PC is on a corporate network that requires a proxy server, disabling it may block web access.", true),
+        RemediationKind.FlushDnsAndRenewIp => new(action, "Flush DNS cache & renew IP address?",
+            "Clears stale DNS records and refreshes the DHCP lease on active network adapters.",
+            "Runs 'ipconfig /flushdns' and 'ipconfig /renew'.",
+            session?.Mode == SessionMode.Remote ? "Running in Remote mode: renewing the IP lease may briefly pause this remote session for a few seconds." : null, true),
+        RemediationKind.SetPublicDns => new(action, $"Use Cloudflare & Google DNS on {label}?",
+            $"Configures adapter '{label}' to use fast, reliable public DNS servers (1.1.1.1 and 8.8.8.8).",
+            "Updates the IPv4 DNS server addresses on this adapter.", AdminNote(), !string.IsNullOrWhiteSpace(action.Target)),
+        RemediationKind.ResetDhcpDns => new(action, $"Reset DNS to automatic (DHCP) on {label}?",
+            (action.CurrentSetting is { Length: > 0 } dns ? $"Current DNS servers on {label} at last check: {DnsSpeedTest.FormatServers(dns)}. " : "")
+            + $"Restores automatic DNS settings on adapter '{label}'.",
+            "Clears custom static DNS server addresses so Windows uses the DNS provided by the router/DHCP.",
+            AdminNote(), !string.IsNullOrWhiteSpace(action.Target)),
+        _ => null,
+    };
+
+    private RemediationPlan PlanScheduleCleanRestart(AreaAction action)
+    {
+        var remote = session?.Mode == SessionMode.Remote;
+        return new(
+            action,
+            remote ? "Schedule a clean PC restart in 60 seconds (and auto-resume this remote session)?" : "Schedule a clean PC restart in 60 seconds?",
+            "Records current memory and process usage, registers a sign-in task to relaunch Remote PC Diagnostics into the same session, and restarts the PC in 60 seconds. Where Windows allows it, the same user is signed back in automatically with the screen locked.",
+            remote
+                ? "After the PC reboots and signs back in, Remote PC Diagnostics will automatically reconnect to this exact remote session link, re-measure running resources, and log the RAM/process reduction in History."
+                : "After the PC reboots and signs back in, Remote PC Diagnostics will automatically relaunch, re-measure running resources, and log the RAM/process reduction in History.",
+            remote
+                ? "Remote mode: the connection will pause while Windows restarts and automatically resume once the user signs back in. Make sure any unsaved documents are saved."
+                : "Make sure any unsaved documents are saved before restarting.",
+            true);
+    }
+
+    private RemediationPlan PlanDisableDeviceWake(AreaAction action, string label)
+    {
+        var warning = DeviceWake.IsProtectedBusOrHub(action.Target)
+            ? "Stopping wake on a USB hub, controller, or composite device can disconnect keyboards, mice, or docks plugged into it (Code 43). Disable wake on an individual device instead."
+            : DeviceWake.IsSafeName(action.Target) ? AdminNote() : "This isn't a device name this app can change.";
+        return new(
+            action,
+            $"Stop {label} from waking the PC?",
+            $"'{label}' is allowed to wake this PC from sleep. A mouse nudged in a bag or a network adapter often wakes a PC by itself and drains the battery.",
+            $"Runs 'powercfg /devicedisablewake' for this one device. The PC then stays asleep when the device is used; the power button (and the lid, on a laptop) still wake it. Undo lets the device wake the PC again.",
+            warning,
+            DeviceWake.CanDisableWake(action.Target));
+    }
+
+    private RemediationPlan? PlanStorageAndRepair(AreaAction action, string label) => action.Kind switch
+    {
+        RemediationKind.CleanTempFiles => new(action, "Clean up temporary files & Recycle Bin?",
+            "Removes unlocked temporary files in %TEMP%, C:\\Windows\\Temp (older than 24 hours), and empties the Recycle Bin.",
+            "Frees disk space without touching personal documents, downloads, or active app files.", null, true),
+        RemediationKind.DeleteDuplicateFiles => PlanDeleteDuplicates(action),
+        RemediationKind.DeleteLargeFile => PlanDeleteLargeFile(action),
+        RemediationKind.OptimizeSsd => PlanOptimizeSsd(action, label),
+        RemediationKind.RepairComponentStore => new(action, "Repair the Windows component store (DISM RestoreHealth)?",
+            "Repairs corruption DISM found in the Windows component store (the copies Windows uses to fix its own files)."
+            + (action.Target == "needs-source" ? " DISM reported the store cannot be repaired from local files: this needs Windows Update (internet) or a matching installation source." : ""),
+            "Runs 'dism.exe /English /Online /Cleanup-Image /RestoreHealth' (10–30 minutes; may download files from Windows Update). Not undoable.", AdminNote(), true),
+        RemediationKind.RepairSystemFiles => new(action, "Repair protected system files (SFC /scannow)?",
+            "Replaces corrupt or changed protected Windows files with good copies from the component store.",
+            "Runs 'sfc.exe /scannow' (10–20 minutes), after DISM RestoreHealth when both run. Not undoable.", AdminNote(), true),
+        RemediationKind.AnalyzeComponentStore => new(action, "Analyze the Windows component store?",
+            "Measures the component store (WinSxS) and reports whether a cleanup is recommended.",
+            "Runs 'dism.exe /English /Online /Cleanup-Image /AnalyzeComponentStore' (a few minutes). Changes nothing on the PC.", AdminNote(), true),
+        RemediationKind.CleanUpComponentStore => new(action, "Clean up the Windows component store?",
+            "Removes older versions of Windows components that newer updates have replaced.",
+            "Runs 'dism.exe /English /Online /Cleanup-Image /StartComponentCleanup' (10–30 minutes). Installed updates can still be uninstalled afterwards. Not undoable.",
+            AdminNote("Restart the PC afterwards, before repairing the store again."), true),
+        RemediationKind.RepairComponentStoreFromImage => new(action, "Repair the Windows component store from a Windows image?",
+            $"Repairs the component store from '{label}' instead of Windows Update, for when Windows Update doesn't have the files.",
+            "Finds the image of this PC's Windows edition, then runs 'dism.exe /English /Online /Cleanup-Image /RestoreHealth /Source:… /LimitAccess' (10–30 minutes). Not undoable.",
+            WindowsRepair.IsImagePath(action.Target)
+                ? AdminNote("The image must be the same Windows version and edition as this PC; another version usually fails.")
+                : "This isn't a Windows image file (.wim or .esd) this app can use.",
+            WindowsRepair.IsImagePath(action.Target)),
+        RemediationKind.InstallUpdate => new(action, $"Install {label}?",
+            "Installs this one update from Windows Update and leaves the other pending updates alone.",
+            "Windows downloads the update if needed and installs it. Not undoable from here.",
+            Guid.TryParse(action.Target, out _) ? "The update may need a restart to finish. A display or network driver may briefly flicker the screen or reconnect the network."
+                : "This update has no Windows Update ID.",
+            Guid.TryParse(action.Target, out _)),
+        _ => null,
+    };
+
+    private RemediationPlan PlanOptimizeSsd(AreaAction action, string label)
+    {
+        var dl = DriveLetters(action.Target);
+        var hasLetters = dl.Length > 0;
+        return new(action, $"Optimize / Retrim {label}?",
+            "Sends TRIM / ReTrim optimization commands to the solid-state drive so it can maintain peak write speeds.",
+            hasLetters ? $"Runs 'Optimize-Volume -DriveLetter {string.Join(",", dl.ToCharArray())} -ReTrim'." : "Nothing will run.",
+            hasLetters ? AdminNote() : "This drive has no drive letter to optimize.",
+            hasLetters);
+    }
+
+    private RemediationPlan? PlanSettingsAndDev(AreaAction action, string label) => action.Kind switch
+    {
+        RemediationKind.ApplySecuritySetting => Security.SecurityFixes.Find(action.Target) is { } sf
+            ? new(action, $"{sf.ButtonText}?", sf.WhatItIs, sf.WhatHappens, sf.Caveat, true)
+            : new(action, action.ButtonText, "", "This setting isn't one this app changes.", "This setting isn't one this app changes.", Allowed: false),
+        RemediationKind.InstallBiosUpdate => PlanInstallBiosUpdate(action, label),
+        RemediationKind.OpenSettings => PlanOpenSettings(action, label),
+        RemediationKind.EnableStorageSense => new(action, "Turn on Windows Storage Sense?",
+            "Windows Storage Sense automatically cleans temporary files and old Recycle Bin items so the system drive doesn't silently fill up.",
+            string.IsNullOrWhiteSpace(action.Target)
+                ? "Sets HKCU StoragePolicy\\01 = 1 while preserving your existing schedule and retention choices (Windows defaults apply to unset values). Undo restores the setting, but cannot recover files Windows has already deleted."
+                : $"Sets HKCU StoragePolicy\\01 = 1. {action.Target}",
+            "Undo restores the Storage Sense setting, but cannot recover files Windows has already deleted.", true),
+        RemediationKind.ResetMaxProcessorState => new(action, "Set maximum processor state on AC to 100%?",
+            "The active power scheme currently limits maximum processor state on AC below 100%.",
+            "Sets the active scheme's AC Maximum processor state (PROCTHROTTLEMAX) to 100% and reapplies it if still active. Undo puts the previous value back on that scheme without switching plans.",
+            null, true),
+        RemediationKind.MovePackageCacheToDevDrive => DevDrivePackageCaches.TryParseActionTarget(action.Target, out var cacheSpec, out var cacheFolder)
+            ? new(action, $"Use Dev Drive for {cacheSpec.ToolName} cache?",
+                $"Redirects {cacheSpec.EnvVar} to your Dev Drive ({cacheFolder}) so package restores benefit from Dev Drive performance mode.",
+                $"Sets your user environment variable {cacheSpec.EnvVar} to {cacheFolder} and creates the folder. The existing cache stays on C: (use Storage cleanup to reclaim it if desired). Restart any open terminals and IDEs for the new path to take effect. Undo restores or removes the environment variable.",
+                null, true)
+            : new(action, action.ButtonText, "", "This cache target isn't on the allowlist.", "This cache target isn't on the allowlist.", Allowed: false),
+        RemediationKind.CreatePersistentDevDrive => new(action, "Create persistent Dev Drive (50 GB ReFS)?",
+            "Creates a dynamically expanding 50 GB ReFS Dev Drive VHDX with Defender Performance Mode so builds and package caches run faster.",
+            "Mounts a persistent Dev Drive via the elevated Agent and grants your account modify permissions. Undo detaches and removes the VHDX.",
+            AdminNote("Requires Windows 11 with Dev Drive support and at least 50 GB free on the system drive."), true),
+        RemediationKind.InstallDotNetSdk => IsAllowedDotNetSdkPackage(action.Target)
+            ? new(action, $"Install {DotNetSdkDisplayName(action.Target)} (side-by-side)?",
+                $"Installs {DotNetSdkDisplayName(action.Target)} alongside your existing SDKs via winget ({action.Target}).",
+                "Runs winget install silently for the official Microsoft package. Existing SDKs remain installed and global.json-pinned repos stay on their pinned version.",
+                "Requires internet access and winget (App Installer). Can be uninstalled later from Windows Installed Apps.", true)
+            : new(action, action.ButtonText, "", "This .NET SDK package isn't on the allowlist.", "This .NET SDK package isn't on the allowlist.", Allowed: false),
+        _ => null,
+    };
+
+    private RemediationPlan PlanInstallBiosUpdate(AreaAction action, string label)
+    {
+        var title = string.IsNullOrWhiteSpace(label)
+            ? "Update BIOS to latest version?"
+            : $"Update BIOS to {(label.StartsWith("BIOS ", StringComparison.OrdinalIgnoreCase) ? label[5..].Trim() : label)}?";
+        var warning = bios is null
+            ? "BIOS update service is not available in this session."
+            : AdminNote("Requires AC power. Save open work first: the PC restarts by itself to flash the firmware. Do not turn off or unplug the PC while the BIOS update is applying.");
+        return new(action, title,
+            "Downloads, verifies, and stages the official vendor BIOS/UEFI firmware update for this PC.",
+            "Checks AC power, battery level, and BitLocker prerequisites, suspends BitLocker for one reboot if active, verifies the signed vendor package, stages the BIOS update, then restarts the PC in 60 seconds to apply it. The app (and a remote session) reconnects after Windows signs back in. Not undoable.",
+            warning, bios is not null);
+    }
+
+    private RemediationPlan PlanOpenSettings(AreaAction action, string label)
+    {
+        var allowedUri = Optimizations.MemoryCommandAllowlist.IsAllowedSettingsUri(action.Target);
+        var warning = openUri is null
+            ? "Opening Windows settings is not available in this session."
+            : !allowedUri ? "This settings link isn't allowed." : null;
+        return new(action, $"Open {label}?",
+            "Windows requires changing this setting directly in its own settings screen.",
+            $"Opens {label} on this PC. Make the change there, then re-run this check to verify.",
+            warning, openUri is not null && allowedUri);
+    }
+
+    private static bool IsAudioKind(RemediationKind kind) => kind is
+        RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint
+        or RemediationKind.EnableAudioEndpoint or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements
+        or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy or RemediationKind.CloseAudioHolder
+        or RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic
+        or RemediationKind.EvenAudioBalance;
 
     /// <summary>The Sound fixes. A dialog fix's Target before the choice ("output", or the busy device) is allowed: Go waits for the choice.</summary>
     private RemediationPlan PlanAudio(AreaAction action, string label)
     {
-        // The Windows Audio service fixes go through the Agent only; the rest need the sound devices.
-        var unavailable = audio is null || (!audio.Available && !Audio.AudioFixService.IsServiceFix(action.Kind)) ? "Sound devices can't be changed in this session."
-            : Audio.AudioFixService.NeedsPolicyConfig(action.Kind) && !audio.CanChangeSettings ? "Windows doesn't let this app change that sound setting on this PC. Use Sound settings instead."
-            : null;
-        RemediationPlan P(string title, string what, string happens, string? warning, bool valid) =>
-            new(action, title, what, happens, unavailable ?? (valid ? warning : "This isn't a sound device this app can change."), unavailable is null && valid);
+        var unavailable = GetAudioUnavailableReason(action.Kind);
         var t = action.Target;
         var device = Audio.AudioTargets.TrySplit(t, out var id, out var rest);
-        switch (action.Kind)
+        return PlanAudioEndpoint(action, label, unavailable, t, device, id, rest)
+            ?? PlanAudioServiceOrApp(action, label, unavailable, t, device, rest)
+            ?? new(action, action.ButtonText, "", "", null, false);
+    }
+
+    private string? GetAudioUnavailableReason(RemediationKind kind)
+    {
+        // The Windows Audio service fixes go through the Agent only; the rest need the sound devices.
+        if (audio is null || (!audio.Available && !Audio.AudioFixService.IsServiceFix(kind)))
+            return "Sound devices can't be changed in this session.";
+        if (Audio.AudioFixService.NeedsPolicyConfig(kind) && !audio.CanChangeSettings)
+            return "Windows doesn't let this app change that sound setting on this PC. Use Sound settings instead.";
+        return null;
+    }
+
+    private static RemediationPlan BuildAudioPlan(AreaAction action, string? unavailable, string title, string what, string happens, string? warning, bool valid) =>
+        new(action, title, what, happens, unavailable ?? (valid ? warning : "This isn't a sound device this app can change."), unavailable is null && valid);
+
+    private RemediationPlan? PlanAudioEndpoint(AreaAction action, string label, string? unavailable, string t, bool device, string id, string rest) => action.Kind switch
+    {
+        RemediationKind.UnmuteAudioEndpoint => BuildAudioPlan(action, unavailable, $"Unmute {label}?",
+            $"{label} is muted, so nothing {(Audio.AudioTargets.FlowOf(id) == Audio.AudioFlow.Input ? "you say is heard" : "plays")}.",
+            "Turns mute off on this device, as the speaker icon in the taskbar does. Undo mutes it again.", null, device && rest.Length == 0),
+        RemediationKind.RaiseAudioVolume => PlanRaiseAudioVolume(action, label, unavailable, device, id, rest),
+        RemediationKind.EvenAudioBalance => BuildAudioPlan(action, unavailable, $"Even out the balance of {label}?",
+            $"One side of {label} is much quieter than the other, so it may sound like one speaker is dead.",
+            "Sets the left and right levels to the louder of the two, as the balance sliders in Sound settings do. Undo puts the old levels back.", null, device && rest.Length == 0),
+        RemediationKind.SetDefaultAudioEndpoint => PlanSetDefaultAudioEndpoint(action, label, unavailable, t),
+        RemediationKind.EnableAudioEndpoint => BuildAudioPlan(action, unavailable, $"Turn on {label}?",
+            $"{label} is disabled in Windows' Sound settings, so apps can't use it.",
+            "Turns the device back on, as Enable in the Sound control panel does. Undo turns it off again.", null, device && rest.Length == 0),
+        RemediationKind.ResetAudioFormat => BuildAudioPlan(action, unavailable, $"Reset the sound format of {label}?",
+            $"The format of {label} was changed from the driver's default, which can stop it playing or recording.",
+            "Puts the driver's default format back (the Sound control panel's Advanced tab). Undo puts the old format back.", null, device && rest.Length == 0),
+        RemediationKind.ToggleAudioEnhancements => PlanToggleAudioEnhancements(action, label, unavailable, device, rest),
+        _ => null,
+    };
+
+    private static RemediationPlan PlanRaiseAudioVolume(AreaAction action, string label, string? unavailable, bool device, string id, string rest)
+    {
+        var input = Audio.AudioTargets.FlowOf(id) == Audio.AudioFlow.Input;
+        return BuildAudioPlan(action, unavailable, $"Raise the {(input ? "microphone level" : "volume")} of {label}?",
+            input ? $"{label} is set so low that others may not hear you." : $"{label} is so quiet it may sound silent.",
+            $"Sets the level to {(input ? "80" : "50")}%. Undo puts the old level back.", null, device && rest.Length == 0);
+    }
+
+    private static RemediationPlan PlanSetDefaultAudioEndpoint(AreaAction action, string label, string? unavailable, string t)
+    {
+        if (t is Audio.AudioTargets.Output or Audio.AudioTargets.Input)
         {
-            case RemediationKind.UnmuteAudioEndpoint:
-                return P($"Unmute {label}?", $"{label} is muted, so nothing {(Audio.AudioTargets.FlowOf(id) == Audio.AudioFlow.Input ? "you say is heard" : "plays")}.",
-                    "Turns mute off on this device, as the speaker icon in the taskbar does. Undo mutes it again.", null, device && rest.Length == 0);
-            case RemediationKind.RaiseAudioVolume:
-                var input = Audio.AudioTargets.FlowOf(id) == Audio.AudioFlow.Input;
-                return P($"Raise the {(input ? "microphone level" : "volume")} of {label}?",
-                    input ? $"{label} is set so low that others may not hear you." : $"{label} is so quiet it may sound silent.",
-                    $"Sets the level to {(input ? "80" : "50")}%. Undo puts the old level back.", null, device && rest.Length == 0);
-            case RemediationKind.EvenAudioBalance:
-                return P($"Even out the balance of {label}?", $"One side of {label} is much quieter than the other, so it may sound like one speaker is dead.",
-                    "Sets the left and right levels to the louder of the two, as the balance sliders in Sound settings do. Undo puts the old levels back.", null, device && rest.Length == 0);
-            case RemediationKind.SetDefaultAudioEndpoint:
-                if (t is Audio.AudioTargets.Output or Audio.AudioTargets.Input)
-                    return P(t == Audio.AudioTargets.Input ? "Choose the microphone" : "Choose where sound plays",
-                        t == Audio.AudioTargets.Input ? "Pick the microphone apps should use." : "Pick the speakers or headphones apps should play to.",
-                        "Makes the device you pick the Windows default. Undo makes the previous device the default again.", null, true);
-                var calls = t.EndsWith(Audio.AudioTargets.CallsSuffix, StringComparison.Ordinal);
-                var deviceId = calls ? t[..^Audio.AudioTargets.CallsSuffix.Length] : t;
-                return P($"Make {label} the default?", $"Apps will {(Audio.AudioTargets.FlowOf(deviceId) == Audio.AudioFlow.Input ? "record from" : "play sound on")} {label}{(calls ? ", calls included" : "")}.",
-                    "Changes the Windows default device. Undo makes the previous device the default again.", null, Audio.AudioTargets.IsEndpointId(deviceId));
-            case RemediationKind.EnableAudioEndpoint:
-                return P($"Turn on {label}?", $"{label} is disabled in Windows' Sound settings, so apps can't use it.",
-                    "Turns the device back on, as Enable in the Sound control panel does. Undo turns it off again.", null, device && rest.Length == 0);
-            case RemediationKind.ResetAudioFormat:
-                return P($"Reset the sound format of {label}?", $"The format of {label} was changed from the driver's default, which can stop it playing or recording.",
-                    "Puts the driver's default format back (the Sound control panel's Advanced tab). Undo puts the old format back.", null, device && rest.Length == 0);
-            case RemediationKind.ToggleAudioEnhancements:
-                var off = rest == Audio.AudioTargets.Off;
-                return P($"Turn audio enhancements {(off ? "off" : "on")} for {label}?",
-                    off ? $"Sound makers' enhancements (equalizers, virtual surround) can stop {label} from working." : $"Audio enhancements are off for {label}.",
-                    $"Turns the device's \"Audio enhancements\" switch {(off ? "off" : "on")}. Undo puts it back.", "Some devices sound different with enhancements off.",
-                    device && rest is Audio.AudioTargets.Off or Audio.AudioTargets.On);
-            case RemediationKind.UnmuteAudioSession:
-                return P($"Unmute {rest} in the Volume mixer?", $"{rest} is muted in the Volume mixer, so it makes no sound.",
-                    "Unmutes that app only. Undo mutes it again while it's still running.", null, device && Session.AgentScripts.IsProcessName(rest));
-            case RemediationKind.AllowCapturePrivacy:
-                var thing = Audio.CapturePrivacy.IsCapability(t) ? Audio.CapturePrivacy.Thing(t) : "Microphone";
-                return P($"Turn on {thing.ToLowerInvariant()} access?", $"Windows privacy settings stop apps from using the {thing.ToLowerInvariant()}.",
-                    $"Turns on the {thing.ToLowerInvariant()} switches that are off: the per-account ones here, the device-wide one through the Agent. Undo turns them off again.",
-                    "Apps that are already open may need to be restarted.", Audio.CapturePrivacy.IsCapability(t));
-            case RemediationKind.StartAudioServices:
-                return P("Start Windows Audio?", "Windows Audio isn't running, so no sound can play or be recorded.",
-                    "Starts Windows Audio Endpoint Builder, then Windows Audio, through the Agent, and checks they're running.", AdminNote(), t.Length == 0);
-            case RemediationKind.RestartAudioServices:
-                return P("Restart Windows Audio?", "Windows Audio isn't answering, so sound devices can't be opened.",
-                    "Restarts Windows Audio through the Agent. If the sound devices still don't answer, restarts Windows Audio Endpoint Builder too.",
-                    AdminNote("Sound will stop for a few seconds, and apps playing audio (calls, music) may need to be restarted."), t.Length == 0);
-            case RemediationKind.SetAudioServicesAutomatic:
-                return P("Turn Windows Audio back on?", "A Windows Audio service is disabled, so no sound can play.",
-                    "Sets the disabled Windows Audio services to Automatic and starts them, through the Agent. Undo puts the start-up type back.",
-                    AdminNote(), t.Length == 0);
-            case RemediationKind.CloseAudioHolder:
-                if (device && rest.Length == 0)
-                    return P("Close the app holding the device?", $"An app has taken over {label}, so other apps can't use it.",
-                        "Pick the app to close. It's closed right away, like End task.", "Unsaved work in that app may be lost.", true);
-                var holder = new AreaAction(RemediationKind.EndProcessGroup, action.ButtonText, rest, rest);
-                if (!device || !Session.AgentScripts.IsProcessName(rest) || ProcessProtection.IsProtected(rest))
-                    return new(action, $"Close {rest}?", "", "This app can't be closed from here.", $"{rest} is protected or isn't an app this app can close.", false);
-                return P($"Close {rest}?", $"{rest} is using {label} so other apps can't.", PlanEndProcess(holder, rest).WhatWillHappen + " Not undoable.",
-                    "Any unsaved work inside that app will be lost.", true);
+            var isInput = t == Audio.AudioTargets.Input;
+            return BuildAudioPlan(action, unavailable,
+                isInput ? "Choose the microphone" : "Choose where sound plays",
+                isInput ? "Pick the microphone apps should use." : "Pick the speakers or headphones apps should play to.",
+                "Makes the device you pick the Windows default. Undo makes the previous device the default again.", null, true);
         }
-        return new(action, action.ButtonText, "", "", null, false);
+        var calls = t.EndsWith(Audio.AudioTargets.CallsSuffix, StringComparison.Ordinal);
+        var deviceId = calls ? t[..^Audio.AudioTargets.CallsSuffix.Length] : t;
+        var flowVerb = Audio.AudioTargets.FlowOf(deviceId) == Audio.AudioFlow.Input ? "record from" : "play sound on";
+        return BuildAudioPlan(action, unavailable, $"Make {label} the default?",
+            $"Apps will {flowVerb} {label}{(calls ? ", calls included" : "")}.",
+            "Changes the Windows default device. Undo makes the previous device the default again.", null, Audio.AudioTargets.IsEndpointId(deviceId));
+    }
+
+    private static RemediationPlan PlanToggleAudioEnhancements(AreaAction action, string label, string? unavailable, bool device, string rest)
+    {
+        var off = rest == Audio.AudioTargets.Off;
+        return BuildAudioPlan(action, unavailable, $"Turn audio enhancements {(off ? "off" : "on")} for {label}?",
+            off ? $"Sound makers' enhancements (equalizers, virtual surround) can stop {label} from working." : $"Audio enhancements are off for {label}.",
+            $"Turns the device's \"Audio enhancements\" switch {(off ? "off" : "on")}. Undo puts it back.",
+            "Some devices sound different with enhancements off.",
+            device && rest is Audio.AudioTargets.Off or Audio.AudioTargets.On);
+    }
+
+    private RemediationPlan? PlanAudioServiceOrApp(AreaAction action, string label, string? unavailable, string t, bool device, string rest) => action.Kind switch
+    {
+        RemediationKind.UnmuteAudioSession => BuildAudioPlan(action, unavailable, $"Unmute {rest} in the Volume mixer?",
+            $"{rest} is muted in the Volume mixer, so it makes no sound.",
+            "Unmutes that app only. Undo mutes it again while it's still running.", null, device && Session.AgentScripts.IsProcessName(rest)),
+        RemediationKind.AllowCapturePrivacy => PlanAllowCapturePrivacy(action, unavailable, t),
+        RemediationKind.StartAudioServices => BuildAudioPlan(action, unavailable, "Start Windows Audio?",
+            "Windows Audio isn't running, so no sound can play or be recorded.",
+            "Starts Windows Audio Endpoint Builder, then Windows Audio, through the Agent, and checks they're running.", AdminNote(), t.Length == 0),
+        RemediationKind.RestartAudioServices => BuildAudioPlan(action, unavailable, "Restart Windows Audio?",
+            "Windows Audio isn't answering, so sound devices can't be opened.",
+            "Restarts Windows Audio through the Agent. If the sound devices still don't answer, restarts Windows Audio Endpoint Builder too.",
+            AdminNote("Sound will stop for a few seconds, and apps playing audio (calls, music) may need to be restarted."), t.Length == 0),
+        RemediationKind.SetAudioServicesAutomatic => BuildAudioPlan(action, unavailable, "Turn Windows Audio back on?",
+            "A Windows Audio service is disabled, so no sound can play.",
+            "Sets the disabled Windows Audio services to Automatic and starts them, through the Agent. Undo puts the start-up type back.",
+            AdminNote(), t.Length == 0),
+        RemediationKind.CloseAudioHolder => PlanCloseAudioHolder(action, label, unavailable, device, rest),
+        _ => null,
+    };
+
+    private static RemediationPlan PlanAllowCapturePrivacy(AreaAction action, string? unavailable, string t)
+    {
+        var thing = (Audio.CapturePrivacy.IsCapability(t) ? Audio.CapturePrivacy.Thing(t) : "Microphone").ToLowerInvariant();
+        return BuildAudioPlan(action, unavailable, $"Turn on {thing} access?",
+            $"Windows privacy settings stop apps from using the {thing}.",
+            $"Turns on the {thing} switches that are off: the per-account ones here, the device-wide one through the Agent. Undo turns them off again.",
+            "Apps that are already open may need to be restarted.", Audio.CapturePrivacy.IsCapability(t));
+    }
+
+    private static RemediationPlan PlanCloseAudioHolder(AreaAction action, string label, string? unavailable, bool device, string rest)
+    {
+        if (device && rest.Length == 0)
+            return BuildAudioPlan(action, unavailable, "Close the app holding the device?", $"An app has taken over {label}, so other apps can't use it.",
+                "Pick the app to close. It's closed right away, like End task.", "Unsaved work in that app may be lost.", true);
+        if (!device || !Session.AgentScripts.IsProcessName(rest) || ProcessProtection.IsProtected(rest))
+            return new(action, $"Close {rest}?", "", "This app can't be closed from here.", $"{rest} is protected or isn't an app this app can close.", false);
+        var holder = new AreaAction(RemediationKind.EndProcessGroup, action.ButtonText, rest, rest);
+        return BuildAudioPlan(action, unavailable, $"Close {rest}?", $"{rest} is using {label} so other apps can't.",
+            PlanEndProcess(holder, rest).WhatWillHappen + " Not undoable.", "Any unsaved work inside that app will be lost.", true);
     }
 
     private static RemediationPlan PlanEndProcess(AreaAction action, string label)
@@ -526,39 +485,13 @@ public sealed class RemediationService(
         var plan = Plan(action);
         Log($"{actor} requested {action.Kind} target='{action.Target}'");
 
-        RemediationResult result;
-        if (!plan.Allowed)
-        {
-            result = new(false, plan.Warning ?? "This action is not allowed.");
-        }
-        else
-        {
-            try
-            {
-                var before = await CaptureBeforeAsync(action, ct).ConfigureAwait(false);
-                result = await RunActionAsync(action, ct).ConfigureAwait(false);
-                if (result.Success && before is not null) try { journal?.Add(before); } catch (Exception ex) { Log($"journal: {ex.Message}"); }
-                // Permanent changes are journaled too, so "Undo all" can say what it left as is. Update checks that installed nothing changed nothing.
-                // Temp cleanup writes its own TempFiles record (with the amount freed), so it isn't recorded twice.
-                var permanent = Changes.Undoability.Of(action.Kind) == Changes.UndoSupport.None && action.Kind != RemediationKind.CleanTempFiles
-                    && (action.Kind is not (RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.InstallUpdate or RemediationKind.InstallBiosUpdate) || result.UpdatesInstalled > 0);
-                if (result.Success && permanent)
-                    try { journal?.Add(Changes.Undoability.Permanent($"{action.Kind}:{action.Target}:{Guid.NewGuid():N}", $"{plan.Title.TrimEnd('?')}: {result.Message}", actor)); }
-                    catch (Exception ex) { Log($"journal: {ex.Message}"); }
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                result = new(false, "Cancelled. Windows may still finish the operation in the background.");
-            }
-            catch (Exception ex)
-            {
-                LogError($"{action.Kind} failed: {ex}");
-                result = new(false, $"Couldn't complete '{action.ButtonText}'. " + ElevationService.AdminRepairHint);
-            }
-        }
+        var result = plan.Allowed
+            ? await ExecutePlannedActionAsync(action, plan, actor, ct).ConfigureAwait(false)
+            : new(false, plan.Warning ?? "This action is not allowed.");
 
         if (action.Kind == RemediationKind.OptimizeSsd && result.Success)
-            try { retrimLog?.Record(action.Target, DateTimeOffset.Now); } catch (Exception ex) { Log($"retrim log: {ex.Message}"); }
+            TryRecordRetrim(action.Target);
+
         RecordCompleted(
             actor,
             action.Kind,
@@ -571,6 +504,58 @@ public sealed class RemediationService(
             result.UpdatesInstalled,
             origin);
         return result;
+    }
+
+    private async Task<RemediationResult> ExecutePlannedActionAsync(AreaAction action, RemediationPlan plan, string actor, CancellationToken ct)
+    {
+        try
+        {
+            var before = await CaptureBeforeAsync(action, ct).ConfigureAwait(false);
+            var result = await RunActionAsync(action, ct).ConfigureAwait(false);
+            if (result.Success)
+                RecordExecutionJournal(action, plan, actor, before, result);
+            return result;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return new(false, "Cancelled. Windows may still finish the operation in the background.");
+        }
+        catch (Exception ex)
+        {
+            LogError($"{action.Kind} failed: {ex}");
+            return new(false, $"Couldn't complete '{action.ButtonText}'. " + ElevationService.AdminRepairHint);
+        }
+    }
+
+    private void RecordExecutionJournal(AreaAction action, RemediationPlan plan, string actor, Changes.ChangeRecord? before, RemediationResult result)
+    {
+        if (before is not null)
+            TryAddJournalRecord(before);
+        if (ShouldJournalPermanent(action.Kind, result))
+            TryAddJournalRecord(Changes.Undoability.Permanent($"{action.Kind}:{action.Target}:{Guid.NewGuid():N}", $"{plan.Title.TrimEnd('?')}: {result.Message}", actor));
+    }
+
+    private static bool ShouldJournalPermanent(RemediationKind kind, RemediationResult result)
+    {
+        // Permanent changes are journaled too, so "Undo all" can say what it left as is. Update checks that installed nothing changed nothing.
+        // Temp cleanup writes its own TempFiles record (with the amount freed), so it isn't recorded twice.
+        if (Changes.Undoability.Of(kind) != Changes.UndoSupport.None || kind == RemediationKind.CleanTempFiles)
+            return false;
+        var isUpdateKind = kind is RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.CheckAndInstallDriverUpdates
+            or RemediationKind.InstallUpdate or RemediationKind.InstallBiosUpdate;
+        return !isUpdateKind || result.UpdatesInstalled > 0;
+    }
+
+    private void TryAddJournalRecord(Changes.ChangeRecord record)
+    {
+        try { journal?.Add(record); }
+        catch (Exception ex) { Log($"journal: {ex.Message}"); }
+    }
+
+    private void TryRecordRetrim(string target)
+    {
+        try { retrimLog?.Record(target, DateTimeOffset.Now); }
+        catch (Exception ex) { Log($"retrim log: {ex.Message}"); }
     }
 
     /// <summary>Records a completed remediation (including post-reboot verification) and notifies <see cref="ActionCompleted"/> listeners.</summary>
@@ -602,6 +587,7 @@ public sealed class RemediationService(
         {
             _recent.Insert(0, rec);
             if (_recent.Count > MaxRecent) _recent.RemoveAt(_recent.Count - 1);
+            _recentSnapshot = _recent.ToArray();
         }
         Log($"AUDIT when={rec.When:O} actor='{actor}' kind={kind} target='{target}' success={success} freedDisk={freedDiskBytes} freedMem={freedMemoryBytes} message='{message}'");
         try { ActionCompleted?.Invoke(rec); } catch (Exception ex) { LogError($"ActionCompleted handler failed: {ex}"); }
@@ -919,16 +905,8 @@ public sealed class RemediationService(
 
         RepairProgress?.Report("Checking current BIOS version and vendor catalog…");
         var outcome = await bios.CheckForUpdateAsync(ct).ConfigureAwait(false);
-        if (outcome.Latest.Status == Bios.BiosCheckStatus.UpToDate)
-            return new(true, string.IsNullOrWhiteSpace(outcome.Latest.Message) ? "BIOS is already up to date." : outcome.Latest.Message);
-
-        if (outcome.Latest.Status != Bios.BiosCheckStatus.UpdateAvailable)
-            return new(false, outcome.Latest.Message ?? "No installable BIOS update is available.");
-
-        // Install only the version the technician approved on the card. If the vendor catalog moved on since the check,
-        // stop and let them look at the new version first.
-        if (BiosVersionChanged(action.Target, outcome.Latest.LatestVersion))
-            return new(false, $"The BIOS update offered changed from {action.Target} to {outcome.Latest.LatestVersion ?? "an unknown version"} since the check ran. Nothing was installed. Run BIOS & firmware again and approve the new version.");
+        if (TryShortCircuitBiosCheck(action, outcome) is { } early)
+            return early;
 
         var request = new Bios.BiosInstallRequest(
             System: outcome.System,
@@ -939,7 +917,26 @@ public sealed class RemediationService(
             AllowReboot: false,
             SuspendBitLocker: true);
 
-        IProgress<Bios.BiosInstallProgress>? progress = RepairProgress is { } rp
+        var install = await bios.InstallUpdateAsync(request, CreateBiosProgress(), ct).ConfigureAwait(false);
+        return FormatBiosInstallResult(install);
+    }
+
+    private static RemediationResult? TryShortCircuitBiosCheck(AreaAction action, Bios.BiosUpdateCheckOutcome outcome)
+    {
+        if (outcome.Latest.Status == Bios.BiosCheckStatus.UpToDate)
+            return new(true, string.IsNullOrWhiteSpace(outcome.Latest.Message) ? "BIOS is already up to date." : outcome.Latest.Message);
+        if (outcome.Latest.Status != Bios.BiosCheckStatus.UpdateAvailable)
+            return new(false, outcome.Latest.Message ?? "No installable BIOS update is available.");
+
+        // Install only the version the technician approved on the card. If the vendor catalog moved on since the check,
+        // stop and let them look at the new version first.
+        if (BiosVersionChanged(action.Target, outcome.Latest.LatestVersion))
+            return new(false, $"The BIOS update offered changed from {action.Target} to {outcome.Latest.LatestVersion ?? "an unknown version"} since the check ran. Nothing was installed. Run BIOS & firmware again and approve the new version.");
+        return null;
+    }
+
+    private IProgress<Bios.BiosInstallProgress>? CreateBiosProgress() =>
+        RepairProgress is { } rp
             ? new Progress<Bios.BiosInstallProgress>(p =>
             {
                 var msg = string.IsNullOrWhiteSpace(p.Detail) ? p.Stage.ToString() : p.Detail;
@@ -947,7 +944,8 @@ public sealed class RemediationService(
             })
             : null;
 
-        var install = await bios.InstallUpdateAsync(request, progress, ct).ConfigureAwait(false);
+    private static RemediationResult FormatBiosInstallResult(Bios.BiosInstallResult install)
+    {
         var message = string.IsNullOrWhiteSpace(install.Message)
             ? (install.Succeeded ? $"BIOS update to {install.TargetVersion} staged." : "BIOS update failed.")
             : install.Message;
@@ -1293,55 +1291,77 @@ public sealed class RemediationService(
         var pr = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.WindowsUpdate, driversOnly ? "drivers" : "software"), UpdateTimeout, ct).ConfigureAwait(false);
         PendingUpdates.Invalidate();
         if (pr is not { ExitCode: 0 } || string.IsNullOrWhiteSpace(pr.StdOut))
-            return new(false, SystemCommandRunner.AgentFailure(pr)
-                ?? (pr?.StdErr.Trim() is { Length: > 0 } why ? $"Couldn't check Windows Update for {kindWord} updates: {AreaReportExport.Text(why, 300)}"
-                    : $"Couldn't check Windows Update for {kindWord} updates."));
+            return new(false, FormatWindowsUpdateCommandFailure(pr, kindWord));
 
         try
         {
             using var doc = JsonDocument.Parse(pr.StdOut);
-            var root = doc.RootElement;
-            var count = root.TryGetProperty("Count", out var c) && c.TryGetInt32(out var ci) ? ci : 0;
-            var installed = root.TryGetProperty("Installed", out var ins) && ins.TryGetInt32(out var ii) ? ii : 0;
-            // IUpdateInstaller ResultCode: 2 succeeded, 3 succeeded with errors, 4 failed, 5 aborted; -1/absent = no install attempted.
-            var installResult = root.TryGetProperty("InstallResult", out var ir) && ir.TryGetInt32(out var iri) ? iri : -1;
-            var restart = root.TryGetProperty("RebootRequired", out var rb) && rb.ValueKind == JsonValueKind.True;
-            var titles = new List<string>();
-            if (root.TryGetProperty("Titles", out var tEl))
-            {
-                if (tEl.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var x in tEl.EnumerateArray())
-                        if (x.GetString() is { Length: > 0 } s) titles.Add(s);
-                }
-                else if (tEl.ValueKind == JsonValueKind.String && tEl.GetString() is { Length: > 0 } single)
-                {
-                    titles.Add(single);
-                }
-            }
-
-            if (count == 0)
-                return new(true, driversOnly ? "All drivers are up to date (no pending driver updates found)." : "Windows is up to date (no pending updates found).");
-
-            // Installed updates are permanent, so name them all (up to 10) for the record; otherwise a short sample.
-            var shown = installed > 0 ? 10 : 2;
-            var sample = string.Join(", ", titles.Take(shown));
-            if (titles.Count > shown) sample += $" (+{titles.Count - shown} more)";
-            if (installed > 0)
-                return new(true, $"Installed {installed} of {count} {kindWord} update(s): {sample}." + (restart ? " Restart the PC to finish." : ""),
-                    UpdatesInstalled: installed, RestartNeeded: restart);
-            if (installResult is 4 or 5)
-            {
-                var why = root.TryGetProperty("Error", out var er) && er.GetString() is { Length: > 0 } e ? $" ({AreaReportExport.Text(e, 300)})" : "";
-                return new(false, $"Found {count} {kindWord} update(s) ({sample}) but Windows couldn't install them{why}. Try again from Settings > Windows Update.");
-            }
-            return new(true, $"Found {count} available {kindWord} update(s) ({sample}) and triggered Windows Update scan/download.");
+            return FormatWindowsUpdateResult(doc.RootElement, driversOnly, kindWord);
         }
         catch
         {
             return new(false, $"Couldn't read Windows Update results for {kindWord} updates.");
         }
     }
+
+    private static string FormatWindowsUpdateCommandFailure(ProcessResult? pr, string kindWord)
+    {
+        if (SystemCommandRunner.AgentFailure(pr) is { } agentErr) return agentErr;
+        return pr?.StdErr.Trim() is { Length: > 0 } why
+            ? $"Couldn't check Windows Update for {kindWord} updates: {AreaReportExport.Text(why, 300)}"
+            : $"Couldn't check Windows Update for {kindWord} updates.";
+    }
+
+    private static RemediationResult FormatWindowsUpdateResult(JsonElement root, bool driversOnly, string kindWord)
+    {
+        var count = JsonInt(root, "Count", 0);
+        if (count == 0)
+            return new(true, driversOnly ? "All drivers are up to date (no pending driver updates found)." : "Windows is up to date (no pending updates found).");
+
+        var installed = JsonInt(root, "Installed", 0);
+        // IUpdateInstaller ResultCode: 2 succeeded, 3 succeeded with errors, 4 failed, 5 aborted; -1/absent = no install attempted.
+        var installResult = JsonInt(root, "InstallResult", -1);
+        var restart = JsonBool(root, "RebootRequired");
+        var titles = ReadJsonTitles(root);
+
+        // Installed updates are permanent, so name them all (up to 10) for the record; otherwise a short sample.
+        var shown = installed > 0 ? 10 : 2;
+        var sample = string.Join(", ", titles.Take(shown)) + (titles.Count > shown ? $" (+{titles.Count - shown} more)" : "");
+        if (installed > 0)
+            return new(true, $"Installed {installed} of {count} {kindWord} update(s): {sample}." + (restart ? " Restart the PC to finish." : ""),
+                UpdatesInstalled: installed, RestartNeeded: restart);
+        if (installResult is 4 or 5)
+        {
+            var why = JsonNonEmptyString(root, "Error") is { } e ? $" ({AreaReportExport.Text(e, 300)})" : "";
+            return new(false, $"Found {count} {kindWord} update(s) ({sample}) but Windows couldn't install them{why}. Try again from Settings > Windows Update.");
+        }
+        return new(true, $"Found {count} available {kindWord} update(s) ({sample}) and triggered Windows Update scan/download.");
+    }
+
+    private static List<string> ReadJsonTitles(JsonElement root)
+    {
+        var titles = new List<string>();
+        if (!root.TryGetProperty("Titles", out var tEl)) return titles;
+        if (tEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var x in tEl.EnumerateArray())
+                if (x.GetString() is { Length: > 0 } s) titles.Add(s);
+        }
+        else if (tEl.ValueKind == JsonValueKind.String && tEl.GetString() is { Length: > 0 } single)
+        {
+            titles.Add(single);
+        }
+        return titles;
+    }
+
+    private static bool JsonBool(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+
+    private static int JsonInt(JsonElement root, string name, int fallback) =>
+        root.TryGetProperty(name, out var v) && v.TryGetInt32(out var i) ? i : fallback;
+
+    private static string? JsonNonEmptyString(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var v) && v.GetString() is { Length: > 0 } s ? s : null;
 
     private async Task<RemediationResult> RunInstallUpdateAsync(AreaAction action, CancellationToken ct)
     {
@@ -1358,29 +1378,34 @@ public sealed class RemediationService(
         try
         {
             using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            bool Flag(string n) => root.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.True;
-            int Number(string n) => root.TryGetProperty(n, out var v) && v.TryGetInt32(out var i) ? i : -1;
-            var title = root.TryGetProperty("Title", out var t) && t.GetString() is { Length: > 0 } s ? s : label;
-            var error = root.TryGetProperty("Error", out var e) ? e.GetString() ?? "" : "";
-            if (error.Length > 0) return new(false, $"Windows Update couldn't install {title}: {AreaReportExport.Text(error, 300)}");
-            if (!Flag("Found")) return new(false, $"Windows Update no longer offers {title}. It may be installed already, or replaced by a newer update. Run the check again.");
-            var restart = Flag("RebootRequired");
-            // IUpdateInstaller ResultCode: 2 succeeded, 3 succeeded with errors, 4 failed, 5 aborted; -1 = nothing was installed.
-            var code = Number("ResultCode");
-            if (Flag("Installed"))
-                return new(true, $"Installed {title}." + (restart ? " Restart the PC to finish." : ""), UpdatesInstalled: 1, RestartNeeded: restart);
-            if (code is 4 or 5)
-            {
-                var hr = Number("HResult");
-                return new(false, $"Windows couldn't install {title}" + (hr is not (0 or -1) ? $" (0x{unchecked((uint)hr):X8})." : ".") + " Try again from Settings > Windows Update.", RestartNeeded: restart);
-            }
-            return new(false, $"Windows couldn't download {title}. Check the internet connection and try again.");
+            return InterpretInstallUpdateJson(doc.RootElement, label);
         }
         catch (JsonException)
         {
             return new(false, $"Couldn't read Windows Update's answer for {label}.");
         }
+    }
+
+    private static RemediationResult InterpretInstallUpdateJson(JsonElement root, string label)
+    {
+        var title = JsonNonEmptyString(root, "Title") ?? label;
+        if (JsonNonEmptyString(root, "Error") is { } error)
+            return new(false, $"Windows Update couldn't install {title}: {AreaReportExport.Text(error, 300)}");
+        if (!JsonBool(root, "Found"))
+            return new(false, $"Windows Update no longer offers {title}. It may be installed already, or replaced by a newer update. Run the check again.");
+
+        var restart = JsonBool(root, "RebootRequired");
+        if (JsonBool(root, "Installed"))
+            return new(true, $"Installed {title}." + (restart ? " Restart the PC to finish." : ""), UpdatesInstalled: 1, RestartNeeded: restart);
+
+        // IUpdateInstaller ResultCode: 2 succeeded, 3 succeeded with errors, 4 failed, 5 aborted; -1 = nothing was installed.
+        if (JsonInt(root, "ResultCode", -1) is 4 or 5)
+        {
+            var hr = JsonInt(root, "HResult", -1);
+            var hrSuffix = hr is not (0 or -1) ? $" (0x{unchecked((uint)hr):X8})." : ".";
+            return new(false, $"Windows couldn't install {title}{hrSuffix} Try again from Settings > Windows Update.", RestartNeeded: restart);
+        }
+        return new(false, $"Windows couldn't download {title}. Check the internet connection and try again.");
     }
 
     private async Task<RemediationResult> RunCleanTempFilesAsync(CancellationToken ct)
@@ -1512,41 +1537,63 @@ public sealed class RemediationService(
         if (journal is null) return null;
         try
         {
-            Changes.ChangeRecord Rec(Changes.ChangeKind k, string target, string? prev, string label, bool restart = false) => Changes.ChangeRecord.New(k, target, prev, label, Actor, restart);
-            switch (action.Kind)
+            return action.Kind switch
             {
-                case RemediationKind.SetBalancedPowerPlan:
-                    var pr = await commands.RunAsync(SystemCommandRunner.SystemTool("powercfg.exe"), ["/getactivescheme"], ct).ConfigureAwait(false);
-                    return Changes.UndoService.ParseSchemeGuid(pr?.StdOut) is { } g && !g.Equals(BalancedPlanGuid, StringComparison.OrdinalIgnoreCase)
-                        ? Rec(Changes.ChangeKind.PowerPlan, "", g, "Power plan switched to Balanced") : null;
-                case RemediationKind.DisableFastStartup:
-                    return settings?.GetFastStartup() == 1
-                        ? Rec(Changes.ChangeKind.FastStartup, "", "1", "Fast Startup turned off", restart: true) : null;
-                case RemediationKind.DisableSystemProxy:
-                    return settings?.GetUserProxyEnable() == 1
-                        ? Rec(Changes.ChangeKind.SystemProxy, "", "1", "System proxy turned off") : null;
-                case RemediationKind.ApplySecuritySetting when Security.SecurityFixes.Find(action.Target) is { } sf:
-                    var cur = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.SecurityRead, sf.Key), null, ct).ConfigureAwait(false);
-
-                    var prev = cur is { ExitCode: 0 } ? cur.StdOut.Trim() : null;
-                    return prev is not null && Security.SecurityFixes.ParsePrevious(sf.Key, prev) is not null
-                        ? Rec(Changes.ChangeKind.SecuritySetting, sf.Key, prev, sf.Done.TrimEnd('.')) : null;
-                case RemediationKind.DisableDeviceWake:
-                    // Journaled only when the device is armed now, under Windows' own spelling of its name.
-                    var armed = await DeviceWake.QueryArmedAsync(commands, ct).ConfigureAwait(false);
-                    return armed is not null && DeviceWake.FindArmed(armed, action.Target) is { } device
-                        ? Rec(Changes.ChangeKind.DeviceWake, device, "armed", $"{device} can't wake the PC") : null;
-                case RemediationKind.DisableWakeTimer:
-                    return DeviceWake.IsSafeTaskPath(action.Target)
-                        ? Rec(Changes.ChangeKind.WakeTimer, action.Target, "true", $"{DeviceWake.ShortTaskName(action.Target)} can't wake the PC")
-                        : null;
-                case RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns when SystemSettingsRules.IsAdapterName(action.Target):
-                    var dns = settings?.GetAdapterDns(action.Target);
-                    return dns is null ? null : Rec(Changes.ChangeKind.AdapterDns, action.Target, dns,
-                        action.Kind == RemediationKind.SetPublicDns ? $"Public DNS set on {Display(action)}" : $"DNS reset to automatic on {Display(action)}");
-            }
+                RemediationKind.SetBalancedPowerPlan => await CapturePowerPlanBeforeAsync(ct).ConfigureAwait(false),
+                RemediationKind.DisableFastStartup => settings?.GetFastStartup() == 1
+                    ? NewChangeRecord(Changes.ChangeKind.FastStartup, "", "1", "Fast Startup turned off", restart: true) : null,
+                RemediationKind.DisableSystemProxy => settings?.GetUserProxyEnable() == 1
+                    ? NewChangeRecord(Changes.ChangeKind.SystemProxy, "", "1", "System proxy turned off") : null,
+                RemediationKind.ApplySecuritySetting => await CaptureSecuritySettingBeforeAsync(action.Target, ct).ConfigureAwait(false),
+                RemediationKind.DisableDeviceWake => await CaptureDeviceWakeBeforeAsync(action.Target, ct).ConfigureAwait(false),
+                RemediationKind.DisableWakeTimer => DeviceWake.IsSafeTaskPath(action.Target)
+                    ? NewChangeRecord(Changes.ChangeKind.WakeTimer, action.Target, "true", $"{DeviceWake.ShortTaskName(action.Target)} can't wake the PC") : null,
+                RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns => CaptureAdapterDnsBefore(action),
+                _ => null,
+            };
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"Couldn't record the previous setting for {action.Kind}: {ex.Message}"); }
-        return null;
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogWarn($"Couldn't record the previous setting for {action.Kind}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private Changes.ChangeRecord NewChangeRecord(Changes.ChangeKind k, string target, string? prev, string label, bool restart = false) =>
+        Changes.ChangeRecord.New(k, target, prev, label, Actor, restart);
+
+    private async Task<Changes.ChangeRecord?> CapturePowerPlanBeforeAsync(CancellationToken ct)
+    {
+        var pr = await commands.RunAsync(SystemCommandRunner.SystemTool("powercfg.exe"), ["/getactivescheme"], ct).ConfigureAwait(false);
+        return Changes.UndoService.ParseSchemeGuid(pr?.StdOut) is { } g && !g.Equals(BalancedPlanGuid, StringComparison.OrdinalIgnoreCase)
+            ? NewChangeRecord(Changes.ChangeKind.PowerPlan, "", g, "Power plan switched to Balanced") : null;
+    }
+
+    private async Task<Changes.ChangeRecord?> CaptureSecuritySettingBeforeAsync(string target, CancellationToken ct)
+    {
+        if (Security.SecurityFixes.Find(target) is not { } sf) return null;
+        var cur = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.SecurityRead, sf.Key), null, ct).ConfigureAwait(false);
+        var prev = cur is { ExitCode: 0 } ? cur.StdOut.Trim() : null;
+        return prev is not null && Security.SecurityFixes.ParsePrevious(sf.Key, prev) is not null
+            ? NewChangeRecord(Changes.ChangeKind.SecuritySetting, sf.Key, prev, sf.Done.TrimEnd('.')) : null;
+    }
+
+    private async Task<Changes.ChangeRecord?> CaptureDeviceWakeBeforeAsync(string target, CancellationToken ct)
+    {
+        // Journaled only when the device is armed now, under Windows' own spelling of its name.
+        var armed = await DeviceWake.QueryArmedAsync(commands, ct).ConfigureAwait(false);
+        return armed is not null && DeviceWake.FindArmed(armed, target) is { } device
+            ? NewChangeRecord(Changes.ChangeKind.DeviceWake, device, "armed", $"{device} can't wake the PC") : null;
+    }
+
+    private Changes.ChangeRecord? CaptureAdapterDnsBefore(AreaAction action)
+    {
+        if (!SystemSettingsRules.IsAdapterName(action.Target)) return null;
+        var dns = settings?.GetAdapterDns(action.Target);
+        if (dns is null) return null;
+        var label = action.Kind == RemediationKind.SetPublicDns
+            ? $"Public DNS set on {Display(action)}"
+            : $"DNS reset to automatic on {Display(action)}";
+        return NewChangeRecord(Changes.ChangeKind.AdapterDns, action.Target, dns, label);
     }
 }
