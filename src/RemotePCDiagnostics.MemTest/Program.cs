@@ -16,6 +16,7 @@ if (bytes <= 0 || seconds <= 0) { Emit(new MemTestMessage.Fail("usage: --bytes <
 
 try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.BelowNormal; } catch { }
 try { Thread.CurrentThread.Priority = ThreadPriority.BelowNormal; } catch { }
+StressThreadQos.DisableForCurrentThread(); // this windowless helper would otherwise be a candidate for efficiency mode
 
 var sw = Stopwatch.StartNew();
 var deadline = TimeSpan.FromSeconds(seconds);

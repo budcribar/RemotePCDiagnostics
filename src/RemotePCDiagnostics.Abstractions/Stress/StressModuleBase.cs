@@ -5,7 +5,8 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// <summary>
 /// Custom <see cref="TaskScheduler"/> for stressor workloads: executes tasks on dedicated background threads at
 /// <see cref="ThreadPriority.BelowNormal"/> so heavy CPU, GPU, disk, and network stress loops never starve the UI thread
-/// or the <see cref="ThreadPool"/> (keeping progress updates and Stop button clicks responsive).
+/// or the <see cref="ThreadPool"/> (keeping progress updates and Stop button clicks responsive). The threads opt out of Windows
+/// efficiency mode (<see cref="StressThreadQos"/>), so a minimized or windowless app still stresses at full speed.
 /// </summary>
 public sealed class StressTaskScheduler : TaskScheduler
 {
@@ -62,6 +63,7 @@ public sealed class StressTaskScheduler : TaskScheduler
     private void WorkerLoop()
     {
         try { Thread.CurrentThread.Priority = ThreadPriority.BelowNormal; } catch { }
+        StressThreadQos.DisableForCurrentThread(); // full speed even when the app has no visible window (see StressThreadQos)
         while (true)
         {
             if (!_signal.Wait(IdleTimeoutMs, CancellationToken.None))
