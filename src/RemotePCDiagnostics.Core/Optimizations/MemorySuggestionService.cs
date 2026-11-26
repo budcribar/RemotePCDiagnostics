@@ -34,7 +34,7 @@ public static class MemoryFeedback
     public static bool IsDeferred(MemoryActionType t) => t is MemoryActionType.DisableStartup or MemoryActionType.EnableBrowserMemorySaver
         or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.OpenSettings
         or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile or MemoryActionType.IncreasePageFile
-        or MemoryActionType.AddDefenderExclusions or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights
+        or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights
         or MemoryActionType.ReduceHibernateFile or MemoryActionType.SkipOfficeStartScreen or MemoryActionType.SetPdfDefaultPrinter or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension
         or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.StopSilentAppInstalls or MemoryActionType.RemoveNarratorAddons; // disk space / later installs, not memory
 }
@@ -178,11 +178,7 @@ public interface IStorageCleanupSystem
 /// <summary>Microsoft Defender settings (exclusions).</summary>
 public interface IDefenderConfig
 {
-    /// <summary>Adds the exclusions (the Agent does it: it needs administrator rights) and returns them read back
-    /// (<see cref="DefenderProbe.Confirmed"/>). Ok = false when Windows or the Agent refused.</summary>
-    Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) =>
-        Task.FromResult<(bool, string?)>((false, null));
-    /// <summary>Removes exclusions this app added (through the Agent).</summary>
+    /// <summary>Removes exclusions an earlier version of this app added (through the Agent), so their journaled changes can still be undone.</summary>
     Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) => Task.FromResult(false);
 }
 
@@ -275,8 +271,6 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
     private AppRemovalSuggestions Apps => _apps ??= new(Ctx);
     private BrowserSuggestions? _browser;
     private BrowserSuggestions Browser => _browser ??= new(Ctx);
-    private DefenderSuggestions? _defender;
-    private DefenderSuggestions Defender => _defender ??= new(Ctx);
     private OfficeSuggestions? _office;
     private OfficeSuggestions Office => _office ??= new(Ctx);
     private PowerSuggestions? _power;
@@ -429,7 +423,6 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 MemoryActionType.EnableBrowserMemorySaver => Browser.UndoMemorySaver(u),
                 MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled => ServiceFamily.UndoStartType(u),
                 MemoryActionType.StopService => await ServiceFamily.UndoStopServiceAsync(u, ct).ConfigureAwait(false),
-                MemoryActionType.AddDefenderExclusions => await Defender.UndoExclusionsAsync(u, ct).ConfigureAwait(false),
                 MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights => Ctx.UndoRegistry(u),
                 MemoryActionType.SkipOfficeStartScreen => Ctx.UndoRegistry(u, $"The start screen is back in {u.Target}. Takes effect the next time each app opens."),
                 MemoryActionType.SetPdfDefaultPrinter => Office.UndoPdfDefaultPrinter(u),
@@ -514,7 +507,6 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             MemoryActionType.DisableTransparency => Shell.DisableTransparency(s, a),
             MemoryActionType.DisableWidgets => await Shell.DisableWidgetsAsync(s, ct).ConfigureAwait(false),
             MemoryActionType.DisableSearchHighlights => Shell.DisableSearchHighlights(s),
-            MemoryActionType.AddDefenderExclusions => await Defender.AddDefenderExclusionsAsync(s, ct).ConfigureAwait(false),
             MemoryActionType.SkipOfficeStartScreen => Office.SkipOfficeStartScreen(s),
             MemoryActionType.SetPdfDefaultPrinter => Office.SetPdfDefaultPrinter(s),
             MemoryActionType.DisableOfficeOptionalExperiences => Office.DisableOfficeOptionalExperiences(s),

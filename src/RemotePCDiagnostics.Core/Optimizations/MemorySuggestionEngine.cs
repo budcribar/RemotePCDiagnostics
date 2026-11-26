@@ -366,34 +366,6 @@ public static class MemorySuggestionEngine
                 s.FastStartup == true ? "Turning off Fast Startup is a PC-wide power setting; Restart alone already clears memory." : null));
         }
 
-        // Defender scanning code and build folders: one click when we found the folders and can read Defender's exclusions.
-        if (s.Defender is { HasWork: true } dfn)
-        {
-            var shown = dfn.MissingFolders.Take(6).ToList();
-            var more = dfn.MissingFolders.Count - shown.Count;
-            var hog = s.App("MsMpEng") is { } msmp && msmp.MemoryBytes >= 250 * Mb ? $" Defender is using {MemoryText.Size(msmp.MemoryBytes)} right now." : "";
-            var steps = new List<string>();
-            if (dfn.MissingFolders.Count > 0) steps.Add("New folders: " + string.Join("; ", shown) + (more > 0 ? $" (+{more} more)" : ""));
-            if (dfn.MissingProcesses.Count > 0) steps.Add("New build tools: " + string.Join(", ", dfn.MissingProcesses.Select(Path.GetFileName).Distinct(StringComparer.OrdinalIgnoreCase)));
-            steps.Add("Only new code folders not yet excluded in Defender (from Visual Studio, VS Code, Rider and Windows Search, plus the NuGet package cache). Never Downloads, Desktop, Documents or a whole drive.");
-            steps.Add("Undo removes exactly these exclusions.");
-            var detailItems = new List<string>(dfn.MissingFolders.Count + dfn.MissingProcesses.Count);
-            foreach (var f in dfn.MissingFolders) detailItems.Add(f);
-            foreach (var p in dfn.MissingProcesses) detailItems.Add($"Build tool: {Path.GetFileName(p)} ({p})");
-            list.Add(new("defender-exclusions", "Stop Defender rescanning code and build folders",
-                $"Microsoft Defender scans every file a build writes. Excluding {DefenderProbe.Describe(dfn.MissingFolders.Count, dfn.MissingProcesses.Count)} makes builds noticeably faster.{hog}",
-                null, SuggestionRisk.Medium, SuggestionKind.Automated, steps,
-                [new(MemoryActionType.AddDefenderExclusions, "", "Add exclusions",
-                    "Add these Defender exclusions? Files in these folders and files opened by these build tools won't be scanned for malware. Needs administrator rights.")],
-                "Windows", "Applies right away.", DetailItems: detailItems));
-        }
-        else if (s.Defender is null && s.App("MsMpEng") is { } def && def.MemoryBytes >= 250 * Mb && Running(s, "devenv", "MSBuild", "VBCSCompiler", "Code"))
-            list.Add(new("defender-exclusions", "Exclude your code and build folders from Defender scanning",
-                $"Microsoft Defender is using {MemoryText.Size(def.MemoryBytes)} while developer tools are running. Builds create lots of files it rescans.",
-                null, SuggestionRisk.Medium, SuggestionKind.Guided,
-                ["Windows Security > Virus & threat protection > Manage settings", "Exclusions > Add or remove exclusions > Add an exclusion > Folder", "Add only your own source/build folders (e.g. C:\\src), never a whole drive"],
-                [new(MemoryActionType.OpenSettings, "windowsdefender://threatsettings", "Open Windows Security")], "Windows"));
-
         // Info: memory pressure.
         var m = s.Memory;
         if (m.TotalBytes > 0 && m.UsedPercent >= 85)

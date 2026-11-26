@@ -222,17 +222,4 @@ public sealed class ProjectLocator(ProjectLocatorPaths paths, Func<CancellationT
             if (!kept.Any(k => IsUnder(r.Path, k.Path))) kept.Add(r);
         return kept.OrderBy(r => r.Path, StringComparer.OrdinalIgnoreCase).ToList();
     }
-
-    /// <summary>
-    /// For Defender: three or more repos side by side in one safe parent (D:\work\a, D:\work\b, D:\work\c) become that parent,
-    /// so the exclusion list stays short and new repos cloned there are covered.
-    /// </summary>
-    public static IReadOnlyList<string> CollapseSiblings(IEnumerable<string> folders, ProjectLocatorPaths p, int minSiblings = 3)
-    {
-        var list = folders.Select(f => f.TrimEnd('\\', '/')).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var parents = list.GroupBy(f => Path.GetDirectoryName(f) ?? f, StringComparer.OrdinalIgnoreCase)
-            .Where(g => g.Count() >= minSiblings && !IsUnsafe(g.Key, p)).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var result = list.Select(f => Path.GetDirectoryName(f) is { } d && parents.Contains(d) ? d : f);
-        return RemoveNested(result.Distinct(StringComparer.OrdinalIgnoreCase).Select(f => new ProjectRoot(f, ProjectSource.CommonFolder))).Select(r => r.Path).ToList();
-    }
 }

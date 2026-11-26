@@ -41,8 +41,6 @@ public class PowerShellScreenTests
                 "\"C:\\Program Files\\RemotePCDiagnostics\\RemotePCDiagnostics.Host.exe\" -u=https://server.example.com:34544 -i=748279c7-4309-452c-8b30-e02ec52e498f --post-reboot",
                 @"PC\me",
                 DateTimeOffset.Parse("2026-11-19T12:00:00-07:00")),
-            DefenderProbe.AddScript([@"C:\Games"], ["game.exe"]),
-            DefenderProbe.RemoveScript([@"C:\Games"], ["game.exe"]),
         ];
         // Every script the app ships as an embedded resource, too.
         var embedded = typeof(PowerShellScripts).Assembly.GetManifestResourceNames()

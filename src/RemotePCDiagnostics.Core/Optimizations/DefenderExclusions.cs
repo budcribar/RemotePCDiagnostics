@@ -2,20 +2,7 @@ using System.Text.Json;
 
 namespace RemotePCDiagnostics.Core.Optimizations;
 
-/// <summary>
-/// Microsoft Defender state for the "stop scanning code and build folders" fix.
-/// <see cref="Active"/> is false when Defender isn't the PC's real-time antivirus (another antivirus, passive mode, turned off),
-/// and then nothing is suggested.
-/// </summary>
-/// <param name="ProjectFolders">Code folders found on this PC (before removing ones already excluded); empty = no development here.</param>
-/// <param name="MissingFolders">Folders to add: code folders and the NuGet package cache not yet excluded.</param>
-/// <param name="MissingProcesses">Full paths of build tools to add (devenv, MSBuild, the compiler server) not yet excluded.</param>
-public sealed record DefenderInfo(bool Active, IReadOnlyList<string> ProjectFolders, IReadOnlyList<string> MissingFolders, IReadOnlyList<string> MissingProcesses)
-{
-    public bool HasWork => Active && ProjectFolders.Count > 0 && (MissingFolders.Count > 0 || MissingProcesses.Count > 0);
-}
-
-/// <summary>Reads Defender's status and exclusions, and works out which exclusions are still missing.</summary>
+/// <summary>Reads Defender's status and exclusions (the Developer setup check and the build benchmark's temporary exclusion use it).</summary>
 public static class DefenderProbe
 {
     public sealed record Status(bool Active, IReadOnlyList<string> Paths, IReadOnlyList<string> Processes, bool ExclusionsReadable);
@@ -58,81 +45,5 @@ public static class DefenderProbe
         return f.Equals(e, StringComparison.OrdinalIgnoreCase) || f.StartsWith(e + "\\", StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>An existing process exclusion covers a build tool when it matches its full path or its bare executable name (e.g. MSBuild.exe).</summary>
-    public static bool CoversProcess(string existing, string tool)
-    {
-        var e = Normalize(existing);
-        var t = Normalize(tool);
-        if (e.Equals(t, StringComparison.OrdinalIgnoreCase)) return true;
-        if (e.Contains('\\')) return false;
-        var lastSlash = t.LastIndexOf('\\');
-        var toolName = lastSlash >= 0 ? t[(lastSlash + 1)..] : t;
-        return toolName.Equals(e, StringComparison.OrdinalIgnoreCase);
-    }
-
     private static string Normalize(string p) => Environment.ExpandEnvironmentVariables(p.Trim().Trim('"')).Replace('/', '\\').TrimEnd('\\');
-
-    public static DefenderInfo Plan(Status status, IReadOnlyList<string> projectFolders, string? nugetPackages, IReadOnlyList<string> buildTools)
-    {
-        if (!status.Active || !status.ExclusionsReadable) return new(false, projectFolders, [], []);
-        var wanted = projectFolders.Concat(nugetPackages is null ? [] : [nugetPackages]).Distinct(StringComparer.OrdinalIgnoreCase);
-        var missing = wanted.Where(f => !status.Paths.Any(e => Covers(e, f))).ToList();
-        var procs = buildTools.Where(t => !status.Processes.Any(e => CoversProcess(e, t))).ToList();
-        return new(true, projectFolders, missing, procs);
-    }
-
-    /// <summary>
-    /// "19 folders and 7 build tools": what the card offers (the missing exclusions) and what the result confirms, counted the same way.
-    /// Folders include the NuGet package cache when it's one of them.
-    /// </summary>
-    public static string Describe(int folders, int processes) => (folders, processes) switch
-    {
-        ( > 0, > 0) => $"{MemoryText.Plural(folders, "folder")} and {MemoryText.Plural(processes, "build tool")}",
-        ( > 0, _) => MemoryText.Plural(folders, "folder"),
-        (_, > 0) => MemoryText.Plural(processes, "build tool"),
-        _ => "nothing new",
-    };
-
-    private static string Q(string s) => "'" + s.Replace("'", "''") + "'";
-
-    /// <summary>Adds the exclusions, then reads them back: an organization's policy can make local exclusions ineffective.</summary>
-    public static string AddScript(IReadOnlyList<string> folders, IReadOnlyList<string> processes) =>
-        "$ErrorActionPreference='Stop';" +
-        (folders.Count > 0 ? $"Add-MpPreference -ExclusionPath @({string.Join(",", folders.Select(Q))});" : "") +
-        (processes.Count > 0 ? $"Add-MpPreference -ExclusionProcess @({string.Join(",", processes.Select(Q))});" : "") +
-        "$p=Get-MpPreference;[pscustomobject]@{Paths=@($p.ExclusionPath | Where-Object { $_ });Procs=@($p.ExclusionProcess | Where-Object { $_ })} | ConvertTo-Json -Compress";
-
-    public static string RemoveScript(IReadOnlyList<string> folders, IReadOnlyList<string> processes) =>
-        "$ErrorActionPreference='Stop';" +
-        (folders.Count > 0 ? $"Remove-MpPreference -ExclusionPath @({string.Join(",", folders.Select(Q))});" : "") +
-        (processes.Count > 0 ? $"Remove-MpPreference -ExclusionProcess @({string.Join(",", processes.Select(Q))});" : "");
-
-    /// <summary>Which of the requested exclusions show up when read back after adding.</summary>
-    public static (List<string> Folders, List<string> Processes) Confirmed(string? readBackJson, IReadOnlyList<string> folders, IReadOnlyList<string> processes)
-    {
-        if (string.IsNullOrWhiteSpace(readBackJson)) return ([], []);
-        try
-        {
-            using var doc = JsonDocument.Parse(readBackJson);
-            var paths = Strings(doc.RootElement, "Paths");
-            var procs = Strings(doc.RootElement, "Procs");
-            return (folders.Where(f => paths.Any(e => Covers(e, f))).ToList(),
-                    processes.Where(t => procs.Any(e => CoversProcess(e, t))).ToList());
-        }
-        catch (JsonException) { return ([], []); }
-    }
-
-    /// <summary>Saved with the undo entry so one undo removes exactly what was added.</summary>
-    public static string Encode(IReadOnlyList<string> folders, IReadOnlyList<string> processes) =>
-        JsonSerializer.Serialize(new Dictionary<string, IReadOnlyList<string>> { ["Folders"] = folders, ["Processes"] = processes });
-
-    public static (IReadOnlyList<string> Folders, IReadOnlyList<string> Processes) Decode(string? json)
-    {
-        try
-        {
-            var d = string.IsNullOrEmpty(json) ? null : JsonSerializer.Deserialize<Dictionary<string, List<string>>>(json);
-            return (d?.GetValueOrDefault("Folders") ?? [], d?.GetValueOrDefault("Processes") ?? []);
-        }
-        catch (JsonException) { return ([], []); }
-    }
 }

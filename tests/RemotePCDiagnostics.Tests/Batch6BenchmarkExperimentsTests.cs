@@ -60,7 +60,6 @@ public class Batch6BenchmarkExperimentsTests
         public Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct) => Task.FromResult(new ActionOutcome(true, "ok"));
         public Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, "ok"));
         public Task<string?> ReadDefenderAsync(CancellationToken ct) => Task.FromResult<string?>(null);
-        public Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) => Task.FromResult<(bool, string?)>((true, null));
         public Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) => Task.FromResult(true);
 
         public Task<DevDriveMountResult> CreatePersistentDevDriveAsync(int sizeGb, string? grantUserSid, CancellationToken ct) =>

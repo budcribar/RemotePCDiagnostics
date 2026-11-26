@@ -49,7 +49,7 @@ public static class Undoability
     public static UndoSupport Of(MemoryActionType t) => t switch
     {
         MemoryActionType.DisableStartup or MemoryActionType.EnableBrowserMemorySaver or MemoryActionType.SetServiceManual
-            or MemoryActionType.SetServiceDisabled or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
+            or MemoryActionType.SetServiceDisabled or MemoryActionType.StopService
             or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile or MemoryActionType.IncreasePageFile or MemoryActionType.DisableFastStartup
             or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile
             or MemoryActionType.SkipOfficeStartScreen or MemoryActionType.SetPdfDefaultPrinter or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension or MemoryActionType.StopBrowserBackground or MemoryActionType.StopSilentAppInstalls => UndoSupport.Full,

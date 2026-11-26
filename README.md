@@ -118,7 +118,6 @@ On **Resource hogs & uptime** (and via "See ways to use less memory" in the *Top
 | Optional services (Print Spooler w/o printer, Fax, Search indexing, SysMain, DiagTrack, Xbox, Bluetooth w/o devices, Remote Registry, Biometric w/o reader, Geolocation, Retail Demo, Phone, Maps, Lenovo/Adobe/Google/Edge/VS updaters, TeamViewer/AnyDesk, Hyper-V/WSL/Docker when unused): Stop now, Don't start automatically (Manual), Disable — via the existing service control path, protected list enforced, original start-up type recorded for Undo | One click + Undo |
 | Restart Visual Studio (over 1.5 GB or open 8+ hours), turn off Live Share, turn off unused extensions | Steps |
 | Restart (not Shut down) when Fast Startup is on and the PC has run 4+ hours, or any 3+ days | Steps |
-| Defender exclusions for code/build folders (only with dev tools running) | Steps |
 | Transparency effects, Widgets | Steps |
 | Memory almost full, page-file pressure, memory compression | Info |
 

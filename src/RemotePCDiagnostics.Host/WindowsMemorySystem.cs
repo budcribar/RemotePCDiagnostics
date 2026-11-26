@@ -69,7 +69,7 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
 
     public async Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> services, IProgress<string>? progress, CancellationToken ct)
     {
-        progress.ReportStep(1, 5, "Reading memory and running processes…");
+        progress.ReportStep(1, 4, "Reading memory and running processes…");
         var mem = ReadMemory();
 
         // Service PIDs (from the service control manager, as the signed-in user), so service-hosting processes are never offered as
@@ -106,7 +106,7 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
             svcPid.TryGetValue(s.Name, out var pid) ? new ServiceUsage(s, byPid.TryGetValue(pid, out var b) ? b : null, pidCounts[pid]) : new ServiceUsage(s, null))
             .Select(u => AiVmServices.Is(u.Info.Name) ? u with { UsersCanStart = ReadUsersCanStart(u.Info.Name) } : u).ToList();
 
-        progress.ReportStep(2, 5, "Checking browser settings and background mode…");
+        progress.ReportStep(2, 4, "Checking browser settings and background mode…");
         var browsers = new List<BrowserInfo>();
         var backgrounds = new List<BrowserBackgroundInfo>();
         foreach (var k in new[] { BrowserKind.Chrome, BrowserKind.Edge })
@@ -119,13 +119,11 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
             backgrounds.Add(ReadBrowserBackground(k, json));
         }
 
-        progress.ReportStep(3, 5, "Checking page file and memory slots…");
+        progress.ReportStep(3, 4, "Checking page file and memory slots…");
         var (autoPageFile, slots) = await Task.Run(MemoryProbe.Read, ct).ConfigureAwait(false);
-        progress.ReportStep(4, 5, "Checking Windows Defender exclusions…");
-        var defender = apps.Any(a => a.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase)) ? await ReadDefenderAsync(ct).ConfigureAwait(false) : null;
-        progress.ReportStep(5, 5, "Checking startup apps, Windows settings and removable apps…");
+        progress.ReportStep(4, 4, "Checking startup apps, Windows settings and removable apps…");
         return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
-            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate(), ReadOfficeStart(), ReadDefaultPrinter(), ReadOfficePrivacy(), ReadExtensions(ct), backgrounds, ReadRemovableApps());
+            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), ReadFeeds(), ReadHibernate(), ReadOfficeStart(), ReadDefaultPrinter(), ReadOfficePrivacy(), ReadExtensions(ct), backgrounds, ReadRemovableApps());
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -576,31 +574,6 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
         k?.DeleteValue(s.Name, throwOnMissingValue: false);
         Log($"{s.Target} deleted");
     }
-
-    /// <summary>Defender status + which code folders, package cache and build tools aren't excluded yet. Null = couldn't tell.</summary>
-    private async Task<DefenderInfo?> ReadDefenderAsync(CancellationToken ct)
-    {
-        try
-        {
-            // Only an administrator can read the exclusion lists, so the Agent reads them. Without it the app reads Defender's state itself,
-            // the lists come back unreadable, and nothing is suggested.
-            var json = await _machine.ReadDefenderAsync(ct).ConfigureAwait(false);
-            if (json is null)
-                json = await Task.Run(RemotePCDiagnostics.Core.Platform.WindowsDefenderWmi.ReadStatusJson, ct).ConfigureAwait(false);
-            if (DefenderProbe.Parse(json) is not { } status) return null;
-            if (!status.Active) return new(false, [], [], []);
-            var p = ProjectLocatorPaths.Current();
-            var roots = await DevProjects.FindAsync(log, ct).ConfigureAwait(false);
-            var folders = ProjectLocator.CollapseSiblings(roots.Select(x => x.Path), p);
-            var nuget = Path.Combine(p.UserProfile, ".nuget", "packages");
-            return DefenderProbe.Plan(status, folders, Directory.Exists(nuget) ? nuget : null, DevProjects.BuildTools());
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn("Defender read failed: " + ex.Message); return null; }
-    }
-
-    /// <summary>The Agent adds them (it checks each is a code folder or a Visual Studio build tool) and reads them back.</summary>
-    public Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) =>
-        _machine.AddDefenderExclusionsAsync(folders, processes, ct);
 
     public Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) =>
         _machine.RemoveDefenderExclusionsAsync(folders, processes, ct);

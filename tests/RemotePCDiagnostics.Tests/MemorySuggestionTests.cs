@@ -401,16 +401,6 @@ public class MemorySuggestionTests
         Assert.DoesNotContain(Build(Snap()), x => x.Kind == SuggestionKind.Info);
     }
 
-    [Fact]
-    public void Defender_OnlyWithDevTools()
-    {
-        var def = new AppUsage("MsMpEng", 1, 400 * Mb);
-        Assert.DoesNotContain(Build(Snap(def)), x => x.Id == "defender-exclusions");
-        var s = Build(Snap(def, new AppUsage("devenv", 1, 500 * Mb, true))).Single(x => x.Id == "defender-exclusions");
-        Assert.Equal(SuggestionKind.Guided, s.Kind);
-        Assert.DoesNotContain(s.Actions, a => a.Type != MemoryActionType.OpenSettings);
-    }
-
     // ---- services
     [Fact]
     public void Services_Rules()
