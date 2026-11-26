@@ -310,20 +310,34 @@ internal static class DxCore
         var result = new List<(IntPtr, DxCoreAdapterRow)>();
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041)) return result;
         if (DXCoreCreateAdapterFactory(IID_Factory, out var factory) < 0 || factory == IntPtr.Zero) return result;
+        var seenLuids = new HashSet<long>();
+        Guid[] queries = [HARDWARE_TYPE_NPU, D3D12_GENERIC_ML, D3D12_CORE_COMPUTE];
         try
         {
-            if (Slot<CreateAdapterListFn>(factory, 3)(factory, 1, [D3D12_GENERIC_ML], IID_List, out var list) < 0 || list == IntPtr.Zero) return result;
-            try
+            var createList = Slot<CreateAdapterListFn>(factory, 3);
+            foreach (var attr in queries)
             {
-                var count = Slot<GetCountFn>(list, 4)(list);
-                for (uint i = 0; i < count; i++)
+                if (createList(factory, 1, [attr], IID_List, out var list) < 0 || list == IntPtr.Zero) continue;
+                try
                 {
-                    if (Slot<GetAdapterFn>(list, 3)(list, i, IID_Adapter, out var a) < 0 || a == IntPtr.Zero) continue;
-                    try { result.Add((a, Read(a))); }
-                    catch { Marshal.Release(a); }
+                    var count = Slot<GetCountFn>(list, 4)(list);
+                    var getAdapter = Slot<GetAdapterFn>(list, 3);
+                    for (uint i = 0; i < count; i++)
+                    {
+                        if (getAdapter(list, i, IID_Adapter, out var a) < 0 || a == IntPtr.Zero) continue;
+                        try
+                        {
+                            var row = Read(a);
+                            if (seenLuids.Add(row.Luid))
+                                result.Add((a, row));
+                            else
+                                Marshal.Release(a);
+                        }
+                        catch { Marshal.Release(a); }
+                    }
                 }
+                finally { Marshal.Release(list); }
             }
-            finally { Marshal.Release(list); }
         }
         finally { Marshal.Release(factory); }
         return result;

@@ -95,8 +95,15 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
                 iterations = next;
 
                 progress?.Report(new GpuStressProgress(clk.Elapsed - start, duration, adapterName, batches, checkedValues, mismatches, temp, fan, sensorsOk, rate));
-                try { await clk.DelayAsync(o.Gap, ct); } // stay on StressTaskScheduler.Default (BelowNormal priority)
-                catch (OperationCanceledException) { stopped = true; break; }
+                if (o.Gap > TimeSpan.Zero)
+                {
+                    try { await clk.DelayAsync(o.Gap, ct); } // stay on StressTaskScheduler.Default (BelowNormal priority)
+                    catch (OperationCanceledException) { stopped = true; break; }
+                }
+                else
+                {
+                    await Task.Yield();
+                }
             }
         }
         catch (GpuDeviceLostException ex)

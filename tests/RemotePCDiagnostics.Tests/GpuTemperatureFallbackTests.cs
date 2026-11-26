@@ -101,7 +101,7 @@ public class GpuTemperatureFallbackTests
     private static SensorSnapshot Snap(double winGpu) =>
         new(GpuTemperatureFallback.Apply([Cpu(60), Gpu(0)], [FakeGpuTempSource.Of("win", (Radeon, winGpu))]), true);
 
-    private static GpuStressOptions Opts() => new() { Duration = TimeSpan.FromMinutes(1), Gap = TimeSpan.FromSeconds(1), SensorInterval = TimeSpan.Zero };
+    private static GpuStressOptions Opts() => new() { Duration = TimeSpan.FromMinutes(1), Gap = TimeSpan.FromSeconds(1), MaxIterations = 1024, SensorInterval = TimeSpan.Zero };
 
     [Fact]
     public async Task StressTest_ReadsFallbackTemperature_AndAbortsWhenCritical()
