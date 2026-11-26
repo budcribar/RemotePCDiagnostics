@@ -3,7 +3,7 @@
        %ProgramFiles%\RemotePCDiagnostics\modules. Unsigned, it is listed on the About page and never loads into the app. -->
   <Import Project="..\..\build\RemotePCDiagnostics.Module.props" />
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <Version>1.0.0</Version>

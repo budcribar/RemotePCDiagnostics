@@ -2,7 +2,7 @@
 
   <!-- Tests for the agent's pure logic (release manifest, signature, app cache, backoff). No Windows, no network. -->
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>

@@ -2,7 +2,7 @@
   <!-- Serves the real RPCD pages and checks on a recorded PC, with faults injected on demand, for the Playwright fault-injection tests
        (docs/fault-injection.md). Runs anywhere .NET does (no Windows, no Agent). Test tool only: never shipped. -->
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
