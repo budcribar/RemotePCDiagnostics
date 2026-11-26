@@ -666,7 +666,8 @@ public class RpcdRemoteUpdateTests
     [MemberData(nameof(EveryWorkflowStage))]
     public void Update_guard_and_activity_list_agree_on_each_stage(WorkflowStage stage)
     {
-        var active = WorkflowState.IsActiveStage(stage);
+        // Checking with nothing working is a leftover (the app closed mid-check), so it doesn't block.
+        var active = WorkflowState.IsActiveStage(stage) && stage != WorkflowStage.Checking;
         var snapshot = new AgentExports.ActivitySnapshot([],
             Workflow: new AgentExports.WorkflowActivity(stage, Busy: false, Status: null));
 
@@ -686,6 +687,16 @@ public class RpcdRemoteUpdateTests
             Assert.Null(reason);
             Assert.False(listed);
         }
+    }
+
+    [Fact]
+    public void A_workflow_checking_with_work_running_blocks_the_update()
+    {
+        var snapshot = new AgentExports.ActivitySnapshot([],
+            Workflow: new AgentExports.WorkflowActivity(WorkflowStage.Checking, Busy: true, Status: "Running checks"));
+        Assert.Contains("service workflow is running (Checking)", AgentExports.UpdateBlockReason(snapshot));
+        using var doc = JsonDocument.Parse(AgentExports.Activity(snapshot));
+        Assert.True(doc.RootElement.TryGetProperty("workflow", out _));
     }
 
     [Fact]

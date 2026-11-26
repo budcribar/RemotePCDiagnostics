@@ -36,6 +36,10 @@ public sealed class WorkflowService(
     private static WorkflowState LoadState(IWorkflowStore store)
     {
         var saved = store.Load();
+        // Checking runs only inside the app process that started it, so a saved Checking stage belongs to an app that closed
+        // mid-check (an update, a crash). Nothing can resume it, so start over instead of showing it, and holding updates, forever.
+        if (saved is { Stage: WorkflowStage.Checking })
+            return new WorkflowState();
         // Old approvals may include recommendations that current rules deliberately suppress.
         // Never invalidate an in-progress workflow: its resume and cleanup state must survive.
         return saved is { Stage: WorkflowStage.Review } && saved.ReviewRulesVersion != CurrentReviewRulesVersion

@@ -140,7 +140,7 @@ public static class AgentExports
             reasons.Add("A stress test is running.");
         if (s.Fix is not null)
             reasons.Add("A fix is running.");
-        if (s.Workflow is { } flow && Workflow.WorkflowState.IsActiveStage(flow.Stage))
+        if (s.Workflow is { } flow && WorkflowRunning(flow))
             reasons.Add($"The service workflow is running ({flow.Stage}).");
         if (s.BenchmarkRunning is not null || s.BenchmarkSettling)
             reasons.Add("A benchmark is running.");
@@ -149,9 +149,16 @@ public static class AgentExports
         return string.Join(" ", reasons) + " Wait until it finishes before updating Remote PC Diagnostics.";
     }
 
+    /// <summary>
+    /// The workflow counts as running in an active stage, except Checking with nothing working: the checks only run while the
+    /// workflow is busy, so a Checking stage without that is left over from a run that stopped and must not hold an update back.
+    /// </summary>
+    private static bool WorkflowRunning(WorkflowActivity flow) =>
+        Workflow.WorkflowState.IsActiveStage(flow.Stage) && (flow.Busy || flow.Stage != Workflow.WorkflowStage.Checking);
+
     public static object BuildActivity(ActivitySnapshot s)
     {
-        var workflow = s.Workflow is { } w && Workflow.WorkflowState.IsActiveStage(w.Stage) ? w : null;
+        var workflow = s.Workflow is { } w && WorkflowRunning(w) ? w : null;
         var stress = s.StressSuite is { Finished: false } p ? p : null;
         var benchmark = s.BenchmarkRunning is not null || s.BenchmarkSettling;
         var busy = s.Checks.Count > 0 || s.Sequence is not null || stress is not null || s.Fix is not null || benchmark

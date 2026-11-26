@@ -52,6 +52,29 @@ public class RpcdRemoteUpdaterTests
     }
 
     [Fact]
+    public void A_missed_first_try_takes_the_update_lock_on_retry()
+    {
+        var name = "rpcd-test-" + Guid.NewGuid().ToString("N");
+        var hold = new UpdateBusyHold(() => UpdateBusyLock.TryHold(TimeSpan.Zero, name));
+        var other = UpdateBusyLock.TryHold(TimeSpan.Zero, name);
+        Assert.NotNull(other);
+
+        using (hold.Enter())
+        {
+            Assert.False(hold.IsHeld);
+            hold.Retry();
+            Assert.False(hold.IsHeld);
+            other!.Dispose();
+            SpinWait.SpinUntil(() => { hold.Retry(); return hold.IsHeld; }, TimeSpan.FromSeconds(5));
+            Assert.True(hold.IsHeld);
+        }
+
+        Assert.False(hold.IsHeld);
+        hold.Retry();
+        Assert.False(hold.IsHeld);
+    }
+
+    [Fact]
     public async Task An_update_running_in_one_agent_process_refuses_one_in_the_other()
     {
         var dir = TempDir();
