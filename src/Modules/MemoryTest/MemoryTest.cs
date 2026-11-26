@@ -93,7 +93,7 @@ public sealed class MemoryTest(IMemoryInfo memory, IMemTestHelperLauncher launch
                 if (Volatile.Read(ref stop) != StopNone) break;
                 await Task.WhenAny(reader, clk.DelayAsync(o.SampleInterval, cancellationToken)).ConfigureAwait(false);
             }
-            try { await reader.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false); }
+            try { await reader.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None).ConfigureAwait(false); }
             catch (Exception ex) { log.Warn($"Memory test: reading helper output: {ex.Message}"); }
             exit = proc.ExitCode;
             log.Info($"Memory test: helper exit code={exit?.ToString() ?? "(running/killed)"}");

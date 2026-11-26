@@ -711,7 +711,7 @@ public sealed class AgentHubWorker(
             try
             {
                 writeCt.ThrowIfCancellationRequested();
-                await call.RequestStream.WriteAsync(msg).ConfigureAwait(false);
+                await call.RequestStream.WriteAsync(msg, writeCt).ConfigureAwait(false);
             }
             finally
             {

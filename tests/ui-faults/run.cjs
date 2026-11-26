@@ -22,7 +22,23 @@ const port = Number(opt('port', '5199'));
 const out = path.resolve(opt('out', path.join('artifacts', 'ui-faults', path.basename(recording))));
 const base = `http://127.0.0.1:${port}`;
 const repo = path.resolve(__dirname, '..', '..');
-const hostDll = opt('host', path.join(repo, 'tools', 'RpcdReplayHost', 'bin', 'Debug', 'net10.0', 'RpcdReplayHost.dll'));
+const hostDll = opt('host', path.join(repo, 'tools', 'RpcdReplayHost', 'bin', 'Debug', 'net11.0', 'RpcdReplayHost.dll'));
+
+function resolveDotnetExecutable() {
+  const exeName = process.platform === 'win32' ? 'dotnet.exe' : 'dotnet';
+  const candidates = [];
+  if (process.env.DOTNET_ROOT) candidates.push(path.join(process.env.DOTNET_ROOT, exeName));
+  if (process.platform === 'win32') {
+    const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    candidates.push(path.join(programFiles, 'dotnet', exeName));
+  } else {
+    candidates.push('/usr/bin/dotnet', '/usr/local/bin/dotnet');
+    if (process.env.HOME) candidates.push(path.join(process.env.HOME, '.dotnet', exeName));
+  }
+  const found = candidates.find(p => fs.existsSync(p));
+  if (!found) throw new Error(`Could not locate ${exeName}; set DOTNET_ROOT to your .NET SDK directory.`);
+  return found;
+}
 
 // A check that hasn't finished this long after it started is stuck. Timing faults wait TIMEOUT_MS before answering.
 const RUN_BUDGET_MS = 30_000, TIMEOUT_MS = 1_500, STOP_BUDGET_MS = 5_000;
@@ -47,7 +63,7 @@ async function api(method, p, body) {
 async function startHost() {
   const hostArgs = [hostDll, '--recording', recording, '--port', String(port)];
   if (flag('store')) hostArgs.push('--store');
-  const proc = spawn('dotnet', hostArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn(resolveDotnetExecutable(), hostArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   proc.stdout.on('data', d => { log += d; });
   proc.stderr.on('data', d => { log += d; });

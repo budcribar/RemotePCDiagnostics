@@ -481,14 +481,13 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
                     var extractDir = Path.Combine(runStagingDir, "extracted");
                     Directory.CreateDirectory(extractDir);
 
-                    BiosAgentInstallResult? extractResult = null;
                     string? innerFlasher = null;
                     if (Bios.BiosArchiveAndXml.TryExtractEmbeddedCabToDirectory(stagedPath, extractDir))
                         innerFlasher = FindExtractedHpFlasher(extractDir);
 
                     if (innerFlasher is null)
                     {
-                        extractResult = await ExecuteInstallerAsync(
+                        var extractResult = await ExecuteInstallerAsync(
                             stagedPath,
                             BuildHpSoftPaqExtractArguments(extractDir),
                             timeout,
@@ -496,45 +495,43 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
                             ct).ConfigureAwait(false);
                         if (extractResult.ExitCode == 0)
                             innerFlasher = FindExtractedHpFlasher(extractDir);
-                    }
 
-                    if (innerFlasher is not null)
-                    {
-                        var allowedInnerSigners = BiosAgentInstallModes.AllowedExtractedFlasherSignerOrganizations(BiosAgentInstallModes.HpBiosUpdRec);
-                        var innerSigValid = await _signatureVerifier.VerifyAuthenticodeAsync(
-                            innerFlasher,
-                            allowedInnerSigners,
-                            ct).ConfigureAwait(false);
-                        if (!innerSigValid)
+                        if (innerFlasher is null)
                         {
-                            var sigDiag = WinVerifyTrustSignatureVerifier.DescribeAuthenticodeStatus(innerFlasher, allowedInnerSigners);
+                            // Running the SoftPaq itself can't keep the PC from rebooting (sp*.exe rejects -r), so stop here.
+                            var foundExes = ListExtractedExeNames(extractDir);
+                            var diag = $"extractExit={extractResult.ExitCode}, foundExes=[{string.Join(", ", foundExes)}]";
+                            var logTail = string.IsNullOrWhiteSpace(extractResult.LogTail) ? diag : $"{extractResult.LogTail}\n{diag}";
                             return new BiosAgentInstallResult(
                                 Executed: false,
-                                Allowed: false,
-                                ExitCode: -1,
+                                Allowed: true,
+                                ExitCode: extractResult.ExitCode,
                                 TimedOut: false,
-                                LogTail: sigDiag ?? "",
-                                Error: "Extracted HP BIOS flasher failed Agent Authenticode signature verification.");
+                                LogTail: logTail,
+                                Error: HpFlasherNotFound);
                         }
-
-                        executablePath = innerFlasher;
-                        arguments = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.HpBiosUpdRec, request.AllowReboot);
-                        workingDirectory = Path.GetDirectoryName(innerFlasher) ?? extractDir;
                     }
-                    else
+
+                    var allowedInnerSigners = BiosAgentInstallModes.AllowedExtractedFlasherSignerOrganizations(BiosAgentInstallModes.HpBiosUpdRec);
+                    var innerSigValid = await _signatureVerifier.VerifyAuthenticodeAsync(
+                        innerFlasher,
+                        allowedInnerSigners,
+                        ct).ConfigureAwait(false);
+                    if (!innerSigValid)
                     {
-                        // Running the SoftPaq itself can't keep the PC from rebooting (sp*.exe rejects -r), so stop here.
-                        var foundExes = ListExtractedExeNames(extractDir);
-                        var diag = $"extractExit={(extractResult is null ? "cab-only" : extractResult.ExitCode.ToString())}, foundExes=[{string.Join(", ", foundExes)}]";
-                        var logTail = string.IsNullOrWhiteSpace(extractResult?.LogTail) ? diag : $"{extractResult!.LogTail}\n{diag}";
+                        var sigDiag = WinVerifyTrustSignatureVerifier.DescribeAuthenticodeStatus(innerFlasher, allowedInnerSigners);
                         return new BiosAgentInstallResult(
                             Executed: false,
-                            Allowed: true,
-                            ExitCode: extractResult?.ExitCode ?? -1,
+                            Allowed: false,
+                            ExitCode: -1,
                             TimedOut: false,
-                            LogTail: logTail,
-                            Error: HpFlasherNotFound);
+                            LogTail: sigDiag ?? "",
+                            Error: "Extracted HP BIOS flasher failed Agent Authenticode signature verification.");
                     }
+
+                    executablePath = innerFlasher;
+                    arguments = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.HpBiosUpdRec, request.AllowReboot);
+                    workingDirectory = Path.GetDirectoryName(innerFlasher) ?? extractDir;
                 }
                 else if ((mode == BiosAgentInstallModes.LenovoWinUptp || mode == BiosAgentInstallModes.LenovoPackageSilent)
                     && IsLenovoSfxExecutable(stagedPath))

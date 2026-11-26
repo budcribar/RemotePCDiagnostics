@@ -74,10 +74,10 @@ public static class HardwareSyncService
         var stampPath = Path.Combine(stateFolder, StampFileName);
         try
         {
-            if (File.Exists(stampPath) && string.Equals((await File.ReadAllTextAsync(stampPath).ConfigureAwait(false)).Trim(), hash, StringComparison.OrdinalIgnoreCase))
+            if (File.Exists(stampPath) && string.Equals((await File.ReadAllTextAsync(stampPath, ct).ConfigureAwait(false)).Trim(), hash, StringComparison.OrdinalIgnoreCase))
                 return HardwareSyncOutcome.Unchanged;
         }
-        catch { }
+        catch (Exception) when (!ct.IsCancellationRequested) { }
 
         bool ok;
         try
@@ -108,9 +108,9 @@ public static class HardwareSyncService
         try
         {
             Directory.CreateDirectory(stateFolder);
-            await File.WriteAllTextAsync(stampPath, hash).ConfigureAwait(false);
+            await File.WriteAllTextAsync(stampPath, hash, ct).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             log?.Invoke($"Could not write hardware sync stamp: {ex.Message}");
         }

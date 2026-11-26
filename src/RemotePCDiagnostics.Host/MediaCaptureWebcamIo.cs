@@ -134,7 +134,7 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
             finally
             {
                 lock (gate) stopped = true;
-                try { await reader.StopAsync().AsTask().ConfigureAwait(false); } catch { }
+                try { await reader.StopAsync().AsTask(CancellationToken.None).ConfigureAwait(false); } catch { }
             }
             if (failure is not null) throw failure;
             return new WebcamCaptureResult(w, h, fps, cur?.Subtype, note);
