@@ -100,7 +100,14 @@ public sealed class AgentChangeJournal : IChangeJournal, IDisposable
             while (true)
             {
                 (ChangeRecord? Add, Guid? Remove) next;
-                lock (_gate) { if (_unsent.Count == 0) break; next = _unsent[0]; }
+                lock (_gate)
+                {
+                    if (_unsent.Count == 0)
+                    {
+                        break;
+                    }
+                    next = _unsent[0];
+                }
                 if (!await SendAsync(next, ct).ConfigureAwait(false)) return; // tried again on the next connect
                 lock (_gate) _unsent.RemoveAt(0);
             }

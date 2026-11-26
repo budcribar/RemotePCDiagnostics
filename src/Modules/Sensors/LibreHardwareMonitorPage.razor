@@ -105,7 +105,14 @@
 
 @code {
     private readonly HashSet<string> _expandedCards = new(StringComparer.OrdinalIgnoreCase);
-    private void Toggle(string id) { if (!_expandedCards.Remove(id)) _expandedCards.Add(id); _uiDirty = true; }
+    private void Toggle(string id)
+    {
+        if (!_expandedCards.Remove(id))
+        {
+            _expandedCards.Add(id);
+        }
+        _uiDirty = true;
+    }
     private bool _busy;        // a read is in flight; no overlap
     private bool _uiDirty = true;
     private (string Signature, Guid? RunId, DateTimeOffset Timestamp)? _lastRender;

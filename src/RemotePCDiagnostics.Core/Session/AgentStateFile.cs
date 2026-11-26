@@ -53,7 +53,14 @@ public sealed class AgentStateFile(IElevatedCommandBridge agent, string name, st
                 // Never creates the folder: only the secured one (administrators only) may hold these files.
                 if (Directory.Exists(Path.GetDirectoryName(fallbackPath)))
                 {
-                    if (json is null) { if (File.Exists(fallbackPath)) File.Delete(fallbackPath); return true; }
+                    if (json is null)
+                    {
+                        if (File.Exists(fallbackPath))
+                        {
+                            File.Delete(fallbackPath);
+                        }
+                        return true;
+                    }
                     var tmp = fallbackPath + ".tmp";
                     File.WriteAllText(tmp, json);
                     File.Move(tmp, fallbackPath, overwrite: true);

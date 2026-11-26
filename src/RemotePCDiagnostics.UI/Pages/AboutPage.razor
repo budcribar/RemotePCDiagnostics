@@ -24,14 +24,18 @@
         <dt>Process architecture</dt><dd>@System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture</dd>
     </dl>
 </section>
-@if (Plugins.Count > 0)
+@{
+    var plugins = GetPlugins();
+    var builtInDlls = GetBuiltInDlls();
+}
+@if (plugins.Count > 0)
 {
     <details class="card about-card bench-customize" data-testid="about-plugins" open="@_pluginsOpen">
         <summary class="bench-customize-summary" data-testid="about-plugins-toggle" aria-expanded="@(_pluginsOpen ? "true" : "false")"
                  @onclick="() => _pluginsOpen = !_pluginsOpen" @onclick:preventDefault="true">
             <span class="bench-customize-title">
                 <span>Module plugins</span>
-                <span class="meta">(@Plugins.Count @(Plugins.Count == 1 ? "module" : "modules"))</span>
+                <span class="meta">(@plugins.Count @(plugins.Count == 1 ? "module" : "modules"))</span>
             </span>
             <span class="chevron-icon @(_pluginsOpen ? "is-open" : "")" aria-hidden="true">▾</span>
         </summary>
@@ -40,7 +44,7 @@
             <table class="about-plugins">
                 <thead><tr><th>Module</th><th>Version</th><th>Signature</th><th>State</th></tr></thead>
                 <tbody>
-                @foreach (var p in Plugins)
+                @foreach (var p in plugins)
                 {
                     <tr data-testid="about-plugin">
                         <td><strong>@(p.DisplayName ?? p.PluginId)</strong><div class="meta">@p.PluginId@(p.ModuleId is { } id ? $" · {id}" : "")</div></td>
@@ -55,14 +59,14 @@
     </details>
 }
 
-@if (BuiltInDlls.Count > 0)
+@if (builtInDlls.Count > 0)
 {
     <details class="card about-card bench-customize" data-testid="about-builtin-modules" open="@_builtInOpen">
         <summary class="bench-customize-summary" data-testid="about-builtin-modules-toggle" aria-expanded="@(_builtInOpen ? "true" : "false")"
                  @onclick="() => _builtInOpen = !_builtInOpen" @onclick:preventDefault="true">
             <span class="bench-customize-title">
                 <span>Built-in modules</span>
-                <span class="meta">(@BuiltInDlls.Count(p => p.State == PluginState.Loaded) of @BuiltInDlls.Count loaded)</span>
+                <span class="meta">(@builtInDlls.Count(p => p.State == PluginState.Loaded) of @builtInDlls.Count loaded)</span>
             </span>
             <span class="chevron-icon @(_builtInOpen ? "is-open" : "")" aria-hidden="true">▾</span>
         </summary>
@@ -71,7 +75,7 @@
             <table class="about-plugins">
                 <thead><tr><th>Module</th><th>File</th><th>State</th></tr></thead>
                 <tbody>
-                @foreach (var p in BuiltInDlls)
+                @foreach (var p in builtInDlls)
                 {
                     <tr data-testid="about-builtin-module">
                         <td><strong>@(p.DisplayName ?? p.PluginId)</strong>@if (p.ModuleId is { } id) {<div class="meta">@id</div>}</td>
@@ -112,10 +116,10 @@
         catch (Exception ex) { _unsignedError = $"Couldn't change the setting: {ex.Message}"; }
     }
 
-    private IReadOnlyList<PluginRecord> BuiltInDlls =>
+    private IReadOnlyList<PluginRecord> GetBuiltInDlls() =>
         App.Plugins?.Records.Where(r => r.Source == RemotePCDiagnostics.Core.ModuleSource.BuiltIn && r.Path is not null).ToList() ?? [];
 
-    private IReadOnlyList<PluginRecord> Plugins =>
+    private IReadOnlyList<PluginRecord> GetPlugins() =>
         App.Plugins?.Records.Where(r => r.Source == RemotePCDiagnostics.Core.ModuleSource.Plugin).ToList() ?? [];
 
     private AboutMachineFacts? _machine;

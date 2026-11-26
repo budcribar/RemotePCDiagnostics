@@ -164,7 +164,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
         try
         {
             var effectiveIndexUrl = primaryUrl;
-            var response = await BiosProviderHttp.GetFollowingAllowedRedirectsAsync(
+            HttpResponseMessage? response = await BiosProviderHttp.GetFollowingAllowedRedirectsAsync(
                 _httpClient,
                 primaryUrl,
                 AllowedHostSuffixes,
@@ -178,6 +178,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
                 if (response.StatusCode == HttpStatusCode.NotFound && isWin11)
                 {
                     response.Dispose();
+                    response = null;
                     effectiveOs = "Win10";
                     effectiveIndexUrl = $"{_catalogBaseUrl}/{mtm}_Win10.xml";
                     response = await BiosProviderHttp.GetFollowingAllowedRedirectsAsync(
@@ -204,7 +205,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             }
             finally
             {
-                response.Dispose();
+                response?.Dispose();
             }
 
             var indexDoc = BiosArchiveAndXml.ParseXmlSafe(indexXml);

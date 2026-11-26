@@ -63,60 +63,73 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
         using var tokenScope = token;
         // Every pipe end starts out non-inheritable; only the child's three ends are handed to it (CreateRestricted).
         var sa = new SECURITY_ATTRIBUTES { nLength = Marshal.SizeOf<SECURITY_ATTRIBUTES>(), bInheritHandle = false };
-        SafeFileHandle? inRead = null, inWrite = null, outRead = null, outWrite = null, errRead = null, errWrite = null;
-        Process process;
+        SafeFileHandle? inWrite = null, outRead = null, errRead = null;
+        Process? process = null;
         try
         {
-            Check(CreatePipe(out inRead, out inWrite, ref sa, 0));
-            Check(CreatePipe(out outRead, out outWrite, ref sa, 0));
-            Check(CreatePipe(out errRead, out errWrite, ref sa, 0));
-
-            PROCESS_INFORMATION pi;
-            try
+            PROCESS_INFORMATION pi = default;
+            var fallback = false;
+            Check(CreatePipe(out var inRead, out inWrite, ref sa, 0));
+            using (inRead)
             {
-                pi = CreateRestricted(token, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, dir, inRead, outWrite, errWrite);
+                Check(CreatePipe(out outRead, out var outWrite, ref sa, 0));
+                using (outWrite)
+                {
+                    Check(CreatePipe(out errRead, out var errWrite, ref sa, 0));
+                    using (errWrite)
+                    {
+                        try
+                        {
+                            pi = CreateRestricted(token, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, dir, inRead, outWrite, errWrite);
+                        }
+                        catch (Win32Exception ex) when (module.Bundled && !Environment.IsPrivilegedProcess)
+                        {
+                            if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: CreateProcessAsUser rejected packaged/standard-user token ({Error}); starting with standard-user token", module.Manifest.Slug, ex.NativeErrorCode);
+                            fallback = true;
+                        }
+                    }
+                }
             }
-            catch (Win32Exception ex) when (module.Bundled && !Environment.IsPrivilegedProcess)
+            if (!fallback)
             {
-                inRead.Dispose(); inWrite.Dispose();
-                outRead.Dispose(); outWrite.Dispose();
-                errRead.Dispose(); errWrite.Dispose();
-                if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: CreateProcessAsUser rejected packaged/standard-user token ({Error}); starting with standard-user token", module.Manifest.Slug, ex.NativeErrorCode);
-                return new ProcessModuleHostLauncher(directory, log).StartRaw(module);
+                try
+                {
+                    process = Process.GetProcessById(pi.dwProcessId);
+                }
+                finally
+                {
+                    CloseHandle(pi.hThread);
+                    CloseHandle(pi.hProcess);
+                }
+                if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: started pid={Pid} (restricted token, Medium integrity{Unsigned})",
+                    module.Manifest.Slug, pi.dwProcessId, module.Bundled ? "" : ", no INTERACTIVE or Event Log Readers");
             }
-            finally
-            {
-                inRead.Dispose(); outWrite.Dispose(); errWrite.Dispose(); // the child's ends
-            }
-            try
-            {
-                process = Process.GetProcessById(pi.dwProcessId);
-            }
-            finally
-            {
-                CloseHandle(pi.hThread);
-                CloseHandle(pi.hProcess);
-            }
-            if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: started pid={Pid} (restricted token, Medium integrity{Unsigned})",
-                module.Manifest.Slug, pi.dwProcessId, module.Bundled ? "" : ", no INTERACTIVE or Event Log Readers");
         }
         catch
         {
-            inRead?.Dispose(); inWrite?.Dispose();
-            outRead?.Dispose(); outWrite?.Dispose();
-            errRead?.Dispose(); errWrite?.Dispose();
+            inWrite?.Dispose();
+            outRead?.Dispose();
+            errRead?.Dispose();
             throw;
         }
 
-        var stderr = new StreamReader(new FileStream(errRead, FileAccess.Read), Encoding.UTF8);
+        if (process is null)
+        {
+            inWrite?.Dispose();
+            outRead?.Dispose();
+            errRead?.Dispose();
+            return new ProcessModuleHostLauncher(directory, log).StartRaw(module);
+        }
+
+        var stderr = new StreamReader(new FileStream(errRead!, FileAccess.Read), Encoding.UTF8);
         _ = Task.Run(async () =>
         {
             try { while (await stderr.ReadLineAsync().ConfigureAwait(false) is { } line) { if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: {Line}", module.Manifest.Slug, line); } }
             catch { }
         });
         return new Connection(process,
-            new StreamWriter(new FileStream(inWrite, FileAccess.Write), new UTF8Encoding(false)) { AutoFlush = true },
-            new StreamReader(new FileStream(outRead, FileAccess.Read), Encoding.UTF8), stderr);
+            new StreamWriter(new FileStream(inWrite!, FileAccess.Write), new UTF8Encoding(false)) { AutoFlush = true },
+            new StreamReader(new FileStream(outRead!, FileAccess.Read), Encoding.UTF8), stderr);
     }
 
     /// <summary>
@@ -167,11 +180,10 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
         {
             // Only stdin is handed over; the process has no stdout or stderr (it logs to its own file).
             PROCESS_INFORMATION pi;
-            try
+            using (inRead)
             {
                 pi = CreateRestricted(token, new StringBuilder($"\"{exe}\" {arguments}"), CREATE_UNICODE_ENVIRONMENT, workingDirectory, inRead, null, null);
             }
-            finally { inRead.Dispose(); } // the child's end
             try
             {
                 return (Process.GetProcessById(pi.dwProcessId), new StreamWriter(new FileStream(inWrite, FileAccess.Write), new UTF8Encoding(false)) { AutoFlush = true });
@@ -184,7 +196,7 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
         }
         catch
         {
-            inRead.Dispose(); inWrite.Dispose();
+            inWrite.Dispose();
             throw;
         }
     }

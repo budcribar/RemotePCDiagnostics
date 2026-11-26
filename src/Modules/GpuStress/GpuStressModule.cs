@@ -30,10 +30,10 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
     }
 
     /// <summary>Stresses the GPU <paramref name="instance"/> names (its <see cref="ModuleInstance.Details"/> is the adapter id).</summary>
-    public async Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken cancellationToken = default)
+    public async Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken ct = default)
     {
         _adapterId = instance.Key == FirstGpuKey ? null : instance.Details;
-        try { return await RefreshAsync(progress, cancellationToken).ConfigureAwait(false); }
+        try { return await RefreshAsync(progress, ct).ConfigureAwait(false); }
         finally
         {
             _adapterId = null;

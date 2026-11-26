@@ -74,29 +74,29 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : OnDemandModu
     }
 
     /// <summary>Tests one NPU with the whole time budget.</summary>
-    public Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken cancellationToken = default) =>
-        RunGuardedAsync(async ct =>
+    public Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken ct = default) =>
+        RunGuardedAsync(async token =>
         {
             try
             {
                 var budget = ClampDuration(Settings.Duration);
-                var device = (await Task.Run(Devices, ct).ConfigureAwait(false)).FirstOrDefault(d => d.Id == instance.Details);
+                var device = (await Task.Run(Devices, token).ConfigureAwait(false)).FirstOrDefault(d => d.Id == instance.Details);
                 if (device is null) return CouldNotRun.Result(Name, $"{instance.Label} is no longer connected.");
                 var (a, b) = Inputs(MatrixSize);
                 float[] reference = [];
-                var cpu = await Stress.StressTaskScheduler.Run(() => CpuBaseline(a, b, MatrixSize, out reference), ct).ConfigureAwait(false);
+                var cpu = await Stress.StressTaskScheduler.Run(() => CpuBaseline(a, b, MatrixSize, out reference), token).ConfigureAwait(false);
                 progress?.Report($"Testing {device.Name}…");
-                var report = await TestDeviceAsync(io, device, a, b, reference, cpu, budget, WatchdogGrace, ct, Logger).ConfigureAwait(false);
+                var report = await TestDeviceAsync(io, device, a, b, reference, cpu, budget, WatchdogGrace, token, Logger).ConfigureAwait(false);
                 Log($"{Name}: {device.Name}: {report.Verdict} {report.Message}");
                 return ToResult(new NpuTestReport([report], MatrixSize, budget, report.Verdict, null));
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
                 LogError($"{Name}: {ex}");
                 return new DiagnosticResult(Name, DiagnosticStatus.Error, "The NPU test couldn't finish on this PC. Please try again.", DateTimeOffset.Now);
             }
-        }, cancellationToken);
+        }, ct);
 
     /// <summary>One report listing every NPU's latest result, for the page.</summary>
     public object? Combine(IReadOnlyList<DiagnosticResult> instanceResults)
