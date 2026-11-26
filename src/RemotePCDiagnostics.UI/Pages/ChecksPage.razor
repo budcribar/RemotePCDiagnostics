@@ -69,7 +69,7 @@
     }
     else
     {
-        <AgentData TestId="checks-report-data" Json="@AgentExports.CheckEnablement(checkChoices)" />
+        <AgentData TestId="checks-report-data" Json="@AgentExports.CheckEnablement(checkChoices, ActiveProfiles)" />
         <details class="card bench-customize" data-testid="checks-settings" open="@_checksOpen">
             @* The click saves the open state, so a view-only mirror and a controlling mirror show the same panel the start buttons do. *@
             <summary class="bench-customize-summary" data-testid="checks-settings-toggle" aria-expanded="@(_checksOpen ? "true" : "false")"

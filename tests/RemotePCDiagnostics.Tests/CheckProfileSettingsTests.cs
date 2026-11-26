@@ -1,4 +1,5 @@
 using RemotePCDiagnostics.Core;
+using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Checks;
 
 namespace RemotePCDiagnostics.Tests;
@@ -120,6 +121,31 @@ public class CheckProfileSettingsTests
         }
         Assert.Contains(ModuleSlugs.Sound, CheckProfiles.Find(CheckProfiles.Office)!.CheckIds);
         Assert.Contains(ModuleSlugs.Sensors, CheckProfiles.Find(CheckProfiles.Gamer)!.CheckIds);
+    }
+
+    [Fact]
+    public void The_checks_page_data_lists_each_profile_its_checks_and_which_are_picked()
+    {
+        CheckChoice[] choices =
+        [
+            new(ModuleSlugs.Osquery, "Hardware inventory", "Hardware", Available: true, Enabled: true, Reason: null),
+            new(ModuleSlugs.Sound, "Sound", "Audio", Available: true, Enabled: false, Reason: null),
+        ];
+
+        using var doc = System.Text.Json.JsonDocument.Parse(AgentExports.CheckEnablement(choices, [CheckProfiles.Office]));
+        var root = doc.RootElement;
+        var profiles = root.GetProperty("profiles").EnumerateArray().ToList();
+        Assert.Equal(CheckProfiles.All.Select(p => p.Id), profiles.Select(p => p.GetProperty("id").GetString()));
+        var office = profiles.Single(p => p.GetProperty("id").GetString() == CheckProfiles.Office);
+        Assert.True(office.GetProperty("active").GetBoolean());
+        Assert.Equal("Office worker", office.GetProperty("name").GetString());
+        Assert.Contains(ModuleSlugs.Sound, office.GetProperty("checks").EnumerateArray().Select(c => c.GetString()));
+        Assert.All(profiles.Where(p => p.GetProperty("id").GetString() != CheckProfiles.Office), p => Assert.False(p.GetProperty("active").GetBoolean()));
+
+        var rows = root.GetProperty("checks").EnumerateArray().ToList();
+        Assert.Equal([CheckProfiles.Developer, CheckProfiles.Performance], rows[0].GetProperty("profiles").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal([CheckProfiles.Office], rows[1].GetProperty("profiles").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(6, BrowserContract.Checks);
     }
 
     private sealed class CountingStore : ICheckSettingsStore
