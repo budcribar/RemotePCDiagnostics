@@ -25,13 +25,20 @@ public sealed record CheckSettings
     /// <summary>Preferred display order of check ids (Dashboard cards and Checks list). Empty uses catalog order.</summary>
     public IReadOnlyList<string> Order { get; init; } = [];
 
+    /// <summary>
+    /// Check profiles (<see cref="CheckProfiles"/> ids) whose checks are what is turned on. Empty means a custom list (or every check).
+    /// Picking or dropping a profile rewrites <see cref="Disabled"/>; turning a check on or off by hand clears this, since the list no
+    /// longer matches a profile.
+    /// </summary>
+    public IReadOnlyList<string> Profiles { get; init; } = [];
+
     public bool IsEnabled(string checkId) =>
         !Disabled.Any(id => string.Equals(id, checkId, StringComparison.OrdinalIgnoreCase));
 
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
 
     public string ToJson() => JsonSerializer.Serialize(
-        this with { Disabled = CheckEnableRules.Normalize(Disabled), Order = CheckEnableRules.NormalizeOrder(Order) }, Json);
+        this with { Disabled = CheckEnableRules.Normalize(Disabled), Order = CheckEnableRules.NormalizeOrder(Order), Profiles = CheckProfiles.Normalize(Profiles) }, Json);
 
     public static CheckSettings? FromJson(string? json)
     {
@@ -47,6 +54,7 @@ public sealed record CheckSettings
                 SchemaVersion = CheckSettings.CurrentSchemaVersion,
                 Disabled = CheckEnableRules.Normalize(state.Disabled),
                 Order = CheckEnableRules.NormalizeOrder(state.Order),
+                Profiles = CheckProfiles.Normalize(state.Profiles),
             };
         }
         catch (JsonException) { return null; }
@@ -171,6 +179,24 @@ public static class CheckEnableRules
         return Normalize(set);
     }
 
+    /// <summary>
+    /// The disabled list for <paramref name="profiles"/>: every available check outside their union is off, every one inside it is on.
+    /// No profiles turns every available check on. Checks that are hidden are left as they were.
+    /// </summary>
+    public static IReadOnlyList<string> WithProfiles(CheckSettings settings, IReadOnlyList<string> profiles, IEnumerable<string> availableIds)
+    {
+        var available = availableIds.Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id.Trim()).ToList();
+        if (profiles.Count == 0) return WithAll(settings, available, on: true);
+        var wanted = CheckProfiles.ResolveEnabledCheckIds(profiles, available);
+        var set = new HashSet<string>(settings.Disabled, StringComparer.OrdinalIgnoreCase);
+        foreach (var id in available)
+        {
+            if (wanted.Contains(id)) set.Remove(id);
+            else set.Add(id);
+        }
+        return Normalize(set);
+    }
+
     /// <summary>A result recorded instead of running a check that is turned off. Warning plus a skip gate: the row says Skipped, not failed.</summary>
     public static DiagnosticResult SkippedResult(string checkId, Guid moduleId) =>
         ModuleOrdering.GateResult(checkId, new DependencyGate(GateKind.Skipped, TurnedOffReason, moduleId));
@@ -271,14 +297,25 @@ public sealed class CheckSettingsService
     public void SetEnabled(string checkId, bool on, bool available) => SetEnabled(checkId, on, available, persistToHost: true);
 
     public void SetEnabled(string checkId, bool on, bool available, bool persistToHost) =>
-        Update(s => s with { Disabled = CheckEnableRules.WithEnabled(s, checkId, on, available) }, persistToHost);
+        Update(s => s with { Disabled = CheckEnableRules.WithEnabled(s, checkId, on, available), Profiles = [] }, persistToHost);
 
     public void SetAll(IEnumerable<string> availableIds, bool on) => SetAll(availableIds, on, persistToHost: true);
 
     public void SetAll(IEnumerable<string> availableIds, bool on, bool persistToHost)
     {
         var ids = availableIds.ToList();
-        Update(s => s with { Disabled = CheckEnableRules.WithAll(s, ids, on) }, persistToHost);
+        Update(s => s with { Disabled = CheckEnableRules.WithAll(s, ids, on), Profiles = [] }, persistToHost);
+    }
+
+    /// <summary>
+    /// Makes <paramref name="profileIds"/> the active profiles and turns on exactly their checks among <paramref name="availableIds"/>
+    /// (every other available check off), in one change and one save. No profiles turns every available check back on.
+    /// </summary>
+    public void SetProfiles(IEnumerable<string> profileIds, IEnumerable<string> availableIds, bool persistToHost)
+    {
+        var profiles = CheckProfiles.Normalize(profileIds);
+        var available = availableIds.ToList();
+        Update(s => s with { Disabled = CheckEnableRules.WithProfiles(s, profiles, available), Profiles = profiles }, persistToHost);
     }
 
     public void SetOrder(IEnumerable<string> orderedIds, bool persistToHost = true)
@@ -337,6 +374,7 @@ public sealed class CheckSettingsService
         SchemaVersion = CheckSettings.CurrentSchemaVersion,
         Disabled = CheckEnableRules.Normalize(settings.Disabled),
         Order = CheckEnableRules.NormalizeOrder(settings.Order),
+        Profiles = CheckProfiles.Normalize(settings.Profiles),
     };
 
     private void Raise() { try { Changed?.Invoke(); } catch { } }
