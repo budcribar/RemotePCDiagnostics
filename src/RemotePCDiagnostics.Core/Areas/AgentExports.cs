@@ -392,22 +392,41 @@ public static class AgentExports
 
     // ---- Which checks are turned on -------------------------------------------------------------------------------------
 
-    /// <summary>The Checks page's enablement for browser agents (checks-report-data): every diagnostic check, hidden hardware included.</summary>
-    public static string CheckEnablement(IReadOnlyList<CheckChoice> checks) => JsonSerializer.Serialize(BuildCheckEnablement(checks), Json);
+    /// <summary>
+    /// The Checks page's enablement for browser agents (checks-report-data): every diagnostic check, hidden hardware included,
+    /// the profiles each check belongs to, and the profile catalog with which profiles are picked (Settings.Profiles).
+    /// </summary>
+    public static string CheckEnablement(IReadOnlyList<CheckChoice> checks, IReadOnlyCollection<string>? activeProfiles = null) =>
+        JsonSerializer.Serialize(BuildCheckEnablement(checks, activeProfiles), Json);
 
-    public static object BuildCheckEnablement(IEnumerable<CheckChoice> checks) => new
+    public static object BuildCheckEnablement(IEnumerable<CheckChoice> checks, IReadOnlyCollection<string>? activeProfiles = null)
     {
-        schema = SchemaVersion,
-        checks = checks.Select(c => new
+        var active = new HashSet<string>(activeProfiles ?? [], StringComparer.OrdinalIgnoreCase);
+        return new
         {
-            id = V(c.Id),
-            title = V(c.Title),
-            category = V(c.Category),
-            available = c.Available,
-            enabled = c.Enabled,
-            reason = T(c.Reason),
-        }).ToList(),
-    };
+            schema = SchemaVersion,
+            checks = checks.Select(c => new
+            {
+                id = V(c.Id),
+                title = V(c.Title),
+                category = V(c.Category),
+                available = c.Available,
+                enabled = c.Enabled,
+                reason = T(c.Reason),
+                profiles = CheckProfiles.All
+                    .Where(p => p.CheckIds.Contains(c.Id, StringComparer.OrdinalIgnoreCase))
+                    .Select(p => p.Id).ToList(),
+            }).ToList(),
+            profiles = CheckProfiles.All.Select(p => new
+            {
+                id = p.Id,
+                name = p.DisplayName,
+                summary = p.Summary,
+                checks = p.CheckIds,
+                active = active.Contains(p.Id),
+            }).ToList(),
+        };
+    }
 
     // ---- Security audit -------------------------------------------------------------------------------------------------
 

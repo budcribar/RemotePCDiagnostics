@@ -9,7 +9,7 @@ public static class BrowserContract
 {
     public const int Dashboard = 1;
     public const int Workflow = 3;
-    public const int Checks = 5;
+    public const int Checks = 6;
     public const int Stress = 1;
     public const int Interactive = 1;
     public const int SecurityAudit = 1;
