@@ -78,6 +78,8 @@ public sealed class AgentSessionOptions
 
     /// <summary>The latest update progress, or the one named by request id. Null when this process has no updater.</summary>
     public Func<string, UpdateRpcdProgress?>? ReadUpdateRpcd { get; init; }
+    /// <summary>Cancels an update that is still waiting for the PC to be free (empty id = the latest) and returns its status after.</summary>
+    public Func<string, UpdateRpcdProgress?>? CancelUpdateRpcd { get; init; }
 
     /// <summary>Persists a per-agent token assigned by the relay on first enrollment (writes secured agent.json).</summary>
     public Action<string>? SaveAgentToken { get; init; }
@@ -823,6 +825,10 @@ public sealed class AgentHubWorker(
                         _ = HandleUpdateRpcdStatusAsync(command.UpdateRpcdStatus, WriteMessageAsync, token);
                         break;
 
+                    case HubCommand.BodyOneofCase.CancelUpdateRpcd:
+                        _ = HandleCancelUpdateRpcdAsync(command.CancelUpdateRpcd, WriteMessageAsync, token);
+                        break;
+
                     case HubCommand.BodyOneofCase.MetricsSchedule:
                         _options.Metrics?.ApplySchedule(command.MetricsSchedule);
                         break;
@@ -1424,6 +1430,28 @@ public sealed class AgentHubWorker(
                     Stage = "idle",
                     Detail = "No RPCD update has been requested.",
                 };
+            await writeAsync(new AgentMessage { UpdateRpcd = progress }, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log($"[rpcd-update] {ex.Message}");
+        }
+    }
+
+    private async Task HandleCancelUpdateRpcdAsync(
+        CancelUpdateRpcdCommand command,
+        Func<AgentMessage, CancellationToken, Task> writeAsync,
+        CancellationToken ct)
+    {
+        try
+        {
+            var progress = _options.CancelUpdateRpcd?.Invoke(command.RequestId ?? "");
+            if (progress is null)
+                return;
+            Log($"[rpcd-update] Cancel asked for update {progress.RequestId}: stage {progress.Stage}.");
             await writeAsync(new AgentMessage { UpdateRpcd = progress }, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
