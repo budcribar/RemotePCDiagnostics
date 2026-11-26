@@ -89,10 +89,12 @@ public sealed class SystemWmiSource(ILogger? log = null, TimeSpan? timeout = nul
         return result;
     }
 
-    /// <summary>The error's text. Some WMI failures come with an empty message, so the status code (ManagementException) or type is kept too.</summary>
+    /// <summary>The error's text. Some WMI failures come with an empty message, so the status (ManagementException: its name and code) or the
+    /// exception type is kept too.</summary>
     private static string Describe(Exception ex)
     {
-        var code = OperatingSystem.IsWindows() && ex is System.Management.ManagementException me ? me.ErrorCode.ToString() : null;
+        // The status name and its code ("InvalidClass (0x80041010)"): the code is what Microsoft's documentation and searches use.
+        var code = OperatingSystem.IsWindows() && ex is System.Management.ManagementException me ? $"{me.ErrorCode} (0x{(uint)me.ErrorCode:X8})" : null;
         var message = ex.Message.Trim();
         if (code is null) return message.Length > 0 ? message : $"{ex.GetType().Name} (0x{ex.HResult:X8})";
         return message.Length > 0 ? $"{code}: {message}" : code;

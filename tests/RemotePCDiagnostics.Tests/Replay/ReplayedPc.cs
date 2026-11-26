@@ -15,7 +15,13 @@ namespace RemotePCDiagnostics.Tests.Replay;
 /// </summary>
 internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults = null)
 {
-    private readonly FaultingSources? _faults = faults is null ? null : new(faults);
+    private readonly FaultingSources? _faults = faults is null ? null : new(UsingRecordedErrors(faults, recording));
+
+    private static FaultPlan UsingRecordedErrors(FaultPlan plan, MachineRecording recording)
+    {
+        plan.UseRecordedErrors(recording);
+        return plan;
+    }
 
     public RecordingReplay Replay { get; } = new(recording);
     public MachineRecording Recording => recording;
@@ -89,7 +95,9 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
     /// <summary>The Store edition without an Agent: osquery interface_details and the NetAdapterStatistics and IpConfig scripts.</summary>
     public NetworkModule NetworkOld() => new(new OsqueryNetworkSource(Osquery, Commands), includeWifiAndIpConfig: true, offline: true);
 
-    public SecurityEssentialsModule SecurityEssentials() => new(new Core.Security.WmiSecurityEssentialsSource(Wmi, Registry, Commands));
+    /// <summary>With Security Center's antivirus list when the recording holds it (recorder v9 on), as the app reads it.</summary>
+    public SecurityEssentialsModule SecurityEssentials() => new(new Core.Security.WmiSecurityEssentialsSource(Wmi, Registry, Commands,
+        antivirusProducts: Has(c => c.Kind == RecordedCall.AntivirusKind) ? AntivirusProducts : null));
     public SecurityEssentialsModule SecurityEssentialsOld() => new(new PowerShellSecurityEssentialsSource(Commands));
 
     public bool HasFile(string name) => Has(c => c.Kind == RecordedCall.FileKind && c.File == name);

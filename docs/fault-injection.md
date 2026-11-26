@@ -49,7 +49,9 @@ was used, or the fault was hidden), questions the recording doesn't hold (record
 - `FaultPlan` and `FaultingSources` (`src/RemotePCDiagnostics.Core/Recording`): rules such as
   `{ "source": "wmi", "match": "Win32_Battery", "fault": "missing-class" }`, applied to every source a check reads (WMI, the registry, Store
   packages, Security Center, Core Audio, programs such as osquery, PowerShell, powercfg and wevtutil, and report files). `match` is plain
-  text the answer's key contains, case ignored, or `*`. Errors use the wording Windows gives (`SystemWmiSource`), and `disconnected` and
+  text the answer's key contains, case ignored, or `*`. Errors use the wording and code Windows gives (`SystemWmiSource`: "InvalidClass
+  (0x80041010): Invalid class"); when the recording holds the recorder's error probes (`ErrorProbes`, recorder v9 on), the PC's own errors
+  are used instead. `disconnected` and `disconnected` and
   `drop-after` give the Agent's "isn't connected" answer to every WMI read. The faults are listed in `Faults`.
 - `ReplayedPc` (`tests/RemotePCDiagnostics.Tests/Replay/ReplayedPc.cs`): builds the checks on a recording, through a fault plan when given
   one. The replay tests and the host share it.
@@ -61,8 +63,6 @@ was used, or the fault was hidden), questions the recording doesn't hold (record
 ## Not covered yet
 
 - Live sensors (LibreHardwareMonitor), the Lenovo EC fan, interactive tests and benchmarks: they measure live hardware and aren't recorded.
-- The Sound check: recordings made before it don't hold its Core Audio answer. Record both PCs again (recorder from current main).
+- The Sound check: recordings made before recorder v9 don't hold its Core Audio answer. Record both PCs again.
 - The real app on Windows (WebView2, the module host out of process, the Agent's pipe). The plan is a Debug-only switch that starts the
   Host on a recording and fault plan, driven by `tests/smoke`'s CDP attach.
-- WMI's error codes: faults use Windows' wording, but the codes aren't recorded yet (planned: recorder probes that fail on purpose, and an
-  error code on `WmiQueryResult`).

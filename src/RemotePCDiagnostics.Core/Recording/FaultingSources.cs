@@ -33,7 +33,7 @@ public sealed class FaultingSources(FaultPlan plan)
             if (plan.For(RecordedCall.WmiKind, RecordingReplay.WmiKey(wmiNamespace, wql)) is not { } rule)
                 return await inner.QueryAsync(wmiNamespace, wql, ct).ConfigureAwait(false);
             await FaultPlan.WaitAsync(rule, ct).ConfigureAwait(false);
-            return FaultPlan.Apply(rule, await inner.QueryAsync(wmiNamespace, wql, ct).ConfigureAwait(false));
+            return FaultPlan.Apply(rule, await inner.QueryAsync(wmiNamespace, wql, ct).ConfigureAwait(false), plan.ErrorFor(rule));
         }
     }
 
@@ -44,7 +44,7 @@ public sealed class FaultingSources(FaultPlan plan)
             if (plan.For(RecordedCall.RegistryKind, RecordingReplay.RegistryKey(read.Location, read.Describe())) is not { } rule)
                 return await inner.ReadAsync(read, ct).ConfigureAwait(false);
             await FaultPlan.WaitAsync(rule, ct).ConfigureAwait(false);
-            return FaultPlan.Apply(rule, await inner.ReadAsync(read, ct).ConfigureAwait(false));
+            return FaultPlan.Apply(rule, await inner.ReadAsync(read, ct).ConfigureAwait(false), plan.ErrorFor(rule));
         }
     }
 
@@ -55,7 +55,7 @@ public sealed class FaultingSources(FaultPlan plan)
             if (plan.For(RecordedCall.PackagesKind, RecordingReplay.PackagesKey) is not { } rule)
                 return await inner.ReadPackagesAsync(ct).ConfigureAwait(false);
             await FaultPlan.WaitAsync(rule, ct).ConfigureAwait(false);
-            return FaultPlan.Apply(rule, await inner.ReadPackagesAsync(ct).ConfigureAwait(false));
+            return FaultPlan.Apply(rule, await inner.ReadPackagesAsync(ct).ConfigureAwait(false), plan.ErrorFor(rule));
         }
     }
 
@@ -67,7 +67,7 @@ public sealed class FaultingSources(FaultPlan plan)
                 return await inner.ReadAsync(ct).ConfigureAwait(false);
             await FaultPlan.WaitAsync(rule, ct).ConfigureAwait(false);
             var answer = await inner.ReadAsync(ct).ConfigureAwait(false);
-            if (Faults.ErrorText(rule) is { } error) return Security.AntivirusInventoryResult.Unavailable(error);
+            if (plan.ErrorFor(rule) is { } error) return Security.AntivirusInventoryResult.Unavailable(error);
             return rule.Fault == Faults.Empty ? answer with { Products = [] } : answer;
         }
     }
@@ -80,7 +80,7 @@ public sealed class FaultingSources(FaultPlan plan)
                 return await inner.ReadAsync(ct).ConfigureAwait(false);
             await FaultPlan.WaitAsync(rule, ct).ConfigureAwait(false);
             var answer = await inner.ReadAsync(ct).ConfigureAwait(false);
-            if (Faults.ErrorText(rule) is { } error) return Core.Audio.AudioState.Unavailable(error);
+            if (plan.ErrorFor(rule) is { } error) return Core.Audio.AudioState.Unavailable(error);
             return rule.Fault switch
             {
                 Faults.Empty => answer with { Endpoints = [], Sessions = [] },

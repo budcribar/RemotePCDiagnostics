@@ -15,6 +15,8 @@
     <Compile Include="..\..\src\RemotePCDiagnostics.Host\WasapiAudioStateSource.cs" Link="WasapiAudioStateSource.cs" />
     <Compile Include="..\..\src\RemotePCDiagnostics.Host\WasapiAudioEndpointControl.cs" Link="WasapiAudioEndpointControl.cs" />
     <PackageReference Include="NAudio.Wasapi" Version="3.3.0" />
+    <!-- Security Center's antivirus list for Security essentials, shared with the app. -->
+    <Compile Include="..\..\src\RemotePCDiagnostics.Host\WindowsAntivirusProductSource.cs" Link="WindowsAntivirusProductSource.cs" />
     <Using Include="Microsoft.Extensions.Logging.ILogger" Alias="ILogger" />
     <Using Include="RemotePCDiagnostics.Logging" />
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Legacy\RemotePCDiagnostics.Legacy.csproj" />

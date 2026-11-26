@@ -42,7 +42,7 @@ public static class Faults
 {
     // A failed answer.
     public const string Error = "error", AccessDenied = "access-denied", MissingClass = "missing-class", MissingNamespace = "missing-namespace",
-        ProviderFailure = "provider-failure", Quota = "quota";
+        InvalidQuery = "invalid-query", ProviderFailure = "provider-failure", Quota = "quota";
     // An answer that isn't what was expected.
     public const string Empty = "empty", Garbage = "garbage", CutOff = "cut-off", ExitCode = "exit-code", Value = "value";
     // Timing: answers late, never answers until cancelled, or fails after a wait as WMI does when it times out.
@@ -51,20 +51,23 @@ public static class Faults
     public const string Disconnected = "disconnected", DropAfter = "drop-after";
 
     /// <summary>Every whole-answer fault, for the fault matrix.</summary>
-    public static readonly IReadOnlyList<string> WholeAnswer = [AccessDenied, MissingClass, MissingNamespace, ProviderFailure, Timeout, Empty, Garbage, CutOff];
+    public static readonly IReadOnlyList<string> WholeAnswer = [AccessDenied, MissingClass, MissingNamespace, InvalidQuery, ProviderFailure, Timeout, Empty, Garbage, CutOff];
 
     public const string GarbageText = "@@ garbage ##";
     public const string TimedOutText = "The query timed out after 30s.";
 
-    /// <summary>The error text for a failed-answer fault, as <see cref="SystemWmiSource"/> words a real ManagementException; null for other faults.</summary>
-    public static string? ErrorText(FaultRule rule) => rule.Fault switch
+    /// <summary>The error text for a failed-answer fault, as <see cref="SystemWmiSource"/> words a real ManagementException; null for other
+    /// faults. <paramref name="recorded"/>: the errors the recorded PC really gave (<see cref="ErrorProbes"/>), used first.</summary>
+    public static string? ErrorText(FaultRule rule, IReadOnlyDictionary<string, string>? recorded = null) => rule.Fault switch
     {
-        Error => rule.Message ?? "Failed: Generic failure",
-        AccessDenied => "AccessDenied: Access denied",
-        MissingClass => "InvalidClass: Invalid class",
-        MissingNamespace => "InvalidNamespace: Invalid namespace",
-        ProviderFailure => "ProviderLoadFailure: Provider load failure",
-        Quota => "QuotaViolation: Quota violation",
+        _ when rule.Message is null && recorded is not null && recorded.TryGetValue(rule.Fault, out var real) => real,
+        Error => rule.Message ?? "Failed (0x80041001): Generic failure",
+        AccessDenied => "AccessDenied (0x80041003): Access denied",
+        MissingClass => "InvalidClass (0x80041010): Invalid class",
+        MissingNamespace => "InvalidNamespace (0x8004100E): Invalid namespace",
+        InvalidQuery => "InvalidQuery (0x80041017): Invalid query",
+        ProviderFailure => "ProviderLoadFailure (0x80041013): Provider load failure",
+        Quota => "QuotaViolation (0x8004106C): Quota violation",
         Timeout => TimedOutText,
         Disconnected or DropAfter => AgentWmiSource.NotConnected,
         _ => null,
@@ -91,6 +94,14 @@ public sealed class FaultPlan
     };
 
     public FaultPlan(IEnumerable<FaultRule>? rules = null) { if (rules is not null) Set(rules); }
+
+    /// <summary>The errors the replayed PC really gave (<see cref="ErrorProbes"/>), used instead of the standard wording when present.</summary>
+    public IReadOnlyDictionary<string, string> RecordedErrors { get; private set; } = new Dictionary<string, string>();
+
+    public void UseRecordedErrors(MachineRecording recording) => RecordedErrors = ErrorProbes.From(recording);
+
+    /// <summary>The error text this rule answers with (null: the rule doesn't fail the answer).</summary>
+    public string? ErrorFor(FaultRule rule) => Faults.ErrorText(rule, RecordedErrors);
 
     public IReadOnlyList<FaultRule> Rules { get { lock (_gate) return [.. _rules]; } }
     public IReadOnlyList<string> Hits { get { lock (_gate) return [.. _hits]; } }
@@ -164,9 +175,10 @@ public sealed class FaultPlan
     }
 
     /// <summary>A WMI-shaped answer (WMI, the registry, the package list) with the fault applied.</summary>
-    public static WmiQueryResult Apply(FaultRule rule, WmiQueryResult answer)
+    public static WmiQueryResult Apply(FaultRule rule, WmiQueryResult answer, string? error = null)
     {
-        if (Faults.ErrorText(rule) is { } error) return WmiQueryResult.Failed(answer.Namespace, answer.Query, error);
+        error ??= Faults.ErrorText(rule);
+        if (error is not null) return WmiQueryResult.Failed(answer.Namespace, answer.Query, error);
         var rows = answer.Rows;
         if (rows is null) return answer;
         return rule.Fault switch

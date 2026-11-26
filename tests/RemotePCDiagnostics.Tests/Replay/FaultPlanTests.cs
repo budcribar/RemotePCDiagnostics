@@ -28,8 +28,8 @@ public sealed class FaultPlanTests
     }
 
     [Theory]
-    [InlineData(Faults.MissingClass, "InvalidClass: Invalid class")]
-    [InlineData(Faults.AccessDenied, "AccessDenied: Access denied")]
+    [InlineData(Faults.MissingClass, "InvalidClass (0x80041010): Invalid class")]
+    [InlineData(Faults.AccessDenied, "AccessDenied (0x80041003): Access denied")]
     [InlineData(Faults.Disconnected, AgentWmiSource.NotConnected)]
     public async Task Error_faults_fail_with_Windows_wording(string fault, string error)
     {
@@ -91,6 +91,21 @@ public sealed class FaultPlanTests
         var row = (await new ReplayedPc(Sample, plan).Wmi.QueryAsync(ns, wql)).Rows![0];
         Assert.Equal(-1, row.Long(property));
         Assert.Equal(original.Values.Count, row.Values.Count);
+    }
+
+    [Fact]
+    public async Task Recorded_errors_replace_the_standard_wording()
+    {
+        FirstWmi(out var ns, out var wql);
+        var (fault, probeNs, probeQuery) = ErrorProbes.Wmi[0];
+        var probe = new RecordedCall { Kind = RecordedCall.WmiKind, Namespace = probeNs, Query = probeQuery, Error = "InvalidClass (0x80041010): Classe non valide" };
+        var rec = new MachineRecording { Schema = Sample.Schema, Machine = Sample.Machine, CapturedAt = Sample.CapturedAt, Calls = [.. Sample.Calls, probe] };
+        var plan = new FaultPlan([new FaultRule { Source = "wmi", Fault = fault }]);
+        var r = await new ReplayedPc(rec, plan).Wmi.QueryAsync(ns, wql);
+        Assert.Equal("InvalidClass (0x80041010): Classe non valide", r.Error);
+        // A fault the recording has no probe for keeps the standard wording.
+        plan.Set([new FaultRule { Source = "wmi", Fault = Faults.AccessDenied }]);
+        Assert.Equal("AccessDenied (0x80041003): Access denied", (await new ReplayedPc(rec, plan).Wmi.QueryAsync(ns, wql)).Error);
     }
 
     [Fact]

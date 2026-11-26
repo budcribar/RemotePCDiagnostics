@@ -17,6 +17,9 @@ It writes `<folder>/<product id>-<date>/` with:
 - `calls.json`: every answer the checks got, in order (WMI rows, registry values, osquery and command output).
 - `scrub-report.txt`: what was replaced before saving.
 
+Since v9 it also records Security Center's antivirus list and a few WMI reads meant to fail (`ErrorProbes`: a class, a namespace and a
+property that don't exist), so the fault-injection tests answer with the errors that PC's WMI really gives.
+
 The PC name, user names and serial numbers are replaced with placeholders (`<pc:…>`, `<user:…>`, `<serial:…>`) before the files are
 written, and so is the SMBIOS UUID. Even so, a recording lists the PC's hardware and software, so real recordings stay out of this public
 repo: they are kept in the private Admin repo under `test-data/rpcd-recordings`. Point `RPD_RECORDINGS_DIR` at that folder.
