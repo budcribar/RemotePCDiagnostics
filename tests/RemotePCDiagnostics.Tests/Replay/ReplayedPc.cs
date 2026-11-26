@@ -49,7 +49,8 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
     /// <summary>The Store edition without an Agent: the Get-PhysicalDisk PowerShell script, then osquery disk_info.</summary>
     public DriveHealthModule DriveHealthOld() => Drives(new PowerShellDriveSource(Commands, Osquery));
     private DriveHealthModule Drives(IDriveSource source) =>
-        new(source, clock: () => recording.CapturedAt, historyStore: new DriveHealthHistoryStore(), volumes: () => []);
+        // The clock stands still at the recording's time, so a 20 s reuse would share the first read forever: read afresh each time.
+        new(source, clock: () => recording.CapturedAt, historyStore: new DriveHealthHistoryStore(), volumes: () => [], reuseReadFor: TimeSpan.Zero);
 
     /// <summary>Hardware inventory on WMI (the Agent's).</summary>
     public OsqueryModule Inventory() => new(new WmiHardwareInventorySource(Wmi));
@@ -57,6 +58,11 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
     public OsqueryModule InventoryOld() => new(new OsqueryHardwareInventorySource(Osquery));
 
     public ServicesModule Services() => new(new WmiServiceSource(Wmi));
+
+    /// <summary>Sound: Core Audio from the recording (recorder v9 on), services, drivers, WMI and the registry as the module host gives them.</summary>
+    public Modules.Sound.SoundModule Sound() =>
+        new(Audio, new WmiServiceSource(Wmi), new WmiDeviceDriverSource(Wmi), Wmi, Registry, pendingRecheck: TimeSpan.Zero);
+    public bool HasAudio => Has(c => c.Kind == RecordedCall.AudioKind);
     public ServicesModule ServicesOld() => new(new OsqueryServiceSource(Osquery));
 
     /// <summary>Device Manager and drivers on WMI. Pending driver updates aren't recorded, so they aren't asked.</summary>

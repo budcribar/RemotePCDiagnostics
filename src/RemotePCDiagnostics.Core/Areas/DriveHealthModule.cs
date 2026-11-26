@@ -81,7 +81,7 @@ public sealed record DriveHealth(
 /// </summary>
 public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retrims = null, Func<DateTimeOffset>? clock = null,
     IDriveHealthHistoryStore? historyStore = null, Func<IReadOnlyList<DriveCapacityInfo>>? volumes = null, ILogger? log = null,
-    DataSources.IRegistrySource? registry = null)
+    DataSources.IRegistrySource? registry = null, TimeSpan? reuseReadFor = null)
     : AreaModuleBase(log), IPerDeviceModule, IInstanceSummary, IHasAreaPanels
 {
     private readonly IDriveHealthHistoryStore _history = historyStore ?? new DriveHealthHistoryStore(DriveHealthHistoryStore.DefaultPath(), log);
@@ -138,7 +138,10 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
     private SharedRead? _sharedRead;
     private volatile DriveRead? _latest;
 
-    /// <summary>Reads every drive once; a read finished (or started) in the last <see cref="ReuseReadFor"/> is shared.</summary>
+    /// <summary>
+    /// Reads every drive once; a read finished (or started) in the last <see cref="ReuseReadFor"/> (or <c>reuseReadFor</c>: zero in the
+    /// replay tests, whose clock stands still at the recording's time) is shared.
+    /// </summary>
     private async Task<DriveRead> ReadDrivesCachedAsync(IProgress<string>? progress, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -146,7 +149,7 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
         lock (_readGate)
         {
             var now = Now();
-            if (_sharedRead is { Task: { IsFaulted: false, IsCanceled: false } } existing && now - existing.StartedAt < ReuseReadFor)
+            if (_sharedRead is { Task: { IsFaulted: false, IsCanceled: false } } existing && now - existing.StartedAt < (reuseReadFor ?? ReuseReadFor))
                 shared = existing;
             else
                 shared = _sharedRead = new SharedRead(now, token => ReadDrivesAsync(progress, token));

@@ -291,7 +291,9 @@ public class SoundTests
         Assert.Equal(AreaLevel.Error, Card(r, "audio-output").Level);
         Assert.Equal(AreaLevel.Error, Card(r, "audio-input").Level);
         Assert.Equal(AreaLevel.Ok, Card(r, "audio-services").Level);
-        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+        // Not "No sound problems found": the speakers and microphones were never read (the fault-injection UI run found this).
+        Assert.Equal(DiagnosticStatus.Warning, r.Status);
+        Assert.Equal("Speakers & headphones and Microphones couldn't be read", r.Summary);
 
         var none = SoundModule.Build(AudioState.Unavailable("COM failed"), Facts() with { Services = null });
         Assert.Equal(DiagnosticStatus.Error, none.Status);

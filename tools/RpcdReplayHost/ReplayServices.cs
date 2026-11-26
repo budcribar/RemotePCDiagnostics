@@ -30,7 +30,10 @@ internal static class ReplayServices
     }
 
     /// <summary>The checks the recordings hold answers for, as the Setup edition (WMI through the Agent) or the Store edition without one runs them.</summary>
-    private static IDiagnosticModule[] Checks(ReplayedPc pc, bool store) => store
+    private static IDiagnosticModule[] Checks(ReplayedPc pc, bool store) =>
+        pc.HasAudio ? [.. Edition(pc, store), pc.Sound()] : Edition(pc, store);
+
+    private static IDiagnosticModule[] Edition(ReplayedPc pc, bool store) => store
         ?
         [
             pc.InventoryOld(), pc.BatteryPowerOld(), pc.DriveHealthOld(), pc.ServicesOld(), pc.DeviceDriversOld(), pc.ProgramsOld(),
