@@ -84,6 +84,15 @@ public static class AgentDotNetSdkInstaller
         return null;
     }
 
+    /// <summary>
+    /// Verifies that an extracted <c>sdk\&lt;version&gt;</c> directory contains both the SDK host
+    /// (<c>dotnet.dll</c>) and <c>Microsoft.NET.Sdk</c> so half-extracted folders are never treated as installed.
+    /// </summary>
+    public static bool IsCompleteSdkInstall(string? sdkVersionDir) =>
+        !string.IsNullOrWhiteSpace(sdkVersionDir)
+        && File.Exists(Path.Combine(sdkVersionDir, "dotnet.dll"))
+        && File.Exists(Path.Combine(sdkVersionDir, "Sdks", "Microsoft.NET.Sdk", "Sdk", "Sdk.props"));
+
     public static async Task<ProcessResult> InstallAsync(int majorVersion, CancellationToken ct)
     {
         if (!OperatingSystem.IsWindows())
@@ -110,7 +119,7 @@ public static class AgentDotNetSdkInstaller
 
         var installRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
         var sdkTargetDir = Path.Combine(installRoot, "sdk", asset.SdkVersion);
-        if (Directory.Exists(sdkTargetDir))
+        if (IsCompleteSdkInstall(sdkTargetDir))
             return WindowsAgentNativeOps.Ok(new { SdkVersion = asset.SdkVersion, InstallDir = installRoot, AlreadyInstalled = true });
 
         var tempZip = Path.Combine(Path.GetTempPath(), $"rpcd-dotnet-sdk-{asset.SdkVersion}-{Guid.NewGuid():N}.zip");
@@ -135,7 +144,7 @@ public static class AgentDotNetSdkInstaller
                 return WindowsAgentNativeOps.Failed($"Downloaded .NET {asset.SdkVersion} SDK archive failed SHA-512 verification.");
 
             Directory.CreateDirectory(installRoot);
-            ExtractSideBySide(tempZip, installRoot);
+            ExtractSideBySide(tempZip, installRoot, asset.SdkVersion);
             return WindowsAgentNativeOps.Ok(new { SdkVersion = asset.SdkVersion, InstallDir = installRoot, AlreadyInstalled = false });
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -150,38 +159,89 @@ public static class AgentDotNetSdkInstaller
     }
 
     /// <summary>
-    /// Extracts a .NET SDK zip side-by-side into <paramref name="installRoot"/>. Existing versioned SDK/runtime folders
-    /// are preserved; top-level host files are skipped if locked by a running dotnet process.
+    /// Extracts a .NET SDK zip side-by-side into <paramref name="installRoot"/>.
+    /// <list type="bullet">
+    /// <item>The <c>sdk/&lt;sdkVersion&gt;/</c> tree is extracted to a sibling staging directory, verified for
+    /// <c>Microsoft.NET.Sdk</c>, and atomically moved into place so a failed extract can never leave a broken SDK.</item>
+    /// <item>Existing files outside <c>sdk/&lt;sdkVersion&gt;/</c> (such as <c>dotnet.exe</c>, <c>host/fxr/*</c>,
+    /// <c>shared/*</c>, and <c>packs/*</c>) are skipped if locked by a running .NET process (including the Agent itself).</item>
+    /// </list>
     /// </summary>
-    private static void ExtractSideBySide(string zipPath, string installRoot)
+    internal static void ExtractSideBySide(string zipPath, string installRoot, string sdkVersion)
     {
         var fullRoot = Path.GetFullPath(installRoot);
         if (!fullRoot.EndsWith(Path.DirectorySeparatorChar))
             fullRoot += Path.DirectorySeparatorChar;
 
-        using var archive = ZipFile.OpenRead(zipPath);
-        foreach (var entry in archive.Entries)
+        var sdkRoot = Path.Combine(fullRoot, "sdk");
+        Directory.CreateDirectory(sdkRoot);
+        var sdkTargetDir = Path.Combine(sdkRoot, sdkVersion);
+        var stagingSdkDir = Path.Combine(sdkRoot, $".rpcd-staging-{sdkVersion}-{Guid.NewGuid():N}");
+        var fullStagingRoot = Path.GetFullPath(stagingSdkDir);
+        if (!fullStagingRoot.EndsWith(Path.DirectorySeparatorChar))
+            fullStagingRoot += Path.DirectorySeparatorChar;
+
+        var sdkPrefix = $"sdk/{sdkVersion}/";
+
+        try
         {
-            if (string.IsNullOrEmpty(entry.Name))
-                continue;
+            using var archive = ZipFile.OpenRead(zipPath);
+            foreach (var entry in archive.Entries)
+            {
+                if (string.IsNullOrEmpty(entry.Name))
+                    continue;
 
-            var destPath = Path.GetFullPath(Path.Combine(fullRoot, entry.FullName));
-            if (!destPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("Archive entry escapes install root.");
+                var normalized = entry.FullName.Replace('\\', '/').TrimStart('/');
+                if (normalized.StartsWith(sdkPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    var relPath = normalized[sdkPrefix.Length..];
+                    var stagedPath = Path.GetFullPath(Path.Combine(fullStagingRoot, relPath));
+                    if (!stagedPath.StartsWith(fullStagingRoot, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("Archive entry escapes SDK staging root.");
 
-            var dir = Path.GetDirectoryName(destPath);
-            if (!string.IsNullOrEmpty(dir))
-                Directory.CreateDirectory(dir);
+                    var stagedDir = Path.GetDirectoryName(stagedPath);
+                    if (!string.IsNullOrEmpty(stagedDir))
+                        Directory.CreateDirectory(stagedDir);
 
-            var isTopLevelHost = !entry.FullName.Contains('/') && !entry.FullName.Contains('\\');
+                    entry.ExtractToFile(stagedPath, overwrite: true);
+                    continue;
+                }
+
+                var destPath = Path.GetFullPath(Path.Combine(fullRoot, normalized));
+                if (!destPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Archive entry escapes install root.");
+
+                var dir = Path.GetDirectoryName(destPath);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+
+                try
+                {
+                    entry.ExtractToFile(destPath, overwrite: true);
+                }
+                catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && File.Exists(destPath))
+                {
+                    // Existing host/fxr, shared runtime, packs, or root dotnet.exe may be locked by a running .NET
+                    // process (including the Agent or Desktop app); those versioned files are already in place.
+                }
+            }
+
+            if (!IsCompleteSdkInstall(stagingSdkDir))
+                throw new InvalidOperationException($"Extracted .NET {sdkVersion} SDK archive is missing Microsoft.NET.Sdk.");
+
+            if (Directory.Exists(sdkTargetDir))
+                Directory.Delete(sdkTargetDir, recursive: true);
+
+            Directory.Move(stagingSdkDir, sdkTargetDir);
+        }
+        finally
+        {
             try
             {
-                entry.ExtractToFile(destPath, overwrite: true);
+                if (Directory.Exists(stagingSdkDir))
+                    Directory.Delete(stagingSdkDir, recursive: true);
             }
-            catch (IOException) when (isTopLevelHost && File.Exists(destPath))
-            {
-                // dotnet.exe or LICENSE at root may be in use; existing host already discovers the newly extracted sdk/<version> folder.
-            }
+            catch { }
         }
     }
 }

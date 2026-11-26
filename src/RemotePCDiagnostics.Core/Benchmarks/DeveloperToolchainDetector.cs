@@ -67,7 +67,9 @@ public sealed class DeveloperToolchainDetector(
         try
         {
             var r = await _launcher.RunAsync(exe, ["--list-sdks"], ProbeTimeout, ct).ConfigureAwait(false);
-            return r.ExitCode == 0 ? ParseInstalledDotNetSdkMajors(r.StdOut) : [];
+            return r.ExitCode == 0
+                ? ParseInstalledDotNetSdkMajors(r.StdOut, Session.AgentDotNetSdkInstaller.IsCompleteSdkInstall)
+                : [];
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -75,7 +77,9 @@ public sealed class DeveloperToolchainDetector(
         }
     }
 
-    public static IReadOnlyList<int> ParseInstalledDotNetSdkMajors(string? listSdksOutput)
+    public static IReadOnlyList<int> ParseInstalledDotNetSdkMajors(
+        string? listSdksOutput,
+        Func<string, bool>? isCompleteSdkDir = null)
     {
         if (string.IsNullOrWhiteSpace(listSdksOutput)) return [];
         var majors = new SortedSet<int>();
@@ -84,8 +88,22 @@ public sealed class DeveloperToolchainDetector(
             var trimmed = line.Trim();
             var space = trimmed.IndexOf(' ');
             var ver = space > 0 ? trimmed[..space] : trimmed;
-            if (DeveloperScoring.ParseMajorVersion(ver) is > 0 and var m)
-                majors.Add(m);
+            if (DeveloperScoring.ParseMajorVersion(ver) is not (> 0 and var m))
+                continue;
+
+            if (isCompleteSdkDir is not null)
+            {
+                var open = trimmed.IndexOf('[');
+                var close = trimmed.LastIndexOf(']');
+                if (open >= 0 && close > open + 1)
+                {
+                    var baseDir = trimmed[(open + 1)..close].Trim();
+                    if (Directory.Exists(baseDir) && !isCompleteSdkDir(Path.Combine(baseDir, ver)))
+                        continue;
+                }
+            }
+
+            majors.Add(m);
         }
         return majors.ToList();
     }
