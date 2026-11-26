@@ -382,16 +382,61 @@ public sealed class DiagnosticsService
     /// <summary>Runs <paramref name="modules"/> together in dependency order; results come back in the order given.</summary>
     private Task<DiagnosticResult[]> RunSetAsync(IReadOnlyList<IDiagnosticModule> modules, CancellationToken ct)
     {
-        var byId = modules.GroupBy(m => m.Id).ToDictionary(g => g.Key, g => g.First());
-        var tasks = new Dictionary<Guid, Task<DiagnosticResult>>();
-        foreach (var d in ModuleOrdering.Sort(byId.Values.Select(DescriptorOf)))
-            tasks[d.Id] = RunGatedAsync(byId[d.Id], d, tasks, ct);
+        var tasks = StartSet(modules, null, ct);
         return Task.WhenAll(modules.Select(m => tasks[m.Id]));
     }
 
-    private Task<DiagnosticResult> RunGatedAsync(IDiagnosticModule module, ModuleDescriptor d, IReadOnlyDictionary<Guid, Task<DiagnosticResult>> started, CancellationToken ct)
+    /// <summary>
+    /// Starts the given modules the way <see cref="RunAllAsync"/> does (DependsOn and RunAfter are waited for, a failed dependency gates
+    /// the module), but with at most <paramref name="maxConcurrency"/> running at once, so Run all doesn't load an older PC with every
+    /// scan together. <paramref name="started"/> is told when a module takes a slot (a gated module never does), and
+    /// <paramref name="progressFor"/> gives each module its progress. Returns one task per module, by name; a module still waiting for
+    /// a slot when <paramref name="ct"/> is cancelled ends cancelled without running.
+    /// </summary>
+    public IReadOnlyDictionary<string, Task<DiagnosticResult>> StartChecks(IReadOnlyList<IDiagnosticModule> modules, int maxConcurrency,
+        Action<IDiagnosticModule>? started = null, Func<IDiagnosticModule, IProgress<string>?>? progressFor = null, CancellationToken ct = default)
     {
-        if (d.DependsOn.Count == 0 && !d.RunAfter.Any(started.ContainsKey)) return RunAsync(module, null, ct, gateInstances: true);
+        var limit = Math.Max(1, maxConcurrency);
+        var slots = new SetSlots(new SemaphoreSlim(limit, limit), started, progressFor);
+        var tasks = StartSet(modules, slots, ct);
+        _ = Task.WhenAll(tasks.Values).ContinueWith(_ => slots.Gate.Dispose(), CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+        return modules.GroupBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => tasks[g.First().Id], StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed record SetSlots(SemaphoreSlim Gate, Action<IDiagnosticModule>? Started, Func<IDiagnosticModule, IProgress<string>?>? ProgressFor);
+
+    private Dictionary<Guid, Task<DiagnosticResult>> StartSet(IReadOnlyList<IDiagnosticModule> modules, SetSlots? slots, CancellationToken ct)
+    {
+        var byId = modules.GroupBy(m => m.Id).ToDictionary(g => g.Key, g => g.First());
+        var tasks = new Dictionary<Guid, Task<DiagnosticResult>>();
+        foreach (var d in ModuleOrdering.Sort(byId.Values.Select(DescriptorOf)))
+            tasks[d.Id] = RunGatedAsync(byId[d.Id], d, tasks, slots, ct);
+        return tasks;
+    }
+
+    /// <summary>Runs the module, first taking a slot when the set limits how many run at once.</summary>
+    private Task<DiagnosticResult> RunInSlotAsync(IDiagnosticModule module, SetSlots? slots, CancellationToken ct)
+    {
+        if (slots is null) return RunAsync(module, null, ct, gateInstances: true);
+        return InSlotAsync();
+
+        async Task<DiagnosticResult> InSlotAsync()
+        {
+            await slots.Gate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                ct.ThrowIfCancellationRequested(); // a slot freed by Stop can still go to a waiter: it must not start
+                slots.Started?.Invoke(module);
+                return await RunAsync(module, slots.ProgressFor?.Invoke(module), ct, gateInstances: true).ConfigureAwait(false);
+            }
+            finally { slots.Gate.Release(); }
+        }
+    }
+
+    private Task<DiagnosticResult> RunGatedAsync(IDiagnosticModule module, ModuleDescriptor d, IReadOnlyDictionary<Guid, Task<DiagnosticResult>> started, SetSlots? slots, CancellationToken ct)
+    {
+        if (d.DependsOn.Count == 0 && !d.RunAfter.Any(started.ContainsKey)) return RunInSlotAsync(module, slots, ct);
         // Taken now: every module this one waits for was started before it (topological order).
         var waitFor = d.DependsOn.Concat(d.RunAfter).Distinct().Where(started.ContainsKey).ToDictionary(id => id, id => started[id]);
         return WaitThenRunAsync();
@@ -419,7 +464,7 @@ public sealed class DiagnosticsService
                 try { Log.Info($"{module.Name}: {r.Message}"); } catch { }
                 return r;
             }
-            return await RunAsync(module, null, ct, gateInstances: true).ConfigureAwait(false);
+            return await RunInSlotAsync(module, slots, ct).ConfigureAwait(false);
         }
     }
 

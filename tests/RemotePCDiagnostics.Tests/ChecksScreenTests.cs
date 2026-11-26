@@ -341,17 +341,17 @@ public class ChecksScreenTests
 
         Assert.Equal(CheckGroup.Checks, s.RunningGroup);
         Assert.Equal(2, s.TotalChecksCount);
-        Assert.Equal(0, s.CompletedChecksCount);
         var live = s.LiveCheckItems(store);
         Assert.Equal(2, live.Count);
         Assert.Equal(DiagnosticStatus.Running, live[0].Status);
         Assert.Equal("Step one", live[0].Message);
         Assert.Equal(1, live[0].Step);
         Assert.Equal(2, live[0].Total);
-        Assert.Equal(DiagnosticStatus.NotRun, live[1].Status);
-        Assert.True(s.CheckProgressFraction > 0 && s.CheckProgressFraction < 0.5);
         Assert.True(s.IsRunAll);
-        Assert.Equal(["B"], s.RemainingSteps());
+        // B runs beside A (checks run up to MaxConcurrentChecks at once), so it finishes while A is still going.
+        await WaitUntilAsync(() => s.CheckItems.Any(c => c.Id == "B" && c.Status == DiagnosticStatus.Warning));
+        Assert.True(s.CheckProgressFraction > 0.5 && s.CheckProgressFraction < 1);
+        Assert.Empty(s.RemainingSteps());
         Assert.Contains(svc.RunningModules, run => run.ModuleName == "A" && run.RunId is not null);
 
         release.SetResult();
@@ -364,6 +364,101 @@ public class ChecksScreenTests
         Assert.False(s.IsRunAll);
         Assert.Empty(s.RemainingSteps());
         Assert.Empty(svc.RunningModules);
+    }
+
+    [Fact]
+    public async Task RunAllChecks_RunsAtMostMaxConcurrentChecksAtOnce()
+    {
+        var store = new ResultStore();
+        var release = new TaskCompletionSource();
+        var running = 0;
+        var peak = 0;
+        var names = Enumerable.Range(1, ChecksScreenState.MaxConcurrentChecks + 2).Select(i => $"C{i}").ToArray();
+        var svc = new DiagnosticsService(store, [.. names.Select(n => (IDiagnosticModule)new FakeModule(n, async ct =>
+        {
+            var now = Interlocked.Increment(ref running);
+            int seen;
+            while ((seen = Volatile.Read(ref peak)) < now && Interlocked.CompareExchange(ref peak, now, seen) != seen) { }
+            try { await release.Task.WaitAsync(ct); return FakeModule.Ok(n); }
+            finally { Interlocked.Decrement(ref running); }
+        }))]);
+        var s = new ChecksScreenState(svc, store);
+
+        var run = s.RunAllChecksAsync();
+        await WaitUntilAsync(() => Volatile.Read(ref running) == ChecksScreenState.MaxConcurrentChecks);
+        await Task.Delay(50);
+        Assert.Equal(ChecksScreenState.MaxConcurrentChecks, Volatile.Read(ref running));
+        Assert.Equal(2, s.CheckItems.Count(c => c.Id.StartsWith('C') && c.Status == DiagnosticStatus.NotRun));
+        Assert.Equal(ChecksScreenState.MaxConcurrentChecks, s.Progress?.Index);
+        Assert.Equal(names.Length, s.Progress?.Total);
+        Assert.Equal(ChecksScreenState.MaxConcurrentChecks, s.Progress!.Current.Split(", ").Length);
+
+        release.SetResult();
+        await run;
+
+        Assert.Equal(ChecksScreenState.MaxConcurrentChecks, peak);
+        Assert.All(names, n => Assert.Equal(DiagnosticStatus.Ok, store.Get(n).Status));
+        Assert.Null(s.RunningGroup);
+    }
+
+    [Fact]
+    public async Task RunAllChecks_RunsHardwareInventoryFirst_ThenTheRestTogether()
+    {
+        var store = new ResultStore();
+        var inventoryRelease = new TaskCompletionSource();
+        var inventoryStarted = new TaskCompletionSource();
+        var othersStarted = 0;
+        var othersRelease = new TaskCompletionSource();
+        var svc = new DiagnosticsService(store, [
+            new FakeModule("A", async ct => { Interlocked.Increment(ref othersStarted); await othersRelease.Task.WaitAsync(ct); return FakeModule.Ok("A"); }),
+            new FakeModule("B", async ct => { Interlocked.Increment(ref othersStarted); await othersRelease.Task.WaitAsync(ct); return FakeModule.Ok("B"); }),
+            new FakeModule(ModuleSlugs.Osquery, async ct => { inventoryStarted.TrySetResult(); await inventoryRelease.Task.WaitAsync(ct); return FakeModule.Ok(ModuleSlugs.Osquery); })]);
+        var s = new ChecksScreenState(svc, store);
+
+        var run = s.RunAllChecksAsync();
+        await inventoryStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(50);
+        Assert.Equal(0, Volatile.Read(ref othersStarted));
+        Assert.Equal(1, s.Progress?.Index);
+
+        inventoryRelease.SetResult();
+        await WaitUntilAsync(() => Volatile.Read(ref othersStarted) == 2);
+        othersRelease.SetResult();
+        await run;
+
+        Assert.Equal(DiagnosticStatus.Ok, store.Get(ModuleSlugs.Osquery).Status);
+        Assert.Equal(DiagnosticStatus.Ok, store.Get("A").Status);
+        Assert.Equal(DiagnosticStatus.Ok, store.Get("B").Status);
+    }
+
+    [Fact]
+    public async Task RunAllChecks_Stop_LeavesQueuedChecksUnstarted()
+    {
+        var store = new ResultStore();
+        var startedNames = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var names = Enumerable.Range(1, ChecksScreenState.MaxConcurrentChecks + 2).Select(i => $"C{i}").ToArray();
+        var svc = new DiagnosticsService(store, [.. names.Select(n => (IDiagnosticModule)new FakeModule(n, async ct =>
+        {
+            startedNames.Add(n);
+            await Task.Delay(Timeout.Infinite, ct);
+            return FakeModule.Ok(n);
+        }))]);
+        var s = new ChecksScreenState(svc, store);
+
+        var run = s.RunAllChecksAsync();
+        await WaitUntilAsync(() => startedNames.Count == ChecksScreenState.MaxConcurrentChecks);
+        s.Stop();
+        await run;
+
+        Assert.Equal(ChecksScreenState.MaxConcurrentChecks, startedNames.Count);
+        Assert.Null(s.RunningGroup);
+        Assert.Null(s.LastRunNote);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        for (var i = 0; i < 500 && !condition(); i++) await Task.Delay(10);
+        Assert.True(condition());
     }
 
     [Fact]
