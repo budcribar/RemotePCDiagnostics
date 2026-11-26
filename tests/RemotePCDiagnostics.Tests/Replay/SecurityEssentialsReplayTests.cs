@@ -40,9 +40,24 @@ public sealed class SecurityEssentialsReplayTests
         var oldPc = new ReplayedPc(rec);
         var old = (AreaReport)(await oldPc.SecurityEssentialsOld().RefreshAsync(null, ct)).Payload!;
         Assert.Empty(oldPc.Replay.Misses);
-        var diffs = ReportDiff.Between(old, now);
+        var diffs = ReportDiff.Between(old, now).Where(d => !WmiOnlyGain(d)).ToList();
         Assert.True(diffs.Count == 0, $"{diffs.Count} differences:\n" + string.Join("\n", diffs));
     }
+
+    /// <summary>
+    /// What only the WMI path reads, on purpose: the 2023 Secure Boot certificate servicing keys, and the antivirus name from Security
+    /// Center ("Microsoft Defender Antivirus") where the PowerShell path names Defender from Get-MpComputerStatus ("Windows Defender").
+    /// The PowerShell path also lists every SecurityCenter2 registration, so a leftover one (McAfee on the Lenovo, "State unknown") that
+    /// Security Center itself no longer lists shows there only.
+    /// </summary>
+    private static bool WmiOnlyGain(string diff) =>
+        (diff.StartsWith("card secureboot row only new: ", StringComparison.Ordinal)
+            && (diff.Contains("2023 Secure Boot certs", StringComparison.Ordinal) || diff.Contains("2023 cert servicing error", StringComparison.Ordinal)
+                || diff.Contains("Pending Secure Boot updates", StringComparison.Ordinal)))
+        || diff == "card antivirus row only old: Neutral: Antivirus | Windows Defender"
+        || diff == "card antivirus row only new: Neutral: Antivirus | Microsoft Defender Antivirus"
+        || diff == "card antivirus row only old: Neutral: Antivirus | Windows Defender, McAfee"
+        || diff == "card antivirus row only old: Neutral: Product · McAfee | State unknown";
 
     [Theory]
     [MemberData(nameof(Recordings))]
