@@ -896,8 +896,8 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
 
         // %LOCALAPPDATA%\Temp (>24h): measured only; RemediationKind.CleanTempFiles deletes it.
         progress.ReportStep(total, total, "Measuring temporary files (%TEMP%)…");
-        var temp = Path.GetTempPath();
-        if (Directory.Exists(temp))
+        var temp = string.IsNullOrWhiteSpace(roots.LocalAppData) ? null : Path.Combine(roots.LocalAppData, "Temp");
+        if (!string.IsNullOrEmpty(temp) && Directory.Exists(temp))
         {
             var tempBytes = StorageCleanupEngine.Measure(StorageTarget.Contents(temp, DateTime.UtcNow.AddHours(-24)), ct).Bytes;
             if (tempBytes > 10L << 20)
@@ -937,7 +937,7 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
                 ? new(true, $"Closed {MemoryText.FriendlyAppName(processName)}.")
                 : new(false, $"{MemoryText.FriendlyAppName(processName)} didn't close (it may be asking to save). Check its window, or use Force close.");
         }
-        finally { Dispose(procs); }
+        finally { DisposeProcesses(procs); }
     }
 
     public async Task<ActionOutcome> ForceCloseAppAsync(string processName, CancellationToken ct)
@@ -948,12 +948,12 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
             foreach (var p in procs) { try { p.Kill(entireProcessTree: true); } catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { Log($"Kill {processName}/{p.Id}: {ex.Message}"); } }
             await Task.Delay(500, ct).ConfigureAwait(false);
         }
-        finally { Dispose(procs); }
-        var left = Process.GetProcessesByName(processName); var n = left.Length; Dispose(left);
+        finally { DisposeProcesses(procs); }
+        var left = Process.GetProcessesByName(processName); var n = left.Length; DisposeProcesses(left);
         return n == 0 ? new(true, $"Ended {MemoryText.FriendlyAppName(processName)}.") : new(false, $"Couldn't end every {MemoryText.FriendlyAppName(processName)} process.");
     }
 
-    private static void Dispose(Process[] ps) { foreach (var p in ps) p.Dispose(); }
+    private static void DisposeProcesses(Process[] ps) { foreach (var p in ps) p.Dispose(); }
 
     /// <summary>Each running Windows service's process ID, by service name. Empty when the service control manager can't be read.</summary>
     public static Dictionary<string, int> RunningServicePids()
@@ -1052,7 +1052,7 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
     {
         var procs = Process.GetProcesses();
         try { return procs.Select(p => { try { return p.ProcessName; } catch (InvalidOperationException) { return ""; } }).Where(n => n.Length > 0).ToList(); }
-        finally { Dispose(procs); }
+        finally { DisposeProcesses(procs); }
     }
 
     public async Task<ActionOutcome> RunCommandAsync(string fileName, IReadOnlyList<string> args, CancellationToken ct)
@@ -1127,7 +1127,7 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
     public bool IsBrowserRunning(BrowserKind kind)
     {
         var ps = Process.GetProcessesByName(BrowserPrefs.ProcessName(kind));
-        var any = ps.Length > 0; Dispose(ps); return any;
+        var any = ps.Length > 0; DisposeProcesses(ps); return any;
     }
 
     public async Task<ActionOutcome> EndBrowserBackgroundAsync(BrowserKind kind, CancellationToken ct)
@@ -1149,10 +1149,10 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
             while (DateTime.UtcNow < deadline && procs.Any(p => { try { return !p.HasExited; } catch { return false; } }))
                 await Task.Delay(200, ct).ConfigureAwait(false);
         }
-        finally { Dispose(all); }
+        finally { DisposeProcesses(all); }
         var left = Process.GetProcessesByName(BrowserPrefs.ProcessName(kind));
         var n = left.Count(p => { try { return p.SessionId == session; } catch { return false; } });
-        Dispose(left);
+        DisposeProcesses(left);
         Log($"End {kind} background processes: {n} left");
         return n == 0 ? new(true, $"Ended {name}'s background processes.") : new(false, $"Couldn't end every {name} background process.");
     }
@@ -1171,9 +1171,40 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
     public void OpenUri(string uri)
     {
         if (!MemoryCommandAllowlist.IsAllowedSettingsUri(uri)) throw new InvalidOperationException("Not allowed");
-        if (uri.StartsWith("chrome://", StringComparison.OrdinalIgnoreCase)) { Process.Start(new ProcessStartInfo("chrome.exe", uri) { UseShellExecute = true })?.Dispose(); return; }
-        if (uri.StartsWith("edge://", StringComparison.OrdinalIgnoreCase)) { Process.Start(new ProcessStartInfo("msedge.exe", uri) { UseShellExecute = true })?.Dispose(); return; }
+        if (uri.StartsWith("chrome://", StringComparison.OrdinalIgnoreCase))
+        {
+            if (ResolveBrowserExe("chrome.exe", @"Google\Chrome\Application\chrome.exe") is { } chrome)
+                Process.Start(new ProcessStartInfo(chrome, uri) { UseShellExecute = true })?.Dispose();
+            return;
+        }
+        if (uri.StartsWith("edge://", StringComparison.OrdinalIgnoreCase))
+        {
+            if (ResolveBrowserExe("msedge.exe", @"Microsoft\Edge\Application\msedge.exe") is { } edge)
+                Process.Start(new ProcessStartInfo(edge, uri) { UseShellExecute = true })?.Dispose();
+            return;
+        }
         Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true })?.Dispose();
+    }
+
+    private static string? ResolveBrowserExe(string appPathKey, string relativeSubPath)
+    {
+        foreach (var root in new[] { Registry.LocalMachine, Registry.CurrentUser })
+        {
+            using var k = root.OpenSubKey($@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{appPathKey}");
+            if (k?.GetValue(null) is string p && Path.IsPathRooted(p) && File.Exists(p)) return p;
+        }
+        foreach (var dir in new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        })
+        {
+            if (string.IsNullOrEmpty(dir)) continue;
+            var candidate = Path.Combine(dir, relativeSubPath);
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
     }
 
     private static string ServiceKey(string name) => @"SYSTEM\CurrentControlSet\Services\" + name;

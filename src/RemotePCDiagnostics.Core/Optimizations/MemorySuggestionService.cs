@@ -28,7 +28,7 @@ public static class MemoryFeedback
     /// so the generic deferred line from <see cref="Describe"/> would only repeat it.
     /// </summary>
     public static bool SaysWhen(string? message) =>
-        message is not null && System.Text.RegularExpressions.Regex.IsMatch(message, @"\btakes (full )?effect\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        message is not null && System.Text.RegularExpressions.Regex.IsMatch(message, @"\btakes (full )?effect\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2));
 
     /// <summary>Whether an action's effect should show right away (closing/stopping) or only later (settings).</summary>
     public static bool IsDeferred(MemoryActionType t) => t is MemoryActionType.DisableStartup or MemoryActionType.EnableBrowserMemorySaver

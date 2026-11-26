@@ -477,7 +477,7 @@ public sealed class WorkflowService(
         remediation.RepairProgress = new InlineProgress(p =>
         {
             Status = $"{title}: {p}";
-            var m = System.Text.RegularExpressions.Regex.Match(p, @"(\d{1,3}(?:\.\d+)?)\s*%");
+            var m = System.Text.RegularExpressions.Regex.Match(p, @"(\d{1,3}(?:\.\d+)?)\s*%", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(2));
             if (m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var pct))
                 RepairFraction = Math.Clamp(pct / 100.0, 0, 1);
             Raise();
@@ -556,10 +556,10 @@ public sealed class WorkflowService(
     {
         var wasRunning = State.IsRunning;
         var restartPending = State.Stage is WorkflowStage.RestartBefore or WorkflowStage.RestartAfter;
-        try { _cts?.Cancel(); } catch (ObjectDisposedException) { }
+        try { if (_cts is not null) await _cts.CancelAsync().ConfigureAwait(false); } catch (ObjectDisposedException) { }
         try { bench.Stop(); } catch { }
         // Let a running step finish recording what it did before the report is written.
-        if (_resuming is { } r) try { await r.Task.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false); } catch (TimeoutException) { Log("cancel: the running step didn't stop in time"); }
+        if (_resuming is { } r) try { await r.Task.WaitAsync(TimeSpan.FromSeconds(60), CancellationToken.None).ConfigureAwait(false); } catch (TimeoutException) { Log("cancel: the running step didn't stop in time"); }
         try { await sys.AbortRestartAsync(CancellationToken.None).ConfigureAwait(false); } catch (Exception ex) { LogWarn("abort restart: " + ex.Message); }
         await CleanupAsync(CancellationToken.None).ConfigureAwait(false);
         Save(s => s with { Stage = WorkflowStage.Cancelled, RestartAborted = s.RestartAborted || restartPending });

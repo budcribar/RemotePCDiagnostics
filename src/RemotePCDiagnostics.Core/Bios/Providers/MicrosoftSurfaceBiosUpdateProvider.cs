@@ -1909,9 +1909,6 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
             return false;
         }
 
-        if (resolved is null)
-            return false;
-
         return TryValidateVendorUrl(resolved.AbsoluteUri, AllowedHostSuffixes, out nextUri);
     }
 
@@ -2099,7 +2096,7 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
                 if (totalRead > maxBytes)
                     throw new InvalidDataException($"Microsoft Surface catalog response exceeded maximum allowed size ({maxBytes} bytes).");
 
-                ms.Write(buffer, 0, read);
+                await ms.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
             }
         }
         finally

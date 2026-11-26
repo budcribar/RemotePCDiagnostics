@@ -75,18 +75,20 @@ public static class WindowsRepair
         && (path.EndsWith(".wim", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".esd", StringComparison.OrdinalIgnoreCase))
         && (path.Length > 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] == '\\' || path.StartsWith(@"\\", StringComparison.Ordinal));
 
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
+
     /// <summary>"Current Edition : Professional" from <c>DISM /Online /Get-CurrentEdition</c>; null when absent.</summary>
     public static string? ParseCurrentEdition(string? output) =>
-        Regex.Match(output ?? "", @"(?im)^\s*Current Edition\s*:\s*(\S+)") is { Success: true } m ? m.Groups[1].Value : null;
+        Regex.Match(output ?? "", @"(?im)^\s*Current Edition\s*:\s*(\S+)", RegexOptions.None, RegexTimeout) is { Success: true } m ? m.Groups[1].Value : null;
 
     /// <summary>The index numbers <c>DISM /Get-WimInfo /WimFile:…</c> lists.</summary>
     public static IReadOnlyList<int> ParseWimIndexes(string? output) =>
-        Regex.Matches(output ?? "", @"(?im)^\s*Index\s*:\s*(\d+)").Select(m => int.Parse(m.Groups[1].Value)).Distinct().ToList();
+        Regex.Matches(output ?? "", @"(?im)^\s*Index\s*:\s*(\d+)", RegexOptions.None, RegexTimeout).Select(m => int.Parse(m.Groups[1].Value)).Distinct().ToList();
 
     /// <summary>One image's name, edition and version from <c>DISM /Get-WimInfo /WimFile:… /Index:n</c>; null when the edition is absent.</summary>
     public static WimImageInfo? ParseWimImage(int index, string? output)
     {
-        string Field(string name) => Regex.Match(output ?? "", $@"(?im)^\s*{name}\s*:\s*(.+?)\s*$") is { Success: true } m ? m.Groups[1].Value : "";
+        string Field(string name) => Regex.Match(output ?? "", $@"(?im)^\s*{name}\s*:\s*(.+?)\s*$", RegexOptions.None, RegexTimeout) is { Success: true } m ? m.Groups[1].Value : "";
         var edition = Field("Edition");
         if (edition.Length == 0) return null;
         var version = Field("Version");
@@ -98,7 +100,7 @@ public static class WindowsRepair
     public static (DiagnosticStatus Status, string Summary, bool Reboot) ParseAnalyze(string output, int? exitCode)
     {
         var o = output ?? "";
-        string Field(string name) => Regex.Match(o, $@"(?im)^\s*{name}\s*:\s*(.+?)\s*$") is { Success: true } m ? m.Groups[1].Value : "";
+        string Field(string name) => Regex.Match(o, $@"(?im)^\s*{name}\s*:\s*(.+?)\s*$", RegexOptions.None, RegexTimeout) is { Success: true } m ? m.Groups[1].Value : "";
         var size = Field("Actual Size of Component Store");
         if (exitCode != 0 || size.Length == 0)
             return (DiagnosticStatus.Error, exitCode is null ? "DISM didn't finish (no exit code). " + ElevationService.AdminRepairHint
@@ -133,9 +135,9 @@ public static class WindowsRepair
     public static string CleanOutput(string? raw)
     {
         var s = (raw ?? "").Replace("\0", "").Replace("\r\n", "\n").Replace('\r', '\n');
-        s = Regex.Replace(s, @"(?m)^[ \t]*\[[= \t]*\d{1,3}(?:[.,]\d+)?%[= \t]*\][ \t]*$\n?", "");
-        s = Regex.Replace(s, @"(?m)^[^\n%]{0,60}\b\d{1,3}(?:[.,]\d+)?\s*%[^\n%]{0,30}$\n?", "");
-        s = Regex.Replace(s, @"\n{3,}", "\n\n");
+        s = Regex.Replace(s, @"(?m)^[ \t]*\[[= \t]*\d{1,3}(?:[.,]\d+)?%[= \t]*\][ \t]*$\n?", "", RegexOptions.None, RegexTimeout);
+        s = Regex.Replace(s, @"(?m)^[^\n%]{0,60}\b\d{1,3}(?:[.,]\d+)?\s*%[^\n%]{0,30}$\n?", "", RegexOptions.None, RegexTimeout);
+        s = Regex.Replace(s, @"\n{3,}", "\n\n", RegexOptions.None, RegexTimeout);
         return s.Trim();
     }
 
@@ -146,9 +148,9 @@ public static class WindowsRepair
     public static string? ExtractFailedPackage(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
-        var m = Regex.Match(text, @"(?im)(?:Failed to download payload for package|The repair content could not be found anywhere|Failed to finalize and optimize the package|Failed to restore package|Failed processing package)\s*:?\s*(?<pkg>[A-Za-z0-9_\.~-]+)");
+        var m = Regex.Match(text, @"(?im)(?:Failed to download payload for package|The repair content could not be found anywhere|Failed to finalize and optimize the package|Failed to restore package|Failed processing package)\s*:?\s*(?<pkg>[A-Za-z0-9_\.~-]+)", RegexOptions.None, RegexTimeout);
         if (m.Success) return m.Groups["pkg"].Value.Trim();
-        var fallback = Regex.Match(text, @"(?im)\b(?<pkg>(?:Package_for_|Microsoft-Windows-)[A-Za-z0-9_\.~-]+)");
+        var fallback = Regex.Match(text, @"(?im)\b(?<pkg>(?:Package_for_|Microsoft-Windows-)[A-Za-z0-9_\.~-]+)", RegexOptions.None, RegexTimeout);
         return fallback.Success ? fallback.Groups["pkg"].Value.Trim() : null;
     }
 
@@ -159,7 +161,8 @@ public static class WindowsRepair
         var findings = new List<string>();
 
         var packageMatches = Regex.Matches(dismExcerpt,
-            @"(?im)(?:Failed to download payload for package|The repair content could not be found anywhere|Failed to finalize and optimize the package|Failed to restore package|Failed processing package)\s*:?\s*(?<pkg>[A-Za-z0-9_\.~-]+)");
+            @"(?im)(?:Failed to download payload for package|The repair content could not be found anywhere|Failed to finalize and optimize the package|Failed to restore package|Failed processing package)\s*:?\s*(?<pkg>[A-Za-z0-9_\.~-]+)",
+            RegexOptions.None, RegexTimeout);
         var packages = packageMatches
             .Select(m => m.Groups["pkg"].Value.Trim())
             .Where(p => p.StartsWith("Package_", StringComparison.OrdinalIgnoreCase) || p.StartsWith("Microsoft-Windows-", StringComparison.OrdinalIgnoreCase))
@@ -167,7 +170,8 @@ public static class WindowsRepair
             .ToList();
 
         var errorLineMatches = Regex.Matches(dismExcerpt,
-            @"(?im)\b(?<msg>The repair content could not be found anywhere|Failed to download payload for package[^\r\n,]+|Failed to get provider[^\r\n,]+|Failed to find directory[^\r\n,]+)")
+            @"(?im)\b(?<msg>The repair content could not be found anywhere|Failed to download payload for package[^\r\n,]+|Failed to get provider[^\r\n,]+|Failed to find directory[^\r\n,]+)",
+            RegexOptions.None, RegexTimeout)
             .Select(m => m.Groups["msg"].Value.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -189,7 +193,7 @@ public static class WindowsRepair
             findings.AddRange(errorLineMatches.Take(3));
         }
 
-        var codes = Regex.Matches(dismExcerpt, @"(?i)\b0x8[0-9a-f]{7}\b")
+        var codes = Regex.Matches(dismExcerpt, @"(?i)\b0x8[0-9a-f]{7}\b", RegexOptions.None, RegexTimeout)
             .Select(m => m.Value.ToUpperInvariant())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(5)

@@ -53,7 +53,7 @@ public sealed class DiagnosticsService
             var task = Task.Factory.StartNew(() => m.CleanupAsync(), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
             using var d = new CancellationTokenSource();
             var first = await Task.WhenAny(task, Task.Delay(StressCleanupGrace, d.Token)).ConfigureAwait(false);
-            d.Cancel();
+            await d.CancelAsync().ConfigureAwait(false);
             if (first != task)
             {
                 Log.Info($"Stress suite: cleanup for {m.Name} did not finish within {StressCleanupGrace.TotalSeconds:0}s; moving on");
@@ -80,7 +80,7 @@ public sealed class DiagnosticsService
         using (var d1 = CancellationTokenSource.CreateLinkedTokenSource(suiteCt))
         {
             var first = await Task.WhenAny(run, Task.Delay(limit, d1.Token)).ConfigureAwait(false);
-            d1.Cancel();
+            await d1.CancelAsync().ConfigureAwait(false);
             if (first == run) return (await run.ConfigureAwait(false), "");
         }
         if (!suiteCt.IsCancellationRequested)
@@ -90,7 +90,7 @@ public sealed class DiagnosticsService
         }
         using var d2 = new CancellationTokenSource();
         var second = await Task.WhenAny(run, Task.Delay(StressStopGrace, d2.Token)).ConfigureAwait(false);
-        d2.Cancel();
+        await d2.CancelAsync().ConfigureAwait(false);
         if (second == run) return (await run.ConfigureAwait(false), "");
         var reason = suiteCt.IsCancellationRequested
             ? "Stopped, but the test did not respond and is still running in the background"
@@ -248,7 +248,7 @@ public sealed class DiagnosticsService
     private async Task<ModuleDetection> DetectCoreAsync(IDetectableModule m)
     {
         ModuleDetection detection;
-        try { detection = await m.DetectAsync().ConfigureAwait(false); }
+        try { detection = await m.DetectAsync(CancellationToken.None).ConfigureAwait(false); }
         catch (Exception ex) { detection = ModuleDetection.NotApplicable($"Detection failed: {ex.Message}"); }
         _detections[m.Id] = detection;
         Catalog.SetApplies(m.Id, detection.Applies);
@@ -280,7 +280,7 @@ public sealed class DiagnosticsService
             _ = Task.Run(async () =>
             {
                 var found = false;
-                try { found = await g.DetectPresenceAsync().ConfigureAwait(false); }
+                try { found = await g.DetectPresenceAsync(CancellationToken.None).ConfigureAwait(false); }
                 catch (Exception ex) { try { Log.Warn($"{g.Name}: detection failed, hidden: {ex.Message}"); } catch { } }
                 finally { Interlocked.Decrement(ref _detecting); }
                 Volatile.Write(ref _visible, null);
@@ -288,7 +288,7 @@ public sealed class DiagnosticsService
                 try { ModulesChanged?.Invoke(this, EventArgs.Empty); } catch { }
                 _store.Set(DiagnosticResult.NotRun(g.Name)); // nudges store-aware pages to re-render
                 if (found) try { Log.Info($"{g.Name}: hardware found, shown"); } catch { }
-            });
+            }, CancellationToken.None);
         }
     }
 

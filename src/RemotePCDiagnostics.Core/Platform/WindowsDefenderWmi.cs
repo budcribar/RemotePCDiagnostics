@@ -34,17 +34,14 @@ public static class WindowsDefenderWmi
         {
             using var statusSearcher = new ManagementObjectSearcher(scope, new ObjectQuery("SELECT RealTimeProtectionEnabled, AMServiceEnabled, AMRunningMode FROM " + StatusClass));
             using var statusResults = statusSearcher.Get();
-            foreach (ManagementObject o in statusResults)
+            using var o = statusResults.OfType<ManagementObject>().FirstOrDefault();
+            if (o is not null)
             {
-                using (o)
-                {
-                    gotAny = true;
-                    var rtp = o["RealTimeProtectionEnabled"] is bool b1 && b1;
-                    var svc = o["AMServiceEnabled"] is bool b2 && b2;
-                    on = rtp && svc;
-                    mode = o["AMRunningMode"]?.ToString() ?? "";
-                    break;
-                }
+                gotAny = true;
+                var rtp = o["RealTimeProtectionEnabled"] is bool b1 && b1;
+                var svc = o["AMServiceEnabled"] is bool b2 && b2;
+                on = rtp && svc;
+                mode = o["AMRunningMode"]?.ToString() ?? "";
             }
         }
         catch { }
@@ -109,16 +106,14 @@ public static class WindowsDefenderWmi
         {
             using var prefSearcher = new ManagementObjectSearcher(scope, new ObjectQuery("SELECT ExclusionPath, ExclusionProcess FROM " + PreferenceClass));
             using var prefResults = prefSearcher.Get();
-            foreach (ManagementObject o in prefResults)
+            using var o = prefResults.OfType<ManagementObject>().FirstOrDefault();
+            if (o is not null)
             {
-                using (o)
-                {
-                    if (o["ExclusionPath"] is string[] ep)
-                        paths.AddRange(ep.Where(s => !string.IsNullOrEmpty(s)));
-                    if (o["ExclusionProcess"] is string[] epr)
-                        procs.AddRange(epr.Where(s => !string.IsNullOrEmpty(s)));
-                    return (paths, procs, true);
-                }
+                if (o["ExclusionPath"] is string[] ep)
+                    paths.AddRange(ep.Where(s => !string.IsNullOrEmpty(s)));
+                if (o["ExclusionProcess"] is string[] epr)
+                    procs.AddRange(epr.Where(s => !string.IsNullOrEmpty(s)));
+                return (paths, procs, true);
             }
         }
         catch { }

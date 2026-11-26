@@ -50,14 +50,20 @@ jobs:
       - name: Determine publishing target and parameters
         id: prep
         shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TARGET: ${{ inputs.target }}
+          INPUT_FLIGHT_NAME: ${{ inputs.flight_name }}
+          INPUT_RUN_ID: ${{ inputs.run_id }}
+          RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
-          $event = '${{ github.event_name }}'
+          $event = $env:EVENT_NAME
           if ($event -eq 'workflow_dispatch') {
-            $target = '${{ inputs.target }}'
-            $flightName = '${{ inputs.flight_name }}'
-            $runId = '${{ inputs.run_id }}'.Trim()
+            $target = $env:INPUT_TARGET
+            $flightName = $env:INPUT_FLIGHT_NAME
+            $runId = "$($env:INPUT_RUN_ID)".Trim()
           } else {
-            $tagName = '${{ github.event.release.tag_name }}'
+            $tagName = $env:RELEASE_TAG_NAME
             # If tag indicates a flight/preview, default to flight target; otherwise production submission
             if ($tagName -match '-flight|-beta|-preview|-prerelease') {
               $target = 'flight'

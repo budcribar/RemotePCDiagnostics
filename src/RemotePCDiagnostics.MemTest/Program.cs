@@ -36,7 +36,7 @@ try
     }
     catch (OutOfMemoryException)
     {
-        Console.Error.WriteLine($"allocation stopped at {allocated} bytes (out of memory)");
+        await Console.Error.WriteLineAsync($"allocation stopped at {allocated} bytes (out of memory)");
     }
     if (blocks.Count == 0) { Emit(new MemTestMessage.Fail("could not allocate memory")); return 1; }
     Emit(new MemTestMessage.Allocated(allocated));

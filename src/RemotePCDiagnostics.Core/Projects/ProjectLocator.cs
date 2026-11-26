@@ -115,7 +115,7 @@ public sealed class ProjectLocator(ProjectLocatorPaths paths, Func<CancellationT
         }
     }
 
-    private static readonly Regex VsPath = new(@"""(?:FullPath|Key|LocalPath)""\s*:\s*""(?<p>[A-Za-z]:(?:\\\\|/)[^""]+)""", RegexOptions.Compiled);
+    private static readonly Regex VsPath = new(@"""(?:FullPath|Key|LocalPath)""\s*:\s*""(?<p>[A-Za-z]:(?:\\\\|/)[^""]+)""", RegexOptions.Compiled, TimeSpan.FromSeconds(2));
 
     public static IEnumerable<string> ParseVisualStudioSettings(string xml)
     {
@@ -140,7 +140,7 @@ public sealed class ProjectLocator(ProjectLocatorPaths paths, Func<CancellationT
         }
     }
 
-    private static readonly Regex RiderEntry = new(@"<entry\s+key=""(?<p>[^""]+)""", RegexOptions.Compiled);
+    private static readonly Regex RiderEntry = new(@"<entry\s+key=""(?<p>[^""]+)""", RegexOptions.Compiled, TimeSpan.FromSeconds(2));
 
     public static IEnumerable<string> ParseRiderRecent(string xml, string userProfile)
     {

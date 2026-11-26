@@ -15,9 +15,9 @@ public static class Program
         var parsed = AgentCommandLine.Parse(args);
         if (parsed.Error is not null)
         {
-            Console.Error.WriteLine(parsed.Error);
-            Console.Error.WriteLine();
-            Console.Error.Write(AgentCommandLine.Usage);
+            await Console.Error.WriteLineAsync(parsed.Error);
+            await Console.Error.WriteLineAsync();
+            await Console.Error.WriteAsync(AgentCommandLine.Usage);
             return ExitBadArguments;
         }
 
@@ -104,7 +104,7 @@ public static class Program
         if (config is null)
         {
             var msg = configError ?? $"Agent is not configured ({AgentPaths.ConfigPath()} missing). Run 'RemotePCDiagnostics.Agent.exe install' first.";
-            Console.Error.WriteLine(msg);
+            await Console.Error.WriteLineAsync(msg);
             return ExitError;
         }
 

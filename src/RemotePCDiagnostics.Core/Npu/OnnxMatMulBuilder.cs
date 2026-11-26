@@ -91,7 +91,7 @@ public static class OnnxMatMulBuilder
 
     private static void WriteVarintField(MemoryStream ms, int fieldNumber, long value)
     {
-        WriteVarint(ms, (ulong)((fieldNumber << 3) | 0)); // wire type 0 = varint
+        WriteVarint(ms, (ulong)(fieldNumber << 3)); // wire type 0 = varint
         WriteVarint(ms, unchecked((ulong)value));
     }
 

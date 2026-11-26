@@ -1786,16 +1786,14 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
             var query = new ObjectQuery($"SELECT * FROM Win32_EncryptableVolume WHERE DriveLetter = '{drive}'");
             using var searcher = new ManagementObjectSearcher(scope, query);
             using var results = searcher.Get();
-            foreach (ManagementObject volume in results)
+            using var volume = results.OfType<ManagementObject>().FirstOrDefault();
+            if (volume is not null)
             {
-                using (volume)
-                {
-                    using var inParams = volume.GetMethodParameters("DisableKeyProtectors");
-                    inParams["RebootCount"] = 1u;
-                    using var outParams = volume.InvokeMethod("DisableKeyProtectors", inParams, null);
-                    var returnCode = Convert.ToUInt32(outParams?["ReturnValue"] ?? 1u, CultureInfo.InvariantCulture);
-                    return returnCode == 0u;
-                }
+                using var inParams = volume.GetMethodParameters("DisableKeyProtectors");
+                inParams["RebootCount"] = 1u;
+                using var outParams = volume.InvokeMethod("DisableKeyProtectors", inParams, null);
+                var returnCode = Convert.ToUInt32(outParams?["ReturnValue"] ?? 1u, CultureInfo.InvariantCulture);
+                return returnCode == 0u;
             }
         }
         catch (Exception ex)

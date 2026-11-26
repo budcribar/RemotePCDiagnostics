@@ -1114,7 +1114,7 @@ public sealed partial class AcerBiosUpdateProvider : IBiosUpdateProvider
                 if (totalRead > MaxCatalogJsonBytes)
                     throw new InvalidDataException($"Acer BIOS catalog response exceeded maximum allowed size ({MaxCatalogJsonBytes} bytes).");
 
-                ms.Write(buffer, 0, read);
+                await ms.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
             }
         }
         finally
@@ -1268,9 +1268,6 @@ public sealed partial class AcerBiosUpdateProvider : IBiosUpdateProvider
         {
             return false;
         }
-
-        if (resolved is null)
-            return false;
 
         return TryValidateVendorUrl(resolved.AbsoluteUri, AllowedHostSuffixes, out nextUri);
     }

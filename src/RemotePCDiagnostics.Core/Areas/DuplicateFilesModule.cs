@@ -462,8 +462,8 @@ public sealed class DuplicateFilesModule(
                 return false;
             }
 
-            string? targetHash = ComputeFullHash(fullTarget);
-            string? survivingHash = ComputeFullHash(fullSurviving);
+            string? targetHash = ComputeFullHash(fullTarget, CancellationToken.None);
+            string? survivingHash = ComputeFullHash(fullSurviving, CancellationToken.None);
 
             if (targetHash is null || survivingHash is null)
             {

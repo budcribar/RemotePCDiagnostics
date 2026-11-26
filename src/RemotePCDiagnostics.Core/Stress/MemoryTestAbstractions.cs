@@ -73,8 +73,13 @@ public sealed class ProcessMemTestHelperLauncher(string? directory = null, ILogg
         var dir = directory ?? AppContext.BaseDirectory;
         var exe = Path.Combine(dir, HelperName + (OperatingSystem.IsWindows() ? ".exe" : ""));
         var dll = Path.Combine(dir, HelperName + ".dll");
+        var dotnetExe = Environment.ProcessPath is { Length: > 0 } proc && Path.GetFileNameWithoutExtension(proc).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+            ? proc
+            : OperatingSystem.IsWindows()
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe")
+                : "/usr/bin/dotnet";
         var psi = File.Exists(exe) ? new ProcessStartInfo(exe, Arguments(bytes, duration))
-            : File.Exists(dll) ? new ProcessStartInfo("dotnet", $"\"{dll}\" {Arguments(bytes, duration)}")
+            : File.Exists(dll) ? new ProcessStartInfo(dotnetExe, $"\"{dll}\" {Arguments(bytes, duration)}")
             : throw new FileNotFoundException("Memory test helper not found", exe);
         psi.UseShellExecute = false; psi.RedirectStandardOutput = true; psi.RedirectStandardError = true; psi.CreateNoWindow = true;
         var p = Process.Start(psi) ?? throw new InvalidOperationException("Memory test helper did not start");

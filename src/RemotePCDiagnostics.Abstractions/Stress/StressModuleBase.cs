@@ -37,7 +37,7 @@ public sealed class StressTaskScheduler : TaskScheduler
         for (int i = 0; i < count; i++)
         {
             int index = i;
-            tasks[i] = Run(() => body(index));
+            tasks[i] = Run(() => body(index), CancellationToken.None);
         }
         return Task.WhenAll(tasks);
     }
@@ -64,7 +64,7 @@ public sealed class StressTaskScheduler : TaskScheduler
         try { Thread.CurrentThread.Priority = ThreadPriority.BelowNormal; } catch { }
         while (true)
         {
-            if (!_signal.Wait(IdleTimeoutMs))
+            if (!_signal.Wait(IdleTimeoutMs, CancellationToken.None))
             {
                 int current = Volatile.Read(ref _idleWorkers);
                 if (current > 0 && Interlocked.CompareExchange(ref _idleWorkers, current - 1, current) == current)

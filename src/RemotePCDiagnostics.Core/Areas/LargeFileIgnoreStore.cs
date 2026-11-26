@@ -24,7 +24,9 @@ public sealed class LargeFileIgnoreStore
     {
         var baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(baseDir))
-            baseDir = Path.GetTempPath();
+            baseDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrWhiteSpace(baseDir))
+            baseDir = AppContext.BaseDirectory;
         return Path.Combine(baseDir, "RemotePCDiagnostics", "ignored-large-files.json");
     }
 

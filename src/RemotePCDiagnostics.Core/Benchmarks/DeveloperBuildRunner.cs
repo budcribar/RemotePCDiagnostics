@@ -315,7 +315,7 @@ public sealed class DeveloperBuildRunner(
                 var globalJsonPath = Path.Combine(workDir, "global.json");
                 if (!isCustomSolution || !File.Exists(globalJsonPath))
                 {
-                    File.WriteAllText(
+                    await File.WriteAllTextAsync(
                         globalJsonPath,
                         $$$"""{"sdk":{"version":"{{{pinMajor}}}.0.100","rollForward":"latestFeature"}}""");
                     if (isCustomSolution)

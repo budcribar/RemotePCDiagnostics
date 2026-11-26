@@ -1590,7 +1590,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
                 if (totalRead > maxBytes)
                     throw new InvalidDataException($"Lenovo BIOS XML response exceeded maximum allowed limit ({maxBytes} bytes).");
 
-                destination.Write(buffer, 0, read);
+                await destination.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
             }
 
             var bytes = destination.ToArray();

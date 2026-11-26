@@ -88,7 +88,7 @@ internal static class AgentRunLoop
             // Self-removal starts uninstall in another process, which deletes the status file. Do not recreate it.
             if (Volatile.Read(ref removing) == 0)
                 publisher.Publish(false, null);
-            try { linked.Cancel(); } catch { }
+            try { await linked.CancelAsync().ConfigureAwait(false); } catch { }
             try { await localPipe.ConfigureAwait(false); }
             catch (OperationCanceledException) { }
             try { await watch.ConfigureAwait(false); }

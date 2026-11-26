@@ -1319,7 +1319,7 @@ public sealed class AgentHubWorker(
                 }
                 // An end request that arrived while switching over cancelled the launch token instead.
                 if (launchCt.IsCancellationRequested && !streamCts.IsCancellationRequested)
-                    sessionCts.Cancel();
+                    await sessionCts.CancelAsync().ConfigureAwait(false);
                 detached.TrySetResult();
 
                 try

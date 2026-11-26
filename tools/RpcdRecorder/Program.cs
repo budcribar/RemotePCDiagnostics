@@ -29,7 +29,7 @@ var hardeningKitty = Arg("--hardeningkitty") ?? FirstExisting(
     Path.Combine(AppContext.BaseDirectory, SecurityAuditModule.RelativeFolder, SecurityAuditModule.ManifestFile),
     Path.Combine(Environment.CurrentDirectory, "HardeningKitty", SecurityAuditModule.ManifestFile));
 
-if (!OperatingSystem.IsWindows()) { Console.Error.WriteLine("Run this on the Windows PC to record."); return 2; }
+if (!OperatingSystem.IsWindows()) { await Console.Error.WriteLineAsync("Run this on the Windows PC to record."); return 2; }
 // The app reads WMI through the Agent, which runs as administrator: record from an admin prompt so the answers match.
 if (!Environment.IsPrivilegedProcess)
     Console.WriteLine("Not running as administrator. The Agent reads WMI as administrator, so some answers (the power plan) will differ. Run from an admin prompt.");
@@ -148,7 +148,7 @@ var recording = scrubber.Scrub(new MachineRecording
 });
 var folder = Path.Combine(outRoot, MachineDescription.Safe(machine.ProductId) + "-" + recording.CapturedAt.ToString("yyyyMMdd-HHmm"));
 recording.Save(folder);
-File.WriteAllLines(Path.Combine(folder, "scrub-report.txt"),
+await File.WriteAllLinesAsync(Path.Combine(folder, "scrub-report.txt"),
     ["Replaced before saving (placeholder kind: count):", .. scrubber.Counts.Select(c => $"  {c.Key}: {c.Value}")]);
 Console.WriteLine($"Saved {recording.Calls.Count} answers to {folder}");
 return 0;

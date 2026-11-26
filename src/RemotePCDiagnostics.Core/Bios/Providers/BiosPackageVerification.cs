@@ -272,32 +272,63 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
             }
 
             using var memberFileHandle = File.OpenHandle(memberFilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            var addedRef = false;
-            try
+
+            uint hashLength = 0;
+            _ = CryptCATAdminCalcHashFromFileHandle2(hCatAdmin, memberFileHandle, ref hashLength, null, 0);
+            if (hashLength == 0 || hashLength > 128)
+                return false;
+
+            var hashBytes = new byte[hashLength];
+            if (!CryptCATAdminCalcHashFromFileHandle2(hCatAdmin, memberFileHandle, ref hashLength, hashBytes, 0)
+                || hashLength == 0
+                || hashLength > hashBytes.Length)
             {
-                memberFileHandle.DangerousAddRef(ref addedRef);
-                var rawFileHandle = memberFileHandle.DangerousGetHandle();
+                return false;
+            }
 
-                uint hashLength = 0;
-                _ = CryptCATAdminCalcHashFromFileHandle2(hCatAdmin, rawFileHandle, ref hashLength, null, 0);
-                if (hashLength == 0 || hashLength > 128)
-                    return false;
+            // Standard Inf2Cat / WHQL catalogs use the uppercase hex hash as the member reference tag.
+            var hexTag = Convert.ToHexString(hashBytes.AsSpan(0, (int)hashLength));
+            if (VerifyCatalogMemberWithWinVerifyTrust(
+                    catalogPath,
+                    memberFilePath,
+                    IntPtr.Zero,
+                    hexTag,
+                    hashBytes,
+                    hashLength,
+                    hCatAdmin,
+                    ct))
+            {
+                return true;
+            }
 
-                var hashBytes = new byte[hashLength];
-                if (!CryptCATAdminCalcHashFromFileHandle2(hCatAdmin, rawFileHandle, ref hashLength, hashBytes, 0)
-                    || hashLength == 0
-                    || hashLength > hashBytes.Length)
-                {
-                    return false;
-                }
+            // Fallback for signed catalogs whose member reference tags are filenames or custom identifiers:
+            // enumerate member tags in the catalog and let WinVerifyTrust verify the calculated hash against each.
+            hCatalog = CryptCATOpen(catalogPath, fdwOpenFlags: 0, hProv: IntPtr.Zero, dwPublicVersion: 0, dwEncodingType: 0);
+            if (hCatalog == IntPtr.Zero || hCatalog == InvalidHandleValue)
+                return false;
 
-                // Standard Inf2Cat / WHQL catalogs use the uppercase hex hash as the member reference tag.
-                var hexTag = Convert.ToHexString(hashBytes.AsSpan(0, (int)hashLength));
+            var prevMember = IntPtr.Zero;
+            for (var inspected = 0; inspected < MaxCatalogMembersToInspect; inspected++)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                prevMember = CryptCATEnumerateMember(hCatalog, prevMember);
+                if (prevMember == IntPtr.Zero)
+                    break;
+
+                var header = Marshal.PtrToStructure<CRYPTCATMEMBER_HEADER>(prevMember);
+                if (header.pwszReferenceTag == IntPtr.Zero)
+                    continue;
+
+                var tag = Marshal.PtrToStringUni(header.pwszReferenceTag);
+                if (string.IsNullOrEmpty(tag) || string.Equals(tag, hexTag, StringComparison.Ordinal))
+                    continue;
+
                 if (VerifyCatalogMemberWithWinVerifyTrust(
                         catalogPath,
                         memberFilePath,
-                        rawFileHandle,
-                        hexTag,
+                        IntPtr.Zero,
+                        tag,
                         hashBytes,
                         hashLength,
                         hCatAdmin,
@@ -305,51 +336,9 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
                 {
                     return true;
                 }
-
-                // Fallback for signed catalogs whose member reference tags are filenames or custom identifiers:
-                // enumerate member tags in the catalog and let WinVerifyTrust verify the calculated hash against each.
-                hCatalog = CryptCATOpen(catalogPath, fdwOpenFlags: 0, hProv: IntPtr.Zero, dwPublicVersion: 0, dwEncodingType: 0);
-                if (hCatalog == IntPtr.Zero || hCatalog == InvalidHandleValue)
-                    return false;
-
-                var prevMember = IntPtr.Zero;
-                for (var inspected = 0; inspected < MaxCatalogMembersToInspect; inspected++)
-                {
-                    ct.ThrowIfCancellationRequested();
-
-                    prevMember = CryptCATEnumerateMember(hCatalog, prevMember);
-                    if (prevMember == IntPtr.Zero)
-                        break;
-
-                    var header = Marshal.PtrToStructure<CRYPTCATMEMBER_HEADER>(prevMember);
-                    if (header.pwszReferenceTag == IntPtr.Zero)
-                        continue;
-
-                    var tag = Marshal.PtrToStringUni(header.pwszReferenceTag);
-                    if (string.IsNullOrEmpty(tag) || string.Equals(tag, hexTag, StringComparison.Ordinal))
-                        continue;
-
-                    if (VerifyCatalogMemberWithWinVerifyTrust(
-                            catalogPath,
-                            memberFilePath,
-                            rawFileHandle,
-                            tag,
-                            hashBytes,
-                            hashLength,
-                            hCatAdmin,
-                            ct))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
             }
-            finally
-            {
-                if (addedRef)
-                    memberFileHandle.DangerousRelease();
-            }
+
+            return false;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -545,7 +534,7 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CryptCATAdminCalcHashFromFileHandle2(
         IntPtr hCatAdmin,
-        IntPtr hFile,
+        Microsoft.Win32.SafeHandles.SafeFileHandle hFile,
         ref uint pcbHash,
         byte[]? pbHash,
         uint dwFlags);

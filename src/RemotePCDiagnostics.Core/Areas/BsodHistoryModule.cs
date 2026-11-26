@@ -93,7 +93,7 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
     /// <summary>The stop code a blue screen event records, or null.</summary>
     public static uint? BugCheckValue(WinEvent e)
     {
-        var match = Regex.Match(e.DataAt(0, "param1") + " " + e.Message, @"\b0x([0-9a-fA-F]{1,8})\b");
+        var match = Regex.Match(e.DataAt(0, "param1") + " " + e.Message, @"\b0x([0-9a-fA-F]{1,8})\b", RegexOptions.None, TimeSpan.FromSeconds(2));
         return match.Success && uint.TryParse(match.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var code)
             ? code : null;
     }
@@ -106,7 +106,7 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
         var code = BugCheckCode(e);
         var path = e.DataAt(1, "param2");
         var report = e.DataAt(2, "param3");
-        var parameters = Regex.Match(e.DataAt(0, "param1") + " " + e.Message, @"\((0x[0-9a-fA-F]+(?:,\s*0x[0-9a-fA-F]+){3})\)").Groups[1].Value;
+        var parameters = Regex.Match(e.DataAt(0, "param1") + " " + e.Message, @"\((0x[0-9a-fA-F]+(?:,\s*0x[0-9a-fA-F]+){3})\)", RegexOptions.None, TimeSpan.FromSeconds(2)).Groups[1].Value;
         var found = dumps.Any(d => MatchesEvent(d, e));
         var details = string.Join("\n", new[]
         {

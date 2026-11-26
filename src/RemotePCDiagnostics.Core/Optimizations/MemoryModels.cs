@@ -134,14 +134,8 @@ public static class MemoryProbe
         {
             using var searcher = new System.Management.ManagementObjectSearcher("SELECT AutomaticManagedPagefile FROM Win32_ComputerSystem");
             using var results = searcher.Get();
-            foreach (System.Management.ManagementObject o in results)
-            {
-                using (o)
-                {
-                    if (o["AutomaticManagedPagefile"] is bool b) auto = b;
-                    break;
-                }
-            }
+            using var o = results.OfType<System.Management.ManagementObject>().FirstOrDefault();
+            if (o is not null && o["AutomaticManagedPagefile"] is bool b) auto = b;
         }
         catch { }
 

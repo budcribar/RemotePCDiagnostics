@@ -35,9 +35,9 @@ public static class StoreReinstall
     public static readonly TimeSpan Timeout = TimeSpan.FromMinutes(10);
 
     // $ alone would also accept a trailing newline, hence the length check below and \z for SIDs.
-    private static readonly Regex IdPattern = new("^[0-9A-Z]{12}$", RegexOptions.CultureInvariant);
+    private static readonly Regex IdPattern = new("^[0-9A-Z]{12}$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
     /// <summary>Local, domain and Microsoft account SIDs (S-1-5-21-…) and Microsoft Entra ID accounts (S-1-12-1-…).</summary>
-    private static readonly Regex SidPattern = new(@"^S-1-(5-21|12-1)(-[0-9]{1,10}){4}\z", RegexOptions.CultureInvariant);
+    private static readonly Regex SidPattern = new(@"^S-1-(5-21|12-1)(-[0-9]{1,10}){4}\z", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
 
     /// <summary>A Store product id: exactly 12 upper-case letters or digits ("9WZDNCRFJ3Q2").</summary>
     public static bool IsValidId(string? id) => id is { Length: 12 } && IdPattern.IsMatch(id);

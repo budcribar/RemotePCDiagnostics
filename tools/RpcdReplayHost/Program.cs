@@ -20,7 +20,7 @@ using RpcdReplayHost;
 var options = ReplayHostOptions.Parse(args);
 ReplayHostOptions.Current = options;
 var recording = MachineRecording.Load(options.RecordingFolder);
-var faults = new FaultPlan(options.FaultsFile is { } f ? FaultPlan.Parse(File.ReadAllText(f)) : null);
+var faults = new FaultPlan(options.FaultsFile is { } f ? FaultPlan.Parse(await File.ReadAllTextAsync(f)) : null);
 var pc = new ReplayedPc(recording, faults);
 var errors = new ErrorLog();
 
@@ -57,4 +57,4 @@ app.MapRazorComponents<RpcdReplayHost.Components.App>()
     .AddAdditionalAssemblies(typeof(RemotePCDiagnostics.UI.AppServices).Assembly);
 
 Console.WriteLine($"RPCD replay of {options.RecordingName} on http://127.0.0.1:{options.Port}{(options.Store ? " (Store edition readers)" : "")}");
-app.Run();
+await app.RunAsync();

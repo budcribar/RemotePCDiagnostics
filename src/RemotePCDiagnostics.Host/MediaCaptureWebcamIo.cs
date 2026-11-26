@@ -73,7 +73,7 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
             {
                 // Another app holds the camera: try read-only sharing (no format change) before calling it busy.
                 Log($"start {status}, retrying shared read-only");
-                Dispose(ref reader, ref capture);
+                DisposeCapture(ref reader, ref capture);
                 (capture, source) = await OpenAsync(req.DeviceId, MediaCaptureSharingMode.SharedReadOnly, ct).ConfigureAwait(false);
                 reader = source is null ? null : await capture.CreateFrameReaderAsync(source, MediaEncodingSubtypes.Bgra8).AsTask(ct).ConfigureAwait(false);
                 status = reader is null ? MediaFrameReaderStartStatus.UnknownFailure : await reader.StartAsync().AsTask(ct).ConfigureAwait(false);
@@ -148,7 +148,7 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
         }
         finally
         {
-            Dispose(ref reader, ref capture);
+            DisposeCapture(ref reader, ref capture);
             preview?.Close();
         }
     }
@@ -181,7 +181,7 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
             .ThenByDescending(f => (double)f.FrameRate.Numerator / f.FrameRate.Denominator)
             .FirstOrDefault();
 
-    private void Dispose(ref MediaFrameReader? reader, ref MediaCapture? capture)
+    private void DisposeCapture(ref MediaFrameReader? reader, ref MediaCapture? capture)
     {
         try { reader?.Dispose(); } catch (Exception ex) { Log($"reader dispose: {ex.Message}"); }
         try { capture?.Dispose(); } catch (Exception ex) { Log($"capture dispose: {ex.Message}"); }

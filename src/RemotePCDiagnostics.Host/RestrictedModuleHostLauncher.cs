@@ -71,15 +71,10 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
             Check(CreatePipe(out outRead, out outWrite, ref sa, 0));
             Check(CreatePipe(out errRead, out errWrite, ref sa, 0));
 
-            var si = new STARTUPINFO
-            {
-                cb = Marshal.SizeOf<STARTUPINFO>(), dwFlags = STARTF_USESTDHANDLES,
-                hStdInput = inRead.DangerousGetHandle(), hStdOutput = outWrite.DangerousGetHandle(), hStdError = errWrite.DangerousGetHandle(),
-            };
             PROCESS_INFORMATION pi;
             try
             {
-                pi = CreateRestricted(token, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, dir, si, inRead, outWrite, errWrite);
+                pi = CreateRestricted(token, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, dir, inRead, outWrite, errWrite);
             }
             catch (Win32Exception ex) when (module.Bundled && !Environment.IsPrivilegedProcess)
             {
@@ -171,11 +166,10 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
         try
         {
             // Only stdin is handed over; the process has no stdout or stderr (it logs to its own file).
-            var si = new STARTUPINFO { dwFlags = STARTF_USESTDHANDLES, hStdInput = inRead.DangerousGetHandle() };
             PROCESS_INFORMATION pi;
             try
             {
-                pi = CreateRestricted(token, new StringBuilder($"\"{exe}\" {arguments}"), CREATE_UNICODE_ENVIRONMENT, workingDirectory, si, inRead);
+                pi = CreateRestricted(token, new StringBuilder($"\"{exe}\" {arguments}"), CREATE_UNICODE_ENVIRONMENT, workingDirectory, inRead, null, null);
             }
             finally { inRead.Dispose(); } // the child's end
             try
@@ -198,42 +192,64 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
     private static readonly object InheritLock = new();
 
     /// <summary>
-    /// CreateProcessAsUser with the restricted token that hands the child exactly <paramref name="inherit"/> (PROC_THREAD_ATTRIBUTE_HANDLE_LIST)
+    /// CreateProcessAsUser with the restricted token that hands the child exactly the non-null stdio handles (PROC_THREAD_ATTRIBUTE_HANDLE_LIST)
     /// and no other handle of the app's. The handles are inheritable only for the call. Without the list, a host started at the same moment
     /// as another (Check all) could pick up the other's pipe ends, and then closing that host's stdin wouldn't end it.
     /// </summary>
     private static PROCESS_INFORMATION CreateRestricted(SafeAccessTokenHandle token, StringBuilder commandLine, uint flags, string directory,
-        STARTUPINFO startup, params SafeFileHandle[] inherit)
+        SafeFileHandle? stdIn, SafeFileHandle? stdOut, SafeFileHandle? stdErr)
     {
-        var handles = inherit.Select(h => h.DangerousGetHandle()).Distinct().ToArray();
-        var size = IntPtr.Zero;
-        InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size); // asks for the size; fails by design
-        var list = Marshal.AllocHGlobal(size);
-        var pin = GCHandle.Alloc(handles, GCHandleType.Pinned);
+        SafeFileHandle[] inherit = [.. new[] { stdIn, stdOut, stdErr }.Where(h => h is not null).Cast<SafeFileHandle>()];
+        var refAdded = new bool[inherit.Length];
         try
         {
-            Check(InitializeProcThreadAttributeList(list, 1, 0, ref size));
+            for (var i = 0; i < inherit.Length; i++)
+                inherit[i].DangerousAddRef(ref refAdded[i]);
+
+            static IntPtr Raw(SafeFileHandle? h) => h is null ? IntPtr.Zero : h.DangerousGetHandle();
+            var startup = new STARTUPINFO
+            {
+                cb = Marshal.SizeOf<STARTUPINFO>(),
+                dwFlags = STARTF_USESTDHANDLES,
+                hStdInput = Raw(stdIn),
+                hStdOutput = Raw(stdOut),
+                hStdError = Raw(stdErr),
+            };
+            var handles = inherit.Select(h => Raw(h)).Distinct().ToArray();
+            var size = IntPtr.Zero;
+            InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size); // asks for the size; fails by design
+            var list = Marshal.AllocHGlobal(size);
+            var pin = GCHandle.Alloc(handles, GCHandleType.Pinned);
             try
             {
-                Check(UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, pin.AddrOfPinnedObject(),
-                    (IntPtr)(IntPtr.Size * handles.Length), IntPtr.Zero, IntPtr.Zero));
-                var si = new STARTUPINFOEX { StartupInfo = startup, lpAttributeList = list };
-                si.StartupInfo.cb = Marshal.SizeOf<STARTUPINFOEX>();
-                lock (InheritLock)
+                Check(InitializeProcThreadAttributeList(list, 1, 0, ref size));
+                try
                 {
-                    foreach (var h in inherit) Check(SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT));
-                    try
+                    Check(UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, pin.AddrOfPinnedObject(),
+                        (IntPtr)(IntPtr.Size * handles.Length), IntPtr.Zero, IntPtr.Zero));
+                    var si = new STARTUPINFOEX { StartupInfo = startup, lpAttributeList = list };
+                    si.StartupInfo.cb = Marshal.SizeOf<STARTUPINFOEX>();
+                    lock (InheritLock)
                     {
-                        Check(CreateProcessAsUser(token, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, flags | EXTENDED_STARTUPINFO_PRESENT,
-                            IntPtr.Zero, directory, ref si, out var pi));
-                        return pi;
+                        foreach (var h in inherit) Check(SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT));
+                        try
+                        {
+                            Check(CreateProcessAsUser(token, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, flags | EXTENDED_STARTUPINFO_PRESENT,
+                                IntPtr.Zero, directory, ref si, out var pi));
+                            return pi;
+                        }
+                        finally { foreach (var h in inherit) SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0); }
                     }
-                    finally { foreach (var h in inherit) SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0); }
                 }
+                finally { DeleteProcThreadAttributeList(list); }
             }
-            finally { DeleteProcThreadAttributeList(list); }
+            finally { pin.Free(); Marshal.FreeHGlobal(list); }
         }
-        finally { pin.Free(); Marshal.FreeHGlobal(list); }
+        finally
+        {
+            for (var i = 0; i < inherit.Length; i++)
+                if (refAdded[i]) inherit[i].DangerousRelease();
+        }
     }
 
     /// <summary>The groups an unsigned module's host also gets deny-only: INTERACTIVE and Event Log Readers. The Application and System logs

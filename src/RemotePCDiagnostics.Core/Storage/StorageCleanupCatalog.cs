@@ -260,8 +260,8 @@ public static class StorageCleanupCatalog
     }
 
     private static readonly Regex ExtensionFolder = new(@"^(?<id>[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*)-(?<ver>\d+\.\d+\.\d+)(?<plat>-[a-z0-9-]+)?$",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-    private static readonly Regex StagingFolder = new(@"^\.[0-9a-f]{8}[0-9a-f-]*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
+    private static readonly Regex StagingFolder = new(@"^\.[0-9a-f]{8}[0-9a-f-]*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
 
     /// <summary>"ms-dotnettools.csharp-2.140.9-win32-x64" → ("ms-dotnettools.csharp|-win32-x64", 2.140.9); null when the name isn't a versioned extension folder.</summary>
     public static (string Key, Version Version)? ParseExtensionFolder(string name)

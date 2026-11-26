@@ -193,18 +193,16 @@ public sealed class WindowsSecuritySettingsStore : ISecuritySettingsStore
     {
         using var searcher = new ManagementObjectSearcher(new ManagementScope(DefenderNamespace), new ObjectQuery("SELECT * FROM " + PreferenceClass));
         using var results = searcher.Get();
-        foreach (ManagementObject o in results)
+        using var o = results.OfType<ManagementObject>().FirstOrDefault();
+        if (o is not null)
         {
-            using (o)
-            {
-                return new DefenderPreferences(
-                    Convert.ToInt32(o["PUAProtection"] ?? 0, CultureInfo.InvariantCulture),
-                    Convert.ToInt32(o["EnableNetworkProtection"] ?? 0, CultureInfo.InvariantCulture),
-                    o["AttackSurfaceReductionRules_Ids"] is string[] ids ? ids : [],
-                    o["AttackSurfaceReductionRules_Actions"] is Array actions
-                        ? actions.Cast<object>().Select(a => Convert.ToInt32(a, CultureInfo.InvariantCulture)).ToList() : [],
-                    Convert.ToInt32(o["MAPSReporting"] ?? 0, CultureInfo.InvariantCulture));
-            }
+            return new DefenderPreferences(
+                Convert.ToInt32(o["PUAProtection"] ?? 0, CultureInfo.InvariantCulture),
+                Convert.ToInt32(o["EnableNetworkProtection"] ?? 0, CultureInfo.InvariantCulture),
+                o["AttackSurfaceReductionRules_Ids"] is string[] ids ? ids : [],
+                o["AttackSurfaceReductionRules_Actions"] is Array actions
+                    ? actions.Cast<object>().Select(a => Convert.ToInt32(a, CultureInfo.InvariantCulture)).ToList() : [],
+                Convert.ToInt32(o["MAPSReporting"] ?? 0, CultureInfo.InvariantCulture));
         }
         throw new InvalidOperationException("Microsoft Defender's settings aren't available (Defender may be turned off or replaced by another antivirus).");
     }

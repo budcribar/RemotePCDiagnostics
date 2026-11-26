@@ -174,7 +174,7 @@ public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retri
             }
             if (toCancel is not null)
             {
-                try { toCancel.Cancel(); } catch (ObjectDisposedException) { }
+                try { await toCancel.CancelAsync().ConfigureAwait(false); } catch (ObjectDisposedException) { }
             }
             throw;
         }

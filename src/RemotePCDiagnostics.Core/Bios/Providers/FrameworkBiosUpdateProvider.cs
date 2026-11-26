@@ -3184,9 +3184,6 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
             return false;
         }
 
-        if (resolved is null)
-            return false;
-
         return TryValidateVendorUrl(resolved.AbsoluteUri, AllowedHostSuffixes, out nextUri);
     }
 
@@ -3412,7 +3409,7 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
                             : $"Framework catalog response exceeded maximum allowed size ({maxDecompressedBytes} bytes).");
                 }
 
-                ms.Write(buffer, 0, read);
+                await ms.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
             }
         }
         finally
