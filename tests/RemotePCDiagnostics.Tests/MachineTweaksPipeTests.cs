@@ -48,9 +48,6 @@ public sealed class MachineTweaksPipeTests
                 Assert.True(restored.Success, restored.Message);
                 Assert.Equal("restored 1", restored.Message);
                 Assert.Equal(FakeTweaks.Probe, await app.ReadDefenderAsync(cts.Token));
-                var (ok, readBack) = await app.AddDefenderExclusionsAsync([@"D:\work", @"C:\Users\ann\.nuget\packages"], [Vs + @"MSBuild\Current\Bin\MSBuild.exe"], cts.Token);
-                Assert.True(ok);
-                Assert.Equal(FakeTweaks.ReadBack, readBack);
                 Assert.True(await app.RemoveDefenderExclusionsAsync([@"D:\work"], [], cts.Token));
             }
             await task;
@@ -60,8 +57,7 @@ public sealed class MachineTweaksPipeTests
         [
             @"write HKLM\SOFTWARE\Policies\Microsoft\Dsh|AllowNewsAndInterests=0", @"delete HKLM\SOFTWARE\Policies\Microsoft\Edge|StartupBoostEnabled",
             @"key SOFTWARE\Policies\Microsoft\Dsh", @"key SOFTWARE\Policies\Microsoft\Edge", "block Chrome 3 " + Honey, "unblock Edge 1 " + Honey,
-            "pagefile auto", "pagefile restore", "defender read", @"defender add D:\work;C:\Users\ann\.nuget\packages | " + Vs + @"MSBuild\Current\Bin\MSBuild.exe",
-            @"defender remove D:\work | ",
+            "pagefile auto", "pagefile restore", "defender read", @"defender remove D:\work | ",
         ], backend.Calls);
     }
 
@@ -79,23 +75,22 @@ public sealed class MachineTweaksPipeTests
         new AdminPipeTweak(AdminPipeTweak.ExtensionBlockRemove, Target: "Chrome", Name: "01", Text: Honey),
         new AdminPipeTweak(AdminPipeTweak.PageFileRestore, Text: "not base64!"),
         new AdminPipeTweak(AdminPipeTweak.PageFileRestore, Text: PageFileSettings.Encode([new(@"C:\Windows\System32\config\SAM", 1, 1)])),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Folders: [@"C:\"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Folders: [@"C:\Windows\Temp"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Folders: [@"C:\Program Files\Evil"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Folders: [@"C:\ProgramData"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Folders: [@"C:\Users\ann"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Folders: [@"C:\Users\ann\Downloads\tools"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Folders: [@"C:\Users\ann\AppData\Local\Temp"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Folders: [@"C:\Users\ann\Documents"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Folders: [@"D:\work\*"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Folders: [@"D:\work\..\..\Windows"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Folders: [@"\\server\share\code"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Folders: [@"D:\missing"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Processes: [@"C:\Users\ann\Downloads\MSBuild.exe"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Processes: [Vs + @"Common7\IDE\cmd.exe"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Processes: ["powershell.exe"]),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd),
-        new AdminPipeTweak(AdminPipeTweak.DefenderAdd, Folders: Enumerable.Range(0, MachineTweakRules.MaxDefenderFolders + 1).Select(i => $@"D:\work\p{i}").ToList()),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Folders: [@"C:\"]),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Folders: [@"C:\Windows\Temp"]),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Folders: [@"C:\Program Files\Evil"]),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Folders: [@"C:\ProgramData"]),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Folders: [@"C:\Users\ann"]),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Folders: [@"C:\Users\ann\Downloads\tools"]),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Folders: [@"C:\Users\ann\AppData\Local\Temp"]),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Folders: [@"C:\Users\ann\Documents"]),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Folders: [@"D:\work\*"]),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Folders: [@"D:\work\..\..\Windows"]),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Folders: [@"\\server\share\code"]),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Processes: [Vs + @"Common7\IDE\cmd.exe"]),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Processes: ["powershell.exe"]),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove),
+        new AdminPipeTweak(AdminPipeTweak.DefenderRemove, Folders: Enumerable.Range(0, MachineTweakRules.MaxDefenderFolders + 1).Select(i => $@"D:\work\p{i}").ToList()),
+        new AdminPipeTweak("defender_add", Folders: [@"D:\work"]), // the permanent-exclusion fix is gone, so the Agent no longer adds them
         new AdminPipeTweak("run_script", Text: "Set-MpPreference -DisableRealtimeMonitoring $true"),
     ];
 
@@ -125,11 +120,10 @@ public sealed class MachineTweaksPipeTests
     {
         Assert.Null(MachineTweakRules.Refusal(new(AdminPipeTweak.RegistryWrite, Target: RegistryAllowlist.SearchHighlightsPolicy.Target, Number: 0)));
         Assert.Null(MachineTweakRules.Refusal(new(AdminPipeTweak.RegistryKeyDelete, Target: BrowserExtensions.BlocklistKey(BrowserKind.Edge))));
-        Assert.Null(MachineTweakRules.Refusal(new(AdminPipeTweak.DefenderAdd, Folders: [@"D:\work", @"C:\src", @"C:\Users\ann\source\repos", @"C:\Users\ann\.nuget\packages"],
+        Assert.Null(MachineTweakRules.Refusal(new(AdminPipeTweak.DefenderRemove, Folders: [@"D:\work", @"C:\src", @"C:\Users\ann\source\repos", @"C:\Users\ann\.nuget\packages"],
             Processes: [Vs + @"Common7\IDE\devenv.exe", @"C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\Roslyn\VBCSCompiler.exe"]), Paths));
         // Undo removes an exclusion even after its folder or Visual Studio is gone.
         Assert.Null(MachineTweakRules.Refusal(new(AdminPipeTweak.DefenderRemove, Folders: [@"D:\missing"], Processes: [@"C:\Program Files\Microsoft Visual Studio\missing\Community\MSBuild\Current\Bin\MSBuild.exe"]), Paths));
-        Assert.NotNull(MachineTweakRules.Refusal(new(AdminPipeTweak.DefenderAdd, Processes: [@"C:\Program Files\Microsoft Visual Studio\missing\Community\MSBuild\Current\Bin\MSBuild.exe"]), Paths));
         Assert.Null(MachineTweakRules.Refusal(new(AdminPipeTweak.PageFileRestore, Text: PageFile)));
     }
 
@@ -143,7 +137,7 @@ public sealed class MachineTweaksPipeTests
         var pf = await app.EnableAutoPageFileAsync(CancellationToken.None);
         Assert.False(pf.Success);
         Assert.Contains("Admin Repair Mode", pf.Message);
-        await Assert.ThrowsAsync<AdminRequiredException>(() => app.AddDefenderExclusionsAsync([@"D:\work"], [], CancellationToken.None));
+        await Assert.ThrowsAsync<AdminRequiredException>(() => app.RemoveDefenderExclusionsAsync([@"D:\work"], [], CancellationToken.None));
         Assert.Null(await app.ReadDefenderAsync(CancellationToken.None)); // the app reads what it can itself
         Assert.Empty(notConnected.Sent);
     }
@@ -193,7 +187,6 @@ public sealed class MachineTweaksPipeTests
     private sealed class FakeTweaks : IMachineTweaks
     {
         public const string Probe = """{"On":"True","Mode":"Normal","Paths":["D:\\old"],"Procs":[]}""";
-        public const string ReadBack = """{"Paths":["D:\\work"],"Procs":[]}""";
         public List<string> Calls { get; } = [];
         public void WriteDword(RegistrySetting setting, int value) => Calls.Add($"write {setting.Target}={value}");
         public void DeleteDword(RegistrySetting setting) => Calls.Add("delete " + setting.Target);
@@ -207,11 +200,6 @@ public sealed class MachineTweaksPipeTests
             return Task.FromResult(new ActionOutcome(true, "restored " + PageFileSettings.TryDecode(settings)!.Count));
         }
         public Task<string?> ReadDefenderAsync(CancellationToken ct) { Calls.Add("defender read"); return Task.FromResult<string?>(Probe); }
-        public Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct)
-        {
-            Calls.Add($"defender add {string.Join(";", folders)} | {string.Join(";", processes)}");
-            return Task.FromResult<(bool, string?)>((true, ReadBack));
-        }
         public Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct)
         {
             Calls.Add($"defender remove {string.Join(";", folders)} | {string.Join(";", processes)}");

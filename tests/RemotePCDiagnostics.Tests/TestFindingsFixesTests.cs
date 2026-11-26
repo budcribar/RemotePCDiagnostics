@@ -30,7 +30,6 @@ public class TestFindingsFixesTests
         public Dictionary<string, string> StartTypes = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, int> Delayed = new(StringComparer.OrdinalIgnoreCase);
         public List<string> Calls = [];
-        public string? DefenderReadBack;
 
         public Sys(params string[] keys) { foreach (var k in keys) AddKey(k); }
 
@@ -114,8 +113,6 @@ public class TestFindingsFixesTests
         public IReadOnlyDictionary<string, int?>? ReadHibernateValues() => Hibernation.TrackedValues.ToDictionary(n => n, n => Power.TryGetValue(n, out var v) ? v : (int?)null);
         public void DeleteHibernateValue(string name) { Calls.Add("hib-delete:" + name); Power.Remove(name); }
 
-        public Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) =>
-            Task.FromResult<(bool, string?)>((true, DefenderReadBack));
         public Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) => Task.FromResult(true);
     }
 
@@ -551,65 +548,6 @@ public class TestFindingsFixesTests
         Assert.Equal("Fast Startup", UndoAllResult.RestartName(ChangeRecord.New(ChangeKind.FastStartup, "", "1", "Fast Startup turned off", "x")));
         Assert.Equal("page file", UndoAllResult.RestartName(ChangeRecord.New(ChangeKind.PageFile, "", "x", "Page file managed by Windows", "x")));
         Assert.Equal("Game DVR turned off for this account", UndoAllResult.RestartName(ChangeRecord.New(ChangeKind.RegistryValue, RegistryAllowlist.GameDvrEnabled.Target, null, "Game DVR turned off for this account (was not set)", "x")));
-    }
-
-    [Fact]
-    public void Defender_CardAndResult_CountTheSameWay()
-    {
-        var folders = Enumerable.Range(1, 18).Select(i => $@"D:\src\repo{i}").ToList();
-        var nuget = @"C:\Users\user\.nuget\packages";
-        var tools = Enumerable.Range(1, 7).Select(i => $@"C:\VS\tool{i}.exe").ToList();
-        var info = new DefenderInfo(true, folders, [.. folders, nuget], tools);
-        var card = MemorySuggestionEngine.Build(new MemorySnapshot(new(16 * Gb, 8 * Gb), [new("MsMpEng", 1, 300L << 20, IsService: true)], Defender: info))
-            .Single(x => x.Id == "defender-exclusions");
-        Assert.Contains("Excluding 19 folders and 7 build tools", card.Why);
-        Assert.Equal("19 folders and 7 build tools", DefenderProbe.Describe(19, 7));
-        Assert.Equal("1 folder", DefenderProbe.Describe(1, 0));
-        Assert.Equal("2 build tools", DefenderProbe.Describe(0, 2));
-    }
-
-    [Fact]
-    public async Task Defender_Result_MatchesTheCard()
-    {
-        var folders = new List<string> { @"D:\work", @"C:\Users\user\.nuget\packages" };
-        var tools = new List<string> { @"C:\VS\MSBuild.exe" };
-        var sys = new Sys
-        {
-            Snap = new MemorySnapshot(new(16 * Gb, 8 * Gb), [new("MsMpEng", 1, 300L << 20, IsService: true)], Defender: new(true, [@"D:\work"], folders, tools)),
-            DefenderReadBack = JsonSerializer.Serialize(new { Paths = folders, Procs = tools }),
-        };
-        var (_, _, svc) = Make(sys);
-        await svc.ScanAsync();
-        var s = svc.Suggestions.Single(x => x.Id == "defender-exclusions");
-        Assert.Contains("Excluding 2 folders and 1 build tool", s.Why);
-        var r = await svc.ApplyAsync(s, s.Actions[0]);
-        Assert.Contains("Defender no longer scans 2 folders and 1 build tool.", r.Message);
-    }
-
-    [Fact]
-    public void Defender_PlanAndWorkflowFix_ShowOnlyNewExclusions()
-    {
-        var status = new DefenderProbe.Status(
-            Active: true,
-            Paths: [@"D:\src\existing"],
-            Processes: ["MSBuild.exe"],
-            ExclusionsReadable: true);
-        var info = DefenderProbe.Plan(
-            status,
-            [@"D:\src\existing\sub", @"D:\src\newrepo"],
-            nugetPackages: null,
-            buildTools: [@"C:\VS\MSBuild.exe", @"C:\VS\VBCSCompiler.exe"]);
-
-        Assert.Equal([@"D:\src\newrepo"], info.MissingFolders);
-        Assert.Equal([@"C:\VS\VBCSCompiler.exe"], info.MissingProcesses);
-
-        var suggestions = MemorySuggestionEngine.Build(new MemorySnapshot(new(16 * Gb, 8 * Gb), [], Defender: info));
-        var fix = Assert.Single(RemotePCDiagnostics.Core.Workflow.FixCatalog.Build([], suggestions), f => f.MemoryAction == MemoryActionType.AddDefenderExclusions);
-        Assert.NotNull(fix.Details);
-        Assert.Contains(@"D:\src\newrepo", fix.Details);
-        Assert.DoesNotContain(fix.Details, d => d.Contains("existing", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(fix.Details, d => d.Contains("VBCSCompiler.exe", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(fix.Details, d => d.Contains("MSBuild.exe", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

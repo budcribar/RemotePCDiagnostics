@@ -34,12 +34,11 @@ public interface IMachineTweaks
     Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct);
     /// <summary>The <see cref="Platform.WindowsDefenderWmi.ReadStatusJson"/> output (Defender's state and its exclusions, which only an administrator can read).</summary>
     Task<string?> ReadDefenderAsync(CancellationToken ct);
-    /// <summary>Adds the exclusions and returns them read back (<see cref="DefenderProbe.Confirmed"/>); Ok = false when Windows refused.</summary>
-    Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct);
+    /// <summary>Removes exclusions an earlier version of this app added (undo of their journaled changes).</summary>
     Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct);
     /// <summary>Adds a temporary Defender exclusion for one RPCD build temp folder (<see cref="DevDriveRules.IsRpcdTempBuildFolder"/>).</summary>
     Task<(bool Ok, string? Output)> AddTempBuildDefenderExclusionAsync(string folder, CancellationToken ct) =>
-        AddDefenderExclusionsAsync([folder], [], ct);
+        Task.FromResult<(bool, string?)>((false, null));
     /// <summary>Removes a temporary Defender exclusion for one RPCD build temp folder.</summary>
     Task<bool> RemoveTempBuildDefenderExclusionAsync(string folder, CancellationToken ct) =>
         RemoveDefenderExclusionsAsync([folder], [], ct);
@@ -79,7 +78,6 @@ public sealed record AdminPipeTweak(
     /// <summary>Text = the saved settings (<see cref="PageFileSettings.Encode"/>).</summary>
     public const string PageFileRestore = "pagefile_restore";
     public const string DefenderRead = "defender_read";
-    public const string DefenderAdd = "defender_add";
     public const string DefenderRemove = "defender_remove";
     /// <summary>Target = RPCD build temp folder under Temp\rpcd-devbench-*.</summary>
     public const string DefenderTempAdd = "defender_temp_add";
@@ -97,7 +95,8 @@ public sealed record AdminPipeTweak(
 /// <summary>
 /// What the Agent agrees to change for the app, checked before <see cref="IMachineTweaks"/> is called. A request can only make the
 /// changes the suggestions and undo make: only allowlisted HKLM values and keys, only allowlisted extensions, only page file sizes in the
-/// journal's format, and only Defender exclusions for code folders and Visual Studio's build tools. The Agent never runs a script the
+/// journal's format, only removing Defender exclusions for code folders and Visual Studio's build tools (undo of
+/// an earlier version's fix), and only temporary exclusions for RPCD build temp folders. The Agent never runs a script the
 /// app sent: it builds the PowerShell itself from the checked lists.
 /// </summary>
 public static class MachineTweakRules
@@ -133,17 +132,17 @@ public static class MachineTweakRules
                 if (t.Text is not { Length: > 0 and <= MaxPageFileSettings }) return "The saved page file settings are unreadable.";
                 return PageFileSettings.TryDecode(t.Text) is null ? "The saved page file settings are unreadable." : null;
 
-            case AdminPipeTweak.DefenderAdd or AdminPipeTweak.DefenderRemove:
-                var adding = t.Action == AdminPipeTweak.DefenderAdd;
+            case AdminPipeTweak.DefenderRemove:
+                // Only removal is left (undo of exclusions an earlier version added); the app no longer adds permanent exclusions.
                 var p = paths ?? DefenderPaths.Current();
                 var folders = t.Folders ?? [];
                 var procs = t.Processes ?? [];
                 if (folders.Count + procs.Count == 0) return "No exclusions were sent.";
                 if (folders.Count > MaxDefenderFolders || procs.Count > MaxDefenderProcesses) return "Too many exclusions at once.";
                 foreach (var f in folders)
-                    if (p.FolderRefusal(f, mustExist: adding) is { } why) return why;
+                    if (p.FolderRefusal(f, mustExist: false) is { } why) return why;
                 foreach (var x in procs)
-                    if (!p.IsBuildTool(x, mustExist: adding)) return $"{x} isn't a Visual Studio build tool.";
+                    if (!p.IsBuildTool(x, mustExist: false)) return $"{x} isn't a Visual Studio build tool.";
                 return null;
 
             case AdminPipeTweak.DefenderTempAdd or AdminPipeTweak.DefenderTempRemove:
@@ -212,8 +211,6 @@ public static class MachineTweakRules
             case AdminPipeTweak.DefenderRead:
                 var json = await backend.ReadDefenderAsync(ct).ConfigureAwait(false);
                 return (json is not null, json);
-            case AdminPipeTweak.DefenderAdd:
-                return await backend.AddDefenderExclusionsAsync(t.Folders ?? [], t.Processes ?? [], ct).ConfigureAwait(false);
             case AdminPipeTweak.DefenderRemove:
                 return (await backend.RemoveDefenderExclusionsAsync(t.Folders ?? [], t.Processes ?? [], ct).ConfigureAwait(false), null);
             case AdminPipeTweak.DefenderTempAdd:
@@ -429,13 +426,6 @@ public sealed class AgentMachineTweaks(IElevatedCommandBridge? bridge, ILogger? 
             return r.Ok ? r.StdOut : null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { log.Info("[machine-tweaks] Defender read in the Agent: " + ex.Message); return null; }
-    }
-
-    public async Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct)
-    {
-        var r = await bridge.RequireAgent().MachineTweakAsync(new(AdminPipeTweak.DefenderAdd, Folders: folders, Processes: processes), ct).ConfigureAwait(false);
-        if (!r.Ok) log.Warn("[machine-tweaks] Defender exclusions not added: " + r.Error);
-        return (r.Ok, r.Ok ? r.StdOut : null);
     }
 
     public async Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct)
@@ -715,7 +705,7 @@ public sealed class WindowsMachineTweaks(ILogger? log = null, IProcessLauncher? 
         }
     }
 
-    public async Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct)
+    private async Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct)
     {
         try
         {

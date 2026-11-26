@@ -96,24 +96,4 @@ public static class DevProjects
         }
         catch { }
     }
-
-    /// <summary>Visual Studio's own build tools (full paths, as Defender process exclusions require). dotnet.exe is left out: it also runs every .NET app.</summary>
-    public static IReadOnlyList<string> BuildTools()
-    {
-        var found = new List<string>();
-        foreach (var pf in new[] { Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) })
-        {
-            var vs = Path.Combine(pf, "Microsoft Visual Studio");
-            if (pf.Length == 0 || !Directory.Exists(vs)) continue;
-            try
-            {
-                foreach (var version in Directory.EnumerateDirectories(vs))      // 2022, 18, …
-                    foreach (var edition in Directory.EnumerateDirectories(version)) // Community, Professional, Enterprise, BuildTools, Preview
-                        foreach (var rel in new[] { @"Common7\IDE\devenv.exe", @"MSBuild\Current\Bin\MSBuild.exe", @"MSBuild\Current\Bin\amd64\MSBuild.exe", @"MSBuild\Current\Bin\Roslyn\VBCSCompiler.exe" })
-                            if (File.Exists(Path.Combine(edition, rel))) found.Add(Path.Combine(edition, rel));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-        }
-        return found.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-    }
 }

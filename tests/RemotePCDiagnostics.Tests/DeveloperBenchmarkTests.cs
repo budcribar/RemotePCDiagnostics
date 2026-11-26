@@ -924,7 +924,6 @@ public sealed class DeveloperBenchmarkTests : IDisposable
         public Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct) => Task.FromResult(new ActionOutcome(true, "ok"));
         public Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, "ok"));
         public Task<string?> ReadDefenderAsync(CancellationToken ct) => Task.FromResult<string?>(null);
-        public Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) => Task.FromResult<(bool, string?)>((true, "{}"));
         public Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) => Task.FromResult(true);
 
         public Task<(bool Ok, string? Output)> AddTempBuildDefenderExclusionAsync(string folder, CancellationToken ct)

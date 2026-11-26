@@ -77,7 +77,6 @@ public static class FixKeys
         [MemoryActionType.DisableTransparency] = "disabletransparency",
         [MemoryActionType.AutoManagePageFile] = "automanagepagefile",
         [MemoryActionType.IncreasePageFile] = "increasepagefile",
-        [MemoryActionType.AddDefenderExclusions] = "adddefenderexclusions",
         [MemoryActionType.DisableWidgets] = "disablewidgets",
         [MemoryActionType.DisableSearchHighlights] = "disablesearchhighlights",
         [MemoryActionType.ReduceHibernateFile] = "reducehibernatefile",

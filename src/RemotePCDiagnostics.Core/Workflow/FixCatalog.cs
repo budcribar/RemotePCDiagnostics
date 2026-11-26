@@ -37,7 +37,6 @@ public static class FixCatalog
     {
         MemoryActionType.DisableStartup, MemoryActionType.EnableBrowserMemorySaver, MemoryActionType.SetServiceManual, MemoryActionType.SetServiceDisabled,
         MemoryActionType.DisableTransparency, MemoryActionType.AutoManagePageFile, MemoryActionType.IncreasePageFile,
-        MemoryActionType.AddDefenderExclusions,
         MemoryActionType.DisableWidgets, MemoryActionType.DisableSearchHighlights, MemoryActionType.ReduceHibernateFile,
         MemoryActionType.SkipOfficeStartScreen,
         MemoryActionType.SetPdfDefaultPrinter,
@@ -165,7 +164,7 @@ public static class FixCatalog
                 : s.Why;
             list.Add(new(id, title, why, s.Category, s.Risk, FixSource.Memory, order,
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
-                NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.IncreasePageFile or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
+                NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.IncreasePageFile or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.StopService
                     or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension
                     or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.RemoveNarratorAddons
                     || (a.Type == MemoryActionType.StopBrowserBackground && a.Target == nameof(BrowserKind.Edge)),

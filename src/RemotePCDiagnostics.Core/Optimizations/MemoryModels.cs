@@ -94,7 +94,6 @@ public sealed record MemorySnapshot(
     bool? AutoPageFile = null,
     MemorySlots? Slots = null,
     BrowserKind? DefaultBrowser = null,
-    DefenderInfo? Defender = null,
     WindowsFeedsInfo? Feeds = null,
     HibernateInfo? Hibernate = null,
     OfficeStartInfo? OfficeStart = null, DefaultPrinterInfo? DefaultPrinter = null, OfficePrivacyInfo? OfficePrivacy = null, BrowserExtensionsInfo? Extensions = null, IReadOnlyList<BrowserBackgroundInfo>? BrowserBackground = null, AppRemovalInfo? RemovableApps = null)
@@ -207,7 +206,7 @@ public enum MemoryActionType
     CloseApp, ForceCloseApp, ShutdownBuildServers, DisableStartup, EnableBrowserMemorySaver, OpenSettings,
     StopService, SetServiceManual, SetServiceDisabled,
     RestartPc, DisableFastStartup, DisableTransparency, AutoManagePageFile, IncreasePageFile,
-    AddDefenderExclusions, DisableWidgets, DisableSearchHighlights, ReduceHibernateFile,
+    DisableWidgets, DisableSearchHighlights, ReduceHibernateFile,
     SkipOfficeStartScreen,
     SetPdfDefaultPrinter,
     DisableOfficeOptionalExperiences,

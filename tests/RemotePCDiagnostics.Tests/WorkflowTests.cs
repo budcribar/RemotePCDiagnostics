@@ -843,8 +843,8 @@ public class WorkflowTests
     public void ReportBox_GroupsByCategory_AndNestsMultiChangeFixes()
     {
         var now = DateTimeOffset.Now;
-        var defenderChanges = Enumerable.Range(1, 7)
-            .Select(i => new FixChange(Guid.NewGuid(), $@"Defender no longer scans C:\src\repo{i}", UndoSupport.Full))
+        var appChanges = Enumerable.Range(1, 7)
+            .Select(i => new FixChange(Guid.NewGuid(), $"Removed preinstalled app {i}", UndoSupport.Full))
             .ToList();
         var state = new WorkflowState
         {
@@ -854,9 +854,9 @@ public class WorkflowTests
             [
                 new("browser-ext", "Turn off MSN New Tab in Chrome", "", "Browser", SuggestionRisk.Low, FixSource.Memory, 1),
                 new("office-start", "Skip the Office start screen", "", "Office", SuggestionRisk.Low, FixSource.Memory, 2),
-                new("defender", "Stop Defender rescanning code and build folders", "", "Windows", SuggestionRisk.Medium, FixSource.Memory, 3),
+                new("remove-apps", "Remove preinstalled apps", "", "Windows", SuggestionRisk.Medium, FixSource.Memory, 3),
             ],
-            Approved = ["browser-ext", "office-start", "defender"],
+            Approved = ["browser-ext", "office-start", "remove-apps"],
             Outcomes =
             [
                 new("browser-ext", "Turn off MSN New Tab in Chrome", true, "Done.", Changes: [new(Guid.NewGuid(), "MSN New Tab turned off in Chrome", UndoSupport.Full)]),
@@ -866,7 +866,7 @@ public class WorkflowTests
                     new(Guid.NewGuid(), "Excel start screen turned off", UndoSupport.Full),
                     new(Guid.NewGuid(), "PowerPoint start screen turned off", UndoSupport.Full),
                 ]),
-                new("defender", "Stop Defender rescanning code and build folders", true, "Done.", Changes: defenderChanges),
+                new("remove-apps", "Remove preinstalled apps", true, "Done.", Changes: appChanges),
             ],
         };
         var store = new MemFlowStore { State = state };
@@ -882,9 +882,9 @@ public class WorkflowTests
         Assert.Equal(["Browser", "Office", "Windows"], groups.Select(g => g.GetAttribute("data-area-key")));
         Assert.All(groups, g => Assert.True(g.HasAttribute("open")));
 
-        // Single-item fix (Browser) is a direct row; multi-item fixes (Office, Defender) are nested sub-groups.
+        // Single-item fix (Browser) is a direct row; multi-item fixes (Office, Apps) are nested sub-groups.
         var fixGroups = cut.FindAll("[data-testid='wf-change-fix-group']");
-        Assert.Equal(["office-start", "defender"], fixGroups.Select(g => g.GetAttribute("data-fix-id")));
+        Assert.Equal(["office-start", "remove-apps"], fixGroups.Select(g => g.GetAttribute("data-fix-id")));
         // 3 items <= threshold (5): open by default; 7 items > threshold (5): collapsed by default.
         Assert.True(fixGroups[0].HasAttribute("open"));
         Assert.False(fixGroups[1].HasAttribute("open"));

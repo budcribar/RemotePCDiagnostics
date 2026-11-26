@@ -186,7 +186,7 @@ public sealed class DeveloperSetupModule(
                 ? $"Real-time protection on ({defender.Paths.Count} path, {defender.Processes.Count} process exclusions)"
                 : "Defender real-time protection not active";
             defMeta = defender.Active
-                ? "Approval-gated Defender exclusions for code folders and build tools are available under Optimize (AddDefenderExclusions)."
+                ? "Build on a Dev Drive: Defender's performance mode covers it without folder exclusions."
                 : "Another antivirus or passive mode is active.";
             defRows.Add(new(AreaLevel.Ok, ["Real-time protection", defender.Active ? "On" : "Off / passive"]));
             defRows.Add(new(AreaLevel.Ok, ["Path exclusions", defender.Paths.Count.ToString(CultureInfo.InvariantCulture)]));

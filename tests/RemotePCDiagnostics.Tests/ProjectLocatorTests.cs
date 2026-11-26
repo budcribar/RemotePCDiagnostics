@@ -100,14 +100,5 @@ public sealed class ProjectLocatorTests : IDisposable
         Assert.False(ProjectLocator.IsUnsafe(@"D:\work\shop", paths));
     }
 
-    [Fact]
-    public void CollapseSiblings_ThreeReposInOneSafeFolderBecomeTheFolder()
-    {
-        var list = ProjectLocator.CollapseSiblings([@"D:\work\a", @"D:\work\b", @"D:\work\c", @"E:\one\x", @"E:\one\y"], paths);
-        Assert.Equal([@"D:\work", @"E:\one\x", @"E:\one\y"], list);
-        // Never collapses into an unsafe parent (a drive root).
-        Assert.Equal([@"D:\a", @"D:\b", @"D:\c"], ProjectLocator.CollapseSiblings([@"D:\a", @"D:\b", @"D:\c"], paths));
-    }
-
     public void Dispose() { try { Directory.Delete(root, true); } catch { } }
 }
