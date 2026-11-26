@@ -130,7 +130,7 @@ public sealed class Batch4WindowsMaintenanceTests
         var card = Assert.Single(report.Cards, c => c.Id == "clock");
         Assert.Equal(AreaLevel.Warning, card.Level);
         Assert.Contains(card.Rows, r => r.Values[0] == "Last time sync" && r.Values[1].Contains("days ago"));
-        Assert.Contains(card.Rows, r => r.Values[0] == "Time source" && r.Values[1] == "time.windows.com,0x9");
+        Assert.Contains(card.Rows, r => r.Values[0] == "Time source" && r.Values[1] == "time.windows.com");
         Assert.Null(card.Actions);
     }
 
@@ -205,6 +205,8 @@ public sealed class Batch4WindowsMaintenanceTests
         Assert.Contains("no peering", WindowsMaintenanceModule.DescribeDeliveryOptimizationMode(0), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("local network", WindowsMaintenanceModule.DescribeDeliveryOptimizationMode(1), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("internet", WindowsMaintenanceModule.DescribeDeliveryOptimizationMode(3), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("time.windows.com", WindowsMaintenanceModule.CleanTimeSource("time.windows.com,0x9"));
+        Assert.Equal("Local CMOS Clock", WindowsMaintenanceModule.CleanTimeSource("Local CMOS Clock"));
     }
 
     private sealed class SequenceClockProber(params ClockHttpsSample[] samples) : IClockHttpsProber

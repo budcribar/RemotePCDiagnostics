@@ -305,7 +305,8 @@ public sealed class WindowsMaintenanceModule(
                 ? FormatAge(age)
                 : !string.IsNullOrWhiteSpace(ts.RawLastSync) ? ts.RawLastSync : "Unavailable";
             rows.Add(new(clock.StaleSyncWarning ? AreaLevel.Warning : AreaLevel.Neutral, ["Last time sync", ageText]));
-            rows.Add(new(AreaLevel.Neutral, ["Time source", string.IsNullOrWhiteSpace(ts.Source) ? "Unavailable" : ts.Source]));
+            var cleanSource = CleanTimeSource(ts.Source);
+            rows.Add(new(AreaLevel.Neutral, ["Time source", string.IsNullOrWhiteSpace(cleanSource) ? "Unavailable" : cleanSource]));
         }
         else
         {
@@ -320,9 +321,22 @@ public sealed class WindowsMaintenanceModule(
         notes.Add("Read-only check using strict TLS certificate validation against the Admin HTTPS server.");
 
         // Read-only in Batch 4: no resync action.
+        var cleanCardSource = CleanTimeSource(clock.TimeService?.Source);
         return new("clock", "Clock & time sync", level, headline,
-            clock.TimeService?.Source is { Length: > 0 } src ? $"Time source: {src}" : "HTTPS time check",
+            cleanCardSource is { Length: > 0 } src ? $"Time source: {src}" : "HTTPS time check",
             ["Detail", "Value"], rows, Note: string.Join(" ", notes));
+    }
+
+    /// <summary>
+    /// Strips internal Windows Time (<c>w32tm</c>) hex flag suffixes like <c>,0x9</c> from an NTP source string
+    /// (e.g. <c>time.windows.com,0x9</c> → <c>time.windows.com</c>).
+    /// </summary>
+    public static string CleanTimeSource(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        var trimmed = raw.Trim();
+        var comma = trimmed.IndexOf(",0x", StringComparison.OrdinalIgnoreCase);
+        return comma > 0 ? trimmed[..comma].Trim() : trimmed;
     }
 
     private static AreaCard BuildHostsCard(HostsFileStatus hosts)
@@ -384,13 +398,19 @@ public sealed class WindowsMaintenanceModule(
     private static AreaCard BuildDeliveryOptimizationCard(DeliveryOptimizationStatus dopt)
     {
         var headline = dopt.EffectiveMode is { } m ? $"{dopt.Description} (mode {m})" : dopt.Description;
+        var summary = dopt.EffectiveMode switch
+        {
+            0 or 99 or 100 => "Downloads Windows Updates directly from Microsoft without sharing to other PCs",
+            3 => "Shares Windows Update downloads with PCs on your network and the internet",
+            _ => "Shares Windows Update downloads with other PCs (local network only by default)",
+        };
         var rows = new List<AreaRow>
         {
             new(AreaLevel.Neutral, ["Effective upload mode", headline]),
             new(AreaLevel.Neutral, ["Source", dopt.Source]),
         };
         return new("delivery-optimization", "Delivery Optimization", AreaLevel.Neutral, headline,
-            "Read-only check of Windows Update peer-to-peer upload mode",
+            summary,
             ["Detail", "Value"], rows);
     }
 
