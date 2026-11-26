@@ -11,9 +11,9 @@ if ([string]::IsNullOrWhiteSpace($AgentExePath) -or -not (Test-Path -LiteralPath
     # Check default locations
     $candidates = @(
         (Join-Path $PSScriptRoot '../artifacts/agent/RemotePCDiagnostics.Agent-*-win-x64.exe'),
-        (Join-Path $PSScriptRoot '../src/RemotePCDiagnostics.Agent/bin/Release/net10.0/win-x64/publish/RemotePCDiagnostics.Agent.exe'),
-        (Join-Path $PSScriptRoot '../src/RemotePCDiagnostics.Host/bin/Release/net10.0-windows10.0.19041.0/RemotePCDiagnostics.Agent.exe'),
-        (Join-Path $PSScriptRoot '../src/RemotePCDiagnostics.Agent/bin/Release/net10.0/RemotePCDiagnostics.Agent.exe')
+        (Join-Path $PSScriptRoot '../src/RemotePCDiagnostics.Agent/bin/Release/net11.0/win-x64/publish/RemotePCDiagnostics.Agent.exe'),
+        (Join-Path $PSScriptRoot '../src/RemotePCDiagnostics.Host/bin/Release/net11.0-windows10.0.19041.0/RemotePCDiagnostics.Agent.exe'),
+        (Join-Path $PSScriptRoot '../src/RemotePCDiagnostics.Agent/bin/Release/net11.0/RemotePCDiagnostics.Agent.exe')
     )
     foreach ($c in $candidates) {
         $resolved = Resolve-Path $c -ErrorAction SilentlyContinue | Select-Object -First 1

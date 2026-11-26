@@ -33,7 +33,7 @@ runs:
             $tutorialStub = Join-Path $work 'RemoteBlazorWebViewTutorial'
             New-Item -ItemType Directory -Force $tutorialStub | Out-Null
             Set-Content -Path (Join-Path $tutorialStub 'README.md') -Value '# RemoteBlazorWebView'
-            git clone --branch net10 --depth 1 https://github.com/budcribar/RemoteBlazorWebView.git $srcRoot
+            git clone --branch net11 --depth 1 https://github.com/budcribar/RemoteBlazorWebView.git $srcRoot
             Push-Location (Join-Path $srcRoot 'src/RemoteWebView.Blazor.JS')
             try {
               # Enable corepack yarn for Web.JS submodule build invoked by build:production, or use npm + webpack.

@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -11,12 +11,12 @@
   <ItemGroup>
     <PackageReference Include="NuGet.Versioning" Version="8.0.0" />
     <!-- UserModePlugin builds a plugin's own container inside a user-mode process. -->
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.15" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="11.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="11.0.0" />
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
-    <PackageReference Include="System.Management" Version="10.0.2" />
+    <PackageReference Include="System.Management" Version="11.0.0" />
     <!-- WindowsAdminSettings: the Agent starts and stops services for the app. -->
-    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.15" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="11.0.0" />
   </ItemGroup>
   <ItemGroup>
     <!-- Fixed PowerShell scripts, loaded by name (PowerShellScripts.Get). -->
