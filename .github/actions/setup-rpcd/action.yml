@@ -7,6 +7,43 @@ runs:
       with:
         dotnet-version: 11.0.x
 
+    - name: Mount ephemeral ReFS Dev Drive (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        if (Test-Path 'R:\') {
+          Write-Host "Dev Drive R:\ already mounted."
+        } else {
+          $vhdDir = if (Test-Path 'D:\') { 'D:\' } else { $env:RUNNER_TEMP }
+          $vhd = Join-Path $vhdDir 'rpcd-devdrive.vhdx'
+          $dp = @"
+        create vdisk file="$vhd" maximum=51200 type=expandable
+        select vdisk file="$vhd"
+        attach vdisk
+        convert gpt
+        create partition primary
+        assign letter=R
+        "@
+          $dp | diskpart | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "diskpart failed ($LASTEXITCODE); continuing without Dev Drive."
+            exit 0
+          }
+          try {
+            Format-Volume -DriveLetter R -FileSystem ReFS -DevDrive -NewFileSystemLabel 'DevDrive' -Confirm:$false | Out-Null
+            Write-Host "Mounted ReFS Dev Drive at R:\ ($vhd)"
+          } catch {
+            Write-Warning "Format-Volume -DevDrive failed ($($_.Exception.Message)); falling back to ReFS."
+            Format-Volume -DriveLetter R -FileSystem ReFS -NewFileSystemLabel 'DevDrive' -Confirm:$false | Out-Null
+          }
+        }
+        if (Test-Path 'R:\') {
+          New-Item -ItemType Directory -Force -Path 'R:\nuget', 'R:\tmp' | Out-Null
+          "NUGET_PACKAGES=R:\nuget" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TEMP=R:\tmp" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TMP=R:\tmp" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        }
+
     - name: Ensure RemoteBlazorWebView packages
       shell: pwsh
       run: |
