@@ -1,0 +1,11 @@
+{
+  "id": "b81b0a57-43d2-4ad4-8572-1480fbe6cf0f",
+  "slug": "SoundCheck",
+  "displayName": "Sound check (left and right)",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.SoundCheck.SoundCheckPlugin",
+  "needsAdmin": false,
+  // Its controls live on the Interactive tests page.
+  "hasUi": false,
+  "inProcessOnly": "it uses the app's audio adapter"
+}

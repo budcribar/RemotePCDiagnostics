@@ -22,15 +22,24 @@
     var m2sRep = m2sResult.Payload as MicToSpeakerReport;
     var m2sRunning = m2sResult.Status == DiagnosticStatus.Running;
 
+    var scResult = Store.Get(ModuleSlugs.SoundCheck);
+    var scRep = scResult.Payload as SoundCheckReport;
+    var scRunning = scResult.Status == DiagnosticStatus.Running;
+    var soundResult = Store.Get(ModuleSlugs.Sound);
+    var soundRep = soundResult.Report() as AreaReport;
+    var soundReading = soundResult.Status == DiagnosticStatus.Running;
+    var scSteps = soundRep is null || _soundHelp is null ? [] : _soundHelp == "one-side" ? SoundCheck.OneSideSteps(soundRep) : SoundCheck.CantHearSteps(soundRep);
+    var scServicesOk = soundRep is not null && SoundCheck.ServicesOk(soundRep);
+
     var kbSnap = ActivePhysicalQa.Current;
-    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning;
+    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning || scRunning;
 
     var allSelected = _selected.Count == AllTestIds.Length;
     var mixedSelected = _selected.Count > 0 && _selected.Count < AllTestIds.Length;
 }
 
 <div class="ct-page">
-    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult)" />
+    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk))" />
     <div class="toolbar">
         <span class="icon-badge page-icon"><Icon Name="eye" Size="20" /></span>
         <h1 data-rpcd-page="interactive" data-rpcd-contract="@BrowserContract.Interactive" data-testid="interactive-title">Interactive tests</h1>
@@ -228,6 +237,33 @@
                             <span class="chip chip-@m2sChip" data-testid="interactive-status-mictospeaker">@m2sLabel</span>
                         </div>
                     </div>
+
+                    @* 6. Sound check: left/right test sound and Can't hear sound *@
+                    @{
+                        var scIsSel = _selectedTestId == "soundcheck";
+                        var scWaiting = !scRunning && scRep is { Answer: null } && scResult.Status == DiagnosticStatus.Warning;
+                        var scChip = scWaiting ? "run" : OutcomeChip(scResult.Status);
+                        var scDot = scWaiting ? "running" : DotKind(scResult.Status);
+                        var scLabel = scWaiting ? "Waiting for answer" : OutcomeLabel(scResult.Status);
+                        var scSummary = scRunning ? "Playing the test sound…" : scResult.Status == DiagnosticStatus.NotRun ? "Left/right test sound, and help when there's no sound" : scResult.Message;
+                    }
+                    <div class="ct-row @(scIsSel ? "selected" : "") @(scRunning ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(scIsSel ? "true" : "false")"
+                         data-testid="interactive-row-soundcheck" @onclick='() => SelectTest("soundcheck")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("soundcheck") ? "true" : "false")"
+                                aria-label="Include Sound check"
+                                data-testid="interactive-check-soundcheck"
+                                @onclick='() => ToggleItem("soundcheck")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("soundcheck") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@scDot"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">Sound check (left and right)</div>
+                            <div class="ct-row-summary meta" title="@scSummary">@scSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@scChip" data-testid="interactive-status-soundcheck">@scLabel</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -415,6 +451,10 @@
                             <span> · Output: <strong>@Db(s2mRep.Loopback?.PeakDbfs ?? s2mRep.Mic.PeakDbfs)</strong></span>
                             <span> · Raw mic: <strong>@(s2mRep.RawMic ? "Yes" : "No")</strong></span>
                         </div>
+                        @if (SoundCheck.SuggestFor(s2mRep.Verdict))
+                        {
+                            <p class="meta" data-testid="speakertomic-cant-hear-link">No sound? <button type="button" class="linklike" data-testid="speakertomic-open-cant-hear" @onclick="OpenCantHearAsync">Find the cause with Can't hear sound →</button></p>
+                        }
                     }
 
                     <label class="phys-qa-note">
@@ -543,6 +583,141 @@
                     </div>
                 </div>
             }
+            else if (_selectedTestId == "soundcheck")
+            {
+                var scLeftDone = scRunning && (scResult.Message ?? "").Contains("right", StringComparison.OrdinalIgnoreCase);
+                <div class="phys-qa-pane" data-testid="interactive-soundcheck-pane">
+                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                        <strong>Sound check (left and right)</strong>
+                        <span class="chip chip-@(scRep is { Answer: null } && !scRunning && scResult.Status == DiagnosticStatus.Warning ? "run" : OutcomeChip(scResult.Status))" data-testid="soundcheck-status-chip">
+                            @(scRep is { Answer: null } && !scRunning && scResult.Status == DiagnosticStatus.Warning ? "Waiting for answer" : OutcomeLabel(scResult.Status))
+                        </span>
+                        @if (scRunning)
+                        {
+                            <button type="button" class="btn-small" data-testid="soundcheck-cancel-btn" @onclick="CancelSoundCheck">Cancel</button>
+                        }
+                    </div>
+                    <p class="meta" style="margin-top: 0">Plays a short chime on the left speaker, then the right. Say what you heard. Mute and volume are left as they are.</p>
+                    <div class="toolbar">
+                        <label class="meta">Speaker
+                            <select data-testid="soundcheck-output-select" disabled="@scRunning" @onchange="OnAudioOutputChange">
+                                @DeviceOptions(_outputs, _selectedOutputId)
+                            </select>
+                        </label>
+                        <button type="button" class="btn-small btn-primary" data-testid="soundcheck-play-btn"
+                                disabled="@(scRunning || Diagnostics.IsStressSuiteRunning)" @onclick="StartSoundCheckAsync">
+                            ▶ @(scResult.Status == DiagnosticStatus.NotRun ? "Play test sound" : "Play again")
+                        </button>
+                    </div>
+                    <div class="sc-lr" data-testid="soundcheck-sides">
+                        <div class="sc-side @(scRunning && !scLeftDone ? "on" : "")" data-testid="soundcheck-side-left">Left<b>@(scRunning ? scLeftDone ? "✓ played" : "♪ playing…" : scRep?.Answer is SoundCheckAnswer.Both or SoundCheckAnswer.OnlyLeft ? "Heard" : scRep?.Answer is not null ? "Not heard" : "")</b></div>
+                        <div class="sc-side @(scLeftDone ? "on" : "")" data-testid="soundcheck-side-right">Right<b>@(scLeftDone ? "♪ playing…" : scRep?.Answer is SoundCheckAnswer.Both or SoundCheckAnswer.OnlyRight ? "Heard" : scRep?.Answer is not null ? "Not heard" : "")</b></div>
+                    </div>
+                    @if (!scRunning && scRep?.Notice is { } scNotice) { <p class="notice" data-testid="soundcheck-notice">@scNotice</p> }
+                    <p data-testid="soundcheck-status" class="status-line"><span class="@DotClass(scResult.Status)"></span><span>@(scRunning ? "Playing the test sound…" : scResult.Status == DiagnosticStatus.NotRun ? "Not run. Press Play test sound to begin." : scResult.Message)</span></p>
+                    @if (!scRunning && scRep is not null)
+                    {
+                        <strong class="sc-q">What did you hear?</strong>
+                        <div class="phys-qa-actions" data-testid="soundcheck-answers">
+                            @foreach (var (ans, text, id) in AnswerButtons)
+                            {
+                                <button type="button" class="btn-small @(scRep.Answer == ans ? "btn-primary" : "")" data-testid="soundcheck-answer-@id" data-answer="@id"
+                                        aria-pressed="@(scRep.Answer == ans ? "true" : "false")" @onclick="() => AnswerSoundCheckAsync(ans)">@text</button>
+                            }
+                        </div>
+                    }
+
+                    @if (_soundHelp is not null)
+                    {
+                        <div class="sc-help" data-testid="soundcheck-help" data-mode="@_soundHelp">
+                            <div class="card-head"><strong>@(_soundHelp == "one-side" ? "Only one side heard" : "Can't hear sound")</strong>
+                                @if (!soundReading && soundRep is not null)
+                                {
+                                    <span class="chip chip-@(scSteps.Any(s => s.Row.Level >= AreaLevel.Warning) ? "warn" : "ok")" data-testid="soundcheck-help-chip">
+                                        @(scSteps.Count(s => s.Row.Level >= AreaLevel.Warning || s.Row.Actions is { Count: > 0 }) is var n and > 0 ? $"{n} thing{(n == 1 ? "" : "s")} to try" : "Nothing found")
+                                    </span>
+                                }
+                            </div>
+                            @if (soundReading)
+                            {
+                                <p class="status-line is-running" data-testid="soundcheck-help-reading"><span class="dot dot-running"></span><span>Checking the sound settings…</span></p>
+                            }
+                            else if (soundRep is null)
+                            {
+                                <p class="meta" data-testid="soundcheck-help-unread">@(soundResult.Status == DiagnosticStatus.Error ? soundResult.Message : "The sound settings couldn't be read.")</p>
+                            }
+                            else
+                            {
+                                <p class="meta">@(_soundHelp == "one-side" ? "One side missing points to a speaker, earbud or cable, or to the balance or mono audio." : "Try these in order. Play the test sound again after each one.")</p>
+                                <ul class="sc-steps" data-testid="soundcheck-steps">
+                                    @if (_soundHelp == "cant-hear" && scServicesOk)
+                                    {
+                                        <li class="done" data-testid="soundcheck-step-services-ok"><div class="sc-step-text"><b>Windows Audio services</b><div class="meta">Running.</div></div></li>
+                                    }
+                                    @foreach (var step in scSteps)
+                                    {
+                                        <li class="@(step.Row.Level <= AreaLevel.Ok ? "done" : "")" data-testid="soundcheck-step" data-card-id="@step.CardId" data-row-key="@step.Row.Key" data-level="@step.Row.Level.ToString().ToLowerInvariant()">
+                                            <div class="sc-step-text">
+                                                <b>@step.Title</b>
+                                                @if (step.Text.Length > 0) { <div class="meta">@step.Text</div> }
+                                                @if (App.Remediation is not null && step.Row.Actions is { Count: > 0 } acts)
+                                                {
+                                                    <div class="phys-qa-actions">
+                                                        @foreach (var a in acts)
+                                                        {
+                                                            <button type="button" class="btn-small btn-primary" data-testid="soundcheck-fix-@a.Kind" data-action="remediate" data-card-id="@step.CardId"
+                                                                    data-row-key="@step.Row.Key" data-action-kind="@a.Kind" data-action-target="@a.Target" @onclick="() => _soundFixUi?.Ask(a, step.CardId)">@a.ButtonText</button>
+                                                        }
+                                                    </div>
+                                                }
+                                            </div>
+                                        </li>
+                                    }
+                                    @if (_soundHelp == "one-side")
+                                    {
+                                        <li data-testid="soundcheck-step-hardware"><div class="sc-step-text"><b>Still only one side?</b><div class="meta">The speaker on the silent side, the headphone cable or one earbud is likely faulty. Try other headphones to tell which.</div></div></li>
+                                    }
+                                    else if (scSteps.Count == 0)
+                                    {
+                                        <li data-testid="soundcheck-step-app"><div class="sc-step-text"><b>The speakers and Windows Audio look fine</b><div class="meta">If one app is still silent, it's probably set to another device or turned down in its own settings. Run Speaker to mic to confirm the speakers play.</div></div></li>
+                                    }
+                                </ul>
+                                <div class="phys-qa-actions">
+                                    <button type="button" class="btn-small" data-testid="soundcheck-help-play" disabled="@(scRunning || Diagnostics.IsStressSuiteRunning)" @onclick="StartSoundCheckAsync">▶ Play test sound</button>
+                                    @if (_soundHelp == "cant-hear")
+                                    {
+                                        <button type="button" class="btn-small" data-testid="soundcheck-help-s2m" disabled="@(s2mRunning || Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)" @onclick="RunSpeakerToMicFromHelpAsync">Run Speaker to mic</button>
+                                    }
+                                    <button type="button" class="btn-small" data-testid="soundcheck-help-refresh" disabled="@soundReading" @onclick="() => Diagnostics.RunAsync(ModuleSlugs.Sound)">Check again</button>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="sc-help" data-testid="soundcheck-cant-hear-section">
+                            <strong>No sound at all?</strong>
+                            <p class="meta" style="margin: 2px 0 6px">Finds what's stopping sound and lists the fixes in the order to try them.</p>
+                            <button type="button" class="btn-small" data-testid="soundcheck-cant-hear-btn" @onclick="OpenCantHearAsync">Can't hear sound</button>
+                        </div>
+                    }
+                    @if (App.Remediation is not null)
+                    {
+                        <RemediationActions @ref="_soundFixUi" Actions="App.Remediation" ShowRecent="false" Origin="@ModuleSlugs.Sound" OnStateChanged="StateHasChanged"
+                                            OnCompleted="() => Diagnostics.RefreshQuietlyAsync(ModuleSlugs.Sound)" />
+                    }
+
+                    <label class="phys-qa-note">
+                        <span class="meta">Optional note (e.g. right earbud crackles)</span>
+                        <input data-testid="soundcheck-notes" value="@_soundNotes" @oninput="e => _soundNotes = e.Value?.ToString() ?? string.Empty" maxlength="240" placeholder="Optional note…" />
+                    </label>
+                    <div class="phys-qa-actions">
+                        <button type="button" class="btn-small" data-testid="soundcheck-note-btn" @onclick="() => SetAudioOutcome(ModuleSlugs.SoundCheck, DiagnosticStatus.Warning, _soundNotes)">Pass with note</button>
+                        <button type="button" class="btn-small" data-testid="soundcheck-fail" @onclick="() => SetAudioOutcome(ModuleSlugs.SoundCheck, DiagnosticStatus.Error, _soundNotes)">Fail with note</button>
+                        <button type="button" class="btn-small" data-testid="soundcheck-reset" @onclick="ResetSoundCheck">Reset</button>
+                    </div>
+                </div>
+            }
         </section>
     </div>
 </div>
@@ -551,8 +726,20 @@
     private readonly PhysicalBenchQaService _fallbackPhysicalQa = new();
     private PhysicalBenchQaService ActivePhysicalQa => App.PhysicalQa ?? _fallbackPhysicalQa;
 
-    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker"];
-    private readonly HashSet<string> _selected = new(["keyboard", "display", "webcam", "speakertomic", "mictospeaker"], StringComparer.OrdinalIgnoreCase);
+    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck"];
+    private readonly HashSet<string> _selected = new(["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck"], StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Opens a test's pane from a link ("interactive?test=soundcheck"); help=cant-hear also opens the Can't hear sound list.</summary>
+    [SupplyParameterFromQuery(Name = "test")] public string? TestQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "help")] public string? HelpQuery { get; set; }
+
+    // The Sound check pane's list: "cant-hear", "one-side" or null.
+    private string? _soundHelp;
+    private string _soundNotes = "";
+    private RemediationActions? _soundFixUi;
+    private static readonly (SoundCheckAnswer Answer, string Text, string Id)[] AnswerButtons =
+        [(SoundCheckAnswer.Both, "Heard both", "both"), (SoundCheckAnswer.OnlyLeft, "Only left", "only-left"),
+         (SoundCheckAnswer.OnlyRight, "Only right", "only-right"), (SoundCheckAnswer.Nothing, "Nothing", "nothing")];
     private string _selectedTestId = "keyboard";
 
     private static readonly TimeSpan[] CamDurationChoices = [TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10)];
@@ -568,10 +755,11 @@
         new(r, _personResults.TryGetValue(r.ModuleName, out var entered) && ReferenceEquals(entered, r));
 
     /// <summary>The page's state for browser agents (interactive-data): measured evidence and person-entered verdicts kept apart.</summary>
-    private string InteractiveJson(RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaSnapshot kb, DiagnosticResult cam, DiagnosticResult s2m, DiagnosticResult m2s) =>
+    private string InteractiveJson(RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaSnapshot kb, DiagnosticResult cam, DiagnosticResult s2m, DiagnosticResult m2s,
+        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help) =>
         InteractiveExport.ToJson(
             new InteractiveExport.PageState(_selectedTestId, _selected, _isBatchRunning, _isRemoteDisplay, Session.Mode == SessionMode.Remote || _hasRemoteSession, _technicianHasControl),
-            kb, PersonState(cam), PersonState(s2m), PersonState(m2s));
+            kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help);
 
     private IReadOnlyList<AudioDevice> _outputs = [];
     private IReadOnlyList<AudioDevice> _inputs = [];
@@ -600,6 +788,8 @@
     {
         base.OnInitialized();
         LoadDevices();
+        if (TestQuery is { Length: > 0 } t && AllTestIds.Contains(t, StringComparer.OrdinalIgnoreCase)) _selectedTestId = t.ToLowerInvariant();
+        if (_selectedTestId == "soundcheck" && HelpQuery == "cant-hear") _ = OpenCantHearAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -753,6 +943,9 @@
                     case "mictospeaker":
                         await StartMicToSpeakerAsync();
                         break;
+                    case "soundcheck":
+                        await StartSoundCheckAsync();
+                        break;
                 }
             }
         }
@@ -773,6 +966,7 @@
         CancelWebcam();
         CancelSpeakerToMic();
         CancelMicToSpeaker();
+        CancelSoundCheck();
         Diagnostics.CancelStressSuite();
     }
 
@@ -801,6 +995,11 @@
             _selectedInputId ??= s2m.Settings.InputId;
             _audioHalfDuplex = s2m.Settings.HalfDuplex;
         }
+        else if (GetSoundCheckModule() is { } sc)
+        {
+            _outputs = sc.Devices(AudioFlow.Output);
+            _selectedOutputId ??= sc.Settings.OutputId;
+        }
     }
 
     private IWebcamTestModule? GetWebcamModule() =>
@@ -813,6 +1012,48 @@
 
     private IAudioTestModule? GetMicToSpeakerModule() => GetAudioModule(ModuleSlugs.MicToSpeaker);
     private IAudioTestModule? GetSpeakerToMicModule() => GetAudioModule(ModuleSlugs.SpeakerToMic);
+    private IAudioTestModule? GetSoundCheckModule() => GetAudioModule(ModuleSlugs.SoundCheck);
+
+    private async Task StartSoundCheckAsync()
+    {
+        if (Diagnostics.IsStressSuiteRunning) return;
+        if (GetSoundCheckModule() is { } m) m.Settings.OutputId = _selectedOutputId;
+        await Diagnostics.RunAsync(ModuleSlugs.SoundCheck);
+    }
+
+    private void CancelSoundCheck() => GetSoundCheckModule()?.Cancel();
+
+    /// <summary>Records what the person heard. Only one side opens the balance list; Nothing opens Can't hear sound.</summary>
+    private async Task AnswerSoundCheckAsync(SoundCheckAnswer answer)
+    {
+        if (SoundCheck.Answer(Store.Get(ModuleSlugs.SoundCheck), answer) is not { } updated) return;
+        Store.Set(updated);
+        _personResults.Remove(ModuleSlugs.SoundCheck);
+        _soundHelp = answer switch { SoundCheckAnswer.OnlyLeft or SoundCheckAnswer.OnlyRight => "one-side", SoundCheckAnswer.Nothing => "cant-hear", _ => null };
+        if (_soundHelp is not null) await Diagnostics.RunAsync(ModuleSlugs.Sound);
+    }
+
+    /// <summary>Opens the Sound check pane with Can't hear sound and reads the Sound check again, so the list is current.</summary>
+    private async Task OpenCantHearAsync()
+    {
+        _selectedTestId = "soundcheck";
+        _soundHelp = "cant-hear";
+        await InvokeAsync(StateHasChanged);
+        await Diagnostics.RunAsync(ModuleSlugs.Sound);
+    }
+
+    private async Task RunSpeakerToMicFromHelpAsync()
+    {
+        await StartSpeakerToMicAsync();
+        await Diagnostics.RunAsync(ModuleSlugs.Sound);
+    }
+
+    private void ResetSoundCheck()
+    {
+        _soundNotes = "";
+        _soundHelp = null;
+        Store.Set(DiagnosticResult.NotRun(ModuleSlugs.SoundCheck));
+    }
 
     private void OnCamDeviceChange(ChangeEventArgs e)
     {
@@ -970,10 +1211,11 @@
         }
     }
 
-    private void SetAudioOutcome(string slug, DiagnosticStatus status)
+    private void SetAudioOutcome(string slug, DiagnosticStatus status, string? notes = null)
     {
         var r = Store.Get(slug);
-        var note = string.IsNullOrWhiteSpace(_audioNotes) ? null : _audioNotes.Trim();
+        notes ??= _audioNotes;
+        var note = string.IsNullOrWhiteSpace(notes) ? null : notes.Trim();
         var msg = note ?? (status switch
         {
             DiagnosticStatus.Ok => "Audio verified by technician",

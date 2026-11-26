@@ -414,7 +414,8 @@ public sealed class RemediationService(
             RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint
                 or RemediationKind.EnableAudioEndpoint or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements
                 or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy or RemediationKind.CloseAudioHolder
-                or RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic => PlanAudio(action, label),
+                or RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic
+                or RemediationKind.EvenAudioBalance => PlanAudio(action, label),
 
             _ => new(action, action.ButtonText, "", "", null, true),
         };
@@ -441,6 +442,9 @@ public sealed class RemediationService(
                 return P($"Raise the {(input ? "microphone level" : "volume")} of {label}?",
                     input ? $"{label} is set so low that others may not hear you." : $"{label} is so quiet it may sound silent.",
                     $"Sets the level to {(input ? "80" : "50")}%. Undo puts the old level back.", null, device && rest.Length == 0);
+            case RemediationKind.EvenAudioBalance:
+                return P($"Even out the balance of {label}?", $"One side of {label} is much quieter than the other, so it may sound like one speaker is dead.",
+                    "Sets the left and right levels to the louder of the two, as the balance sliders in Sound settings do. Undo puts the old levels back.", null, device && rest.Length == 0);
             case RemediationKind.SetDefaultAudioEndpoint:
                 if (t is Audio.AudioTargets.Output or Audio.AudioTargets.Input)
                     return P(t == Audio.AudioTargets.Input ? "Choose the microphone" : "Choose where sound plays",
@@ -695,7 +699,8 @@ public sealed class RemediationService(
         RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint
             or RemediationKind.EnableAudioEndpoint or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements
             or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy
-            or RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic => await RunAudioAsync(action, ct).ConfigureAwait(false),
+            or RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic
+            or RemediationKind.EvenAudioBalance => await RunAudioAsync(action, ct).ConfigureAwait(false),
 
         _ => new(false, "Unsupported action."),
     };

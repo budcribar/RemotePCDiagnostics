@@ -71,6 +71,8 @@ public static class ModuleIds
     public static readonly Guid BiosFirmware = new("7f3c9b2e-5d1a-4c8f-a6e0-9b4d2e1f8a3c");
     /// <summary>Slug <c>Sound</c>.</summary>
     public static readonly Guid Sound = new("56dea360-0bd7-4230-b072-0d54d91e90e4");
+    /// <summary>Slug <c>SoundCheck</c>.</summary>
+    public static readonly Guid SoundCheck = new("b81b0a57-43d2-4ad4-8572-1480fbe6cf0f");
     /// <summary>Slug <c>WindowsMaintenance</c>.</summary>
     public static readonly Guid WindowsMaintenance = new("f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41");
 
@@ -110,6 +112,7 @@ public static class ModuleIds
         [BiosFirmware] = ModuleSlugs.BiosFirmware,
         [Sound] = ModuleSlugs.Sound,
         [WindowsMaintenance] = ModuleSlugs.WindowsMaintenance,
+        [SoundCheck] = ModuleSlugs.SoundCheck,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -158,4 +161,6 @@ public static class ModuleSlugs
     public const string BiosFirmware = "BiosFirmware";
     public const string Sound = "Sound";
     public const string WindowsMaintenance = "WindowsMaintenance";
+    /// <summary>The interactive left/right test sound and the "Can't hear sound" helper (Interactive tests page).</summary>
+    public const string SoundCheck = "SoundCheck";
 }

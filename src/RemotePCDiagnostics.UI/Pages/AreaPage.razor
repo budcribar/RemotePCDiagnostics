@@ -90,6 +90,13 @@ else
                                         disabled="@nextBusy" @onclick="() => RunNext(next)">@(nextBusy ? "Running…" : link.ButtonText)</button>
                             </div>
                         }
+                        @if (c.OpenPage is { } pageLink)
+                        {
+                            <div class="svc-actions" style="margin-top:0.5rem" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">
+                                <button class="btn-small" data-testid="card-open-page-@c.Id" data-action="open-page" data-card-id="@c.Id" data-path="@pageLink.Path"
+                                        @onclick="() => Nav.NavigateTo(pageLink.Path)">@pageLink.ButtonText</button>
+                            </div>
+                        }
                         @if (remActions is not null && c.Actions is { Count: > 0 })
                         {
                             <div class="svc-actions" style="margin-top:0.5rem" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">

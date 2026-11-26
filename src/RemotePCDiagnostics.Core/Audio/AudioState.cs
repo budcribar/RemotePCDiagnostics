@@ -28,7 +28,8 @@ public enum AudioProbeOutcome { NotRun, Ok, DeviceInUse, ServiceNotRunning, Devi
 public sealed record AudioEndpointInfo(
     string Id, string Name, AudioFlow Flow, AudioEndpointState State, AudioBus Bus, string FormFactor, string InstanceId,
     IReadOnlyList<string> DefaultFor, bool? Muted = null, double? Volume = null, string? DeviceFormat = null, string? OemFormat = null,
-    bool? EnhancementsDisabled = null, AudioProbeOutcome Probe = AudioProbeOutcome.NotRun, int? ProbeHResult = null)
+    bool? EnhancementsDisabled = null, AudioProbeOutcome Probe = AudioProbeOutcome.NotRun, int? ProbeHResult = null,
+    IReadOnlyList<double>? ChannelLevels = null)
 {
     public const string Console = "Console", Multimedia = "Multimedia", Communications = "Communications";
 
@@ -42,6 +43,15 @@ public sealed record AudioEndpointInfo(
 
     /// <summary>Sound to a monitor or TV over HDMI or DisplayPort.</summary>
     public bool IsDisplayAudio => FormFactor == "DigitalAudioDisplayDevice";
+
+    /// <summary>Left and right differ by more than this (0 to 1 scale, 20 points on Sound settings' balance sliders).</summary>
+    public const double BalanceTolerance = 0.2;
+
+    /// <summary>The left and right channel levels (0 to 1); null for a one-channel device or when they couldn't be read.</summary>
+    public (double Left, double Right)? Balance => ChannelLevels is { Count: >= 2 } l ? (l[0], l[1]) : null;
+
+    /// <summary>One side is much quieter than the other (the balance in Sound settings).</summary>
+    public bool BalanceOff => Balance is { } b && Math.Abs(b.Left - b.Right) > BalanceTolerance;
 
     public string FriendlyState => State switch
     {

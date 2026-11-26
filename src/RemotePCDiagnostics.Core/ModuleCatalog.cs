@@ -34,6 +34,7 @@ public static class BuiltInModules
         new(ModuleIds.Sound, ModuleSlugs.Sound, "Sound", ModuleKind.Check, ModuleGroups.Audio, 50),
         new(ModuleIds.SpeakerToMic, ModuleSlugs.SpeakerToMic, "Speaker to microphone test", ModuleKind.OnDemand, ModuleGroups.Audio, 100) { Page = "interactive" },
         new(ModuleIds.MicToSpeaker, ModuleSlugs.MicToSpeaker, "Microphone to speaker test", ModuleKind.OnDemand, ModuleGroups.Audio, 200) { Page = "interactive" },
+        new(ModuleIds.SoundCheck, ModuleSlugs.SoundCheck, "Sound check (left and right)", ModuleKind.OnDemand, ModuleGroups.Audio, 300) { Page = "interactive" },
         new(ModuleIds.Webcam, ModuleSlugs.Webcam, "Webcam test", ModuleKind.OnDemand, ModuleGroups.Camera, 100) { Page = "interactive" },
         new(ModuleIds.NpuTest, ModuleSlugs.NpuTest, "NPU (AI accelerator) test", ModuleKind.OnDemand, ModuleGroups.Ai, 100),
         new(ModuleIds.SecurityEssentials, ModuleSlugs.SecurityEssentials, "Security essentials", ModuleKind.Check, ModuleGroups.Security, 50),

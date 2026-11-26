@@ -424,7 +424,8 @@ public static class HistorySummary
         RemediationKind.CreatePersistentDevDrive => "Persistent Dev Drive",
         RemediationKind.InstallDotNetSdk => ".NET SDK",
         RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint or RemediationKind.EnableAudioEndpoint
-            or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements or RemediationKind.UnmuteAudioSession => "Sound",
+            or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements or RemediationKind.UnmuteAudioSession
+            or RemediationKind.EvenAudioBalance => "Sound",
         RemediationKind.AllowCapturePrivacy => "Privacy",
         RemediationKind.CloseAudioHolder => "Sound / app closed",
         RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic => "Sound / Windows Audio",

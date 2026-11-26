@@ -100,6 +100,9 @@ public enum RemediationKind
     /// <summary>Sets whichever of the two Windows Audio services is disabled back to Automatic (journaled), then starts them. Target = "".
     /// Undo puts the start type back.</summary>
     SetAudioServicesAutomatic,
+    /// <summary>Sets the left and right channels of an output to the louder of the two (the balance in Sound settings). Target = the
+    /// endpoint id. Undo puts the old channel levels back.</summary>
+    EvenAudioBalance,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>
@@ -131,6 +134,10 @@ public sealed record AreaChoiceOption(string Label, string Suffix, bool DefaultO
 /// <see cref="AreaAction"/> it changes nothing on the PC; it is run like Run just this.</summary>
 public sealed record AreaCheckLink(string CheckId, string ButtonText);
 
+/// <summary>A button on an <see cref="AreaCard"/> that opens another page of the app (a path like "interactive?test=soundcheck"). It
+/// changes nothing on the PC.</summary>
+public sealed record AreaPageLink(string Path, string ButtonText);
+
 /// <summary>One drawer table row; <see cref="Values"/> line up with <see cref="AreaCard.Columns"/>. All text is end-user friendly.</summary>
 public sealed record AreaRow(
     AreaLevel Level,
@@ -157,6 +164,9 @@ public sealed record AreaCard(
 
     /// <summary>The check the card suggests running next, shown as a button on the card.</summary>
     public AreaCheckLink? RunCheck { get; init; }
+
+    /// <summary>Another page the card points to (the Interactive tests page's "Can't hear sound", say), shown as a button on the card.</summary>
+    public AreaPageLink? OpenPage { get; init; }
 
     /// <summary>For a card about storage volumes: their capacity, free and used space in bytes, added up. The page publishes them
     /// for browser agents as numbers, so nothing has to be read back out of the formatted text.</summary>

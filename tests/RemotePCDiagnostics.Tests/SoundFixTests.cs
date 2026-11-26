@@ -34,6 +34,7 @@ public class SoundFixTests
             public double Volume = 0.5;
             public byte[]? Format, Oem;
             public bool FxOff;
+            public double[]? Channels;
         }
 
         public bool CanChangeSettings { get; set; } = true;
@@ -59,6 +60,8 @@ public class SoundFixTests
         public void SetMute(string id, bool mute) { if (MuteSticks) Must(id).Mute = mute; }
         public double? GetVolume(string id) => Get(id)?.Volume;
         public void SetVolume(string id, double level) { if (VolumeSticks) Must(id).Volume = level; }
+        public IReadOnlyList<double>? GetChannelLevels(string id) => Get(id)?.Channels?.ToArray();
+        public void SetChannelLevels(string id, IReadOnlyList<double> levels) => Must(id).Channels = levels.ToArray();
         public string? GetDefault(AudioFlow flow, string role) => Defaults.TryGetValue((flow, role), out var id) ? id : null;
         public void SetDefault(string id, string role) { Must(id); Defaults[(AudioTargets.FlowOf(id), role)] = id; }
         public void SetEnabled(string id, bool enabled) => Must(id).State = enabled ? AudioEndpointState.Active : AudioEndpointState.Disabled;
@@ -207,6 +210,43 @@ public class SoundFixTests
         await undo.UndoAllAsync("tech");
         Assert.Equal(0.05, control.Endpoints[id].Volume, 3);
     }
+
+    [Fact]
+    public async Task Even_balance_sets_both_sides_to_the_louder_one_and_undo_puts_the_old_levels_back()
+    {
+        var (control, journal, fixes, undo, _, _) = Setup();
+        control.Endpoints[Spk].Channels = [0.8, 0.1];
+
+        var r = await fixes.ExecuteAsync(A(RemediationKind.EvenAudioBalance, Spk));
+
+        Assert.True(r.Success, r.Message);
+        Assert.Equal([0.8, 0.8], control.Endpoints[Spk].Channels);
+        var rec = Assert.Single(journal.All);
+        Assert.Equal($"{Spk}|{AudioTargets.Balance}", rec.Target);
+        Assert.Equal("0.800,0.100", rec.Previous);
+        await undo.UndoAllAsync("tech");
+        Assert.Equal([0.8, 0.1], control.Endpoints[Spk].Channels);
+    }
+
+    [Fact]
+    public async Task Even_balance_on_an_even_or_one_channel_device_changes_nothing()
+    {
+        var (control, journal, fixes, _, _, _) = Setup();
+        control.Endpoints[Spk].Channels = [0.5, 0.5];
+        Assert.True((await fixes.ExecuteAsync(A(RemediationKind.EvenAudioBalance, Spk))).Success);
+        control.Endpoints[Spk].Channels = null;
+        Assert.False((await fixes.ExecuteAsync(A(RemediationKind.EvenAudioBalance, Spk))).Success);
+        Assert.Empty(journal.All);
+    }
+
+    [Theory]
+    [InlineData("0.5,0.1", true)]
+    [InlineData("0.5", false)]
+    [InlineData("0.5,1.5", false)]
+    [InlineData("x,0.1", false)]
+    [InlineData("", false)]
+    public void Balance_journal_text_round_trips_and_rejects_junk(string text, bool ok) =>
+        Assert.Equal(ok, AudioFixService.ParseLevels(text) is not null);
 
     [Fact]
     public async Task Volume_an_oem_panel_puts_back_is_reported_as_failed()

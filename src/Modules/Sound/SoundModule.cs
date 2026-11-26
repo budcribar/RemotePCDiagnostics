@@ -44,6 +44,8 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
     public const string DriversSql =
         "SELECT DeviceName, DeviceID, HardWareID, InfName, DriverProviderName, DriverVersion FROM Win32_PnPSignedDriver WHERE DeviceClass = 'MEDIA'";
     public const string MonoKey = @"Software\Microsoft\Multimedia\Audio";
+    /// <summary>The Interactive tests page with the Sound check open and its "Can't hear sound" list showing.</summary>
+    public const string CantHearPath = "interactive?test=soundcheck&help=cant-hear";
 
     /// <summary>HD Audio codec makers that ship their own drivers (the <c>VEN_</c> in <c>HDAUDIO\FUNC_01&amp;VEN_10EC&amp;DEV_0257</c>):
     /// Realtek, Conexant/Synaptics, Cirrus Logic, IDT/Tempo, VIA. Windows' generic hdaudio.inf on one of these is worth a warning.</summary>
@@ -217,6 +219,12 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
                         output ? "Very quiet or silent at this volume." : "Others may not hear you at this level.", "volume",
                         [new AreaAction(RemediationKind.RaiseAudioVolume, output ? "Raise volume to 50%" : "Raise level to 80%", def.Id, def.Name)])
                     : Row(AreaLevel.Ok, output ? "Low volume" : "Low microphone level", NoIssues, Percent(v)));
+            if (output && def.Balance is { } bal)
+                rows.Add(def.BalanceOff
+                    ? Row(AreaLevel.Warning, "Balance", $"Left {Percent(bal.Left)}, right {Percent(bal.Right)}",
+                        "One side is much quieter than the other, so it may sound like a speaker is dead.", "balance",
+                        [new AreaAction(RemediationKind.EvenAudioBalance, "Even out balance", def.Id, def.Name)])
+                    : Row(AreaLevel.Ok, "Balance", NoIssues, $"Left {Percent(bal.Left)}, right {Percent(bal.Right)}"));
         }
 
         // Busy or not answering (the shared-mode open of the default device)
@@ -317,6 +325,7 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
         var meta = def is not null ? def.Name : active.Count == 0 ? $"No {thing} found" : "No default device";
         var card = new AreaCard(id, title, level == AreaLevel.Neutral ? AreaLevel.Ok : level, headline, meta, Columns, rows, PreserveRowOrder: true,
             Actions: policy && active.Count > 1 ? [picker] : null);
+        if (output) card = card with { OpenPage = new AreaPageLink(CantHearPath, "Can't hear sound") };
         return generic.Count > 0 ? card with { RunCheck = new AreaCheckLink(ModuleSlugs.DeviceDrivers, "Check Device Manager & drivers") } : card;
     }
 

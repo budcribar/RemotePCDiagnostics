@@ -180,6 +180,28 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
         catch (Exception ex) when (ex is not OperationCanceledException) { throw Map(ex); }
     }, ct);
 
+    public Task<int> PlayOnChannelAsync(PlayChannelRequest r, CancellationToken ct) => Task.Run(async () =>
+    {
+        try
+        {
+            // Mute and volume are left as they are: the person should hear what an app would (a muted speaker is the finding).
+            using var en = new MMDeviceEnumerator();
+            using var outDev = Device(en, r.OutputId, DataFlow.Render);
+            var pos = 0;
+            var only = r.Channel == AudioChannel.Left ? 0 : 1;
+            var channels = await PlayAsync(outDev, r.SampleRate, span =>
+            {
+                var n = Math.Min(span.Length, r.Tone.Length - pos);
+                r.Tone.AsSpan(pos, n).CopyTo(span);
+                pos += n;
+                return n;
+            }, TimeSpan.FromSeconds((double)r.Tone.Length / r.SampleRate) + TimeSpan.FromSeconds(2), ct, only).ConfigureAwait(false);
+            Log($"test sound on the {r.Channel.ToString().ToLowerInvariant()} channel of '{outDev.FriendlyName}' ({channels} channels)");
+            return channels;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { throw Map(ex); }
+    }, ct);
+
     // Per-call state for PlayAndCaptureAsync (calls never overlap: DiagnosticsService runs a module once at a time).
     private float[] _mic = [];
     private int _micRate;
@@ -305,11 +327,14 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
     /// Plays mono samples (from <paramref name="fill"/>, at <paramref name="sourceRate"/>) on the device at its mix format with linear
     /// resampling; returns when the source ends, <paramref name="maxTime"/> passes or <paramref name="ct"/> fires.
     /// </summary>
-    private static async Task PlayAsync(MMDevice dev, int sourceRate, Func<Span<float>, int> fill, TimeSpan maxTime, CancellationToken ct)
+    /// <param name="onlyChannel">Plays on this channel only (0 = left, 1 = right) and keeps the others silent; null = every channel.</param>
+    /// <returns>The device's channel count.</returns>
+    private static async Task<int> PlayAsync(MMDevice dev, int sourceRate, Func<Span<float>, int> fill, TimeSpan maxTime, CancellationToken ct, int? onlyChannel = null)
     {
         WaveFormat mix;
         using (var probe = dev.CreateAudioClient()) mix = probe.MixFormat;
-        var provider = new MonoProvider(WaveFormat.CreateIeeeFloatWaveFormat(mix.SampleRate, mix.Channels), sourceRate, fill);
+        var provider = new MonoProvider(WaveFormat.CreateIeeeFloatWaveFormat(mix.SampleRate, mix.Channels), sourceRate, fill,
+            onlyChannel is { } c && mix.Channels > 1 ? Math.Min(c, mix.Channels - 1) : null);
 #pragma warning disable CS0618 // WasapiOut still works in NAudio 3.x; WasapiPlayer is newer but untested here.
         using var player = new WasapiOut(dev, AudioClientShareMode.Shared, true, 100);
 #pragma warning restore CS0618
@@ -320,9 +345,10 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
         try { await done.Task.WaitAsync(maxTime + TimeSpan.FromMilliseconds(500), ct).ConfigureAwait(false); }
         catch (TimeoutException) { }
         finally { try { player.Stop(); } catch { } }
+        return mix.Channels;
     }
 
-    private sealed class MonoProvider(WaveFormat format, int sourceRate, Func<Span<float>, int> fill) : IWaveProvider
+    private sealed class MonoProvider(WaveFormat format, int sourceRate, Func<Span<float>, int> fill, int? onlyChannel = null) : IWaveProvider
     {
         private readonly double _step = (double)sourceRate / format.SampleRate;
         private float[] _src = new float[4096];
@@ -344,7 +370,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
                 i = (int)_pos;
                 var frac = (float)(_pos - i);
                 var v = _src[i] + (_src[Math.Min(i + 1, _srcLen - 1)] - _src[i]) * frac;
-                for (var c = 0; c < ch; c++) outF[written * ch + c] = v;
+                for (var c = 0; c < ch; c++) outF[written * ch + c] = onlyChannel is { } only && c != only ? 0f : v;
                 _pos += _step;
             }
             return written * ch * sizeof(float);

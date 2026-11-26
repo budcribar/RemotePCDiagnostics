@@ -32,7 +32,7 @@ public static class Undoability
             or RemediationKind.MovePackageCacheToDevDrive or RemediationKind.CreatePersistentDevDrive
             or RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint
             or RemediationKind.EnableAudioEndpoint or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements
-            or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy => UndoSupport.Full,
+            or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy or RemediationKind.EvenAudioBalance => UndoSupport.Full,
         RemediationKind.CloseAudioHolder => UndoSupport.None, // a closed app isn't reopened
         RemediationKind.SetAudioServicesAutomatic => UndoSupport.Full, // the start type is journaled; the started services stay running
         // Brings Windows Audio back to its normal running state: nothing to put back (stopping sound again would be no undo).
