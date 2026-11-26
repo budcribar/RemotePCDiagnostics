@@ -54,12 +54,11 @@ public sealed class WindowsNpuIo(ILogger? log = null) : INpuIo
 
     public Task<NpuWorkloadResult> RunWorkloadAsync(NpuDevice device, NpuWorkloadRequest request, CancellationToken ct)
     {
-        if (device.AdapterLuid is not { } luid) throw new NpuDeviceException("No DirectX adapter for this NPU.");
         // Dedicated thread: a hung driver call can't block the thread pool, and the Core watchdog can abandon it.
         var tcs = new TaskCompletionSource<NpuWorkloadResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var t = new Thread(() =>
         {
-            try { tcs.TrySetResult(Run(luid, device, request, ct)); }
+            try { tcs.TrySetResult(Run(device, request, ct)); }
             catch (OperationCanceledException oce) { tcs.TrySetCanceled(oce.CancellationToken); }
             catch (NpuDirect3DUnsupportedException ex) { tcs.TrySetException(ex); }
             catch (NpuDeviceException ex) { tcs.TrySetException(ex); }
@@ -71,9 +70,19 @@ public sealed class WindowsNpuIo(ILogger? log = null) : INpuIo
 
     private const int DxgiErrorUnsupported = unchecked((int)0x887A0004);
 
-    private NpuWorkloadResult Run(long luid, NpuDevice device, NpuWorkloadRequest req, CancellationToken ct)
+    private NpuWorkloadResult Run(NpuDevice device, NpuWorkloadRequest req, CancellationToken ct)
     {
         var n = Math.Clamp(req.MatrixSize, 16, NpuTestLimits.MaxMatrixSize) / 16 * 16;
+
+        // Prefer Windows ML (ONNX Runtime + dynamic NPU EPs: Qualcomm QNN, AMD VitisAI, Intel OpenVINO).
+        if (WindowsMlNpuRunner.TryRunMatMul(device, req, n, Log, LogWarn, ct) is { } winMlResult)
+            return winMlResult;
+
+        if (device.AdapterLuid is not { } luid)
+            throw new NpuDirect3DUnsupportedException("No Windows ML or Direct3D 12 compute adapter is available for this NPU.");
+        if (device.Compute == NpuComputeLevel.None)
+            throw new NpuDirect3DUnsupportedException("This NPU does not expose a Windows ML or Direct3D 12 compute adapter.");
+
         using var adapter = DxCore.OpenAdapter(luid) ?? throw new NpuDeviceException("The NPU adapter disappeared.");
         var core = device.Compute == NpuComputeLevel.CoreCompute;
         var level = core ? FeatureLevel.Level_1_0_CORE : FeatureLevel.Level_1_0_GENERIC;

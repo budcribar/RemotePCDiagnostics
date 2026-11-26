@@ -129,17 +129,24 @@ public class NpuTests
     [Fact]
     public async Task Non_d3d12_npu_adapter_warns_without_critical_failure()
     {
-        var nonD3d = Dev() with { Compute = NpuComputeLevel.None };
-        var io1 = new FakeIo(Correct(), nonD3d);
-        var r1 = await new NpuTestModule(io1).RefreshAsync(null);
-        Assert.Equal(DiagnosticStatus.Warning, r1.Status);
-        Assert.Equal(NpuVerdict.NoAdapter, ((NpuTestReport)r1.Payload!).Overall);
-        Assert.Equal(0, io1.Calls);
+        var io = new FakeIo((_, _) => Task.FromException<NpuWorkloadResult>(new NpuDirect3DUnsupportedException("0x887A0004")), Dev() with { Compute = NpuComputeLevel.None });
+        var r = await new NpuTestModule(io).RefreshAsync(null);
+        Assert.Equal(DiagnosticStatus.Warning, r.Status);
+        Assert.Equal(NpuVerdict.NoAdapter, ((NpuTestReport)r.Payload!).Overall);
+        Assert.Equal(1, io.Calls);
+    }
 
-        var io2 = new FakeIo((_, _) => Task.FromException<NpuWorkloadResult>(new NpuDirect3DUnsupportedException("0x887A0004")), Dev());
-        var r2 = await new NpuTestModule(io2).RefreshAsync(null);
-        Assert.Equal(DiagnosticStatus.Warning, r2.Status);
-        Assert.Equal(NpuVerdict.NoAdapter, ((NpuTestReport)r2.Payload!).Overall);
+    [Fact]
+    public void OnnxMatMulBuilder_emits_valid_onnx_matmul_bytes()
+    {
+        var bytes = OnnxMatMulBuilder.BuildFloat32MatMul(256);
+        Assert.NotEmpty(bytes);
+        var ascii = System.Text.Encoding.ASCII.GetString(bytes);
+        Assert.Contains("npu_matmul", ascii);
+        Assert.Contains("MatMul", ascii);
+        // Field 1 varint = IR version 8 (tag 0x08, value 0x08).
+        Assert.Equal(0x08, bytes[0]);
+        Assert.Equal(0x08, bytes[1]);
     }
 
     [Fact]

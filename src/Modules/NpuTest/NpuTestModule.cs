@@ -159,7 +159,7 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : OnDemandModu
     {
         if (!d.DriverHealthy)
             return Report(d, NpuVerdict.DriverProblem, null, cpuMs, null, null);
-        if (!d.HasAdapter || d.Compute == NpuComputeLevel.None)
+        if (!d.HasAdapter)
             return Report(d, NpuVerdict.NoAdapter, null, cpuMs, null, null);
         var n = (int)Math.Sqrt(a.Length);
         var req = new NpuWorkloadRequest(n, a, b, budget, MaxIterations);
