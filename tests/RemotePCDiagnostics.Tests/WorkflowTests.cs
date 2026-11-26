@@ -65,6 +65,16 @@ public class WorkflowTests
         public void Save(BenchmarkState s) => State = s;
     }
 
+    [Fact]
+    public void A_saved_checking_stage_from_a_closed_app_starts_over()
+    {
+        var store = new MemFlowStore { State = new WorkflowState { Stage = WorkflowStage.Checking, StartedUtc = DateTimeOffset.UtcNow } };
+        var flow = Make(store).Flow;
+        Assert.Equal(WorkflowStage.Idle, flow.State.Stage);
+        Assert.False(flow.Reload());
+        Assert.Equal(WorkflowStage.Idle, flow.State.Stage);
+    }
+
     private static AreaReport Report(params AreaAction[] actions) =>
         new([new AreaCard("c", "Card", AreaLevel.Warning, "Headline", "", [], [], Actions: actions)], "1 thing", DiagnosticStatus.Warning);
 

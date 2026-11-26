@@ -119,6 +119,19 @@ public sealed class UpdateBusyHold
         return new Exit(this);
     }
 
+    /// <summary>
+    /// Tries the mutex again while work is still marked running but this process does not hold it, because an update or another
+    /// process had it when <see cref="Enter"/> ran. Does nothing when idle or already held.
+    /// </summary>
+    public void Retry()
+    {
+        lock (_gate)
+        {
+            if (_count > 0)
+                _held ??= _take();
+        }
+    }
+
     private void Leave()
     {
         IDisposable? release = null;

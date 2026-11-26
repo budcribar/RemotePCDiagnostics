@@ -158,6 +158,8 @@
         {
             if (running && _busy is null && !_disposed)
                 _busy = UpdateBusyHold.App.Enter();
+            else if (running && _busy is not null)
+                UpdateBusyHold.App.Retry(); // The first try can miss (another holder at that moment); keep trying while busy.
             else if (!running && _busy is not null)
             {
                 release = _busy;
