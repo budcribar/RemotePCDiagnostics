@@ -159,7 +159,7 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : OnDemandModu
     {
         if (!d.DriverHealthy)
             return Report(d, NpuVerdict.DriverProblem, null, cpuMs, null, null);
-        if (!d.HasAdapter)
+        if (!d.HasAdapter || d.Compute == NpuComputeLevel.None)
             return Report(d, NpuVerdict.NoAdapter, null, cpuMs, null, null);
         var n = (int)Math.Sqrt(a.Length);
         var req = new NpuWorkloadRequest(n, a, b, budget, MaxIterations);
@@ -174,6 +174,11 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : OnDemandModu
             return Report(d, NpuVerdict.TimedOut, null, cpuMs, null, null);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (NpuDirect3DUnsupportedException ex)
+        {
+            log.Info($"NpuTest: {d.Name} does not support Direct3D 12: {ex.Message}");
+            return Report(d, NpuVerdict.NoAdapter, null, cpuMs, null, ex.Message);
+        }
         catch (Exception ex)
         {
             log.Error($"NpuTest: {d.Name} workload failed: {ex}");
