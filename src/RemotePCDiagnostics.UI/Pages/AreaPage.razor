@@ -110,10 +110,10 @@ else
                     </ChildContent>
                     <Details>
                         @{
-                            var reviewedCard = shown.ReviewedCards?.FirstOrDefault(rc => rc.Id == cardId);
+                            var (openCard, reviewedCard) = PendingFor(m.Name).Apply(c, shown.ReviewedCards?.FirstOrDefault(rc => rc.Id == cardId));
                             var hasReviewed = reviewedCard?.Rows.Any(row => row.ReviewKeys is { Count: > 0 }) == true;
                             var showingReviewed = hasReviewed && _showReviewedCards.Contains(cardId);
-                            var open = showingReviewed ? reviewedCard! : c;
+                            var open = showingReviewed ? reviewedCard! : openCard;
                             var issueRows = open.Rows.Where(row => row.ReviewKeys is { Count: > 0 }).ToList();
                             var groupKeys = issueRows.SelectMany(row => row.ReviewKeys!).Distinct().ToList();
                             var isLargeFilesCard = m.Name == ModuleSlugs.DiskSpace && open.Id == "files";
@@ -466,7 +466,16 @@ else
         if (Diagnostics.Catalog.Get(next.Id)?.Kind == ModuleKind.StressTest) Nav.NavigateTo("stress");
     }
 
-    private async Task SetReview(string module, IReadOnlyList<string> keys, bool reviewed)
+    // Reviews saved since the check's last result, per check. The rows move at once; the check is refreshed in the background (it reads
+    // every event log again, which takes seconds) and its result then counts the reviews itself.
+    private readonly Dictionary<string, PendingEventReviews> _pendingReviews = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _reviewGeneration = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _refreshingReviews = new(StringComparer.OrdinalIgnoreCase);
+
+    private PendingEventReviews PendingFor(string module) =>
+        _pendingReviews.TryGetValue(module, out var pending) ? pending : _pendingReviews[module] = new();
+
+    private void SetReview(string module, IReadOnlyList<string> keys, bool reviewed)
     {
         if (_savingReview) return;
         _savingReview = true;
@@ -474,15 +483,45 @@ else
         try
         {
             EventReviews.Set(keys, reviewed);
+            PendingFor(module).Set(keys, reviewed);
+            _reviewGeneration[module] = _reviewGeneration.GetValueOrDefault(module) + 1;
             _expanded = null;
             _expandedKey = null;
-            await Diagnostics.RefreshQuietlyAsync(module);
+            _ = RefreshAfterReviewsAsync(module);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             _reviewError = "Couldn't save the event review.";
         }
         finally { _savingReview = false; }
+    }
+
+    /// <summary>Refreshes the check until a run that started after the latest review finishes, then drops the pending reviews. A run
+    /// already going when a review is saved is joined, but it read the old review list, so the loop runs once more after it.</summary>
+    private async Task RefreshAfterReviewsAsync(string module)
+    {
+        if (!_refreshingReviews.Add(module)) return;
+        try
+        {
+            int generation;
+            do
+            {
+                generation = _reviewGeneration.GetValueOrDefault(module);
+                var joined = Diagnostics.IsRunning(module);
+                await Diagnostics.RefreshQuietlyAsync(module);
+                if (joined) generation = -1;
+            } while (generation != _reviewGeneration.GetValueOrDefault(module));
+            PendingFor(module).Clear();
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // The reviews are saved, and the check's next run counts them; the moved rows stay until then.
+        }
+        finally
+        {
+            _refreshingReviews.Remove(module);
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     private string? _getHelpError;
