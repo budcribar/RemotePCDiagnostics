@@ -70,6 +70,5 @@ alone, and never send Admin a number no PC has. A hang is cut off by the pass's 
 
 - The Agent's alerts (event log watchers, disk, memory and power levels) and the security audit's report: not recorded yet.
 - Live sensors (LibreHardwareMonitor), the Lenovo EC fan, interactive tests and benchmarks: they measure live hardware and aren't recorded.
-- The Sound check: recordings made before recorder v9 don't hold its Core Audio answer. Record both PCs again.
 - The real app on Windows (WebView2, the module host out of process, the Agent's pipe). The plan is a Debug-only switch that starts the
   Host on a recording and fault plan, driven by `tests/smoke`'s CDP attach.
