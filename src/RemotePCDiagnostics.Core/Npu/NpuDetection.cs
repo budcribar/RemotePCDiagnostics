@@ -46,10 +46,24 @@ public static partial class NpuDetection
         return string.IsNullOrWhiteSpace(manufacturer) ? "Unknown" : manufacturer.Trim();
     }
 
-    public static string VendorOf(uint pciVendorId) => pciVendorId switch
+    public static string VendorOf(uint pciVendorId, string? description = null)
     {
-        0x8086 => "Intel", 0x1022 or 0x1002 => "AMD", 0x17CB or 0x5143 => "Qualcomm", _ => $"0x{pciVendorId:X4}",
-    };
+        var byId = pciVendorId switch
+        {
+            0x8086 => "Intel",
+            0x1022 or 0x1002 => "AMD",
+            0x17CB or 0x5143 or 0x4D4F4351 => "Qualcomm",
+            _ => null,
+        };
+        if (byId is not null) return byId;
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            if (description.Contains("Intel", StringComparison.OrdinalIgnoreCase)) return "Intel";
+            if (description.Contains("AMD", StringComparison.OrdinalIgnoreCase) || description.Contains("Ryzen", StringComparison.OrdinalIgnoreCase)) return "AMD";
+            if (description.Contains("Qualcomm", StringComparison.OrdinalIgnoreCase) || description.Contains("Hexagon", StringComparison.OrdinalIgnoreCase) || description.Contains("Snapdragon", StringComparison.OrdinalIgnoreCase)) return "Qualcomm";
+        }
+        return $"0x{pciVendorId:X4}";
+    }
 
     /// <summary>DXCore packs the driver version as four 16-bit parts (like DXGI's UMD version).</summary>
     public static string FormatDriverVersion(ulong v) => $"{v >> 48 & 0xFFFF}.{v >> 32 & 0xFFFF}.{v >> 16 & 0xFFFF}.{v & 0xFFFF}";
@@ -60,18 +74,35 @@ public static partial class NpuDetection
     public static NpuComputeLevel LevelOf(DxCoreAdapterRow a) =>
         a.SupportsCoreCompute ? NpuComputeLevel.CoreCompute : a.SupportsGenericMl ? NpuComputeLevel.GenericMl : NpuComputeLevel.None;
 
+    private static bool IsComputeAcceleratorClass(PnpRow r) =>
+        string.Equals(r.PnpClass, "ComputeAccelerator", StringComparison.OrdinalIgnoreCase)
+        || (Guid.TryParse(r.ClassGuid, out var g) && g == ComputeAcceleratorClassGuid);
+
     /// <summary>PnP candidates merged with NPU DXCore adapters (matched by PCI vendor+device id, else by vendor when there is one of each).</summary>
     public static IReadOnlyList<NpuDevice> Merge(IEnumerable<PnpRow> pnp, IEnumerable<DxCoreAdapterRow> adapters)
     {
         var dx = adapters.Where(IsNpuAdapter).ToList();
+        var candidates = pnp.Where(IsNpuCandidate).ToList();
+        // When a vendor already exposes a real ComputeAccelerator PnP device, drop secondary non-ComputeAccelerator
+        // helper/subsystem nodes (e.g. Qualcomm Hexagon firmware/subsystem nodes) so one physical NPU isn't counted twice.
+        var computeVendors = candidates
+            .Where(IsComputeAcceleratorClass)
+            .Select(r => VendorOf(r.DeviceId, r.Manufacturer, r.Name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var filtered = candidates
+            .Where(r => IsComputeAcceleratorClass(r) || !computeVendors.Contains(VendorOf(r.DeviceId, r.Manufacturer, r.Name)))
+            .ToList();
+
         var used = new HashSet<long>();
         var list = new List<NpuDevice>();
-        foreach (var r in pnp.Where(IsNpuCandidate))
+        foreach (var r in filtered)
         {
             var vendor = VendorOf(r.DeviceId, r.Manufacturer, r.Name);
             var ids = string.Join(" ", new[] { r.DeviceId ?? "" }.Concat(r.HardwareIds ?? []));
-            var match = dx.FirstOrDefault(a => !used.Contains(a.Luid) && ids.Contains($"VEN_{a.VendorId:X4}&DEV_{a.DeviceId:X4}", StringComparison.OrdinalIgnoreCase))
-                ?? (dx.Count(a => !used.Contains(a.Luid) && VendorOf(a.VendorId) == vendor) == 1 ? dx.First(a => !used.Contains(a.Luid) && VendorOf(a.VendorId) == vendor) : null);
+            var match = dx.FirstOrDefault(a => !used.Contains(a.Luid) && a.VendorId != 0 && ids.Contains($"VEN_{a.VendorId:X4}&DEV_{a.DeviceId:X4}", StringComparison.OrdinalIgnoreCase))
+                ?? (dx.Count(a => !used.Contains(a.Luid) && VendorOf(a.VendorId, a.Description) == vendor) == 1
+                    ? dx.First(a => !used.Contains(a.Luid) && VendorOf(a.VendorId, a.Description) == vendor)
+                    : null);
             if (match is not null) used.Add(match.Luid);
             list.Add(new NpuDevice(r.DeviceId ?? r.Name ?? "?", (r.Name ?? match?.Description ?? "NPU").Trim(), vendor,
                 r.DriverVersion ?? (match is null ? null : FormatDriverVersion(match.DriverVersion)), r.Status, r.ConfigManagerErrorCode,
@@ -79,7 +110,7 @@ public static partial class NpuDetection
         }
         foreach (var a in dx.Where(a => !used.Contains(a.Luid)))
         {
-            list.Add(new NpuDevice($"dxcore:{a.Luid:X}", a.Description.Trim(), VendorOf(a.VendorId), FormatDriverVersion(a.DriverVersion), "OK", 0,
+            list.Add(new NpuDevice($"dxcore:{a.Luid:X}", a.Description.Trim(), VendorOf(a.VendorId, a.Description), FormatDriverVersion(a.DriverVersion), "OK", 0,
                 NpuSource.DXCore, $"PCI\\VEN_{a.VendorId:X4}&DEV_{a.DeviceId:X4}", a.Luid, LevelOf(a)));
         }
         return list;

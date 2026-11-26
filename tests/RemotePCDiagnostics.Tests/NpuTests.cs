@@ -119,11 +119,31 @@ public class NpuTests
     }
 
     [Fact]
-    public async Task Missing_adapter_fails()
+    public async Task Missing_adapter_warns_without_critical_failure()
     {
         var r = await new NpuTestModule(new FakeIo(Correct(), Dev(luid: null))).RefreshAsync(null);
-        Assert.Equal(DiagnosticStatus.Error, r.Status);
+        Assert.Equal(DiagnosticStatus.Warning, r.Status);
         Assert.Equal(NpuVerdict.NoAdapter, ((NpuTestReport)r.Payload!).Overall);
+    }
+
+    [Fact]
+    public void Merge_matches_acpi_qualcomm_npu_and_deduplicates_subsystem_node()
+    {
+        var pnp = new[]
+        {
+            new PnpRow(@"ACPI\QCOM0D0A\0", "Snapdragon(R) X Elite - X1E78100 - Qualcomm(R) Hexagon(TM) NPU", "ComputeAccelerator", null, "Qualcomm", "OK", 0, "30.0.222.0", [@"ACPI\VEN_QCOM&DEV_0D0A"]),
+            new PnpRow(@"ACPI\QCOM0D0B\0", "Qualcomm(R) Hexagon(TM) NPU Subsystem", "System", null, "Qualcomm", "OK", 0, "30.0.222.0", [@"ACPI\VEN_QCOM&DEV_0D0B"]),
+        };
+        var dx = new[]
+        {
+            new DxCoreAdapterRow(0x1234, "Qualcomm(R) Hexagon(TM) NPU", 0, 0, 0x001E000000DE0000, true, false, false, true, true),
+        };
+        var merged = NpuDetection.Merge(pnp, dx);
+        var only = Assert.Single(merged);
+        Assert.Equal("Qualcomm", only.Vendor);
+        Assert.Equal(NpuSource.Both, only.Source);
+        Assert.True(only.HasAdapter);
+        Assert.Equal(0x1234, only.AdapterLuid);
     }
 
     [Fact]

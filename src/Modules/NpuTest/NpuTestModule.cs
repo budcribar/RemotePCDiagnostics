@@ -199,7 +199,7 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : OnDemandModu
     public static DiagnosticStatus StatusOf(NpuVerdict v) => v switch
     {
         NpuVerdict.Pass => DiagnosticStatus.Ok,
-        NpuVerdict.NoNpu or NpuVerdict.Slow or NpuVerdict.SmokeOnly => DiagnosticStatus.Warning,
+        NpuVerdict.NoNpu or NpuVerdict.NoAdapter or NpuVerdict.Slow or NpuVerdict.SmokeOnly => DiagnosticStatus.Warning,
         _ => DiagnosticStatus.Error,
     };
 
@@ -219,7 +219,7 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : OnDemandModu
         var msg = v switch
         {
             NpuVerdict.DriverProblem => $"Driver problem: {(d.ProblemCode is { } c and not 0 ? NpuDetection.ProblemText(c) : $"status {d.Status}")}. Reinstall or update the NPU driver.",
-            NpuVerdict.NoAdapter => "Windows lists the NPU, but its compute driver isn't loaded (no DirectX adapter). Install the vendor's NPU driver.",
+            NpuVerdict.NoAdapter => "Driver is installed and working properly, but this NPU does not expose a DirectX compute adapter so this test couldn't run a Direct3D workload on it.",
             NpuVerdict.TimedOut => "The NPU didn't finish its workload in time (driver hang?). The test stopped waiting.",
             NpuVerdict.WorkloadFailed => $"The workload failed on the NPU{(detail is { Length: > 0 } ? ": " + detail : ".")}",
             NpuVerdict.Mismatch => $"The NPU returned wrong results (max error {err:0.####} vs CPU, limit {MaxAbsError}).",
