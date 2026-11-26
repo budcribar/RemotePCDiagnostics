@@ -303,11 +303,10 @@ public sealed class AgentMetrics
     /// <summary>Writes a scheduled run to the PC's History (event 1100 in the app's log), as the app writes its own runs.</summary>
     public static Action<DiagnosticResult> EventLogHistory(Action<string>? log)
     {
-        var context = new ResultEventContext(null, () => Environment.MachineName, AppBuildInfo.Version);
         return r =>
         {
             if (!OperatingSystem.IsWindows() || !AppEventLog.SourceRegistered()) return;
-            var text = LogText.Truncate(ResultEventLogger.Format(r, null, null, context));
+            var text = HistoryText(r);
             var level = ResultEventLogger.LevelFor(r) switch
             {
                 LogLevel.Error => EventLogEntryType.Error,
@@ -315,7 +314,12 @@ public sealed class AgentMetrics
                 _ => EventLogEntryType.Information,
             };
             using var el = new EventLog { Source = AppEventLog.SourceName };
-            el.WriteEntry(text + Environment.NewLine + "Build: " + AppBuildInfo.Version, level, LogEventIds.TestResult);
+            el.WriteEntry(text, level, LogEventIds.TestResult);
         };
     }
+
+    /// <summary>The 1100 message the Agent writes for a scheduled run: the app's own format, then the build.</summary>
+    public static string HistoryText(DiagnosticResult r) =>
+        LogText.Truncate(ResultEventLogger.Format(r, null, null, new ResultEventContext(null, () => Environment.MachineName, AppBuildInfo.Version)))
+        + Environment.NewLine + "Build: " + AppBuildInfo.Version;
 }
