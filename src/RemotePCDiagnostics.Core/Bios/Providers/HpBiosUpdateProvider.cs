@@ -184,33 +184,26 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
 
         try
         {
-            HttpResponseMessage? response = null;
             var usedOs = candidates[0].OsVersion;
+            var response = await BiosProviderHttp.GetFollowingAllowedRedirectsAsync(
+                _http,
+                candidates[0].Url,
+                AllowedHostSuffixes,
+                HttpCompletionOption.ResponseHeadersRead,
+                ct).ConfigureAwait(false);
             try
             {
-                for (var i = 0; i < candidates.Count; i++)
+                for (var i = 1; i < candidates.Count && response.StatusCode == HttpStatusCode.NotFound; i++)
                 {
                     var candidate = candidates[i];
                     usedOs = candidate.OsVersion;
-                    response?.Dispose();
+                    response.Dispose();
                     response = await BiosProviderHttp.GetFollowingAllowedRedirectsAsync(
                         _http,
                         candidate.Url,
                         AllowedHostSuffixes,
                         HttpCompletionOption.ResponseHeadersRead,
                         ct).ConfigureAwait(false);
-
-                    if (response.StatusCode != HttpStatusCode.NotFound)
-                        break;
-                }
-
-                if (response is null)
-                {
-                    return BiosProviderHttp.ClassifyHttpStatus(
-                        VendorId,
-                        DisplayName,
-                        HttpStatusCode.NotFound,
-                        $"SystemId {systemId}");
                 }
 
                 if (!response.IsSuccessStatusCode)

@@ -89,24 +89,35 @@ public abstract record MemTestMessage
 {
     public const string Prefix = "MT ";
 
-    public sealed record Allocated(long Bytes) : MemTestMessage;
-    /// <summary>Pass = completed full pattern passes so far; Fraction = progress through the current pass.</summary>
-    public sealed record Progress(int Pass, string Pattern, double Fraction, long Errors) : MemTestMessage;
-    public sealed record BadWord(long Offset, ulong Expected, ulong Actual) : MemTestMessage;
-    public sealed record Done(long Bytes, int Passes, long Errors) : MemTestMessage;
-    public sealed record Fail(string Reason) : MemTestMessage;
-
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
-    public string Format() => this switch
+    public abstract string Format();
+
+    public sealed record Allocated(long Bytes) : MemTestMessage
     {
-        Allocated a => $"{Prefix}ALLOC {a.Bytes.ToString(Inv)}",
-        Progress p => $"{Prefix}PROGRESS {p.Pass.ToString(Inv)} {p.Pattern} {p.Fraction.ToString("0.####", Inv)} {p.Errors.ToString(Inv)}",
-        BadWord b => $"{Prefix}BAD {b.Offset.ToString(Inv)} {b.Expected:X16} {b.Actual:X16}",
-        Done d => $"{Prefix}DONE {d.Bytes.ToString(Inv)} {d.Passes.ToString(Inv)} {d.Errors.ToString(Inv)}",
-        Fail f => $"{Prefix}FAIL {f.Reason.ReplaceLineEndings(" ")}",
-        _ => throw new InvalidOperationException(),
-    };
+        public override string Format() => $"{Prefix}ALLOC {Bytes.ToString(Inv)}";
+    }
+
+    /// <summary>Pass = completed full pattern passes so far; Fraction = progress through the current pass.</summary>
+    public sealed record Progress(int Pass, string Pattern, double Fraction, long Errors) : MemTestMessage
+    {
+        public override string Format() => $"{Prefix}PROGRESS {Pass.ToString(Inv)} {Pattern} {Fraction.ToString("0.####", Inv)} {Errors.ToString(Inv)}";
+    }
+
+    public sealed record BadWord(long Offset, ulong Expected, ulong Actual) : MemTestMessage
+    {
+        public override string Format() => $"{Prefix}BAD {Offset.ToString(Inv)} {Expected:X16} {Actual:X16}";
+    }
+
+    public sealed record Done(long Bytes, int Passes, long Errors) : MemTestMessage
+    {
+        public override string Format() => $"{Prefix}DONE {Bytes.ToString(Inv)} {Passes.ToString(Inv)} {Errors.ToString(Inv)}";
+    }
+
+    public sealed record Fail(string Reason) : MemTestMessage
+    {
+        public override string Format() => $"{Prefix}FAIL {Reason.ReplaceLineEndings(" ")}";
+    }
 
     /// <summary>Parses one line; null for anything that isn't a well-formed protocol message (ignored, logged by the caller).</summary>
     public static MemTestMessage? Parse(string? line)
