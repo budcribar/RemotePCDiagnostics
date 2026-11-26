@@ -308,16 +308,18 @@ public class Batch6BenchmarkExperimentsTests
     {
         public List<int?> SeenSdkMajors { get; } = [];
         public List<string?> SeenBuildWorkRoots { get; } = [];
+        public List<string?> SeenCustomSolutions { get; } = [];
         public BenchmarkConditions ReadConditions() => new(false, 48, "Balanced", "Best performance");
         public Task<IdleSample?> SampleIdleAsync(TimeSpan d, CancellationToken ct) => Task.FromResult<IdleSample?>(new(2.0, 10));
         public Task<double?> StartProgramAsync(BuiltInProgram p, CancellationToken ct) => Task.FromResult<double?>(100);
         public Task<double?> DiskRandomReadIopsAsync(TimeSpan d, CancellationToken ct) => Task.FromResult<double?>(8000);
         public Task<IReadOnlyList<WinEvent>> ReadBootEventsAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<WinEvent>>([]);
         public Task<DeveloperBuildResult?> RunDeveloperCSharpAsync(
-            bool includeAntivirusComparison, IProgress<string>? progress, CancellationToken ct, int? targetDotNetSdkMajor = null, string? buildWorkRoot = null)
+            bool includeAntivirusComparison, IProgress<string>? progress, CancellationToken ct, int? targetDotNetSdkMajor = null, string? buildWorkRoot = null, string? customSolutionPath = null)
         {
             SeenSdkMajors.Add(targetDotNetSdkMajor);
             SeenBuildWorkRoots.Add(buildWorkRoot);
+            SeenCustomSolutions.Add(customSolutionPath);
             var secs = targetDotNetSdkMajor is null && buildWorkRoot is null ? 5.0 : 4.2;
             var major = targetDotNetSdkMajor ?? 10;
             return Task.FromResult<DeveloperBuildResult?>(new DeveloperBuildResult(
@@ -412,5 +414,62 @@ public class Batch6BenchmarkExperimentsTests
         var outcome = Assert.Single(resDevDrive.Outcomes);
         Assert.True(outcome.Succeeded);
         Assert.Contains(@"D:\", outcome.Message);
+    }
+
+    [Fact]
+    public async Task SavedBaselines_and_RunComparisonAsync_lifecycle_works()
+    {
+        var probes = new SdkCapturingProbes();
+        var store = new MemBenchStore
+        {
+            State = new BenchmarkState(new BenchmarkSettings
+            {
+                Goal = BenchmarkGoals.Build,
+                Enabled = [BenchmarkKind.DeveloperCSharp],
+                Runs = 1,
+                DiskRun = TimeSpan.Zero,
+            }),
+        };
+        var svc = new BenchmarkService(new BenchmarkRunner(probes, resolve: (_, _) => Task.CompletedTask), store);
+
+        // 1. Capture baseline -> unsaved (ActiveBaseline is null)
+        var baseRun = await svc.RunAsync(BenchmarkPhase.Before);
+        Assert.NotNull(baseRun);
+        Assert.Null(svc.ActiveBaseline);
+        Assert.Empty(svc.SavedBaselines);
+
+        // 2. Save baseline with custom name
+        var saved = svc.SaveCurrentBaseline("Stock C:\\ · .NET 10");
+        Assert.NotNull(saved);
+        Assert.Equal("Stock C:\\ · .NET 10", saved!.Name);
+        Assert.Single(svc.SavedBaselines);
+        Assert.Equal(saved.Id, svc.ActiveBaselineId);
+
+        // 3. RunComparisonAsync runs ONLY After (never re-runs Before!) against saved baseline and forwards custom solution path
+        probes.SeenBuildWorkRoots.Clear();
+        probes.SeenCustomSolutions.Clear();
+        var cmp = await svc.RunComparisonAsync([], afterBuildWorkRoot: @"D:\", afterCustomSolutionPath: @"C:\src\MyApp\MyApp.sln");
+        Assert.True(cmp.Completed);
+        Assert.NotNull(svc.After);
+        Assert.Equal(new string?[] { @"D:\" }, probes.SeenBuildWorkRoots);
+        Assert.Equal(new string?[] { @"C:\src\MyApp\MyApp.sln" }, probes.SeenCustomSolutions);
+
+        // 4. Promote After to a new saved baseline
+        var promoted = svc.SaveAfterAsBaseline("Dev Drive D:\\ · .NET 10");
+        Assert.NotNull(promoted);
+        Assert.Equal(2, svc.SavedBaselines.Count);
+        Assert.Null(svc.After);
+        Assert.Equal(promoted!.Id, svc.ActiveBaselineId);
+
+        // 5. Switch back to the first saved baseline & delete the promoted one
+        Assert.True(svc.LoadSavedBaseline(saved.Id));
+        Assert.Equal(saved.Id, svc.ActiveBaselineId);
+        Assert.True(svc.DeleteSavedBaseline(promoted.Id));
+        Assert.Single(svc.SavedBaselines);
+
+        // 6. Clear preserves SavedBaselines
+        svc.Clear();
+        Assert.Null(svc.Before);
+        Assert.Single(svc.SavedBaselines);
     }
 }

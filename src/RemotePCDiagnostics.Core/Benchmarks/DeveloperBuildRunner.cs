@@ -194,7 +194,8 @@ public sealed record DeveloperBuildOptions(
     bool IncludeAntivirusComparison = false,
     bool AllowHyperfine = true,
     int? TargetDotNetSdkMajor = null,
-    string? WorkRootOverride = null)
+    string? WorkRootOverride = null,
+    string? CustomSolutionPath = null)
 {
     public TimeSpan EffectiveTimeout => PerCommandTimeout ?? TimeSpan.FromMinutes(5);
 }
@@ -258,29 +259,68 @@ public sealed class DeveloperBuildRunner(
         if (DeveloperCSharpPin.UnsupportedSdkReason(dotnet.Version, dotnet.MajorVersion) is { } tooOld)
             return Failed(DeveloperLanguage.CSharp, "Could not run: " + tooOld, dotnet);
 
-        var freeGb = env.ReadTempVolumeFreeGb();
-        if (freeGb is not null && freeGb.Value < DeveloperScoring.MinFreeDiskGb)
-            return Failed(DeveloperLanguage.CSharp, string.Create(CultureInfo.InvariantCulture,
-                $"Could not run: only {freeGb.Value:0.0} GB free on the temp volume (needs at least {DeveloperScoring.MinFreeDiskGb:0} GB)."), dotnet);
+        var customPath = string.IsNullOrWhiteSpace(options.CustomSolutionPath) ? null : options.CustomSolutionPath.Trim().Trim('"');
+        var isCustomSolution = customPath is not null;
+        if (isCustomSolution)
+        {
+            var ext = Path.GetExtension(customPath);
+            if (!File.Exists(customPath) || !(ext.Equals(".sln", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".slnx", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".csproj", StringComparison.OrdinalIgnoreCase)))
+            {
+                return Failed(DeveloperLanguage.CSharp, "Selected solution/project file was not found or is not a .sln, .slnx, or .csproj file.", dotnet);
+            }
+        }
+        else
+        {
+            var freeGb = env.ReadTempVolumeFreeGb();
+            if (freeGb is not null && freeGb.Value < DeveloperScoring.MinFreeDiskGb)
+                return Failed(DeveloperLanguage.CSharp, string.Create(CultureInfo.InvariantCulture,
+                    $"Could not run: only {freeGb.Value:0.0} GB free on the temp volume (needs at least {DeveloperScoring.MinFreeDiskGb:0} GB)."), dotnet);
+        }
 
         var tempRoot = !string.IsNullOrWhiteSpace(options.WorkRootOverride)
             ? options.WorkRootOverride
             : (tempRootOverride ?? Path.GetTempPath());
-        var workDir = Path.Combine(tempRoot, $"{DevDriveRules.BuildTempPrefix}{Guid.NewGuid():N}");
+        var workDir = isCustomSolution
+            ? Path.GetDirectoryName(Path.GetFullPath(customPath!))!
+            : Path.Combine(tempRoot, $"{DevDriveRules.BuildTempPrefix}{Guid.NewGuid():N}");
         var tempExclusionAdded = false;
+        string? tempGlobalJsonPath = null;
 
         try
         {
-            progress?.Report("Preparing pinned C# benchmark sources…");
             var effectiveMajor = options.TargetDotNetSdkMajor ?? dotnet.MajorVersion!.Value;
-            var (projectPath, sha256) = DeveloperCSharpPin.Materialize(workDir, effectiveMajor);
+            string projectPath;
+            string pinId;
+            string sha256;
+            if (isCustomSolution)
+            {
+                projectPath = Path.GetFullPath(customPath!);
+                pinId = Path.GetFileName(projectPath);
+                sha256 = "custom";
+                progress?.Report($"Preparing {pinId}…");
+            }
+            else
+            {
+                progress?.Report("Preparing pinned C# benchmark sources…");
+                (projectPath, sha256) = DeveloperCSharpPin.Materialize(workDir, effectiveMajor);
+                pinId = DeveloperCSharpPin.PinId;
+            }
+
             var actualSdkVersion = dotnet.Version;
             int? actualSdkMajor = dotnet.MajorVersion;
             if (options.TargetDotNetSdkMajor is { } pinMajor)
             {
-                File.WriteAllText(
-                    Path.Combine(workDir, "global.json"),
-                    $$$"""{"sdk":{"version":"{{{pinMajor}}}.0.100","rollForward":"latestFeature"}}""");
+                var globalJsonPath = Path.Combine(workDir, "global.json");
+                if (!isCustomSolution || !File.Exists(globalJsonPath))
+                {
+                    File.WriteAllText(
+                        globalJsonPath,
+                        $$$"""{"sdk":{"version":"{{{pinMajor}}}.0.100","rollForward":"latestFeature"}}""");
+                    if (isCustomSolution)
+                        tempGlobalJsonPath = globalJsonPath;
+                }
                 var verRes = await _launcher.RunAsync(dotnet.ExecutablePath, ["--version"], TimeSpan.FromSeconds(15), ct, workDir).ConfigureAwait(false);
                 if (verRes is { ExitCode: 0, TimedOut: false } && !string.IsNullOrWhiteSpace(verRes.StdOut))
                 {
@@ -294,7 +334,7 @@ public sealed class DeveloperBuildRunner(
                     actualSdkMajor = pinMajor;
                 }
             }
-            Log($"C# clean build benchmark running on .NET SDK {actualSdkVersion} in {workDir}");
+            Log($"C# clean build benchmark ({pinId}) running on .NET SDK {actualSdkVersion} in {workDir}");
 
             var conditions = env.ReadConditions();
             var (comparable, condNotes) = DeveloperScoring.CheckComparability(conditions.OnBattery, conditions.PowerPlan, thermallyThrottling: false);
@@ -302,7 +342,7 @@ public sealed class DeveloperBuildRunner(
             var defenderActive = defender?.Active;
             var folderExcluded = defender is { ExclusionsReadable: true } d && d.Paths.Any(p => DefenderProbe.Covers(p, workDir));
 
-            var totalSteps = options.IncludeAntivirusComparison && machineTweaks is not null && env.IsAgentConnected ? 4 : 3;
+            var totalSteps = !isCustomSolution && options.IncludeAntivirusComparison && machineTweaks is not null && env.IsAgentConnected ? 4 : 3;
             var step = 0;
 
             // 1. Restore (timed separately, excluded from build score)
@@ -311,27 +351,27 @@ public sealed class DeveloperBuildRunner(
             if (!restoreOk)
                 return FailCommand(DeveloperLanguage.CSharp, "dotnet restore", restoreFail, dotnet, sha256, restoreSecs);
 
-            var hyperfine = options.AllowHyperfine ? env.FindHyperfine() : null;
+            var hyperfine = !isCustomSolution && options.AllowHyperfine ? env.FindHyperfine() : null;
             var usedHyperfine = false;
 
             // 2. Cold clean builds (shut down build servers & disable node reuse / shared compilation so Before and After start equally cold)
             progress.ReportStep(++step, totalSteps, $"Running cold C# clean builds ({options.ColdRepeats} repeats)…");
             await ShutdownBuildServersAsync(dotnet.ExecutablePath, workDir, ct).ConfigureAwait(false);
-            var (coldSamples, coldFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.ColdRepeats, warmups: 0, hyperfine, options.EffectiveTimeout, ct, isolateBuildServer: true).ConfigureAwait(false);
+            var (coldSamples, coldFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.ColdRepeats, warmups: 0, hyperfine, options.EffectiveTimeout, ct, isolateBuildServer: true, useDotnetClean: isCustomSolution).ConfigureAwait(false);
             if (coldFail is not null || coldSamples.Count == 0)
                 return FailCommand(DeveloperLanguage.CSharp, "cold dotnet build", coldFail, dotnet, sha256, restoreSecs);
             if (hyperfine is not null) usedHyperfine = true;
 
             // 3. Warm clean builds (2 warmups discarded by default so VBCSCompiler/MSBuild nodes reach steady state; compiler outputs deleted before EVERY repeat)
             progress.ReportStep(++step, totalSteps, $"Running warm C# clean builds ({options.WarmRepeats} repeats)…");
-            var (warmSamples, warmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct, isolateBuildServer: false).ConfigureAwait(false);
+            var (warmSamples, warmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct, isolateBuildServer: false, useDotnetClean: isCustomSolution).ConfigureAwait(false);
             if (warmFail is not null || warmSamples.Count == 0)
                 return FailCommand(DeveloperLanguage.CSharp, "warm dotnet build", warmFail, dotnet, sha256, restoreSecs);
 
             // 4. Optional approval-gated Antivirus comparison (temporary exclusion through Agent, then removed in finally)
             IReadOnlyList<double>? warmExcludedSamples = null;
             double? warmExcludedMedian = null;
-            if (options.IncludeAntivirusComparison && machineTweaks is not null && env.IsAgentConnected)
+            if (!isCustomSolution && options.IncludeAntivirusComparison && machineTweaks is not null && env.IsAgentConnected)
             {
                 progress.ReportStep(++step, totalSteps, $"Running warm C# clean builds with temporary Defender exclusion ({options.WarmRepeats} repeats)…");
                 var (added, _) = await machineTweaks.AddTempBuildDefenderExclusionAsync(workDir, ct).ConfigureAwait(false);
@@ -353,13 +393,13 @@ public sealed class DeveloperBuildRunner(
             var warmMedian = DeveloperScoring.Median(warmSamples);
             var (cpuName, coreCount) = env.ReadCpuInfo();
             var cpuClass = DeveloperScoring.ClassifyCpu(cpuName, coreCount);
-            var baseline = _baselines.FindUsable(cpuClass, DeveloperLanguage.CSharp, DeveloperCSharpPin.PinId, actualSdkMajor);
+            var baseline = isCustomSolution ? null : _baselines.FindUsable(cpuClass, DeveloperLanguage.CSharp, pinId, actualSdkMajor);
             var score = comparable ? DeveloperScoring.ComputeScore(warmMedian, baseline) : null;
             var band = DeveloperScoring.EvaluateBand(warmMedian, baseline, comparable);
 
             var result = new DeveloperBuildResult(
                 DeveloperLanguage.CSharp,
-                DeveloperCSharpPin.PinId,
+                pinId,
                 sha256,
                 actualSdkVersion,
                 actualSdkMajor,
@@ -378,38 +418,46 @@ public sealed class DeveloperBuildRunner(
                 comparable,
                 condNotes);
 
-            // Append anonymous sample beside benchmarks.json (no computer name, account, serial, or path)
-            sampleStore?.Append(new DeveloperBenchmarkSample(
-                DeveloperLanguage.CSharp,
-                DeveloperCSharpPin.PinId,
-                sha256,
-                actualSdkVersion,
-                actualSdkMajor,
-                cpuClass,
-                cpuName,
-                coreCount,
-                conditions.OnBattery,
-                conditions.PowerPlan,
-                defenderActive == true && folderExcluded != true,
-                coldMedian,
-                warmMedian,
-                warmExcludedMedian,
-                restoreSecs,
-                coldSamples.Count,
-                warmSamples.Count,
-                DateTimeOffset.UtcNow));
+            // Append anonymous sample beside benchmarks.json (built-in pin only; never log custom solution names/samples)
+            if (!isCustomSolution)
+            {
+                sampleStore?.Append(new DeveloperBenchmarkSample(
+                    DeveloperLanguage.CSharp,
+                    pinId,
+                    sha256,
+                    actualSdkVersion,
+                    actualSdkMajor,
+                    cpuClass,
+                    cpuName,
+                    coreCount,
+                    conditions.OnBattery,
+                    conditions.PowerPlan,
+                    defenderActive == true && folderExcluded != true,
+                    coldMedian,
+                    warmMedian,
+                    warmExcludedMedian,
+                    restoreSecs,
+                    coldSamples.Count,
+                    warmSamples.Count,
+                    DateTimeOffset.UtcNow));
+            }
 
-            Log($"C# clean build done: cold={coldMedian:0.00}s warm={warmMedian:0.00}s restore={restoreSecs:0.00}s");
+            Log($"C# clean build ({pinId}) done: cold={coldMedian:0.00}s warm={warmMedian:0.00}s restore={restoreSecs:0.00}s");
             return result;
         }
         finally
         {
+            if (tempGlobalJsonPath is not null)
+            {
+                try { if (File.Exists(tempGlobalJsonPath)) File.Delete(tempGlobalJsonPath); } catch { }
+            }
             if (tempExclusionAdded && machineTweaks is not null)
             {
                 try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(workDir, CancellationToken.None).ConfigureAwait(false); }
                 catch (Exception ex) { Log("Failed to remove temp Defender exclusion: " + ex.Message); }
             }
-            TryDeleteDirectory(workDir);
+            if (!isCustomSolution)
+                TryDeleteDirectory(workDir);
         }
     }
 
@@ -606,9 +654,10 @@ public sealed class DeveloperBuildRunner(
         string? hyperfineExe,
         TimeSpan timeout,
         CancellationToken ct,
-        bool isolateBuildServer = false)
+        bool isolateBuildServer = false,
+        bool useDotnetClean = false)
     {
-        if (hyperfineExe is not null)
+        if (hyperfineExe is not null && !useDotnetClean)
         {
             var hfSamples = await TryMeasureWithHyperfineAsync(hyperfineExe, dotnetExe, projectPath, workDir, repeats, warmups, timeout, ct, isolateBuildServer).ConfigureAwait(false);
             if (hfSamples is { Count: > 0 }) return (hfSamples, null);
@@ -625,7 +674,10 @@ public sealed class DeveloperBuildRunner(
         for (var i = 0; i < warmups + Math.Max(1, repeats); i++)
         {
             ct.ThrowIfCancellationRequested();
-            CleanBuildOutputs(workDir);
+            if (useDotnetClean)
+                await _launcher.RunAsync(dotnetExe, ["clean", projectPath, "-c", "Release", "-v", "q"], timeout, ct, workDir).ConfigureAwait(false);
+            else
+                CleanBuildOutputs(workDir);
             var (ok, seconds, failure) = await TimedCommandAsync(dotnetExe, buildArgs, timeout, ct, workDir).ConfigureAwait(false);
             if (!ok) return ([], failure ?? CommandFailure.Empty);
             if (i >= warmups)

@@ -288,12 +288,13 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         return new(true, null, null);
     }
 
-    /// <summary>Starts a new service call: forgets earlier results (settings are kept).</summary>
+    /// <summary>Starts a new comparison session: forgets active Before/After results while keeping settings and saved baselines.</summary>
     public void Clear()
     {
         if (Running is not null || Settling is not null) return;
         Message = null;
-        Save(new BenchmarkState(Settings));
+        LastExperiment = null;
+        Save(new BenchmarkState(Settings, SavedBaselines: _state.SavedBaselines));
     }
 
     public void Stop() { try { _cts?.Cancel(); } catch (ObjectDisposedException) { } }
@@ -333,7 +334,9 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
                 : null;
             var run = await runner.RunAsync(phase, settings, phase == BenchmarkPhase.After ? Before?.TimeUtc : null, prog, cts.Token,
                 phase == BenchmarkPhase.Before ? bootsSince : null, preferredSpeedometerEngine).ConfigureAwait(false);
-            Save(phase == BenchmarkPhase.Before ? _state with { Before = run, After = null, RunBeforeOnStartup = false } : _state with { After = run });
+            Save(phase == BenchmarkPhase.Before
+                ? _state with { Before = run, After = null, ActiveBaselineId = null, RunBeforeOnStartup = false }
+                : _state with { After = run });
             Message = run.Completed ? null : "Stopped before every benchmark finished; the finished ones are kept.";
             WriteEvent(run);
             try { PassFinished?.Invoke(run); } catch (Exception ex) { LogWarn("PassFinished handler failed: " + ex.Message); }
@@ -699,6 +702,297 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             catch { }
         }
         return null;
+    }
+
+    public IReadOnlyList<SavedBenchmarkBaseline> SavedBaselines => _state.Baselines;
+    public string? ActiveBaselineId => _state.ActiveBaselineId;
+    public SavedBenchmarkBaseline? ActiveBaseline => _state.Baselines.FirstOrDefault(b => string.Equals(b.Id, _state.ActiveBaselineId, StringComparison.Ordinal));
+
+    /// <summary>Builds a friendly default name for a baseline or after snapshot (e.g. "Build speed · .NET SDK 11.0.100").</summary>
+    public static string SuggestRunName(BenchmarkRun? run)
+    {
+        var goalLabel = BenchmarkGoals.Normalize(run?.Goal) switch
+        {
+            BenchmarkGoals.Build => "Build speed",
+            BenchmarkGoals.Browsing => "Web browsing",
+            BenchmarkGoals.TuneUp => "Full tune-up",
+            _ => "Custom",
+        };
+        var tc = run?.Measurements.Select(m => m.DeveloperBuild?.FormatToolchainVersion()).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+        if (!string.IsNullOrWhiteSpace(tc))
+            return $"{goalLabel} · {tc}";
+        var stamp = (run?.TimeUtc ?? DateTimeOffset.UtcNow).ToLocalTime().ToString("MMM d, h:mm tt", System.Globalization.CultureInfo.InvariantCulture);
+        return $"{goalLabel} · {stamp}";
+    }
+
+    /// <summary>Saves the current Before run as a reusable named baseline and marks it active.</summary>
+    public SavedBenchmarkBaseline? SaveCurrentBaseline(string? name)
+    {
+        if (Before is not { } run) return null;
+        return UpsertSavedBaseline(run, name, clearAfter: false);
+    }
+
+    /// <summary>Promotes the current After run to a named saved baseline and makes it the active Before baseline.</summary>
+    public SavedBenchmarkBaseline? SaveAfterAsBaseline(string? name)
+    {
+        if (After is not { } run) return null;
+        var promotedRun = run with { Phase = BenchmarkPhase.Before };
+        return UpsertSavedBaseline(promotedRun, name, clearAfter: true);
+    }
+
+    private SavedBenchmarkBaseline UpsertSavedBaseline(BenchmarkRun run, string? name, bool clearAfter)
+    {
+        var cleanName = string.IsNullOrWhiteSpace(name) ? SuggestRunName(run) : name.Trim();
+        var item = new SavedBenchmarkBaseline(Guid.NewGuid().ToString("N")[..12], cleanName, DateTimeOffset.UtcNow, run);
+        var next = new List<SavedBenchmarkBaseline> { item };
+        next.AddRange(_state.Baselines.Take(19));
+        Save(_state with
+        {
+            Before = run,
+            After = clearAfter ? null : _state.After,
+            SavedBaselines = next,
+            ActiveBaselineId = item.Id,
+        });
+        if (clearAfter) LastExperiment = null;
+        return item;
+    }
+
+    /// <summary>Loads a saved baseline as the active Before run and aligns enabled tests to match it.</summary>
+    public bool LoadSavedBaseline(string id)
+    {
+        if (Running is not null || Settling is not null || ExperimentRunning) return false;
+        var found = _state.Baselines.FirstOrDefault(b => string.Equals(b.Id, id, StringComparison.Ordinal));
+        if (found is null) return false;
+        var enabled = found.Run.EnabledKinds is { Count: > 0 } ek
+            ? ek.ToList()
+            : found.Run.Measurements.Select(m => m.Kind).Distinct().ToList();
+        var settings = enabled.Count > 0
+            ? _state.Settings with { Goal = BenchmarkGoals.Normalize(found.Run.Goal), Enabled = enabled }
+            : _state.Settings with { Goal = BenchmarkGoals.Normalize(found.Run.Goal) };
+        LastExperiment = null;
+        Message = null;
+        Save(_state with
+        {
+            Settings = settings,
+            Before = found.Run,
+            After = null,
+            ActiveBaselineId = found.Id,
+            RunBeforeOnStartup = false,
+            RunAfterOnStartup = false,
+        });
+        return true;
+    }
+
+    /// <summary>Deletes a saved baseline by id; clears active Before/After if it was currently loaded.</summary>
+    public bool DeleteSavedBaseline(string id)
+    {
+        if (Running is not null || Settling is not null || ExperimentRunning) return false;
+        var remaining = _state.Baselines.Where(b => !string.Equals(b.Id, id, StringComparison.Ordinal)).ToList();
+        if (remaining.Count == _state.Baselines.Count) return false;
+        var wasActive = string.Equals(_state.ActiveBaselineId, id, StringComparison.Ordinal);
+        Save(_state with
+        {
+            SavedBaselines = remaining,
+            ActiveBaselineId = wasActive ? null : _state.ActiveBaselineId,
+            Before = wasActive ? null : _state.Before,
+            After = wasActive ? null : _state.After,
+        });
+        if (wasActive) LastExperiment = null;
+        return true;
+    }
+
+    /// <summary>Discards the current After run while keeping the active Baseline intact.</summary>
+    public void DiscardAfter()
+    {
+        if (Running is not null || Settling is not null || ExperimentRunning) return;
+        LastExperiment = null;
+        Message = null;
+        Save(_state with { After = null, RunAfterOnStartup = false });
+    }
+
+    /// <summary>
+    /// Applies selected modifications (+ optional existing Dev Drive / .NET SDK target) and runs ONLY the After pass
+    /// against the already-captured or loaded <see cref="Before"/> baseline.
+    /// </summary>
+    public async Task<BenchmarkExperimentResult> RunComparisonAsync(
+        IReadOnlyList<BenchmarkImprovement> selectedImprovements,
+        Func<AreaAction, CancellationToken, Task<RemediationResult>>? applyImprovement = null,
+        CancellationToken ct = default,
+        int? targetDotNetSdkMajor = null,
+        IReadOnlyList<int>? installedDotNetSdkMajorsOverride = null,
+        string? afterBuildWorkRoot = null,
+        string? afterCustomSolutionPath = null)
+    {
+        if (Before is not { } beforeRun)
+            return new(Settings.Goal, null, null, [], false, "Capture or load a baseline first.");
+        if (Settings.Enabled.Count == 0)
+            return new(Settings.Goal, beforeRun, After, [], false, "No benchmarks are selected.");
+
+        Func<AreaAction, CancellationToken, Task<RemediationResult>> apply = applyImprovement
+            ?? (remediation is not null
+                ? (a, token) => remediation.ExecuteAsync(a, token)
+                : (_, _) => Task.FromResult(new RemediationResult(false, "Remediation service is not available.")));
+
+        CancellationTokenSource cts;
+        BenchmarkSettings settings;
+        lock (_gate)
+        {
+            if (Running is not null || Settling is not null || RunningDeveloperAction || ExperimentRunning)
+                return new(Settings.Goal, beforeRun, After, [], false, "A benchmark is already running.");
+            ExperimentRunning = true;
+            ExperimentStep = "Applying selected modifications…";
+            Running = null;
+            settings = _state.Settings with { TargetDotNetSdkMajor = null, BuildWorkRoot = null };
+            _cts = cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        }
+        Blocked = null;
+        Message = null;
+        LastExperiment = null;
+        Raise();
+
+        BenchmarkRun? afterRun = null;
+        var outcomes = new List<BenchmarkImprovementOutcome>();
+
+        try
+        {
+            var prog = new Progress<string>(m => { Progress = m; Raise(); });
+            var ordered = BenchmarkImprovements.OrderForExecution(selectedImprovements.Where(i => !i.AlreadyApplied));
+            var useExistingDevDrive = !string.IsNullOrWhiteSpace(afterBuildWorkRoot);
+            var effectiveSolutionPath = !string.IsNullOrWhiteSpace(afterCustomSolutionPath)
+                ? afterCustomSolutionPath.Trim()
+                : settings.CustomSolutionPath;
+            var solutionChanged = !string.IsNullOrWhiteSpace(afterCustomSolutionPath)
+                && !string.Equals(afterCustomSolutionPath.Trim(), settings.CustomSolutionPath?.Trim(), StringComparison.OrdinalIgnoreCase);
+            var totalActions = ordered.Count + (useExistingDevDrive ? 1 : 0) + (targetDotNetSdkMajor is 10 or 11 ? 1 : 0) + (solutionChanged ? 1 : 0);
+
+            if (totalActions > 0)
+            {
+                ExperimentStep = $"Step 1/2: Applying {totalActions} {(totalActions == 1 ? "modification" : "modifications")}…";
+                Progress = ExperimentStep;
+                Raise();
+            }
+
+            string? createdDevDriveRoot = null;
+            var devDriveFailed = false;
+            foreach (var imp in ordered)
+            {
+                cts.Token.ThrowIfCancellationRequested();
+                if (imp.RequiresDevDrive && createdDevDriveRoot is null && imp.Action.Target.Contains(BenchmarkImprovements.NewDevDriveToken, StringComparison.Ordinal))
+                {
+                    var reason = devDriveFailed ? "Skipped because creating the persistent Dev Drive failed." : "Skipped because no Dev Drive is mounted.";
+                    outcomes.Add(new(imp.Id, imp.Title, Succeeded: false, Skipped: true, reason));
+                    continue;
+                }
+                Progress = $"Applying: {imp.Title}…";
+                Raise();
+                var resolved = BenchmarkImprovements.ResolveAction(imp.Action, createdDevDriveRoot);
+                var res = await apply(resolved, cts.Token).ConfigureAwait(false);
+                outcomes.Add(new(imp.Id, imp.Title, res.Success, Skipped: false, res.Message));
+                if (imp.Action.Kind == RemediationKind.CreatePersistentDevDrive)
+                {
+                    if (res.Success && !string.IsNullOrWhiteSpace(res.CreatedDriveRoot)) createdDevDriveRoot = res.CreatedDriveRoot;
+                    else if (!res.Success) devDriveFailed = true;
+                }
+            }
+
+            string? effectiveAfterBuildWorkRoot = null;
+            if (useExistingDevDrive)
+            {
+                effectiveAfterBuildWorkRoot = DevDrivePackageCaches.NormalizeDriveRoot(afterBuildWorkRoot!);
+                outcomes.Add(new("devdrive:use-existing", $"Use Dev Drive ({effectiveAfterBuildWorkRoot}) for After build",
+                    Succeeded: true, Skipped: false, $"Running After build on existing Dev Drive {effectiveAfterBuildWorkRoot}."));
+            }
+            else if (!string.IsNullOrWhiteSpace(createdDevDriveRoot))
+            {
+                effectiveAfterBuildWorkRoot = DevDrivePackageCaches.NormalizeDriveRoot(createdDevDriveRoot);
+            }
+
+            if (solutionChanged)
+            {
+                outcomes.Add(new("solution:custom", $"Build solution ({Path.GetFileName(effectiveSolutionPath)})",
+                    Succeeded: true, Skipped: false, $"Running After build on {effectiveSolutionPath}."));
+            }
+
+            int? effectiveAfterSdkMajor = null;
+            if (targetDotNetSdkMajor is 10 or 11)
+            {
+                cts.Token.ThrowIfCancellationRequested();
+                var installedMajors = installedDotNetSdkMajorsOverride ?? InstalledDotNetSdkMajors;
+                var sdkName = targetDotNetSdkMajor == 11 ? ".NET 11 SDK" : ".NET 10 LTS SDK";
+                var sdkId = targetDotNetSdkMajor == 11 ? BenchmarkImprovements.InstallDotNet11SdkId : BenchmarkImprovements.InstallDotNet10SdkId;
+                if (installedMajors.Contains(targetDotNetSdkMajor.Value))
+                {
+                    effectiveAfterSdkMajor = targetDotNetSdkMajor.Value;
+                    outcomes.Add(new(sdkId, $"Run After on {sdkName}", Succeeded: true, Skipped: false, $"Already installed — pinning After pass to {sdkName}."));
+                }
+                else
+                {
+                    var pkgId = targetDotNetSdkMajor == 11 ? RemediationService.DotNet11SdkPackageId : RemediationService.DotNet10SdkPackageId;
+                    Progress = $"Installing {sdkName} silently via Agent…";
+                    Raise();
+                    var installAction = new AreaAction(RemediationKind.InstallDotNetSdk, $"Install {sdkName}", pkgId, sdkName);
+                    var res = await apply(installAction, cts.Token).ConfigureAwait(false);
+                    outcomes.Add(new(sdkId, $"Install & run After on {sdkName}", res.Success, Skipped: false, res.Message));
+                    if (res.Success)
+                    {
+                        effectiveAfterSdkMajor = targetDotNetSdkMajor.Value;
+                        try { await RefreshDeveloperEnvironmentAsync(cts.Token).ConfigureAwait(false); } catch { }
+                    }
+                }
+            }
+
+            if (outcomes.Count > 0 && outcomes.All(o => !o.Succeeded))
+            {
+                Message = "Stopped before comparison: none of the selected modifications succeeded.";
+                return FinishExperiment(settings.Goal, beforeRun, null, outcomes, completed: false, error: Message);
+            }
+
+            lock (_gate)
+            {
+                Running = BenchmarkPhase.After;
+                var parts = new List<string>();
+                if (!string.IsNullOrWhiteSpace(effectiveSolutionPath)) parts.Add(Path.GetFileName(effectiveSolutionPath));
+                if (effectiveAfterBuildWorkRoot is not null) parts.Add($"Dev Drive {effectiveAfterBuildWorkRoot}");
+                if (effectiveAfterSdkMajor is { } m) parts.Add($".NET {m} SDK");
+                ExperimentStep = parts.Count > 0
+                    ? $"Running comparison on {string.Join(" + ", parts)}…"
+                    : "Running comparison benchmark…";
+                Progress = ExperimentStep;
+            }
+            Raise();
+
+            var afterSettings = settings with
+            {
+                TargetDotNetSdkMajor = effectiveAfterSdkMajor,
+                BuildWorkRoot = effectiveAfterBuildWorkRoot,
+                CustomSolutionPath = effectiveSolutionPath,
+            };
+            afterRun = await runner.RunAsync(BenchmarkPhase.After, afterSettings, null, prog, cts.Token).ConfigureAwait(false);
+            Save(_state with { After = afterRun, RunAfterOnStartup = false });
+            WriteEvent(afterRun);
+
+            var completed = afterRun.Completed;
+            Message = completed ? null : "Stopped during comparison benchmark.";
+            return FinishExperiment(settings.Goal, beforeRun, afterRun, outcomes, completed, completed ? null : "Stopped during comparison benchmark.");
+        }
+        catch (OperationCanceledException)
+        {
+            Message = "Comparison cancelled.";
+            return FinishExperiment(settings.Goal, beforeRun, afterRun, outcomes, false, "Cancelled.");
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                ExperimentRunning = false;
+                ExperimentStep = null;
+                Running = null;
+                Progress = null;
+                if (ReferenceEquals(_cts, cts)) _cts = null;
+            }
+            cts.Dispose();
+            Raise();
+        }
     }
 
     /// <summary>

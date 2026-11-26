@@ -133,6 +133,9 @@ public sealed record BenchmarkSettings
 
     /// <summary>Optional root folder/drive (e.g. an existing Dev Drive <c>D:\</c>) where the C# clean build benchmark runs.</summary>
     public string? BuildWorkRoot { get; init; }
+
+    /// <summary>Optional path to a user-selected <c>.sln</c>, <c>.slnx</c>, or <c>.csproj</c> to benchmark instead of the built-in pinned project.</summary>
+    public string? CustomSolutionPath { get; init; }
 }
 
 /// <summary>Goal presets over the existing <see cref="BenchmarkSettings.Enabled"/> list (never a separate run path).</summary>
@@ -300,12 +303,22 @@ public sealed record BenchmarkRun(
     public BenchmarkMeasurement? Get(BenchmarkKind k) => Measurements.FirstOrDefault(m => m.Kind == k);
 }
 
+/// <summary>A named baseline snapshot saved by the user so it can be reloaded and compared against later.</summary>
+public sealed record SavedBenchmarkBaseline(
+    string Id,
+    string Name,
+    DateTimeOffset SavedUtc,
+    BenchmarkRun Run);
+
 /// <summary>Everything kept between app restarts (so a "before" survives the restart for the "after").</summary>
 /// <param name="RunBeforeOnStartup">"Restart, then run before benchmark" was asked: run the before benchmark once the app is back.</param>
 /// <param name="RestartRequestedUtc">When that restart was asked for: the before benchmark counts only start-ups after it.</param>
 public sealed record BenchmarkState(BenchmarkSettings Settings, BenchmarkRun? Before = null, BenchmarkRun? After = null, bool RunAfterOnStartup = false,
-    bool RunBeforeOnStartup = false, DateTimeOffset? RestartRequestedUtc = null)
+    bool RunBeforeOnStartup = false, DateTimeOffset? RestartRequestedUtc = null,
+    IReadOnlyList<SavedBenchmarkBaseline>? SavedBaselines = null, string? ActiveBaselineId = null)
 {
+    public IReadOnlyList<SavedBenchmarkBaseline> Baselines => SavedBaselines ?? [];
+
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
     public string ToJson() => JsonSerializer.Serialize(this, Json);
     public static BenchmarkState? FromJson(string? json)

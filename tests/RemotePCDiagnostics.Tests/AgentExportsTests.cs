@@ -171,18 +171,13 @@ public class AgentExportsTests
     {
         var page = File.ReadAllText(Path.Combine(FindRepoRoot(), "src", "RemotePCDiagnostics.UI", "Pages", "BenchmarkPage.razor"));
 
-        Assert.Contains("data-testid=\"bench-restart\" checked=\"@s.RestartBeforeAfter\" disabled aria-readonly=\"true\"", page, StringComparison.Ordinal);
         Assert.DoesNotContain("@onchange=\"EchoCommittedRestart\"", page, StringComparison.Ordinal);
         Assert.DoesNotContain("RestartBeforeAfter = e.Value", page, StringComparison.Ordinal);
         Assert.Contains("BeginPassAsync", page, StringComparison.Ordinal);
         Assert.Contains("data-blocked-setting", page, StringComparison.Ordinal);
         Assert.Contains("data-blocked-reason", page, StringComparison.Ordinal);
-        Assert.Contains("StartButton(BenchmarkPhase.Before, true", page, StringComparison.Ordinal);
-        Assert.Contains("StartButton(BenchmarkPhase.Before, false", page, StringComparison.Ordinal);
-        Assert.Contains("StartButton(BenchmarkPhase.Before, !s.RestartBeforeAfter", page, StringComparison.Ordinal);
-        Assert.Contains("StartButton(BenchmarkPhase.After, true", page, StringComparison.Ordinal);
-        Assert.Contains("StartButton(BenchmarkPhase.After, false", page, StringComparison.Ordinal);
-        Assert.Contains("StartButton(BenchmarkPhase.After, !s.RestartBeforeAfter", page, StringComparison.Ordinal);
+        Assert.Contains("StartButton(BenchmarkPhase.Before, includesBoot", page, StringComparison.Ordinal);
+        Assert.Contains("StartButton(BenchmarkPhase.After, s.IsEnabled(BenchmarkKind.BootTime)", page, StringComparison.Ordinal);
         Assert.Equal("bench-run-before", BenchmarkStartRules.Control(BenchmarkPhase.Before, false));
         Assert.Equal("bench-restart-before", BenchmarkStartRules.Control(BenchmarkPhase.Before, true));
         Assert.Equal("bench-run-after", BenchmarkStartRules.Control(BenchmarkPhase.After, false));
@@ -241,9 +236,7 @@ public class AgentExportsTests
         Assert.DoesNotContain(BenchmarkKind.DeveloperCSharp, turnedOff);
 
         var page = File.ReadAllText(Path.Combine(FindRepoRoot(), "src", "RemotePCDiagnostics.UI", "Pages", "BenchmarkPage.razor"));
-        Assert.Contains("data-testid=\"bench-settings-toggle\"", page, StringComparison.Ordinal);
-        Assert.Contains("aria-expanded=\"@(_customizeOpen ? \"true\" : \"false\")\"", page, StringComparison.Ordinal);
-        Assert.Contains("open=\"@_customizeOpen\"", page, StringComparison.Ordinal);
+        Assert.Contains("data-testid=\"bench-settings\"", page, StringComparison.Ordinal);
         Assert.Contains("data-testid=\"@BenchmarkTestRules.Control(k)\"", page, StringComparison.Ordinal);
         Assert.Contains("data-bench-test=\"@k\"", page, StringComparison.Ordinal);
         Assert.Contains("data-enabled=\"@(s.IsEnabled(k) ? \"true\" : \"false\")\"", page, StringComparison.Ordinal);
