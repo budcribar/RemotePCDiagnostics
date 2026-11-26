@@ -1,4 +1,4 @@
-using System.IO.Compression;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -6,14 +6,16 @@ using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.Session;
 
-/// <summary>Parsed download metadata for one official Microsoft .NET SDK zip archive.</summary>
-public sealed record DotNetSdkZipAsset(string SdkVersion, string Url, string Sha512);
+/// <summary>Parsed download metadata for one official Microsoft .NET SDK Windows installer.</summary>
+public sealed record DotNetSdkInstallerAsset(string SdkVersion, string Url, string Sha512);
 
 /// <summary>
 /// Headless, zero-popup .NET SDK side-by-side installer that runs inside the elevated Agent.
 /// Downloads Microsoft's official release-metadata JSON, fetches the native <c>win-x64</c> or <c>win-arm64</c>
-/// SDK zip, verifies its SHA-512 hash, and extracts it side-by-side into <c>%ProgramFiles%\dotnet</c>.
-/// No winget, no UAC prompt, and no taskbar/installer window.
+/// signed <c>.exe</c> installer, verifies its SHA-512 hash, and runs it silently with
+/// <c>/install /quiet /norestart</c>. Using Microsoft's official MSI/Burn bundle avoids file-lock and
+/// MSI-owned catalog ACL failures in <c>%ProgramFiles%\dotnet</c>, registers cleanly in Windows, and
+/// produces zero UAC prompts or windows.
 /// </summary>
 public static class AgentDotNetSdkInstaller
 {
@@ -27,10 +29,10 @@ public static class AgentDotNetSdkInstaller
             || uri.Host.Equals("download.visualstudio.microsoft.com", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
-    /// Parses Microsoft's official <c>releases.json</c> for the latest SDK zip matching <paramref name="rid"/>
-    /// (<c>win-x64</c> or <c>win-arm64</c>).
+    /// Parses Microsoft's official <c>releases.json</c> for the latest Windows <c>.exe</c> SDK installer
+    /// matching <paramref name="rid"/> (<c>win-x64</c> or <c>win-arm64</c>).
     /// </summary>
-    public static DotNetSdkZipAsset? TryParseReleaseZipFromMetadata(string releasesJson, string rid)
+    public static DotNetSdkInstallerAsset? TryParseReleaseInstallerFromMetadata(string releasesJson, string rid)
     {
         if (string.IsNullOrWhiteSpace(releasesJson) || string.IsNullOrWhiteSpace(rid))
             return null;
@@ -62,7 +64,7 @@ public static class AgentDotNetSdkInstaller
         return null;
     }
 
-    private static DotNetSdkZipAsset? TryExtractFromSdkElement(JsonElement sdk, string rid)
+    private static DotNetSdkInstallerAsset? TryExtractFromSdkElement(JsonElement sdk, string rid)
     {
         var version = sdk.TryGetProperty("version", out var v) ? v.GetString() : null;
         if (string.IsNullOrWhiteSpace(version)) return null;
@@ -76,10 +78,10 @@ public static class AgentDotNetSdkInstaller
             var url = file.TryGetProperty("url", out var u) ? u.GetString() : null;
             var hash = file.TryGetProperty("hash", out var h) ? h.GetString() : null;
             if (!string.Equals(fileRid, rid, StringComparison.OrdinalIgnoreCase)) continue;
-            if (name is null || !name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
+            if (name is null || !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue;
             if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(hash)) continue;
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || !IsTrustedMicrosoftDownloadHost(uri)) continue;
-            return new DotNetSdkZipAsset(version, url, hash.Trim());
+            return new DotNetSdkInstallerAsset(version, url, hash.Trim());
         }
         return null;
     }
@@ -92,6 +94,12 @@ public static class AgentDotNetSdkInstaller
         !string.IsNullOrWhiteSpace(sdkVersionDir)
         && File.Exists(Path.Combine(sdkVersionDir, "dotnet.dll"))
         && File.Exists(Path.Combine(sdkVersionDir, "Sdks", "Microsoft.NET.Sdk", "Sdk", "Sdk.props"));
+
+    /// <summary>
+    /// Returns true if a WiX Burn / Windows Installer exit code indicates a successful installation:
+    /// <c>0</c> (success), <c>3010</c> (reboot required), <c>1641</c> (reboot initiated), or <c>1638</c> (already installed).
+    /// </summary>
+    public static bool IsSuccessExitCode(int exitCode) => exitCode is 0 or 3010 or 1641 or 1638;
 
     public static async Task<ProcessResult> InstallAsync(int majorVersion, CancellationToken ct)
     {
@@ -113,39 +121,80 @@ public static class AgentDotNetSdkInstaller
             return WindowsAgentNativeOps.Failed($"Could not fetch Microsoft .NET {majorVersion}.0 release metadata: {ex.Message}");
         }
 
-        var asset = TryParseReleaseZipFromMetadata(metadataJson, rid);
+        var asset = TryParseReleaseInstallerFromMetadata(metadataJson, rid);
         if (asset is null)
-            return WindowsAgentNativeOps.Failed($"No official .NET {majorVersion} SDK zip for {rid} was found in Microsoft release metadata.");
+            return WindowsAgentNativeOps.Failed($"No official .NET {majorVersion} SDK installer for {rid} was found in Microsoft release metadata.");
 
         var installRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
         var sdkTargetDir = Path.Combine(installRoot, "sdk", asset.SdkVersion);
         if (IsCompleteSdkInstall(sdkTargetDir))
             return WindowsAgentNativeOps.Ok(new { SdkVersion = asset.SdkVersion, InstallDir = installRoot, AlreadyInstalled = true });
 
-        var tempZip = Path.Combine(Path.GetTempPath(), $"rpcd-dotnet-sdk-{asset.SdkVersion}-{Guid.NewGuid():N}.zip");
+        var runId = Guid.NewGuid().ToString("N");
+        var tempExe = Path.Combine(Path.GetTempPath(), $"rpcd-dotnet-sdk-{asset.SdkVersion}-{runId}.exe");
+        var tempLog = Path.Combine(Path.GetTempPath(), $"rpcd-dotnet-sdk-{asset.SdkVersion}-{runId}.log");
         try
         {
             using (var resp = await Http.GetAsync(asset.Url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
             {
                 resp.EnsureSuccessStatusCode();
                 await using var netStream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-                await using var fileStream = new FileStream(tempZip, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+                await using var fileStream = new FileStream(tempExe, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
                 await netStream.CopyToAsync(fileStream, ct).ConfigureAwait(false);
             }
 
-            // Verify SHA-512 against Microsoft's official release metadata before extracting a single byte.
+            // Verify SHA-512 against Microsoft's official release metadata before executing a single byte.
             string actualHash;
-            await using (var verifyStream = File.OpenRead(tempZip))
+            await using (var verifyStream = File.OpenRead(tempExe))
             {
                 var hashBytes = await SHA512.HashDataAsync(verifyStream, ct).ConfigureAwait(false);
                 actualHash = Convert.ToHexString(hashBytes);
             }
             if (!string.Equals(actualHash, asset.Sha512, StringComparison.OrdinalIgnoreCase))
-                return WindowsAgentNativeOps.Failed($"Downloaded .NET {asset.SdkVersion} SDK archive failed SHA-512 verification.");
+                return WindowsAgentNativeOps.Failed($"Downloaded .NET {asset.SdkVersion} SDK installer failed SHA-512 verification.");
 
-            Directory.CreateDirectory(installRoot);
-            ExtractSideBySide(tempZip, installRoot, asset.SdkVersion);
-            return WindowsAgentNativeOps.Ok(new { SdkVersion = asset.SdkVersion, InstallDir = installRoot, AlreadyInstalled = false });
+            // Remove any leftover half-extracted sdk/<version> folder from earlier attempts before running the official installer.
+            if (Directory.Exists(sdkTargetDir) && !IsCompleteSdkInstall(sdkTargetDir))
+            {
+                try { Directory.Delete(sdkTargetDir, recursive: true); } catch { }
+            }
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = tempExe,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            psi.ArgumentList.Add("/install");
+            psi.ArgumentList.Add("/quiet");
+            psi.ArgumentList.Add("/norestart");
+            psi.ArgumentList.Add("/log");
+            psi.ArgumentList.Add(tempLog);
+
+            using var proc = Process.Start(psi);
+            if (proc is null)
+                return WindowsAgentNativeOps.Failed($"Could not start Microsoft .NET {asset.SdkVersion} SDK installer.");
+
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = proc.StandardError.ReadToEndAsync(ct);
+            await proc.WaitForExitAsync(ct).ConfigureAwait(false);
+            _ = await stdoutTask.ConfigureAwait(false);
+            var stderr = await stderrTask.ConfigureAwait(false);
+
+            if (!IsSuccessExitCode(proc.ExitCode))
+            {
+                var logDetail = TryReadLastErrorFromInstallerLog(tempLog) ?? stderr?.Trim();
+                var suffix = string.IsNullOrWhiteSpace(logDetail) ? "" : $": {logDetail}";
+                return WindowsAgentNativeOps.Failed($"Microsoft .NET {asset.SdkVersion} SDK installer exited with code {proc.ExitCode}{suffix}");
+            }
+
+            if (!IsCompleteSdkInstall(sdkTargetDir) && !HasAnyCompleteSdkForMajor(installRoot, majorVersion))
+                return WindowsAgentNativeOps.Failed($"Microsoft .NET {asset.SdkVersion} SDK installer completed (exit {proc.ExitCode}), but no complete .NET {majorVersion} SDK was found under {installRoot}.");
+
+            return WindowsAgentNativeOps.Ok(new { SdkVersion = asset.SdkVersion, InstallDir = installRoot, AlreadyInstalled = false, ExitCode = proc.ExitCode });
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
@@ -154,94 +203,46 @@ public static class AgentDotNetSdkInstaller
         }
         finally
         {
-            try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
+            try { if (File.Exists(tempExe)) File.Delete(tempExe); } catch { }
+            try { if (File.Exists(tempLog)) File.Delete(tempLog); } catch { }
         }
     }
 
-    /// <summary>
-    /// Extracts a .NET SDK zip side-by-side into <paramref name="installRoot"/>.
-    /// <list type="bullet">
-    /// <item>The <c>sdk/&lt;sdkVersion&gt;/</c> tree is extracted to a sibling staging directory, verified for
-    /// <c>Microsoft.NET.Sdk</c>, and atomically moved into place so a failed extract can never leave a broken SDK.</item>
-    /// <item>Existing files outside <c>sdk/&lt;sdkVersion&gt;/</c> (such as <c>dotnet.exe</c>, <c>host/fxr/*</c>,
-    /// <c>shared/*</c>, and <c>packs/*</c>) are skipped if locked by a running .NET process (including the Agent itself).</item>
-    /// </list>
-    /// </summary>
-    internal static void ExtractSideBySide(string zipPath, string installRoot, string sdkVersion)
+    private static bool HasAnyCompleteSdkForMajor(string installRoot, int majorVersion)
     {
-        var fullRoot = Path.GetFullPath(installRoot);
-        if (!fullRoot.EndsWith(Path.DirectorySeparatorChar))
-            fullRoot += Path.DirectorySeparatorChar;
-
-        var sdkRoot = Path.Combine(fullRoot, "sdk");
-        Directory.CreateDirectory(sdkRoot);
-        var sdkTargetDir = Path.Combine(sdkRoot, sdkVersion);
-        var stagingSdkDir = Path.Combine(sdkRoot, $".rpcd-staging-{sdkVersion}-{Guid.NewGuid():N}");
-        var fullStagingRoot = Path.GetFullPath(stagingSdkDir);
-        if (!fullStagingRoot.EndsWith(Path.DirectorySeparatorChar))
-            fullStagingRoot += Path.DirectorySeparatorChar;
-
-        var sdkPrefix = $"sdk/{sdkVersion}/";
-
+        var sdkRoot = Path.Combine(installRoot, "sdk");
+        if (!Directory.Exists(sdkRoot)) return false;
+        var prefix = $"{majorVersion}.";
         try
         {
-            using var archive = ZipFile.OpenRead(zipPath);
-            foreach (var entry in archive.Entries)
+            foreach (var dir in Directory.EnumerateDirectories(sdkRoot))
             {
-                if (string.IsNullOrEmpty(entry.Name))
-                    continue;
-
-                var normalized = entry.FullName.Replace('\\', '/').TrimStart('/');
-                if (normalized.StartsWith(sdkPrefix, StringComparison.OrdinalIgnoreCase))
-                {
-                    var relPath = normalized[sdkPrefix.Length..];
-                    var stagedPath = Path.GetFullPath(Path.Combine(fullStagingRoot, relPath));
-                    if (!stagedPath.StartsWith(fullStagingRoot, StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidOperationException("Archive entry escapes SDK staging root.");
-
-                    var stagedDir = Path.GetDirectoryName(stagedPath);
-                    if (!string.IsNullOrEmpty(stagedDir))
-                        Directory.CreateDirectory(stagedDir);
-
-                    entry.ExtractToFile(stagedPath, overwrite: true);
-                    continue;
-                }
-
-                var destPath = Path.GetFullPath(Path.Combine(fullRoot, normalized));
-                if (!destPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("Archive entry escapes install root.");
-
-                var dir = Path.GetDirectoryName(destPath);
-                if (!string.IsNullOrEmpty(dir))
-                    Directory.CreateDirectory(dir);
-
-                try
-                {
-                    entry.ExtractToFile(destPath, overwrite: true);
-                }
-                catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && File.Exists(destPath))
-                {
-                    // Existing host/fxr, shared runtime, packs, or root dotnet.exe may be locked by a running .NET
-                    // process (including the Agent or Desktop app); those versioned files are already in place.
-                }
+                var name = Path.GetFileName(dir);
+                if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && IsCompleteSdkInstall(dir))
+                    return true;
             }
-
-            if (!IsCompleteSdkInstall(stagingSdkDir))
-                throw new InvalidOperationException($"Extracted .NET {sdkVersion} SDK archive is missing Microsoft.NET.Sdk.");
-
-            if (Directory.Exists(sdkTargetDir))
-                Directory.Delete(sdkTargetDir, recursive: true);
-
-            Directory.Move(stagingSdkDir, sdkTargetDir);
         }
-        finally
+        catch { }
+        return false;
+    }
+
+    private static string? TryReadLastErrorFromInstallerLog(string logPath)
+    {
+        try
         {
-            try
+            if (!File.Exists(logPath)) return null;
+            var lines = File.ReadLines(logPath);
+            string? lastErr = null;
+            foreach (var line in lines)
             {
-                if (Directory.Exists(stagingSdkDir))
-                    Directory.Delete(stagingSdkDir, recursive: true);
+                if (line.Contains("Error 0x", StringComparison.OrdinalIgnoreCase)
+                    || line.Contains("Failed to ", StringComparison.OrdinalIgnoreCase))
+                {
+                    lastErr = line.Trim();
+                }
             }
-            catch { }
+            return lastErr;
         }
+        catch { return null; }
     }
 }

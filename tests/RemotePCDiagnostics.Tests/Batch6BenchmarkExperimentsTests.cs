@@ -265,9 +265,9 @@ public class Batch6BenchmarkExperimentsTests
                 {
                   "version": "10.0.404",
                   "files": [
-                    { "name": "dotnet-sdk-win-x64.exe", "rid": "win-x64", "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.404/dotnet-sdk-10.0.404-win-x64.exe", "hash": "AAA" },
-                    { "name": "dotnet-sdk-win-x64.zip", "rid": "win-x64", "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.404/dotnet-sdk-10.0.404-win-x64.zip", "hash": "DEADBEEF" },
-                    { "name": "dotnet-sdk-win-arm64.zip", "rid": "win-arm64", "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.404/dotnet-sdk-10.0.404-win-arm64.zip", "hash": "CAFEBABE" }
+                    { "name": "dotnet-sdk-win-x64.zip", "rid": "win-x64", "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.404/dotnet-sdk-10.0.404-win-x64.zip", "hash": "ZIP1" },
+                    { "name": "dotnet-sdk-win-x64.exe", "rid": "win-x64", "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.404/dotnet-sdk-10.0.404-win-x64.exe", "hash": "DEADBEEF" },
+                    { "name": "dotnet-sdk-win-arm64.exe", "rid": "win-arm64", "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.404/dotnet-sdk-10.0.404-win-arm64.exe", "hash": "CAFEBABE" }
                   ]
                 }
               ]
@@ -276,19 +276,28 @@ public class Batch6BenchmarkExperimentsTests
         }
         """;
 
-        var x64 = AgentDotNetSdkInstaller.TryParseReleaseZipFromMetadata(sampleJson, "win-x64");
+        var x64 = AgentDotNetSdkInstaller.TryParseReleaseInstallerFromMetadata(sampleJson, "win-x64");
         Assert.NotNull(x64);
         Assert.Equal("10.0.404", x64!.SdkVersion);
         Assert.Equal("DEADBEEF", x64.Sha512);
+        Assert.EndsWith(".exe", x64.Url, StringComparison.OrdinalIgnoreCase);
 
-        var arm64 = AgentDotNetSdkInstaller.TryParseReleaseZipFromMetadata(sampleJson, "win-arm64");
+        var arm64 = AgentDotNetSdkInstaller.TryParseReleaseInstallerFromMetadata(sampleJson, "win-arm64");
         Assert.NotNull(arm64);
         Assert.Equal("CAFEBABE", arm64!.Sha512);
+        Assert.EndsWith(".exe", arm64.Url, StringComparison.OrdinalIgnoreCase);
 
         const string untrustedJson = """
-        { "releases": [ { "sdk": { "version": "10.0.404", "files": [ { "name": "sdk.zip", "rid": "win-x64", "url": "https://evil.example.com/sdk.zip", "hash": "1234" } ] } } ] }
+        { "releases": [ { "sdk": { "version": "10.0.404", "files": [ { "name": "sdk.exe", "rid": "win-x64", "url": "https://evil.example.com/sdk.exe", "hash": "1234" } ] } } ] }
         """;
-        Assert.Null(AgentDotNetSdkInstaller.TryParseReleaseZipFromMetadata(untrustedJson, "win-x64"));
+        Assert.Null(AgentDotNetSdkInstaller.TryParseReleaseInstallerFromMetadata(untrustedJson, "win-x64"));
+
+        // Standard WiX Burn / MSI success codes are accepted; errors are rejected.
+        Assert.True(AgentDotNetSdkInstaller.IsSuccessExitCode(0));
+        Assert.True(AgentDotNetSdkInstaller.IsSuccessExitCode(3010));
+        Assert.True(AgentDotNetSdkInstaller.IsSuccessExitCode(1641));
+        Assert.True(AgentDotNetSdkInstaller.IsSuccessExitCode(1638));
+        Assert.False(AgentDotNetSdkInstaller.IsSuccessExitCode(1603));
 
         // AgentScripts allowlists only 10 and 11.
         var plan10 = AgentScripts.Plan(AgentScripts.Of(AgentScripts.InstallDotNetSdk, "10"), null, out var refusal10);
@@ -298,7 +307,7 @@ public class Batch6BenchmarkExperimentsTests
     }
 
     [Fact]
-    public void AgentDotNetSdkInstaller_stages_atomically_repairs_partial_sdk_and_filters_incomplete_installs()
+    public void AgentDotNetSdkInstaller_filters_incomplete_sdk_directories()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"rpcd-sdk-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
@@ -325,36 +334,9 @@ public class Batch6BenchmarkExperimentsTests
                 listOutput, AgentDotNetSdkInstaller.IsCompleteSdkInstall);
             Assert.Equal([11], completeMajors);
 
-            // Extracting an incomplete zip must throw and leave no staging folder behind.
-            var badZip = Path.Combine(tempRoot, "bad.zip");
-            using (var z = System.IO.Compression.ZipFile.Open(badZip, System.IO.Compression.ZipArchiveMode.Create))
-            {
-                using var w = new StreamWriter(z.CreateEntry("sdk/10.0.999/dotnet.dll").Open());
-                w.Write("incomplete");
-            }
-            Assert.Throws<InvalidOperationException>(() =>
-                AgentDotNetSdkInstaller.ExtractSideBySide(badZip, installRoot, "10.0.999"));
-            Assert.False(Directory.Exists(Path.Combine(sdkRoot, "10.0.999")));
-            Assert.Empty(Directory.GetDirectories(sdkRoot, ".rpcd-staging-*"));
-
-            // Extracting a complete zip replaces the broken 10.0.404 folder cleanly and leaves no staging dirs.
-            var goodZip = Path.Combine(tempRoot, "good.zip");
-            using (var z = System.IO.Compression.ZipFile.Open(goodZip, System.IO.Compression.ZipArchiveMode.Create))
-            {
-                void Add(string entryPath, string text)
-                {
-                    using var w = new StreamWriter(z.CreateEntry(entryPath).Open());
-                    w.Write(text);
-                }
-                Add("dotnet.exe", "host");
-                Add("host/fxr/10.0.4/hostfxr.dll", "fxr");
-                Add("sdk/10.0.404/dotnet.dll", "full");
-                Add("sdk/10.0.404/Sdks/Microsoft.NET.Sdk/Sdk/Sdk.props", "<Project />");
-            }
-            AgentDotNetSdkInstaller.ExtractSideBySide(goodZip, installRoot, "10.0.404");
-
-            Assert.True(AgentDotNetSdkInstaller.IsCompleteSdkInstall(broken10Dir));
-            Assert.Empty(Directory.GetDirectories(sdkRoot, ".rpcd-staging-*"));
+            // Once Microsoft.NET.Sdk is present, both majors are reported as installed.
+            Directory.CreateDirectory(Path.Combine(broken10Dir, "Sdks", "Microsoft.NET.Sdk", "Sdk"));
+            File.WriteAllText(Path.Combine(broken10Dir, "Sdks", "Microsoft.NET.Sdk", "Sdk", "Sdk.props"), "<Project />");
             var repairedMajors = DeveloperToolchainDetector.ParseInstalledDotNetSdkMajors(
                 listOutput, AgentDotNetSdkInstaller.IsCompleteSdkInstall);
             Assert.Equal([10, 11], repairedMajors);
