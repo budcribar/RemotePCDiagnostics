@@ -90,7 +90,7 @@ public sealed class WasapiAudioStateSource(ILogger? log = null, TimeSpan? probeT
         var formFactor = FormFactorName(Prop<uint?>(dev, FormFactorKey));
         var instanceId = Prop<string>(dev, InstanceIdKey) ?? "";
         IReadOnlyList<string> roles = defaults.TryGetValue(id, out var r) ? r : [];
-        var info = new AudioEndpointInfo(id, name, flow, state, AudioDevice.GuessBus(enumerator, name), formFactor, instanceId, roles);
+        var info = new AudioEndpointInfo(id, name, flow, state, AudioDevice.GuessBus(enumerator, name, instanceId), formFactor, instanceId, roles);
         if (state != AudioEndpointState.Active) return info;
 
         bool? muted = null; double? volume = null;

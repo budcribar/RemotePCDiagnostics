@@ -7,16 +7,44 @@ public sealed record AudioDevice(string Id, string Name, AudioFlow Flow, AudioBu
 {
     public string Label => Name + (Bus switch { AudioBus.Usb => " (USB)", AudioBus.Bluetooth => " (Bluetooth)", _ => "" }) + (IsDefault ? " — Windows default" : "");
 
-    /// <summary>Best-effort bus from the PnP enumerator name ("USB", "BTHENUM"/"BTHHFENUM") or, failing that, the device name.</summary>
-    public static AudioBus GuessBus(string? enumerator, string? name)
+    /// <summary>Best-effort bus from the PnP enumerator name, PnP instance ID, or device name.</summary>
+    public static AudioBus GuessBus(string? enumerator, string? name, string? instanceId = null)
     {
         var e = enumerator ?? "";
-        if (e.StartsWith("BTH", StringComparison.OrdinalIgnoreCase)) return AudioBus.Bluetooth;
-        if (e.Equals("USB", StringComparison.OrdinalIgnoreCase)) return AudioBus.Usb;
-        if (e.Equals("HDAUDIO", StringComparison.OrdinalIgnoreCase) || e.Equals("INTELAUDIO", StringComparison.OrdinalIgnoreCase)) return AudioBus.Internal;
+        var id = instanceId ?? "";
         var n = name ?? "";
-        if (n.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase) || n.Contains("Hands-Free", StringComparison.OrdinalIgnoreCase)) return AudioBus.Bluetooth;
-        if (n.Contains("USB", StringComparison.OrdinalIgnoreCase)) return AudioBus.Usb;
+
+        if (e.StartsWith("BTH", StringComparison.OrdinalIgnoreCase)
+            || e.Contains("BLUETOOTH", StringComparison.OrdinalIgnoreCase)
+            || id.Contains("BTHENUM", StringComparison.OrdinalIgnoreCase)
+            || id.Contains("BTHHFENUM", StringComparison.OrdinalIgnoreCase)
+            || id.Contains("BTHLE", StringComparison.OrdinalIgnoreCase)
+            || id.Contains("BTHA2DP", StringComparison.OrdinalIgnoreCase)
+            || id.Contains("\\BTH", StringComparison.OrdinalIgnoreCase)
+            || id.Contains("BLUETOOTH", StringComparison.OrdinalIgnoreCase)
+            || id.Contains("A2DP", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Hands-Free", StringComparison.OrdinalIgnoreCase))
+            return AudioBus.Bluetooth;
+
+        if (e.Equals("USB", StringComparison.OrdinalIgnoreCase)
+            || id.Contains("USB\\", StringComparison.OrdinalIgnoreCase)
+            || id.Contains("USBVID_", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("USB", StringComparison.OrdinalIgnoreCase))
+            return AudioBus.Usb;
+
+        if (e.Equals("HDAUDIO", StringComparison.OrdinalIgnoreCase)
+            || e.Equals("INTELAUDIO", StringComparison.OrdinalIgnoreCase)
+            || e.Equals("ACX", StringComparison.OrdinalIgnoreCase)
+            || e.StartsWith("QCA", StringComparison.OrdinalIgnoreCase)
+            || e.Equals("SOUNDWIRE", StringComparison.OrdinalIgnoreCase)
+            || id.Contains("HDAUDIO\\", StringComparison.OrdinalIgnoreCase)
+            || id.Contains("INTELAUDIO\\", StringComparison.OrdinalIgnoreCase)
+            || id.Contains("SOUNDWIRE\\", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Aqstic", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Realtek", StringComparison.OrdinalIgnoreCase))
+            return AudioBus.Internal;
+
         return AudioBus.Unknown;
     }
 }

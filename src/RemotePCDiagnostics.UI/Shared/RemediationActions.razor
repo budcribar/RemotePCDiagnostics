@@ -87,20 +87,26 @@
              data-result-seq="@last.Seq">@last.Message</div>
     }
 }
-@if (ShowRecent && Actions is not null && Actions.Recent.Count > 0)
+@if (ShowRecent && Actions is not null && !string.IsNullOrEmpty(Origin))
 {
-    <div class="svc-recent" data-testid="remediation-recent">
-        <strong>Recent automated fixes</strong>
-        <ul>
-            @foreach (var a in Actions.Recent)
-            {
-                <li class="@(a.Success ? "svc-recent-ok" : "svc-recent-fail")" data-outcome="@(a.Success ? "succeeded" : "failed")">
-                    <span class="dot @(a.Success ? "dot-ok" : "dot-error")" aria-hidden="true"></span>
-                    <span>@a.When.ToString("t") · @a.Actor · @a.Message</span>
-                </li>
-            }
-        </ul>
-    </div>
+    var recentForOrigin = Actions.Recent
+        .Where(a => string.Equals(a.Origin, Origin, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+    @if (recentForOrigin.Count > 0)
+    {
+        <div class="svc-recent" data-testid="remediation-recent">
+            <strong>Recent automated fixes</strong>
+            <ul>
+                @foreach (var a in recentForOrigin)
+                {
+                    <li class="@(a.Success ? "svc-recent-ok" : "svc-recent-fail")" data-outcome="@(a.Success ? "succeeded" : "failed")">
+                        <span class="dot @(a.Success ? "dot-ok" : "dot-error")" aria-hidden="true"></span>
+                        <span>@a.When.ToString("t") · @a.Actor · @a.Message</span>
+                    </li>
+                }
+            </ul>
+        </div>
+    }
 }
 
 @code {
