@@ -364,6 +364,64 @@ public class DashboardUiPolishTests : BunitContext
     }
 
     [Fact]
+    public void AreaPage_MarkAsReviewed_MovesRowAtOnceWhileTheCheckRefreshes()
+    {
+        var store = new ResultStore();
+        var key = "pending-review-test-" + Guid.NewGuid().ToString("N");
+        var row = new AreaRow(AreaLevel.Warning, ["Host.exe", "2"], Detail: "Faulting module: x.dll", ReviewKeys: [key]);
+        AreaReport Report(bool reviewed) => new(
+            [new AreaCard("crashes", "Apps that closed unexpectedly", AreaLevel.Warning, "1 crash", "", ["App", "Crashes"], reviewed ? [] : [row])],
+            "1 crash", DiagnosticStatus.Warning,
+            ReviewedCards: [new AreaCard("crashes", "Apps that closed unexpectedly", AreaLevel.Ok, "", "", ["App", "Crashes"], reviewed ? [row] : [])]);
+        DiagnosticResult Result(bool reviewed) =>
+            new DiagnosticResult<AreaReport>(ModuleSlugs.Crashes, DiagnosticStatus.Warning, "1 crash", DateTimeOffset.Now, Report(reviewed));
+        var refreshes = new List<TaskCompletionSource<DiagnosticResult>>();
+        var crashMod = new FakeModule(ModuleSlugs.Crashes, _ =>
+        {
+            var gate = new TaskCompletionSource<DiagnosticResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (refreshes) refreshes.Add(gate);
+            return gate.Task;
+        });
+        RegisterDashboardServices(store, crashMod);
+        store.Set(Result(reviewed: false));
+
+        var cut = Render<AreaPage>(p => p.Add(c => c.Slug, ModuleSlugs.Crashes));
+        cut.Find("[data-testid='osquery-card-crashes'] .card-summary-toggle").Click();
+        cut.Find("tr.row-expandable").Click();
+        try
+        {
+            cut.Find("button[data-action='review-row']").Click();
+
+            // The check's refresh (which reads every event log again) hasn't finished, and the row has already moved.
+            Assert.Empty(cut.FindAll("[data-testid='area-drawer-crashes'] tr.row-expandable"));
+            Assert.Equal("Show reviewed", cut.Find("[data-testid='area-show-reviewed']").TextContent.Trim());
+            cut.WaitForAssertion(() => Assert.Single(refreshes));
+            refreshes[0].SetResult(Result(reviewed: true));
+            var diagnostics = Services.GetRequiredService<DiagnosticsService>();
+            cut.WaitForAssertion(() => Assert.False(diagnostics.IsRunning(ModuleSlugs.Crashes)));
+            cut.WaitForAssertion(() => Assert.Equal("Show reviewed", cut.Find("[data-testid='area-show-reviewed']").TextContent.Trim()));
+            Assert.Empty(cut.FindAll("[data-testid='area-drawer-crashes'] tr.row-expandable"));
+
+            cut.Find("[data-testid='area-show-reviewed']").Click();
+            cut.Find("tr.row-expandable").Click();
+            var undo = cut.WaitForElement("button[data-action='review-row']");
+            Assert.Equal("Undo review", undo.TextContent.Trim());
+            undo.Click();
+
+            Assert.Empty(cut.FindAll("[data-testid='area-show-reviewed']"));
+            Assert.Single(cut.FindAll("[data-testid='area-drawer-crashes'] tr.row-expandable"));
+            cut.WaitForAssertion(() => Assert.Equal(2, refreshes.Count));
+            refreshes[1].SetResult(Result(reviewed: false));
+            cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='area-drawer-crashes'] tr.row-expandable")));
+        }
+        finally
+        {
+            EventReviews.Set([key], reviewed: false);
+            lock (refreshes) foreach (var gate in refreshes) gate.TrySetResult(Result(reviewed: false));
+        }
+    }
+
+    [Fact]
     public async Task RefreshQuietlyAsync_UpdatesResultWithoutEmittingRunningState()
     {
         var store = new ResultStore();
