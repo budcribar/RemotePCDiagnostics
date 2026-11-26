@@ -287,6 +287,7 @@ public sealed class DeveloperBuildRunner(
             : Path.Combine(tempRoot, $"{DevDriveRules.BuildTempPrefix}{Guid.NewGuid():N}");
         var tempExclusionAdded = false;
         string? tempGlobalJsonPath = null;
+        string? originalGlobalJson = null;
 
         try
         {
@@ -312,12 +313,24 @@ public sealed class DeveloperBuildRunner(
             int? actualSdkMajor = dotnet.MajorVersion;
             if (options.TargetDotNetSdkMajor is { } pinMajor)
             {
+                // dotnet picks the SDK from the nearest global.json. A solution's own global.json (RemotePCDiagnostics has one
+                // for the test runner only) used to stop the pin from being written, so the build ran on the newest SDK.
+                // Pin the sdk section in that file for the run, keep everything else in it, and put the original back after.
                 var globalJsonPath = Path.Combine(workDir, "global.json");
-                if (!isCustomSolution || !File.Exists(globalJsonPath))
+                if (isCustomSolution && File.Exists(globalJsonPath))
                 {
-                    await File.WriteAllTextAsync(
-                        globalJsonPath,
-                        $$$"""{"sdk":{"version":"{{{pinMajor}}}.0.100","rollForward":"latestFeature"}}""");
+                    originalGlobalJson = await File.ReadAllTextAsync(globalJsonPath, ct).ConfigureAwait(false);
+                    if (DotNetSdkPin.WithSdkPin(originalGlobalJson, pinMajor) is not { } pinned)
+                    {
+                        originalGlobalJson = null;
+                        return Failed(DeveloperLanguage.CSharp, $"Could not run: {globalJsonPath} could not be read as JSON, so the .NET {pinMajor} SDK could not be selected.", dotnet);
+                    }
+                    tempGlobalJsonPath = globalJsonPath;
+                    await File.WriteAllTextAsync(globalJsonPath, pinned, ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    await File.WriteAllTextAsync(globalJsonPath, DotNetSdkPin.WithSdkPin(null, pinMajor)!, ct).ConfigureAwait(false);
                     if (isCustomSolution)
                         tempGlobalJsonPath = globalJsonPath;
                 }
@@ -333,6 +346,10 @@ public sealed class DeveloperBuildRunner(
                 {
                     actualSdkMajor = pinMajor;
                 }
+                // Measuring another SDK and labelling it as the pinned one would make the comparison meaningless.
+                if (actualSdkMajor != pinMajor)
+                    return Failed(DeveloperLanguage.CSharp,
+                        $"Could not run: dotnet chose SDK {actualSdkVersion} instead of the .NET {pinMajor} SDK in {workDir}. Install the .NET {pinMajor} SDK or check global.json there.", dotnet);
             }
             Log($"C# clean build benchmark ({pinId}) running on .NET SDK {actualSdkVersion} in {workDir}");
 
@@ -449,7 +466,14 @@ public sealed class DeveloperBuildRunner(
         {
             if (tempGlobalJsonPath is not null)
             {
-                try { if (File.Exists(tempGlobalJsonPath)) File.Delete(tempGlobalJsonPath); } catch { }
+                try
+                {
+                    if (originalGlobalJson is not null)
+                        File.WriteAllText(tempGlobalJsonPath, originalGlobalJson);
+                    else if (File.Exists(tempGlobalJsonPath))
+                        File.Delete(tempGlobalJsonPath);
+                }
+                catch (Exception ex) { Log("Failed to restore global.json: " + ex.Message); }
             }
             if (tempExclusionAdded && machineTweaks is not null)
             {
@@ -971,4 +995,39 @@ public sealed class DeveloperBuildRunner(
 
     private static DeveloperBuildResult Failed(DeveloperLanguage lang, string note, DetectedToolchain? tc = null, string sha256 = "", double? restoreSecs = null, int? toolExitCode = null) =>
         new(lang, DeveloperCSharpPin.PinId, sha256, tc?.Version, tc?.MajorVersion, restoreSecs, null, [], null, [], Note: note, ToolExitCode: toolExitCode);
+}
+
+/// <summary>global.json text that makes <c>dotnet</c> pick a given SDK major for a benchmark build.</summary>
+public static class DotNetSdkPin
+{
+    /// <summary>
+    /// <paramref name="existing"/> with its <c>sdk</c> section replaced by <c>{major}.0.100</c> and <c>latestFeature</c>, keeping every
+    /// other section (such as <c>test</c>). A fresh file when <paramref name="existing"/> is null. Null when the text is not a JSON object.
+    /// </summary>
+    public static string? WithSdkPin(string? existing, int major)
+    {
+        System.Text.Json.Nodes.JsonObject root;
+        if (string.IsNullOrWhiteSpace(existing))
+            root = [];
+        else
+        {
+            try
+            {
+                if (System.Text.Json.Nodes.JsonNode.Parse(existing, documentOptions: new JsonDocumentOptions
+                    { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) is not System.Text.Json.Nodes.JsonObject parsed)
+                    return null;
+                root = parsed;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+        root["sdk"] = new System.Text.Json.Nodes.JsonObject
+        {
+            ["version"] = string.Create(CultureInfo.InvariantCulture, $"{major}.0.100"),
+            ["rollForward"] = "latestFeature",
+        };
+        return root.ToJsonString();
+    }
 }
