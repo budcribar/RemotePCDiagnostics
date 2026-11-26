@@ -150,6 +150,13 @@ public class Batch6BenchmarkExperimentsTests
         var nugetDirect = Assert.Single(withDrive, i => i.Id == "devcache:NUGET_PACKAGES");
         Assert.False(nugetDirect.RequiresDevDrive);
         Assert.Equal(@"NUGET_PACKAGES|D:\", nugetDirect.Action.Target);
+
+        // Unlettered Dev Drive already exists on Disk 1: do not offer to create another Dev Drive.
+        var unmounted = BenchmarkImprovements.ForGoal(BenchmarkGoals.Build, new BenchmarkImprovementContext(
+            HasDevEnvironment: true,
+            ExistingDevDriveRoot: null,
+            HasUnmountedDevDrive: true));
+        Assert.DoesNotContain(unmounted, i => i.Id == BenchmarkImprovements.CreateDevDriveId);
     }
 
     [Fact]
