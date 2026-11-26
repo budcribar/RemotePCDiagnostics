@@ -140,7 +140,15 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
 
     private bool SafeAvailability()
     {
-        try { var a = sensors.CheckAvailability(); if (!a.IsAvailable) log.Info($"CPU stress: sensors unavailable: {a.Reason}"); return a.IsAvailable; }
+        try
+        {
+            var a = sensors.CheckAvailability();
+            if (!a.IsAvailable)
+            {
+                log.Info($"CPU stress: sensors unavailable: {a.Reason}");
+            }
+            return a.IsAvailable;
+        }
         catch (Exception ex) { log.Error($"CPU stress: sensor availability failed: {ex}"); return false; }
     }
 

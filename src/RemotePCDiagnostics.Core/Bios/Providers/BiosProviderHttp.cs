@@ -123,7 +123,8 @@ public static class BiosProviderHttp
         // An external process (e.g., AV scanner or another process) can still briefly hold finalPath on Windows,
         // so retry a few times before giving up.
         const int attempts = 8;
-        for (var attempt = 1; ; attempt++)
+        var attempt = 1;
+        while (true)
         {
             try
             {
@@ -157,6 +158,7 @@ public static class BiosProviderHttp
                 }
             }
             await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), ct).ConfigureAwait(false);
+            attempt++;
         }
     }
 
@@ -537,7 +539,7 @@ public static class BiosProviderHttp
             return false;
         }
 
-        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var parsed) || parsed is null)
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var parsed))
         {
             error = "URL is not a valid absolute URI.";
             return false;

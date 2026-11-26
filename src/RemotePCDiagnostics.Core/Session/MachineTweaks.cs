@@ -539,14 +539,18 @@ public sealed class WindowsMachineTweaks(ILogger? log = null, IProcessLauncher? 
         using var root = Hklm();
         var created = RegistryKeyCleanup.TopmostMissing(s.Key, path => KeyExists(root, path));
         var k = root.CreateSubKey(s.Key, writable: true) ?? throw new UnauthorizedAccessException($"Can't open {s.Key}.");
-        try { k.SetValue(s.Name, value, RegistryValueKind.DWord); }
+        try
+        {
+            using (k)
+            {
+                k.SetValue(s.Name, value, RegistryValueKind.DWord);
+            }
+        }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
         {
-            k.Dispose();
             RemoveCreatedKeys(root, s.Key, created);
             throw;
         }
-        finally { k.Dispose(); }
         Log($"{s.Target} set to {value}" + (created is null ? "" : $" (created {created})"));
     }
 
@@ -612,16 +616,17 @@ public sealed class WindowsMachineTweaks(ILogger? log = null, IProcessLauncher? 
         var key = root.CreateSubKey(keyPath, writable: true) ?? throw new UnauthorizedAccessException("Can't open the blocklist key.");
         try
         {
-            if (key.GetValue(valueName) is not null) throw new InvalidOperationException($"Blocklist entry {valueName} already exists.");
-            key.SetValue(valueName, known.Id, RegistryValueKind.String);
+            using (key)
+            {
+                if (key.GetValue(valueName) is not null) throw new InvalidOperationException($"Blocklist entry {valueName} already exists.");
+                key.SetValue(valueName, known.Id, RegistryValueKind.String);
+            }
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
         {
-            key.Dispose();
             RemoveCreatedKeys(root, keyPath, created);
             throw;
         }
-        finally { key.Dispose(); }
         Log($@"HKLM\{keyPath}\{valueName} = {known.Id} ({known.Name})" + (created is null ? "" : $" (created {created})"));
     }
 

@@ -154,7 +154,15 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
 
     private bool SafeAvailability()
     {
-        try { var a = sensors.CheckAvailability(); if (!a.IsAvailable) log.Info($"GPU stress: sensors unavailable: {a.Reason}"); return a.IsAvailable; }
+        try
+        {
+            var a = sensors.CheckAvailability();
+            if (!a.IsAvailable)
+            {
+                log.Info($"GPU stress: sensors unavailable: {a.Reason}");
+            }
+            return a.IsAvailable;
+        }
         catch (Exception ex) { log.Warn($"GPU stress: sensor availability failed: {ex.Message}"); return false; }
     }
 

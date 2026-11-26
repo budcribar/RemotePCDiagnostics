@@ -140,7 +140,18 @@ public static class HistoryEventParser
                     var t = raw.Trim();
                     if (section == "Key metrics") { if (KeyMetricText.Parse(t) is { } km) keyMetrics.Add(km); }
                     else if (section == "Measurements") { var i = t.IndexOf('='); if (i > 0) measurements.Add(new(t[..i].Trim(), t[(i + 1)..].Trim())); }
-                    else if (section == "Details") { if (details.Count < MaxDetailLines) details.Add(t.Length > 300 ? t[..300] + "…" : t); var i = t.IndexOf(": ", StringComparison.Ordinal); if (i > 0 && IsSimpleValue(t[(i + 2)..])) oldDetails.Add(new(t[..i].Trim(), t[(i + 2)..].Trim())); }
+                    else if (section == "Details")
+                    {
+                        if (details.Count < MaxDetailLines)
+                        {
+                            details.Add(t.Length > 300 ? t[..300] + "…" : t);
+                        }
+                        var i = t.IndexOf(": ", StringComparison.Ordinal);
+                        if (i > 0 && IsSimpleValue(t[(i + 2)..]))
+                        {
+                            oldDetails.Add(new(t[..i].Trim(), t[(i + 2)..].Trim()));
+                        }
+                    }
                     continue;
                 }
                 var c = raw.IndexOf(':');

@@ -1084,6 +1084,7 @@ public class AgentHubWorkerTests
         {
             public WriteOptions? WriteOptions { get; set; }
             public Task WriteAsync(T message) => writer.WriteAsync(message).AsTask();
+            public Task WriteAsync(T message, CancellationToken cancellationToken) => writer.WriteAsync(message, cancellationToken).AsTask();
             public Task CompleteAsync()
             {
                 writer.TryComplete();

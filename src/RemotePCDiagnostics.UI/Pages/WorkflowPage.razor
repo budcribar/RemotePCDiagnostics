@@ -377,7 +377,14 @@
     private RemotePCDiagnostics.Core.Preferences.PreferencesService? Prefs =>
         App.Preferences;
     private void SaveOpenAreas() { var open = _openAreas.ToList(); Prefs?.Update(p => p with { WorkflowOpenAreas = open }); }
-    private void ToggleArea(string area) { if (!_openAreas.Remove(area)) _openAreas.Add(area); SaveOpenAreas(); }
+    private void ToggleArea(string area)
+    {
+        if (!_openAreas.Remove(area))
+        {
+            _openAreas.Add(area);
+        }
+        SaveOpenAreas();
+    }
     private bool AllOpen(WorkflowState s) => s.Fixes.Select(f => f.GroupKey).Distinct().All(_openAreas.Contains);
     private void ToggleAllAreas(WorkflowState s)
     {

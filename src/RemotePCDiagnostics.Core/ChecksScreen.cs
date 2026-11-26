@@ -265,7 +265,18 @@ public sealed class ChecksScreenState
     public bool CollapsedChecks { get => _collapsedChecks; set { _collapsedChecks = value; _prefs?.Update(p => p with { ChecksCollapsed = value }); } }
     public bool CollapsedStress { get => _collapsedStress; set { _collapsedStress = value; _prefs?.Update(p => p with { StressCollapsed = value }); } }
     public bool IsCollapsed(CheckGroup g) => g == CheckGroup.Checks ? CollapsedChecks : CollapsedStress;
-    public void ToggleCollapsed(CheckGroup g) { if (g == CheckGroup.Checks) CollapsedChecks = !CollapsedChecks; else CollapsedStress = !CollapsedStress; Raise(); }
+    public void ToggleCollapsed(CheckGroup g)
+    {
+        if (g == CheckGroup.Checks)
+        {
+            CollapsedChecks = !CollapsedChecks;
+        }
+        else
+        {
+            CollapsedStress = !CollapsedStress;
+        }
+        Raise();
+    }
     public void SetAllCollapsed(bool collapsed) { CollapsedChecks = CollapsedStress = collapsed; Raise(); }
 
     private StressSuiteMode _mode = StressSuiteMode.Short;

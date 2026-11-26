@@ -273,7 +273,15 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
 
     private bool SafeAvailability()
     {
-        try { var a = sensors.CheckAvailability(); if (!a.IsAvailable) log.Info($"Disk speed: sensors unavailable: {a.Reason}"); return a.IsAvailable; }
+        try
+        {
+            var a = sensors.CheckAvailability();
+            if (!a.IsAvailable)
+            {
+                log.Info($"Disk speed: sensors unavailable: {a.Reason}");
+            }
+            return a.IsAvailable;
+        }
         catch (Exception ex) { log.Warn($"Disk speed: sensor availability failed: {ex.Message}"); return false; }
     }
 

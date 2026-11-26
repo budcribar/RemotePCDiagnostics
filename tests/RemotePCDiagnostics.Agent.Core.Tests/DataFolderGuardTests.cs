@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using RemotePCDiagnostics.Agent;
 
 namespace RemotePCDiagnostics.Agent.Core.Tests;
@@ -136,6 +137,7 @@ public sealed class DataFolderGuardTests : IDisposable
     }
 
     [Fact]
+    [SupportedOSPlatform("windows")]
     public void Sessions_folder_lets_users_add_files_but_not_folders_and_each_file_belongs_to_its_creator()
     {
         if (!OperatingSystem.IsWindows()) Assert.Skip("Windows permissions.");

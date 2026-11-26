@@ -1021,13 +1021,13 @@ public sealed class AgentHubWorker(
             if (processAlive)
             {
                 running = true;
-                if (!string.IsNullOrEmpty(info?.SessionId))
+                if (!string.IsNullOrEmpty(info!.SessionId))
                 {
                     sessionId = info.SessionId;
                 }
                 else if (string.IsNullOrEmpty(sessionId))
                 {
-                    sessionId = info?.SessionId ?? "";
+                    sessionId = "";
                 }
             }
             else

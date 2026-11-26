@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.Versioning;
 using System.Text.Json;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Scripts;
@@ -166,13 +167,17 @@ public sealed class SupportDiagnostics(IProcessLauncher launcher)
         if (!OperatingSystem.IsWindows()) return null;
         try
         {
-            return await Task.Run(() => Platform.WindowsDockDeviceReader.Read(ct), CancellationToken.None)
-                .WaitAsync(TimeSpan.FromSeconds(15), ct)
-                .ConfigureAwait(false);
+            return await ReadDockWindowsAsync(ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception) { return null; }
     }
+
+    [SupportedOSPlatform("windows")]
+    private static async Task<IReadOnlyList<DockDevice>> ReadDockWindowsAsync(CancellationToken ct) =>
+        await Task.Run(() => Platform.WindowsDockDeviceReader.Read(ct), CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(15), ct)
+            .ConfigureAwait(false);
 
     public static IEnumerable<DockDevice> MissingDevices(IEnumerable<DockDevice> before, IEnumerable<DockDevice> after)
     {

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.Versioning;
 using System.Text.Json;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Session;
@@ -269,12 +270,20 @@ public sealed class RebootResumeCoordinator(
         try
         {
             var xml = BuildRegisterResumeTaskXml(executablePath, resumeCommandLine, user, now);
-            await Task.Run(() => Platform.WindowsTaskScheduler.RegisterTask(ResumeTaskName, user, xml), ct).ConfigureAwait(false);
+            await RegisterLimitedResumeTaskWindowsAsync(user, xml, ct).ConfigureAwait(false);
             return new ProcessResult(0, "", "");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) { return new ProcessResult(1, "", ex.Message); }
     }
+
+    [SupportedOSPlatform("windows")]
+    private static Task RegisterLimitedResumeTaskWindowsAsync(string user, string xml, CancellationToken ct) =>
+        Task.Run(() => Platform.WindowsTaskScheduler.RegisterTask(ResumeTaskName, user, xml), ct);
+
+    [SupportedOSPlatform("windows")]
+    private static Task RemoveLimitedResumeTaskWindowsAsync(CancellationToken ct) =>
+        Task.Run(() => Platform.WindowsTaskScheduler.RemoveTask(ResumeTaskName), ct);
 
     /// <summary>
     /// PowerShell that registers the app's own <see cref="ResumeTaskName"/>, kept for scripted tests; runtime on Windows uses
@@ -306,7 +315,7 @@ public sealed class RebootResumeCoordinator(
                 await commands.RunPowerShellAsync(ResumeTaskScript.Remove(ResumeTaskName), ct).ConfigureAwait(false);
             else
             {
-                try { await Task.Run(() => Platform.WindowsTaskScheduler.RemoveTask(ResumeTaskName), ct).ConfigureAwait(false); }
+                try { await RemoveLimitedResumeTaskWindowsAsync(ct).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
                 catch (Exception ex) { LogWarn($"Couldn't remove limited resume task: {ex.Message}"); }
             }

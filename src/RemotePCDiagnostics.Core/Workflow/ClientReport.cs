@@ -132,16 +132,38 @@ public static class ClientReport
             foreach (var f in dnsEvidence) sb.Append("<li>").Append(E(f.Why)).Append("</li>");
             sb.Append("</ul>");
         }
-        if (s.Findings.Count == 0) sb.Append("<p>No problems were found by the checks.</p>");
-        else { sb.Append("<ul>"); foreach (var f in s.Findings) sb.Append("<li>").Append(E(f)).Append("</li>"); sb.Append("</ul>"); }
+        if (s.Findings.Count == 0)
+        {
+            sb.Append("<p>No problems were found by the checks.</p>");
+        }
+        else
+        {
+            sb.Append("<ul>");
+            foreach (var f in s.Findings)
+            {
+                sb.Append("<li>").Append(E(f)).Append("</li>");
+            }
+            sb.Append("</ul>");
+        }
 
         // Fixes: each with its result, the exact settings it changed, and whether undo puts it back.
         sb.Append("<h2>What we fixed</h2>");
         if (applied.Count > 0 || failed.Count > 0)
             sb.Append("<div class=\"legend\" data-testid=\"report-legend\">").Append(Tag(ReportTag.Undoable)).Append(Tag(ReportTag.Reinstallable)).Append(Tag(ReportTag.Permanent))
               .Append(Tag(ReportTag.NothingToUndo)).Append("</div>");
-        if (applied.Count == 0) sb.Append("<p>").Append(s.Outcomes.Count == 0 && notAttempted.Count > 0 ? "No changes were made." : "No changes were needed.").Append("</p>");
-        else { sb.Append("<ul>"); foreach (var o in applied) Outcome(o); sb.Append("</ul>"); }
+        if (applied.Count == 0)
+        {
+            sb.Append("<p>").Append(s.Outcomes.Count == 0 && notAttempted.Count > 0 ? "No changes were made." : "No changes were needed.").Append("</p>");
+        }
+        else
+        {
+            sb.Append("<ul>");
+            foreach (var o in applied)
+            {
+                Outcome(o);
+            }
+            sb.Append("</ul>");
+        }
         if (failed.Count > 0)
         {
             sb.Append("<h2>Couldn't be applied</h2><ul>");
@@ -234,15 +256,39 @@ public static class ClientReport
         if (undoable.Count + reinstall.Count + permanent.Count + undone.Count == 0) sb.Append("<p>Nothing lasting was changed, so there's nothing to undo.</p>");
         else
         {
-            if (undoable.Count > 0) { sb.Append("<p>").Append(Tag(ReportTag.Undoable)).Append(" Can be put back exactly as it was:</p><ul>"); foreach (var x in undoable) Line(x); sb.Append("</ul>"); }
+            if (undoable.Count > 0)
+            {
+                sb.Append("<p>").Append(Tag(ReportTag.Undoable)).Append(" Can be put back exactly as it was:</p><ul>");
+                foreach (var x in undoable)
+                {
+                    Line(x);
+                }
+                sb.Append("</ul>");
+            }
             if (reinstall.Count > 0)
             {
                 sb.Append("<p>").Append(Tag(ReportTag.Reinstallable)).Append(" Removed apps that undo reinstalls from the Microsoft Store (for the account signed in at the time; needs internet). Their settings and data aren't restored:</p><ul>");
                 foreach (var x in reinstall) Line(x);
                 sb.Append("</ul>");
             }
-            if (permanent.Count > 0) { sb.Append("<p>").Append(Tag(ReportTag.Permanent)).Append(" Can't be undone (for example, installed updates stay installed and deleted files can't be recovered):</p><ul>"); foreach (var x in permanent) Line(x); sb.Append("</ul>"); }
-            if (undone.Count > 0) { sb.Append("<p>").Append(Tag(ReportTag.Undone)).Append(" Already put back after the service:</p><ul>"); foreach (var x in undone) Line(x); sb.Append("</ul>"); }
+            if (permanent.Count > 0)
+            {
+                sb.Append("<p>").Append(Tag(ReportTag.Permanent)).Append(" Can't be undone (for example, installed updates stay installed and deleted files can't be recovered):</p><ul>");
+                foreach (var x in permanent)
+                {
+                    Line(x);
+                }
+                sb.Append("</ul>");
+            }
+            if (undone.Count > 0)
+            {
+                sb.Append("<p>").Append(Tag(ReportTag.Undone)).Append(" Already put back after the service:</p><ul>");
+                foreach (var x in undone)
+                {
+                    Line(x);
+                }
+                sb.Append("</ul>");
+            }
             if (undoable.Count + reinstall.Count > 0)
                 sb.Append("<p>To put one change back, open Remote PC Diagnostics &gt; Service workflow: each change there has its own Undo or Reinstall button. ")
                   .Append("To put everything back, click \"Undo all changes\" (History page), or run <code>RemotePCDiagnostics.Host.exe --undo-all</code> and approve the Agent's administrator prompt (add <code>--restart</code> to restart afterwards). Permanent changes are left as they are.")

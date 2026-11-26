@@ -21,7 +21,7 @@ public static partial class InventoryProbe
     {
         ct.ThrowIfCancellationRequested();
         if (!commands.IsScripted && OperatingSystem.IsWindows())
-            return await Task.Run(() => ReadWindows(ct), ct).ConfigureAwait(false);
+            return await ReadWindowsAsync(ct).ConfigureAwait(false);
 
         async Task<int?> Count(string query)
         {
@@ -40,6 +40,10 @@ public static partial class InventoryProbe
         var apps = await Count(@"Get-AppxPackage -ErrorAction Stop | Where-Object { $_.Name -match '" + BloatwarePattern + "' }").ConfigureAwait(false);
         return new(AutoVendorServices: services, ActiveScheduledTasks: tasks, InstalledBloatwareApps: apps);
     }
+
+    [SupportedOSPlatform("windows")]
+    private static Task<SystemResourceSnapshot> ReadWindowsAsync(CancellationToken ct) =>
+        Task.Run(() => ReadWindows(ct), ct);
 
     [SupportedOSPlatform("windows")]
     internal static SystemResourceSnapshot ReadWindows(CancellationToken ct)

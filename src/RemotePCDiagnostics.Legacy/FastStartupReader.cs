@@ -119,7 +119,7 @@ public static class FastStartupReader
             }
         }
 
-        if (totalBytes is null || freeBytes is null)
+        if (totalBytes is null)
         {
             try
             {

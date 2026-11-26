@@ -913,9 +913,12 @@ internal sealed class WindowsUpdateAgentBiosClient : IBiosWindowsUpdateClient
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("Windows Update Agent is only available on Windows.");
 
-        return await AgentWindowsUpdate.RunSerializedSearchAsync(() => SearchPendingFirmwareUpdatesWindows(online), online ? OnlineSearchTimeout : DefaultSearchTimeout, ct)
-            .ConfigureAwait(false);
+        return await SearchPendingFirmwareUpdatesWindowsAsync(online, ct).ConfigureAwait(false);
     }
+
+    [SupportedOSPlatform("windows")]
+    private Task<IReadOnlyList<BiosWuaFirmwareUpdate>> SearchPendingFirmwareUpdatesWindowsAsync(bool online, CancellationToken ct) =>
+        AgentWindowsUpdate.RunSerializedSearchAsync(() => SearchPendingFirmwareUpdatesWindows(online), online ? OnlineSearchTimeout : DefaultSearchTimeout, ct);
 
     public Task<DateTimeOffset?> GetLastSuccessfulScanUtcAsync(CancellationToken ct = default)
     {

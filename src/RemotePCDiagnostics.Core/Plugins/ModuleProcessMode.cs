@@ -130,7 +130,14 @@ public sealed record ModuleProcessModeSetting
     {
         var path = PathIn(modulesFolder);
         var pruned = this with { Modules = Modules.Where(kv => kv.Value != ModuleProcessMode.Default).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase) };
-        if (pruned.All == ModuleProcessMode.Default && pruned.Modules.Count == 0) { if (File.Exists(path)) File.Delete(path); return; }
+        if (pruned.All == ModuleProcessMode.Default && pruned.Modules.Count == 0)
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+            return;
+        }
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, JsonSerializer.Serialize(pruned, Json));
     }

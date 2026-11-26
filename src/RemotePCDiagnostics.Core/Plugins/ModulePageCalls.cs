@@ -40,7 +40,7 @@ public static class ModulePageCalls
     {
         Dictionary<string, JsonElement>? data = null;
         if (module is IHasAreaPanels { Panels: not AreaPanels.None } panels)
-            (data ??= [])[Panels] = JsonSerializer.SerializeToElement((int)panels.Panels, ModuleHostMessage.Json);
+            data = new() { [Panels] = JsonSerializer.SerializeToElement((int)panels.Panels, ModuleHostMessage.Json) };
         if (module is IInstanceSummary summary && instances is { Count: > 0 })
         {
             // A device this host didn't run counts by its key only (its result, from an earlier host, is in the app).

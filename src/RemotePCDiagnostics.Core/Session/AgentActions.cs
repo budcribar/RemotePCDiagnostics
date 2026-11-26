@@ -183,7 +183,7 @@ public sealed partial class WindowsAgentNativeOps : IAgentNativeOps
                 SetTaskWakeToRunAction wake => Task.FromResult(SetTaskWakeToRun(wake)),
                 AnalyzeCrashDumpAction dump => AnalyzeCrashDumpAsync(dump, ct),
                 SetCapturePrivacyAction privacy => Task.FromResult(SetCapturePrivacy(privacy)),
-                AudioServicesAction audio => Task.Run(() => Audio.AudioServices.Run(audio.Verb, new Audio.AudioServices.WindowsHost()) is { } why ? Failed(why) : Ok(), ct),
+                AudioServicesAction audio => RunAudioServicesAsync(audio.Verb, ct),
                 InstallDotNetSdkAction sdk => AgentDotNetSdkInstaller.InstallAsync(sdk.MajorVersion, ct),
                 _ => RunOtherAsync(action, ct),
             };
@@ -194,6 +194,10 @@ public sealed partial class WindowsAgentNativeOps : IAgentNativeOps
             return Task.FromResult(Failed(ex.Message));
         }
     }
+
+    [SupportedOSPlatform("windows")]
+    private static Task<ProcessResult> RunAudioServicesAsync(string verb, CancellationToken ct) =>
+        Task.Run(() => Audio.AudioServices.Run(verb, new Audio.AudioServices.WindowsHost()) is { } why ? Failed(why) : Ok(), ct);
 
     /// <summary>Actions added in other files of this partial class; this one knows none.</summary>
     private Task<ProcessResult> RunOtherAsync(AgentNativeAction action, CancellationToken ct)
