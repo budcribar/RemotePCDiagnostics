@@ -228,10 +228,24 @@ public class AudioTests
     {
         Assert.Equal(AudioBus.Usb, AudioDevice.GuessBus("USB", "Headset"));
         Assert.Equal(AudioBus.Bluetooth, AudioDevice.GuessBus("BTHENUM", "x"));
+        Assert.Equal(AudioBus.Bluetooth, AudioDevice.GuessBus("SWD", "Headphones (WH-1000XM4)", @"BTHENUM\{0000110b-0000-1000-8000-00805f9b34fb}\7&1234"));
         Assert.Equal(AudioBus.Bluetooth, AudioDevice.GuessBus(null, "Headset (Bluetooth Hands-Free)"));
         Assert.Equal(AudioBus.Internal, AudioDevice.GuessBus("HDAUDIO", "Speakers"));
+        Assert.Equal(AudioBus.Internal, AudioDevice.GuessBus("SWD", "Headphones (Qualcomm(R) Aqstic(TM))"));
         Assert.Equal(AudioBus.Unknown, AudioDevice.GuessBus(null, "Speakers"));
         Assert.Equal("Headset (USB) — Windows default", new AudioDevice("1", "Headset", AudioFlow.Input, AudioBus.Usb, true).Label);
+
+        var btUnplugged = new AudioEndpointInfo("1", "Headphones (WH-1000XM4)", AudioFlow.Output, AudioEndpointState.Unplugged, AudioBus.Bluetooth, "Headphones", "", []);
+        Assert.Equal("Not connected", btUnplugged.FriendlyState);
+        Assert.Equal("Turn on or pair the headset.", btUnplugged.Reconnect);
+
+        var unknownUnplugged = new AudioEndpointInfo("2", "Headphones (WH-1000XM4)", AudioFlow.Output, AudioEndpointState.Unplugged, AudioBus.Unknown, "Headphones", "", []);
+        Assert.Equal("Not connected", unknownUnplugged.FriendlyState);
+        Assert.Equal("Connect or turn on the device.", unknownUnplugged.Reconnect);
+
+        var jackUnplugged = new AudioEndpointInfo("3", "Headphones (Qualcomm(R) Aqstic(TM))", AudioFlow.Output, AudioEndpointState.Unplugged, AudioBus.Internal, "Headphones", "", []);
+        Assert.Equal("Nothing plugged in", jackUnplugged.FriendlyState);
+        Assert.Equal("Plug the device in, or check the jack.", jackUnplugged.Reconnect);
     }
 
     // ---- Module level: CI has no audio devices, so these use the no-device path or a fake. ----

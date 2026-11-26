@@ -69,7 +69,8 @@ public sealed record RemediationRecord(
     long FreedDiskBytes = 0,
     int RemovedFiles = 0,
     long FreedMemoryBytes = 0,
-    int UpdatesInstalled = 0);
+    int UpdatesInstalled = 0,
+    string Origin = "");
 
 /// <summary>
 /// Plans, executes, and audits one-click automated fixes across the 4 diagnostic remediation areas:
@@ -515,7 +516,7 @@ public sealed class RemediationService(
             Allowed: true);
     }
 
-    public async Task<RemediationResult> ExecuteAsync(AreaAction action, CancellationToken ct = default)
+    public async Task<RemediationResult> ExecuteAsync(AreaAction action, CancellationToken ct = default, string origin = "")
     {
         var actor = Actor;
         var plan = Plan(action);
@@ -563,7 +564,8 @@ public sealed class RemediationService(
             result.FreedDiskBytes,
             result.RemovedFiles,
             result.FreedMemoryBytes,
-            result.UpdatesInstalled);
+            result.UpdatesInstalled,
+            origin);
         return result;
     }
 
@@ -577,7 +579,8 @@ public sealed class RemediationService(
         long freedDiskBytes = 0,
         int removedFiles = 0,
         long freedMemoryBytes = 0,
-        int updatesInstalled = 0)
+        int updatesInstalled = 0,
+        string origin = "")
     {
         var rec = new RemediationRecord(
             DateTime.Now,
@@ -589,7 +592,8 @@ public sealed class RemediationService(
             freedDiskBytes,
             removedFiles,
             freedMemoryBytes,
-            updatesInstalled);
+            updatesInstalled,
+            origin);
         lock (_gate)
         {
             _recent.Insert(0, rec);
@@ -1053,7 +1057,7 @@ public sealed class RemediationService(
         RemediationResult result;
         try
         {
-            result = await Task.Run(() => ExecuteAsync(action, cts.Token)).ConfigureAwait(false);
+            result = await Task.Run(() => ExecuteAsync(action, cts.Token, origin)).ConfigureAwait(false);
             // A fix started from its card (the app or Admin's apply_fix) finishes a BIOS update with the restart that applies it.
             // The service workflow runs fixes through ExecuteAsync and restarts the PC itself after all of them.
             if (action.Kind == RemediationKind.InstallBiosUpdate && result is { Success: true, RestartNeeded: true, UpdatesInstalled: > 0 })
