@@ -12,7 +12,7 @@ public static class FixCatalog
     /// </summary>
     public static readonly IReadOnlySet<RemediationKind> SkippedRemediation = new HashSet<RemediationKind>
         { RemediationKind.ScheduleCleanRestart, RemediationKind.CancelScheduledRestart, RemediationKind.EndProcessGroup, RemediationKind.DisableFastStartup,
-          RemediationKind.AnalyzeComponentStore, RemediationKind.DeleteDuplicateFiles, RemediationKind.OpenSettings,
+          RemediationKind.AnalyzeComponentStore, RemediationKind.DeleteDuplicateFiles, RemediationKind.DeleteLargeFile, RemediationKind.OpenSettings,
           // Need a person: a device to pick, consent for the privacy switches, an app to close (the restart closes it anyway).
           RemediationKind.SetDefaultAudioEndpoint, RemediationKind.AllowCapturePrivacy, RemediationKind.CloseAudioHolder,
           // The workflow's own restart starts Windows Audio again; a disabled one (SetAudioServicesAutomatic) is listed.

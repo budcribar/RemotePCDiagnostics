@@ -38,6 +38,7 @@ public static class FixKeys
         [RemediationKind.DisableDeviceWake] = "disabledevicewake",
         [RemediationKind.InstallBiosUpdate] = "installbiosupdate",
         [RemediationKind.DeleteDuplicateFiles] = "deleteduplicatefiles",
+        [RemediationKind.DeleteLargeFile] = "deletelargefile",
         [RemediationKind.DisableWakeTimer] = "disablewaketimer",
         [RemediationKind.OpenSettings] = "opensettings",
         [RemediationKind.EnableStorageSense] = "enablestoragesense",

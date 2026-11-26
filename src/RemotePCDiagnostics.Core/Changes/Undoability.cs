@@ -37,7 +37,7 @@ public static class Undoability
         RemediationKind.SetAudioServicesAutomatic => UndoSupport.Full, // the start type is journaled; the started services stay running
         // Brings Windows Audio back to its normal running state: nothing to put back (stopping sound again would be no undo).
         RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices => UndoSupport.NothingToUndo,
-        RemediationKind.CleanTempFiles or RemediationKind.DeleteDuplicateFiles => UndoSupport.None,
+        RemediationKind.CleanTempFiles or RemediationKind.DeleteDuplicateFiles or RemediationKind.DeleteLargeFile => UndoSupport.None,
         RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles or RemediationKind.RepairComponentStoreFromImage
             or RemediationKind.CleanUpComponentStore => UndoSupport.None, // repaired or removed Windows files aren't put back
         RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.InstallUpdate

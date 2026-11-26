@@ -273,6 +273,8 @@ public sealed class RemediationService(
 
             RemediationKind.DeleteDuplicateFiles => PlanDeleteDuplicates(action),
 
+            RemediationKind.DeleteLargeFile => PlanDeleteLargeFile(action),
+
             RemediationKind.OptimizeSsd => new(
                 action,
                 $"Optimize / Retrim {label}?",
@@ -640,6 +642,8 @@ public sealed class RemediationService(
         RemediationKind.CleanTempFiles => await RunCleanTempFilesAsync(ct).ConfigureAwait(false),
 
         RemediationKind.DeleteDuplicateFiles => await RunDeleteDuplicateFilesAsync(action, ct).ConfigureAwait(false),
+
+        RemediationKind.DeleteLargeFile => await RunDeleteLargeFileAsync(action, ct).ConfigureAwait(false),
 
         RemediationKind.ApplySecuritySetting => Security.SecurityFixes.Find(action.Target) is { } sf
             ? await RunAgentScriptAsync(AgentScripts.Of(AgentScripts.SecurityApply, sf.Key), sf.Done,
@@ -1418,6 +1422,71 @@ public sealed class RemediationService(
         var module = new DuplicateFilesModule(log, recycleBin);
         var (ok, message, freedBytes, removedFiles) = await Task.Run(() => module.DeleteDuplicates(sets, ct), ct).ConfigureAwait(false);
         return new(ok, message, FreedDiskBytes: freedBytes, RemovedFiles: removedFiles);
+    }
+
+    private static RemediationPlan PlanDeleteLargeFile(AreaAction action)
+    {
+        var path = action.Target?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path))
+            return new(action, "Delete file?", "No valid file path was specified.", "", "Nothing will be deleted.", false);
+
+        var name = string.IsNullOrWhiteSpace(action.TargetLabel) ? Path.GetFileName(path) : action.TargetLabel;
+        if (DiskSpaceModule.IsIgnoredLargeFileExtension(Path.GetExtension(path))
+            || DiskSpaceModule.IsSystemFilePath(path, windowsDir: DiskSpaceModule.GetWindowsDirectory()))
+        {
+            return new(action, $"Delete {name}?", $"Refused: {path} is a protected system or virtual disk file.", "", "This file cannot be deleted from here.", false);
+        }
+
+        if (!File.Exists(path))
+            return new(action, $"Delete {name}?", $"{path} no longer exists.", "", "Nothing will be deleted.", false);
+
+        string sizeNote = "";
+        try
+        {
+            var fi = new FileInfo(path);
+            sizeNote = $" ({HardwareInventory.FormatBytes(DiskSpaceModule.GetDiskSpaceUsed(fi, isCloudOnly: false))})";
+        }
+        catch { }
+
+        return new(
+            action,
+            $"Delete {name}?",
+            $"Moves {path}{sizeNote} to the Recycle Bin.",
+            "Frees disk space immediately. You can restore the file from the Recycle Bin if needed.",
+            "Files are sent to the Recycle Bin where supported by the drive; drives or folders that bypass the Recycle Bin may delete them permanently.",
+            true);
+    }
+
+    private async Task<RemediationResult> RunDeleteLargeFileAsync(AreaAction action, CancellationToken ct)
+    {
+        var path = action.Target?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path))
+            return new(false, "No valid file path was specified.");
+        if (DiskSpaceModule.IsIgnoredLargeFileExtension(Path.GetExtension(path))
+            || DiskSpaceModule.IsSystemFilePath(path, windowsDir: DiskSpaceModule.GetWindowsDirectory()))
+        {
+            return new(false, "Protected system and virtual disk (.vhdx) files cannot be deleted from here.");
+        }
+        if (!File.Exists(path))
+            return new(false, $"File no longer exists: {path}");
+
+        var fi = new FileInfo(path);
+        var name = fi.Name;
+        long size = 0;
+        try { size = DiskSpaceModule.GetDiskSpaceUsed(fi, isCloudOnly: false); } catch { }
+
+        var deleter = recycleBin ?? new WindowsRecycleBinDeleter();
+        var (ok, err) = await Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            var deleted = deleter.SendToRecycleBin(path, out var error);
+            return (deleted, error);
+        }, ct).ConfigureAwait(false);
+
+        if (!ok)
+            return new(false, string.IsNullOrWhiteSpace(err) ? $"Couldn't delete {name}." : $"Couldn't delete {name}: {err}");
+
+        return new(true, $"Moved {name} to the Recycle Bin ({HardwareInventory.FormatBytes(size)} freed).", FreedDiskBytes: size, RemovedFiles: 1);
     }
 
     // ---- Undo support: what a setting was before a reversible fix changes it ----
