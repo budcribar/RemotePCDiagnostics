@@ -62,7 +62,7 @@ public static class UpdateBusyLock
             Name = "rpcd-update-busy-lock",
         };
         thread.Start();
-        return acquired.Task.GetAwaiter().GetResult() ? new Held(release) : null;
+        return acquired.Task.GetAwaiter().GetResult() ? new Held(release, thread) : null;
     }
 
     /// <summary>Opens the agent's mutex, or creates it with default permissions when no agent service made it.</summary>
@@ -73,14 +73,20 @@ public static class UpdateBusyLock
         return new Mutex(initiallyOwned: false, name);
     }
 
-    private sealed class Held(ManualResetEventSlim release) : IDisposable
+    private sealed class Held(ManualResetEventSlim release, Thread holder) : IDisposable
     {
         private int _disposed;
 
+        /// <summary>
+        /// Releases the mutex and waits until its thread has let go, so work that starts right after (the next fix) can take it.
+        /// </summary>
         public void Dispose()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) == 0)
-                release.Set();
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+            release.Set();
+            if (Thread.CurrentThread != holder)
+                holder.Join(TimeSpan.FromSeconds(5));
         }
     }
 }
@@ -104,6 +110,29 @@ public sealed class UpdateBusyHold
 
     /// <summary>True while this process holds the mutex.</summary>
     public bool IsHeld { get { lock (_gate) return _held is not null; } }
+
+    /// <summary>Why a fix or undo did not start: an RPCD update holds the lock and is about to install.</summary>
+    public const string UpdateStartingMessage =
+        "Remote PC Diagnostics is being updated on this PC, so this can't start now. The app closes and reopens when the update is done. Try again then.";
+
+    /// <summary>
+    /// Like <see cref="Enter"/>, for work that must not be cut off by Setup closing the app (a fix, an undo): null when another process
+    /// holds the mutex, which means an RPCD update is about to install. Then nothing was marked running.
+    /// </summary>
+    public IDisposable? TryEnter()
+    {
+        var hold = Enter();
+        // Work that just finished on another thread may still be letting go of the mutex: give it a moment before calling it busy.
+        for (var i = 0; i < 4 && !IsHeld; i++)
+        {
+            Thread.Sleep(50);
+            Retry();
+        }
+        if (IsHeld)
+            return hold;
+        hold.Dispose();
+        return null;
+    }
 
     /// <summary>
     /// Marks work as running. When an update already holds the mutex the work still runs (Setup closes the app anyway);

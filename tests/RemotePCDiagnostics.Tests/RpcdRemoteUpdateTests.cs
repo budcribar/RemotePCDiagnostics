@@ -844,4 +844,29 @@ public class RpcdRemoteUpdateTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromResult(respond(request));
     }
+
+    [Fact]
+    public void A_waiting_status_left_by_an_agent_that_stopped_is_failed_after_two_minutes()
+    {
+        var now = DateTimeOffset.Parse("2026-11-26T17:00:00Z");
+        var waiting = new RpcdUpdateStatus { RequestId = "r", Stage = RpcdUpdateStages.Waiting, UpdatedUtc = now };
+        Assert.Equal(RpcdUpdateStages.Waiting, RpcdGitHubRelease.Reconcile(waiting, "1.2.0", now + TimeSpan.FromMinutes(1), RpcdUpdateSession.InstallGiveUp).Stage);
+        var stale = RpcdGitHubRelease.Reconcile(waiting, "1.2.0", now + TimeSpan.FromMinutes(3), RpcdUpdateSession.InstallGiveUp);
+        Assert.Equal(RpcdUpdateStages.Failed, stale.Stage);
+        Assert.True(stale.Terminal);
+        Assert.True(RpcdUpdateStages.IsTerminal(RpcdUpdateStages.Cancelled));
+        Assert.False(RpcdUpdateStages.IsTerminal(RpcdUpdateStages.Waiting));
+    }
+
+    [Fact]
+    public void A_stale_waiting_status_does_not_block_a_new_update()
+    {
+        var session = new RpcdUpdateSession();
+        var now = DateTimeOffset.Parse("2026-11-26T17:00:00Z");
+        session.Restore(new RpcdUpdateStatus { RequestId = "old", Stage = RpcdUpdateStages.Waiting, UpdatedUtc = now });
+        Assert.False(session.TryBegin(new RpcdUpdateRequest("stable", null, true), now + TimeSpan.FromMinutes(1), out var refused));
+        Assert.Contains("already in progress", refused.Error);
+        Assert.True(session.TryBegin(new RpcdUpdateRequest("stable", null, true), now + TimeSpan.FromMinutes(3), out var started));
+        Assert.Equal(RpcdUpdateStages.Checking, started.Stage);
+    }
 }

@@ -66,6 +66,7 @@ internal static class AgentRunLoop
             ReleaseAnnounced = (stable, prerelease) => publisher.PublishRelease(stable, prerelease),
             UpdateRpcd = updater.HandleHubAsync,
             ReadUpdateRpcd = requestId => updater.ToProgress(requestId),
+            CancelUpdateRpcd = requestId => updater.Cancel(requestId),
             SaveAgentToken = assigned =>
             {
                 config.AgentToken = assigned;

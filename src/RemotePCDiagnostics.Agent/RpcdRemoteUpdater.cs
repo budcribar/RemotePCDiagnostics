@@ -28,6 +28,8 @@ internal sealed class RpcdRemoteUpdater : IDisposable
     private readonly object _stagingGate = new();
     private string? _stagingError;
     private bool _restored;
+    private readonly TimeSpan _waitLimit;
+    private readonly TimeSpan _waitHeartbeat;
 
     /// <summary>
     /// The service and elevated helper share the update status and a lock file in the admin-only staging folder.
@@ -39,8 +41,12 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         HttpClient? http = null,
         string? stagingDirectory = null,
         Func<string?>? configuredServer = null,
-        Func<IDisposable?>? holdUpdateLock = null)
+        Func<IDisposable?>? holdUpdateLock = null,
+        TimeSpan? waitLimit = null,
+        TimeSpan? waitHeartbeat = null)
     {
+        _waitLimit = waitLimit ?? RpcdUpdateSession.WaitLimit;
+        _waitHeartbeat = waitHeartbeat ?? RpcdUpdateSession.WaitHeartbeat;
         _installedVersion = installedVersion;
         _holdUpdateLock = holdUpdateLock ?? (() => UpdateBusyLock.TryHold(TimeSpan.FromSeconds(2)));
         _relaunchArguments = relaunchArguments;
@@ -118,16 +124,24 @@ internal sealed class RpcdRemoteUpdater : IDisposable
     /// <summary>
     /// Starts an update unless something is running. The app's pipe request carries its own busy reason. For every request the
     /// agent also takes <see cref="UpdateBusyLock"/> and keeps it until Setup returns, so a hub command (whose busy reason is
-    /// empty) is refused while the app holds it.
+    /// empty) cannot run while the app holds it.
     /// </summary>
-    public RpcdUpdateStatus Start(RpcdUpdateRequest request, IReadOnlyList<string>? relaunch)
+    /// <param name="waitIfBusy">
+    /// When the app holds the lock, accept the update as <see cref="RpcdUpdateStages.Waiting"/> and start it once the lock is free
+    /// (within <see cref="RpcdUpdateSession.WaitLimit"/>) instead of refusing. Hub commands wait; the app's own Update button refuses.
+    /// </param>
+    public RpcdUpdateStatus Start(RpcdUpdateRequest request, IReadOnlyList<string>? relaunch, bool waitIfBusy = false)
     {
         if (!TryPrepareStaging())
             return StagingRefusal(null);
 
         var busyLock = _holdUpdateLock();
+        var waitForLock = false;
         if (busyLock is null && string.IsNullOrWhiteSpace(request.BusyReason))
+        {
             request = request with { BusyReason = UpdateBusyLock.BusyMessage };
+            waitForLock = waitIfBusy;
+        }
 
         bool started;
         RpcdUpdateStatus status;
@@ -150,13 +164,15 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             }
             LoadShared();
             now = DateTimeOffset.UtcNow;
-            started = _session.TryBegin(request, now, out status);
+            started = _session.TryBegin(request, now, out status, waitForLock);
         }
         if (!started)
         {
             busyLock?.Dispose();
             return status;
         }
+        if (waitForLock)
+            request = request with { BusyReason = null };
 
         var relaunchArgs = relaunch is { Count: > 0 } ? relaunch : _relaunchArguments();
         if (relaunchArgs is not null && !SessionLaunchOptions.IsRestartCommandLine(relaunchArgs))
@@ -168,22 +184,33 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         // Setup never starts the app. Its runasoriginaluser start would inherit an elevated helper's token, and in the service it
         // would land on Session 0. The agent starts the app un-elevated in the user's session instead (PendingAppRelaunch):
         // the new agent service does it when Setup restarts it, or this process does when Setup returns.
-        var run = new RpcdUpdateRun
+        RpcdUpdateRun NewRun(DateTimeOffset at) => new()
         {
             Http = _http,
             InstalledVersion = _installedVersion() ?? "",
             ReadInstalledVersion = _installedVersion,
             StagingDirectory = _stagingDirectory,
             RelaunchArguments = null,
-            UtcNow = now,
+            UtcNow = at,
             IsPersistentAgentInstalled = PersistentAgentInstalled,
             ReadInstalledAgentVersion = ReadInstalledAgentProductVersion,
             RunInstaller = (install, ct) => RunInstallerAsync(install, relaunchArgs, ct),
         };
+        var run = NewRun(now);
+        var requestId = status.RequestId;
         _ = Task.Run(async () =>
         {
             try
             {
+                if (busyLock is null && waitForLock)
+                {
+                    _log?.Invoke($"[rpcd-update] Remote PC Diagnostics is busy. Update {requestId} waits for it to finish.");
+                    busyLock = await WaitForLockAsync(requestId).ConfigureAwait(false);
+                    if (busyLock is null)
+                        return;
+                    _log?.Invoke($"[rpcd-update] Remote PC Diagnostics is free. Update {requestId} starts.");
+                    run = NewRun(DateTimeOffset.UtcNow);
+                }
                 await _session.ExecuteAsync(request, run, CancellationToken.None).ConfigureAwait(false);
             }
             finally
@@ -192,6 +219,62 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             }
         });
         return status;
+    }
+
+    /// <summary>
+    /// Holds a waiting update until <see cref="UpdateBusyLock"/> is free, it is cancelled, or the wait limit passes. Returns the held
+    /// lock with the update moved on to checking, or null when it must not install (cancelled, gave up, or replaced).
+    /// </summary>
+    private async Task<IDisposable?> WaitForLockAsync(string requestId)
+    {
+        var started = DateTimeOffset.UtcNow;
+        var lastTouch = started;
+        while (true)
+        {
+            // The lock attempt itself blocks for a moment (two seconds for the real lock), so this loop never spins.
+            var held = _holdUpdateLock();
+            var now = DateTimeOffset.UtcNow;
+            if (held is not null)
+            {
+                if (_session.TryLeaveWaiting(requestId, now))
+                    return held;
+                held.Dispose();
+                return null;
+            }
+            if (now - started >= _waitLimit)
+            {
+                if (_session.GiveUpWaiting(requestId, now))
+                    _log?.Invoke($"[rpcd-update] Update {requestId} gave up: still busy after {_waitLimit.TotalMinutes:0} minutes.");
+                return null;
+            }
+            if (now - lastTouch >= _waitHeartbeat)
+            {
+                lastTouch = now;
+                if (!_session.TouchWaiting(requestId, now, now - started))
+                    return null;
+            }
+            else if (_session.Current(requestId, null, now) is not { Stage: RpcdUpdateStages.Waiting })
+            {
+                return null; // cancelled
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(250)).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Cancels an update that is still waiting. Returns its progress after the call, or null when there is no such update.</summary>
+    public UpdateRpcdProgress? Cancel(string? requestId)
+    {
+        if (!TryPrepareStaging())
+            return null;
+        RpcdUpdateStatus? status;
+        using (AcquireLock())
+        {
+            LoadShared();
+            status = _session.CancelWaiting(string.IsNullOrWhiteSpace(requestId) ? null : requestId, DateTimeOffset.UtcNow);
+        }
+        if (status is { Stage: RpcdUpdateStages.Cancelled })
+            _log?.Invoke($"[rpcd-update] Update {status.RequestId} was cancelled while waiting.");
+        return status is null ? null : ToProto(status);
     }
 
     public async Task HandleHubAsync(
@@ -205,7 +288,7 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             command.Approved,
             string.IsNullOrWhiteSpace(command.ApprovedBy) ? null : command.ApprovedBy,
             BusyReason: null);
-        var status = Start(request, relaunch: null);
+        var status = Start(request, relaunch: null, waitIfBusy: true);
         await ReportAsync(report, status, reportCt).ConfigureAwait(false);
         while (!status.Terminal && !reportCt.IsCancellationRequested)
         {
