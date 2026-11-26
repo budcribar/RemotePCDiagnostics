@@ -51,7 +51,7 @@ was used, or the fault was hidden), questions the recording doesn't hold (record
   packages, Security Center, Core Audio, programs such as osquery, PowerShell, powercfg and wevtutil, and report files). `match` is plain
   text the answer's key contains, case ignored, or `*`. Errors use the wording and code Windows gives (`SystemWmiSource`: "InvalidClass
   (0x80041010): Invalid class"); when the recording holds the recorder's error probes (`ErrorProbes`, recorder v9 on), the PC's own errors
-  are used instead. `disconnected` and `disconnected` and
+  are used instead. `disconnected` and
   `drop-after` give the Agent's "isn't connected" answer to every WMI read. The faults are listed in `Faults`.
 - `ReplayedPc` (`tests/RemotePCDiagnostics.Tests/Replay/ReplayedPc.cs`): builds the checks on a recording, through a fault plan when given
   one. The replay tests and the host share it.
@@ -60,8 +60,15 @@ was used, or the fault was hidden), questions the recording doesn't hold (record
   tool and never shipped; fixes, benchmarks and history have no backend in it.
 - `tests/ui-faults/run.cjs`: the Playwright run described above.
 
+## The Agent's scheduled metrics
+
+`AgentMetricsReplayTests` runs the Agent's scheduled metrics pass (drive health and battery, `CoreMetricsProbes`) on every recording:
+it must see the drives and battery the checks see, fill the outbox, finish under every whole-answer fault and each question broken
+alone, and never send Admin a number no PC has. A hang is cut off by the pass's time limit and the next check still runs.
+
 ## Not covered yet
 
+- The Agent's alerts (event log watchers, disk, memory and power levels) and the security audit's report: not recorded yet.
 - Live sensors (LibreHardwareMonitor), the Lenovo EC fan, interactive tests and benchmarks: they measure live hardware and aren't recorded.
 - The Sound check: recordings made before recorder v9 don't hold its Core Audio answer. Record both PCs again.
 - The real app on Windows (WebView2, the module host out of process, the Agent's pipe). The plan is a Debug-only switch that starts the
