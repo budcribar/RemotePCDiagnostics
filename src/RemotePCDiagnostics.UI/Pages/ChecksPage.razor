@@ -87,7 +87,7 @@
                     @foreach (var profile in CheckProfiles.All)
                     {
                         var p = profile;
-                        var active = _activeProfiles.Contains(p.Id);
+                        var active = ActiveProfiles.Contains(p.Id, StringComparer.OrdinalIgnoreCase);
                         <button type="button"
                                 class="@(active ? "btn-small btn-primary" : "btn-small")"
                                 data-testid="@($"checks-profile-{p.Id}")"
@@ -99,9 +99,9 @@
                         </button>
                     }
                 </div>
-                @if (_activeProfiles.Count > 0)
+                @if (ActiveProfiles.Count > 0)
                 {
-                    var activeList = CheckProfiles.All.Where(p => _activeProfiles.Contains(p.Id)).ToList();
+                    var activeList = CheckProfiles.All.Where(p => ActiveProfiles.Contains(p.Id, StringComparer.OrdinalIgnoreCase)).ToList();
                     <p class="meta" data-testid="checks-profile-links" style="margin:6px 0 8px">
                         Profiles are additive (@string.Join(" + ", activeList.Select(p => p.DisplayName))).
                         @foreach (var p in activeList.Where(x => !string.IsNullOrEmpty(x.RelatedLinkHref) && (!x.RelatedLinkRequiresDevEnvironment || HasDevEnvironment)))
@@ -262,7 +262,8 @@
         try { await JS.InvokeVoidAsync("rpdCheckPrefs.save", App.CheckSettings.Settings.ToJson()); } catch { }
     }
 
-    private readonly HashSet<string> _activeProfiles = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>The profiles saved with the check settings (this session's preferences in a remote session).</summary>
+    private IReadOnlyList<string> ActiveProfiles => App.CheckSettings?.Settings.Profiles ?? [];
 
     private bool HasDevEnvironment =>
         (Services.GetService(typeof(RemotePCDiagnostics.Core.Benchmarks.BenchmarkService)) as RemotePCDiagnostics.Core.Benchmarks.BenchmarkService)
@@ -271,18 +272,12 @@
     private void ToggleProfile(CheckProfile profile)
     {
         if (ChecksLocked || App.CheckSettings is null) return;
-        if (!_activeProfiles.Add(profile.Id))
-            _activeProfiles.Remove(profile.Id);
-
-        if (_activeProfiles.Count == 0) return;
+        var active = ActiveProfiles.ToList();
+        if (active.RemoveAll(id => string.Equals(id, profile.Id, StringComparison.OrdinalIgnoreCase)) == 0)
+            active.Add(profile.Id);
+        // One change and one save: the profiles and the full on/off list together (dropping the last profile turns every check back on).
         var avail = Diagnostics.CheckChoices().Where(c => c.Available).Select(c => c.Id).ToList();
-        var wanted = CheckProfiles.ResolveEnabledCheckIds(_activeProfiles, avail);
-        App.CheckSettings.SetAll(avail, false, persistToHost: false);
-        foreach (var id in wanted)
-            App.CheckSettings.SetEnabled(id, true, available: true, persistToHost: false);
-        // Persist once at the end.
-        if (PersistToHost)
-            App.CheckSettings.SetAll(wanted, true, persistToHost: true);
+        App.CheckSettings.SetProfiles(active, avail, persistToHost: PersistToHost);
         _ = SaveRemotePrefsIfNeededAsync();
     }
 
@@ -296,7 +291,6 @@
     private void SetAllChecks(bool on)
     {
         if (ChecksLocked || App.CheckSettings is null) return;
-        _activeProfiles.Clear();
         App.CheckSettings.SetAll(Diagnostics.CheckChoices().Where(c => c.Available).Select(c => c.Id), on, persistToHost: PersistToHost);
         _ = SaveRemotePrefsIfNeededAsync();
     }

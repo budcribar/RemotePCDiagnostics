@@ -27,40 +27,50 @@ public static class CheckProfiles
             Developer,
             "Developer",
             "Dev Drive caches, WSL, long paths, RAM floor, and build benchmark",
-            [ModuleSlugs.DeveloperSetup, ModuleSlugs.Osquery, ModuleSlugs.DriveHealth],
+            [ModuleSlugs.DeveloperSetup, ModuleSlugs.Osquery, ModuleSlugs.DriveHealth, ModuleSlugs.ResourceHogs],
             "/benchmark?goal=build",
             "Build speed benchmark →",
             RelatedLinkRequiresDevEnvironment: true),
         new(
             Gamer,
             "Gamer",
-            "Power mode, CPU throttling, GPU driver & resets, Wi-Fi & bufferbloat",
-            [ModuleSlugs.BatteryPower, ModuleSlugs.DeviceDrivers, ModuleSlugs.Crashes, ModuleSlugs.Network],
+            "Power mode, CPU throttling, temperatures, GPU driver & resets, Wi-Fi & bufferbloat",
+            [ModuleSlugs.BatteryPower, ModuleSlugs.Sensors, ModuleSlugs.DeviceDrivers, ModuleSlugs.Crashes, ModuleSlugs.Network],
             "/stress",
             "Bufferbloat & GPU tests →"),
         new(
             Office,
             "Office worker",
-            "Wi-Fi & VPN, clock sync, printers/services, and audio/mic/camera",
-            [ModuleSlugs.Network, ModuleSlugs.WindowsMaintenance, ModuleSlugs.Services],
+            "Wi-Fi, clock sync, printers/services, sound & mic, and sleep",
+            [ModuleSlugs.Network, ModuleSlugs.Sound, ModuleSlugs.WindowsMaintenance, ModuleSlugs.Services, ModuleSlugs.SleepWake],
             "/stress",
             "Mic, speaker & webcam tests →"),
         new(
             Home,
             "Home user",
-            "Security & antivirus, Storage Sense, browser clutter, and restore points",
-            [ModuleSlugs.SecurityEssentials, ModuleSlugs.DriveHealth, ModuleSlugs.ResourceHogs, ModuleSlugs.WindowsMaintenance]),
+            "Security & antivirus, updates, Storage Sense, browser clutter, and restore points",
+            [ModuleSlugs.SecurityEssentials, ModuleSlugs.Programs, ModuleSlugs.DriveHealth, ModuleSlugs.ResourceHogs, ModuleSlugs.WindowsMaintenance]),
         new(
             Performance,
             "Performance",
-            "Resource hogs, startup apps, HDD boot drive, power throttling, and benchmarks",
-            [ModuleSlugs.ResourceHogs, ModuleSlugs.DriveHealth, ModuleSlugs.BatteryPower],
+            "Resource hogs, startup apps, services, crashes, HDD boot drive, power throttling, and benchmarks",
+            [ModuleSlugs.ResourceHogs, ModuleSlugs.Services, ModuleSlugs.Crashes, ModuleSlugs.DriveHealth, ModuleSlugs.BatteryPower, ModuleSlugs.Osquery],
             "/benchmark?goal=tuneup",
             "Full tune-up benchmark →"),
     ];
 
     public static CheckProfile? Find(string? id) =>
         string.IsNullOrWhiteSpace(id) ? null : All.FirstOrDefault(p => string.Equals(p.Id, id.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Known profile ids only, lower case, without duplicates, in catalog order.</summary>
+    public static List<string> Normalize(IEnumerable<string>? ids)
+    {
+        var wanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (ids is not null)
+            foreach (var id in ids)
+                if (Find(id) is { } p) wanted.Add(p.Id);
+        return All.Where(p => wanted.Contains(p.Id)).Select(p => p.Id).ToList();
+    }
 
     /// <summary>Computes the additive union of check ids across all active profiles, intersected with available checks.</summary>
     public static IReadOnlySet<string> ResolveEnabledCheckIds(IEnumerable<string> activeProfileIds, IEnumerable<string> availableCheckIds)
