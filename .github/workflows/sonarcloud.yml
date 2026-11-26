@@ -1,0 +1,107 @@
+# SonarQube Cloud analysis for RemotePCDiagnostics.
+#
+# Uses dotnet-sonarscanner (begin / build / end) so C# issues come from the real
+# .NET 11 Roslyn build instead of SonarCloud Automatic Analysis.
+#
+# Prerequisites (one-time setup):
+#   1. Add repository secret SONAR_TOKEN in GitHub Settings -> Secrets -> Actions.
+#   2. Disable Automatic Analysis in SonarCloud (Administration -> Analysis Method)
+#      for project budcribar_RemotePCDiagnostics.
+
+name: SonarCloud
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sonarcloud-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup .NET 11 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 11.0.x
+
+      - name: Install SonarScanner for .NET
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:GITHUB_WORKSPACE '.sonar/scanner'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          dotnet tool install dotnet-sonarscanner --tool-path $dir
+
+      - name: Begin SonarQube Cloud analysis
+        id: begin
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:SONAR_TOKEN)) {
+            throw 'GitHub Actions secret SONAR_TOKEN is empty. Add SONAR_TOKEN in repository Settings -> Secrets -> Actions.'
+          }
+          $scanner = Join-Path $env:GITHUB_WORKSPACE '.sonar/scanner/dotnet-sonarscanner.exe'
+          $exclusions = @(
+            'third_party/**',
+            '**/node_modules/**',
+            '**/bin/**',
+            '**/obj/**'
+          ) -join ','
+          $coverageExclusions = @(
+            'tests/**',
+            'samples/**',
+            'spikes/**',
+            'tools/**',
+            'third_party/**'
+          ) -join ','
+          & $scanner begin `
+            /k:budcribar_RemotePCDiagnostics `
+            /o:budcribar `
+            /d:sonar.host.url=https://sonarcloud.io `
+            "/d:sonar.token=$env:SONAR_TOKEN" `
+            "/d:sonar.exclusions=$exclusions" `
+            "/d:sonar.coverage.exclusions=$coverageExclusions" `
+            "/d:sonar.cpd.exclusions=$coverageExclusions"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build solution
+        id: build
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet build RemotePCDiagnostics.sln -c Release -p:Platform=x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: End SonarQube Cloud analysis
+        if: always() && steps.begin.outcome == 'success' && steps.build.outcome == 'success'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $scanner = Join-Path $env:GITHUB_WORKSPACE '.sonar/scanner/dotnet-sonarscanner.exe'
+          & $scanner end "/d:sonar.token=$env:SONAR_TOKEN"
+          exit $LASTEXITCODE
