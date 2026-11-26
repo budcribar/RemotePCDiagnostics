@@ -142,9 +142,12 @@ public sealed class SoundModule(IAudioStateSource audio, IServiceSource services
         if (cards.All(c => c.Level == AreaLevel.Error)) return AreaReport.Failed("Couldn't check sound on this PC.");
 
         var problems = cards.SelectMany(c => c.Rows).Where(r => r.Level >= AreaLevel.Warning).ToList();
-        var status = AreaReport.Worst(cards.Where(c => c.ErrorText is null).Select(c => c.Level));
-        var summary = problems.Count == 0 ? "No sound problems found"
-            : $"{AreaModuleBase.Plural(problems.Count, "sound problem")}: {problems[0].Values[0].ToLowerInvariant()}";
+        // A card that couldn't be read is a warning, as in the other checks: "No sound problems found" would claim devices nobody read.
+        var unread = cards.Where(c => c.ErrorText is not null).Select(c => c.Title).ToList();
+        var status = AreaReport.Worst(cards.Select(c => c.ErrorText is not null ? AreaLevel.Warning : c.Level));
+        var summary = problems.Count > 0 ? $"{AreaModuleBase.Plural(problems.Count, "sound problem")}: {problems[0].Values[0].ToLowerInvariant()}"
+            : unread.Count > 0 ? $"{string.Join(" and ", unread)} couldn't be read"
+            : "No sound problems found";
         return new AreaReport(cards, summary, status);
     }
 

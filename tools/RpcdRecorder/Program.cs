@@ -3,6 +3,8 @@
 //
 //   dotnet run --project tools/RpcdRecorder -- --out <folder>   (from an admin prompt, as the Agent runs) [--osquery <path to osqueryi.exe>] [--note "text"]
 //
+// v9 (Nov 26): also records Security Center's antivirus list and WMI error probes (ErrorProbes), and WMI errors carry their code.
+//
 // Each check runs twice: once on the new WMI path and once on the old osquery / powercfg / PowerShell path, so the tests can check the two agree.
 
 
@@ -37,6 +39,8 @@ var commands = new SystemCommandRunner(launcher);
 var files = new FileRecorder(recorder);
 // Core Audio (endpoints, defaults, mute, volume, formats, app sessions), read as the app does in the signed-in user's session.
 var audio = new RecordingAudioStateSource(new RemotePCDiagnostics.Host.WasapiAudioStateSource(), recorder);
+// Security Center's antivirus list (third-party antivirus and Defender), as the app's Security essentials reads it.
+var antivirus = new RecordingAntivirusProductSource(new RemotePCDiagnostics.Host.WindowsAntivirusProductSource(), recorder);
 if (!osquery.Exists) Console.WriteLine($"osqueryi.exe not found ({osqueryPath}); the old osquery path won't be recorded. Pass --osquery <path>.");
 
 var machine = await DescribeMachineAsync(liveWmi);
@@ -63,7 +67,7 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     // Without netsh and the event logs (Wi-Fi and event names hold the network's name and its router's address) and offline (no probes or DNS timing).
     ("Network (WMI + registry)", new NetworkModule(new WmiNetworkSource(wmi, registry), includeWifiAndIpConfig: true, offline: true)),
     ("Network (legacy: osquery + PowerShell)", new NetworkModule(new OsqueryNetworkSource(osquery, commands), includeWifiAndIpConfig: true, offline: true)),
-    ("Security essentials (WMI + registry + tpmtool)", new SecurityEssentialsModule(new WmiSecurityEssentialsSource(wmi, registry, commands))),
+    ("Security essentials (WMI + registry + tpmtool)", new SecurityEssentialsModule(new WmiSecurityEssentialsSource(wmi, registry, commands, antivirus))),
     ("Security essentials (legacy: PowerShell + tpmtool)", new SecurityEssentialsModule(new PowerShellSecurityEssentialsSource(commands))),
     // A restart this app scheduled isn't part of a recording. Each path takes its two process snapshots 2 s apart, as in the app.
     ("Resource hogs & uptime (WMI + registry)", new ResourceHogsModule(new WmiResourceHogsSource(wmi, registry), restartPending: () => false)),
@@ -92,6 +96,11 @@ foreach (var (label, module) in checks)
                 Console.WriteLine($"      {string.Join(": ", row.Values)}");
         }
 }
+
+// WMI reads meant to fail (a class, a namespace, a property that don't exist), so the fault-injection tests answer with this PC's real errors.
+await ErrorProbes.RunAsync(wmi);
+foreach (var (fault, ns, query) in ErrorProbes.Wmi)
+    Console.WriteLine($"  Error probe {fault}: {recorder.Snapshot().LastOrDefault(c => c.Query == query)?.Error ?? "(no error)"}");
 
 var scrubber = new RecordingScrubber(Environment.MachineName, UserNames());
 var recording = scrubber.Scrub(new MachineRecording

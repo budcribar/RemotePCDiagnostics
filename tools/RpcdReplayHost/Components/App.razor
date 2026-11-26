@@ -1,0 +1,32 @@
+@* The page the RPCD app's WebView shows (src/RemotePCDiagnostics.Host/wwwroot/index.html), for a browser: same styles and scripts. *@
+<!DOCTYPE html>
+<html data-theme="@Theme" data-theme-choice="@Theme">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RPCD replay: @Pc</title>
+    <base href="/" />
+    <link href="_content/RemotePCDiagnostics.UI/app.css" rel="stylesheet" />
+    <script>
+        window.rpdTheme = { get: function () { return document.documentElement.getAttribute('data-theme-choice'); },
+                            set: function (v) { document.documentElement.setAttribute('data-theme', v === 'dark' ? 'dark' : 'light'); return v; } };
+        window.rpdSplit = { init: function () { }, showDetail: function () { } };
+        window.rpdErrors = [];
+        window.addEventListener('error', function (e) { window.rpdErrors.push(String(e.message)); });
+        window.addEventListener('unhandledrejection', function (e) { window.rpdErrors.push(String(e.reason)); });
+    </script>
+    <HeadOutlet @rendermode="new InteractiveServerRenderMode(prerender: false)" />
+</head>
+<body>
+    <RemotePCDiagnostics.UI.Routes @rendermode="new InteractiveServerRenderMode(prerender: false)" />
+    <div id="blazor-error-ui" data-testid="blazor-error-ui" style="display:none">An unhandled error has occurred. <a href="" class="reload">Reload</a></div>
+    <script src="_content/RemotePCDiagnostics.UI/dialogs.js"></script>
+    <script src="_framework/blazor.web.js"></script>
+</body>
+</html>
+
+@code {
+    [CascadingParameter] public Microsoft.AspNetCore.Http.HttpContext? Http { get; set; }
+    private string Theme => Http?.Request.Query["theme"].ToString() == "dark" ? "dark" : "light";
+    private string Pc => ReplayHostOptions.Current.RecordingName;
+}

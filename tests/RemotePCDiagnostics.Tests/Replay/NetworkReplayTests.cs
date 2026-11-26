@@ -18,11 +18,8 @@ public sealed class NetworkReplayTests
     // A damaged answer can make "connected, but no IP configuration": the check then waits before reading again.
     static NetworkReplayTests() => NetworkModule.IpConfigRetryDelay = TimeSpan.Zero;
 
-    internal static NetworkModule Network(ReplayedPc pc) =>
-        new(new WmiNetworkSource(pc.Wmi, pc.Registry), includeWifiAndIpConfig: true, offline: true);
-    /// <summary>The Store edition without an Agent: osquery interface_details and the NetAdapterStatistics and IpConfig scripts.</summary>
-    internal static NetworkModule NetworkOld(ReplayedPc pc) =>
-        new(new OsqueryNetworkSource(pc.Osquery, pc.Commands), includeWifiAndIpConfig: true, offline: true);
+    internal static NetworkModule Network(ReplayedPc pc) => pc.Network();
+    internal static NetworkModule NetworkOld(ReplayedPc pc) => pc.NetworkOld();
 
     // v6 recordings were made while this check was being written, before it asked MSFT_NetAdapter: they count as not knowing the check.
     private static bool HasNew(ReplayedPc pc) => pc.HasWmi(WmiNetworkSource.AdaptersSql) && pc.HasWmi(WmiNetworkSource.NetAdaptersSql);

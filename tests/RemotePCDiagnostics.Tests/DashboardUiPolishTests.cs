@@ -43,6 +43,26 @@ public class DashboardUiPolishTests : BunitContext
         Assert.Empty(cut.FindAll("[data-testid='dashboard-runall-stress-short']"));
     }
 
+    /// <summary>Found by the fault-injection UI tests: after Stop, a check stopped before it finished was counted as passed.</summary>
+    [Fact]
+    public void Dashboard_Verdict_CountsOnlyFinishedGoodResultsAsPassed()
+    {
+        var store = new ResultStore();
+        var drive = new FakeModule(ModuleSlugs.DriveHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DriveHealth)));
+        var battery = new FakeModule(ModuleSlugs.BatteryPower, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.BatteryPower)));
+        RegisterDashboardServices(store, drive, battery);
+        store.Set(new DiagnosticResult(ModuleSlugs.DriveHealth, DiagnosticStatus.Ok, "2 drives", DateTimeOffset.Now));
+        store.Set(new DiagnosticResult(ModuleSlugs.BatteryPower, DiagnosticStatus.Warning, "Cancelled", DateTimeOffset.Now) { Cancelled = true });
+
+        var cut = Render<Dashboard>();
+
+        var line = cut.Find("[data-testid='dashboard-last-checked']").TextContent;
+        Assert.Contains("1 of 2 enabled checks passed.", line);
+        Assert.Contains("1 stopped before finishing.", line);
+        Assert.DoesNotContain("healthy", cut.Find("[data-testid='dashboard-verdict-title']").TextContent);
+        Assert.Contains("1 / 2 passed", cut.Find("[data-testid='dashboard-verdict-pill']").TextContent);
+    }
+
     [Fact]
     public void Dashboard_Card_ExpandsInPlace_WithInlineRefreshButton()
     {
