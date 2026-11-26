@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Diagnostics.Eventing.Reader;
-using System.Runtime.InteropServices;
 using Google.Protobuf.WellKnownTypes;
 using PeakSWC.RemoteWebView.Agent;
 using RemotePCDiagnostics.Core;
@@ -29,6 +28,7 @@ public sealed class AgentAlerts : IDisposable
     private readonly string _positionsPath;
     private readonly string _powerPath;
     private readonly AgentAlertBook _book;
+    private readonly IAlertReadings _readings;
     private readonly Func<DateTimeOffset> _now;
     private readonly Action<string>? _log;
     private readonly object _gate = new();
@@ -47,9 +47,13 @@ public sealed class AgentAlerts : IDisposable
     private DateTimeOffset _uploadNotBefore;
     private TimeSpan _uploadBackoff = MinUploadBackoff;
 
-    public AgentAlerts(string stateFolder, Func<string> appVersion, Func<DateTimeOffset>? now = null, Action<string>? log = null)
+    /// <param name="readings">Where the events and levels are read: this PC (<see cref="WindowsAlertReadings"/>) unless given, a
+    /// recording in the replay tests.</param>
+    public AgentAlerts(string stateFolder, Func<string> appVersion, Func<DateTimeOffset>? now = null, Action<string>? log = null,
+        IAlertReadings? readings = null)
     {
         _now = now ?? (() => DateTimeOffset.UtcNow);
+        _readings = readings ?? new WindowsAlertReadings();
         _log = log;
         _settingsPath = Path.Combine(stateFolder, AlertSettingsFile.FileName);
         _positionsPath = Path.Combine(stateFolder, "alert-positions.txt");
@@ -69,7 +73,7 @@ public sealed class AgentAlerts : IDisposable
     public async Task RunAsync(CancellationToken ct)
     {
         if (!OperatingSystem.IsWindows()) return;
-        StartWatchers();
+        await StartWatchersAsync(ct).ConfigureAwait(false);
         var nextLevels = DateTimeOffset.MinValue;
         while (!ct.IsCancellationRequested)
         {
@@ -77,7 +81,7 @@ public sealed class AgentAlerts : IDisposable
             {
                 if (_now() >= nextLevels)
                 {
-                    ReadLevels();
+                    await ReadLevelsAsync(ct).ConfigureAwait(false);
                     if (_book.ExpireQuiet() is > 0 and var n) Log($"Alerts: {n} quiet alert(s) cleared after 7 days.");
                     nextLevels = _now() + LevelInterval;
                 }
@@ -94,9 +98,19 @@ public sealed class AgentAlerts : IDisposable
 
     public void Dispose() => StopWatchers();
 
+    /// <summary>
+    /// One look without watching: reads back each channel's events (as after a restart), then the levels. The replay tests run it on a
+    /// recording; the Agent itself watches (<see cref="RunAsync"/>).
+    /// </summary>
+    public async Task ScanAsync(CancellationToken ct)
+    {
+        foreach (var channel in AlertRules.EventIds.Keys) await CatchUpAsync(channel, ct).ConfigureAwait(false);
+        await ReadLevelsAsync(ct).ConfigureAwait(false);
+    }
+
     // ------------------------------------------------------------------ events
 
-    private void StartWatchers()
+    private async Task StartWatchersAsync(CancellationToken ct)
     {
         foreach (var channel in AlertRules.EventIds.Keys)
         {
@@ -106,29 +120,36 @@ public sealed class AgentAlerts : IDisposable
                 watcher.EventRecordWritten += (_, e) =>
                 {
                     if (e.EventRecord is { } record)
-                        using (record) OnRecord(channel, record);
+                        using (record)
+                        {
+                            AlertEvent ev;
+                            try { ev = WindowsAlertReadings.ToEvent(channel, record); }
+                            catch (Exception ex) { Log($"Alerts: an event could not be read: {ex.Message}"); return; }
+                            if (OnEvent(ev)) _ = ReadLevelsAsync(CancellationToken.None);
+                        }
                 };
                 // Read back what was missed, start watching, then read once more for anything written in between (a repeat is
                 // dropped by its record id).
-                CatchUp(channel);
+                await CatchUpAsync(channel, ct).ConfigureAwait(false);
                 watcher.Enabled = true;
                 lock (_gate) _watchers.Add(watcher);
-                CatchUp(channel);
+                await CatchUpAsync(channel, ct).ConfigureAwait(false);
             }
             catch (Exception ex) { Log($"Alerts: cannot watch the {channel} log: {ex.Message}"); }
         }
     }
 
-    private void CatchUp(string channel)
+    private async Task CatchUpAsync(string channel, CancellationToken ct)
     {
         long after;
         lock (_gate) after = _lastRecord.GetValueOrDefault(channel);
-        var query = new EventLogQuery(channel, PathType.LogName, AlertRules.Query(channel, after, MaxLookBack));
-        using var reader = new EventLogReader(query);
-        var seen = 0;
-        for (var record = reader.ReadEvent(); record is not null && seen < 500; record = reader.ReadEvent(), seen++)
-            using (record) OnRecord(channel, record);
-        if (seen > 0) Log($"Alerts: read {seen} missed {channel} event(s).");
+        var answer = await _readings.ReadAsync(AlertReadings.Events(channel), after, MaxLookBack, ct).ConfigureAwait(false);
+        if (answer.Error is { } error) { Log($"Alerts: cannot read the {channel} log: {error}"); return; }
+        var events = AlertReadings.ToEvents(channel, answer);
+        var readLevels = false;
+        foreach (var e in events.Take(AlertReadings.MaxEvents)) readLevels |= OnEvent(e);
+        if (events.Count > 0) Log($"Alerts: read {events.Count} missed {channel} event(s).");
+        if (readLevels) await ReadLevelsAsync(ct).ConfigureAwait(false);
     }
 
     private void StopWatchers()
@@ -142,59 +163,57 @@ public sealed class AgentAlerts : IDisposable
         }
     }
 
-    private void OnRecord(string channel, EventRecord record)
+    /// <summary>Raises what the event means. True when the levels should be read now (the low-disk and low-memory events: the reading
+    /// names the drive and clears it later).</summary>
+    private bool OnEvent(AlertEvent e)
     {
         try
         {
-            var recordId = record.RecordId ?? 0;
             PowerReading? power;
             AlertSettings settings;
             lock (_gate)
             {
-                if (recordId > 0 && recordId <= _lastRecord.GetValueOrDefault(channel)) return; // already seen
-                if (recordId > 0) _lastRecord[channel] = recordId;
+                if (e.RecordId > 0 && e.RecordId <= _lastRecord.GetValueOrDefault(e.Channel)) return false; // already seen
+                if (e.RecordId > 0) _lastRecord[e.Channel] = e.RecordId;
                 power = _lastPower;
                 settings = _settings;
             }
             SavePositions();
 
-            string? message = null;
-            try { message = record.FormatDescription(); } catch { }
-            var properties = record.Properties.Select(p => p.Value?.ToString() ?? "").ToList();
-            var e = new AlertEvent(channel, record.ProviderName ?? "", record.Id, recordId,
-                (record.TimeCreated ?? DateTime.UtcNow).ToUniversalTime(), properties, message);
-
             var signals = AlertRules.FromEvent(e, settings, power, out var readLevels);
             foreach (var signal in signals)
                 Record(_book.Raise(signal, settings), raised: true);
-            if (readLevels) ReadLevels(); // the low-disk and low-memory events: the reading names the drive and clears it later
+            return readLevels;
         }
-        catch (Exception ex) { Log($"Alerts: an event could not be read: {ex.Message}"); }
+        catch (Exception ex) { Log($"Alerts: an event could not be read: {ex.Message}"); return false; }
     }
 
     // ------------------------------------------------------------------ levels
 
-    /// <summary>Free space on each fixed drive, memory commit charge and power: a few system calls, nothing more.</summary>
-    private void ReadLevels()
+    /// <summary>Free space on each fixed drive, memory commit charge and power. A reading that fails or is damaged changes no alert.</summary>
+    private async Task ReadLevelsAsync(CancellationToken ct)
+    {
+        try { await ReadLevelsCoreAsync(ct).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { Log($"Alerts: levels not read: {ex.GetType().Name}: {ex.Message}"); }
+    }
+
+    private async Task ReadLevelsCoreAsync(CancellationToken ct)
     {
         AlertSettings settings;
         lock (_gate) settings = _settings;
         var openKeys = _book.Open;
 
-        foreach (var drive in DriveInfo.GetDrives())
+        var disks = await _readings.ReadAsync(AlertReadings.Disks, 0, TimeSpan.Zero, ct).ConfigureAwait(false);
+        if (disks.Error is { } diskError) Log($"Alerts: free space not read: {diskError}");
+        foreach (var reading in AlertReadings.ToDisks(disks))
         {
-            try
-            {
-                if (drive.DriveType != DriveType.Fixed || !drive.IsReady) continue;
-                var name = drive.Name.TrimEnd('\\');
-                var reading = new DiskReading(name, drive.AvailableFreeSpace / 1e9, drive.TotalSize / 1e9);
-                var open = openKeys.Any(a => a.SameKey(AlertKinds.LowDisk, name));
-                Apply(AlertRules.Disk(reading, settings, open), AlertKinds.LowDisk, name, settings);
-            }
-            catch { /* a drive that went away between listing and reading */ }
+            var open = openKeys.Any(a => a.SameKey(AlertKinds.LowDisk, reading.Drive));
+            Apply(AlertRules.Disk(reading, settings, open), AlertKinds.LowDisk, reading.Drive, settings);
         }
 
-        if (ReadCommitPercent() is { } commit)
+        var memory = await _readings.ReadAsync(AlertReadings.Memory, 0, TimeSpan.Zero, ct).ConfigureAwait(false);
+        if (AlertReadings.ToCommitPercent(memory) is { } commit)
         {
             bool previousHigh;
             lock (_gate) { previousHigh = _memoryWasHigh; _memoryWasHigh = commit >= settings.MemoryCommitPercent; }
@@ -202,7 +221,8 @@ public sealed class AgentAlerts : IDisposable
             Apply(AlertRules.Memory(commit, previousHigh, settings, open), AlertKinds.LowMemory, "", settings);
         }
 
-        if (ReadPower() is { } power)
+        var powerAnswer = await _readings.ReadAsync(AlertReadings.Power, 0, TimeSpan.Zero, ct).ConfigureAwait(false);
+        if (AlertReadings.ToPower(powerAnswer, _now()) is { } power)
         {
             PowerReading? since;
             lock (_gate)
@@ -407,35 +427,6 @@ public sealed class AgentAlerts : IDisposable
             File.WriteAllText(_positionsPath, text);
         }
         catch { }
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MEMORYSTATUSEX
-    {
-        public uint dwLength, dwMemoryLoad;
-        public ulong ullTotalPhys, ullAvailPhys, ullTotalPageFile, ullAvailPageFile, ullTotalVirtual, ullAvailVirtual, ullAvailExtendedVirtual;
-    }
-
-    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX m);
-
-    /// <summary>Commit charge as a share of the commit limit (memory plus page file): what event 2004 is about.</summary>
-    private static double? ReadCommitPercent()
-    {
-        var m = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf<MEMORYSTATUSEX>() };
-        if (!OperatingSystem.IsWindows() || !GlobalMemoryStatusEx(ref m) || m.ullTotalPageFile == 0) return null;
-        return (m.ullTotalPageFile - m.ullAvailPageFile) * 100.0 / m.ullTotalPageFile;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct SYSTEM_POWER_STATUS { public byte ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag; public int BatteryLifeTime, BatteryFullLifeTime; }
-
-    [DllImport("kernel32.dll")] private static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS s);
-
-    private PowerReading? ReadPower()
-    {
-        if (!OperatingSystem.IsWindows() || !GetSystemPowerStatus(out var s)) return null;
-        var hasBattery = s.BatteryFlag != 128 && s.BatteryFlag != 255;
-        return new PowerReading(_now(), s.ACLineStatus == 0, s.BatteryLifePercent <= 100 ? s.BatteryLifePercent : null, (s.BatteryFlag & 8) != 0, hasBattery);
     }
 
     private void Log(string message) => _log?.Invoke(message);

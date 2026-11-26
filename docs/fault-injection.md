@@ -66,9 +66,12 @@ was used, or the fault was hidden), questions the recording doesn't hold (record
 it must see the drives and battery the checks see, fill the outbox, finish under every whole-answer fault and each question broken
 alone, and never send Admin a number no PC has. A hang is cut off by the pass's time limit and the next check still runs.
 
+`AgentAlertsReplayTests` gives the Agent's alerts the recorded events and levels (recorder v10 on, and the sample) through `IAlertReadings`:
+each reading broken in turn may lose only its own alerts, never raise a new one or put a nonsense number in one. `SecurityAuditReplayTests`
+replays the recorded HardeningKitty run as the Agent's, and breaks its output and its report.
+
 ## Not covered yet
 
-- The Agent's alerts (event log watchers, disk, memory and power levels) and the security audit's report: not recorded yet.
 - Live sensors (LibreHardwareMonitor), the Lenovo EC fan, interactive tests and benchmarks: they measure live hardware and aren't recorded.
 - The real app on Windows (WebView2, the module host out of process, the Agent's pipe). The plan is a Debug-only switch that starts the
   Host on a recording and fault plan, driven by `tests/smoke`'s CDP attach.

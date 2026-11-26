@@ -17,6 +17,7 @@ public sealed class FaultingSources(FaultPlan plan)
     public Security.IAntivirusProductSource Antivirus(Security.IAntivirusProductSource inner) => new FaultingAntivirus(inner, plan);
     public Core.Audio.IAudioStateSource Audio(Core.Audio.IAudioStateSource inner) => new FaultingAudio(inner, plan);
     public IProcessLauncher Launcher(IProcessLauncher inner) => new FaultingLauncher(inner, plan);
+    public Alerts.IAlertReadings Alerts(Alerts.IAlertReadings inner) => new FaultingAlerts(inner, plan);
 
     /// <summary>A report file kept by name (<see cref="RecordingReplay.FileText"/>), through the plan.</summary>
     public async Task<string?> FileAsync(string name, Func<string?> read, CancellationToken ct)
@@ -34,6 +35,17 @@ public sealed class FaultingSources(FaultPlan plan)
                 return await inner.QueryAsync(wmiNamespace, wql, ct).ConfigureAwait(false);
             await FaultPlan.WaitAsync(rule, ct).ConfigureAwait(false);
             return FaultPlan.Apply(rule, await inner.QueryAsync(wmiNamespace, wql, ct).ConfigureAwait(false), plan.ErrorFor(rule));
+        }
+    }
+
+    private sealed class FaultingAlerts(Alerts.IAlertReadings inner, FaultPlan plan) : Alerts.IAlertReadings
+    {
+        public async Task<WmiQueryResult> ReadAsync(string reading, long afterRecordId, TimeSpan lookBack, CancellationToken ct)
+        {
+            if (plan.For(RecordedCall.AlertsKind, RecordingReplay.AlertsKey(reading)) is not { } rule)
+                return await inner.ReadAsync(reading, afterRecordId, lookBack, ct).ConfigureAwait(false);
+            await FaultPlan.WaitAsync(rule, ct).ConfigureAwait(false);
+            return FaultPlan.Apply(rule, await inner.ReadAsync(reading, afterRecordId, lookBack, ct).ConfigureAwait(false), plan.ErrorFor(rule));
         }
     }
 

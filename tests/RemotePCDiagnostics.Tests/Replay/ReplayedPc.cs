@@ -34,6 +34,36 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
     public IPackageSource Packages => _faults?.Packages(Replay.Packages) ?? Replay.Packages;
     public Core.Security.IAntivirusProductSource AntivirusProducts => _faults?.Antivirus(Replay.AntivirusProducts) ?? Replay.AntivirusProducts;
     public Core.Audio.IAudioStateSource Audio => _faults?.Audio(Replay.Audio) ?? Replay.Audio;
+    /// <summary>What the Agent's alerts read: the recorded events and levels (recorder v10 on).</summary>
+    public Core.Alerts.IAlertReadings Alerts => _faults?.Alerts(Replay.Alerts) ?? Replay.Alerts;
+    public bool HasAlerts => Has(c => c.Kind == RecordedCall.AlertsKind);
+    public bool HasSecurityAudit => HasFile(SecurityAuditRecording.ReportName);
+
+    /// <summary>
+    /// The security audit as the app runs it in the Agent: the recorded HardeningKitty run (recorder v10 on), through the fault plan.
+    /// The tool's files are taken as there; nothing runs.
+    /// </summary>
+    public SecurityAuditModule SecurityAudit() => new(new SecurityAuditOptions
+    {
+        FileExists = _ => true,
+        ElevatedBridge = new ReplayedAuditBridge(this),
+        Timeout = TimeSpan.FromMinutes(5),
+    });
+
+    /// <summary>The Agent, connected, giving the recorded audit run; it has nothing else to offer.</summary>
+    private sealed class ReplayedAuditBridge(ReplayedPc pc) : Core.Session.IElevatedCommandBridge
+    {
+        public bool IsConnected => true;
+        public async Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, CancellationToken ct = default)
+        {
+            var process = await pc.Launcher.RunAsync(SecurityAuditRecording.Program, SecurityAuditRecording.Arguments, timeout, ct).ConfigureAwait(false);
+            return new SecurityAuditRun(process, await pc.FileAsync(SecurityAuditRecording.ReportName, ct).ConfigureAwait(false));
+        }
+        public Task<ProcessResult?> RunElevatedAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct,
+            Action<string>? outputLine = null) => Task.FromResult<ProcessResult?>(null);
+        public Task<Core.Sensors.SensorSnapshot?> ReadSensorsAsync(CancellationToken ct = default) => Task.FromResult<Core.Sensors.SensorSnapshot?>(null);
+        public Task<IReadOnlyList<DriveHealth>?> ReadDrivesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<DriveHealth>?>(null);
+    }
 
     /// <summary>A report file kept by name, through the fault plan when there is one.</summary>
     public Task<string?> FileAsync(string name, CancellationToken ct) =>

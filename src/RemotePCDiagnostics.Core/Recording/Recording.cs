@@ -90,6 +90,8 @@ public sealed record RecordedCall
     /// <summary>Core Audio's endpoints and sessions (<see cref="Audio.AudioState"/>), kept as JSON in <see cref="StdOut"/>.</summary>
     public const string AudioKind = "audio";
     public const string FileKind = "file";
+    /// <summary>What the Agent's alerts read (<see cref="Alerts.IAlertReadings"/>): events and levels, kept as rows like WMI.</summary>
+    public const string AlertsKind = "alerts";
 
     public string Kind { get; init; } = "";
 
@@ -134,6 +136,8 @@ public sealed record RecordedCall
     public static RecordedCall FromRegistry(WmiQueryResult r) => FromWmi(r) with { Kind = RegistryKind };
     public static RecordedCall FromPackages(WmiQueryResult r) => FromWmi(r) with { Kind = PackagesKind };
     public static RecordedCall FromAntivirus(Security.AntivirusInventoryResult r) => FromWmi(r.ToRecordedResult()) with { Kind = AntivirusKind };
+
+    public static RecordedCall FromAlerts(WmiQueryResult r) => FromWmi(r) with { Kind = AlertsKind };
 
     public static RecordedCall FromAudio(Audio.AudioState s) => new() { Kind = AudioKind, StdOut = s.ToJson(), Error = s.Error };
 

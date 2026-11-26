@@ -17,6 +17,8 @@
     <PackageReference Include="NAudio.Wasapi" Version="3.3.0" />
     <!-- Security Center's antivirus list for Security essentials, shared with the app. -->
     <Compile Include="..\..\src\RemotePCDiagnostics.Host\WindowsAntivirusProductSource.cs" Link="WindowsAntivirusProductSource.cs" />
+    <!-- What the Agent's alerts read (events, free space, memory, power), shared with the Agent. -->
+    <Compile Include="..\..\src\RemotePCDiagnostics.Agent\WindowsAlertReadings.cs" Link="WindowsAlertReadings.cs" />
     <Using Include="Microsoft.Extensions.Logging.ILogger" Alias="ILogger" />
     <Using Include="RemotePCDiagnostics.Logging" />
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Legacy\RemotePCDiagnostics.Legacy.csproj" />
