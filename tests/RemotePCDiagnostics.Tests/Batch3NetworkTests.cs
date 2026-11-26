@@ -280,7 +280,17 @@ public sealed class Batch3NetworkTests
     [Fact]
     public async Task NetworkTest_OrdinaryLinkWithFastUploadExhaustion_ProducesPartialDownloadGrade()
     {
-        var clock = new FakeStressClock(beforeDelay: (_, ct) => Task.Delay(25, ct));
+        // The fake clock moves 1 s per main-loop tick of real time, while the speed test runs on its own threads. On a busy runner the
+        // speed test could start after the clock had already passed the test's end, so no download ran. Once the speed test has been
+        // started (elapsed >= 2 s), hold the clock until the upload has run.
+        var uploaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        FakeStressClock clock = null!;
+        clock = new FakeStressClock(beforeDelay: async (_, ct) =>
+        {
+            await Task.Delay(25, ct);
+            if (clock.Elapsed >= TimeSpan.FromSeconds(2))
+                await uploaded.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
+        });
         var phase = "idle";
         var pinger = new FakePinger((_, _) => phase == "down" ? 30 : 10);
 
@@ -295,6 +305,7 @@ public sealed class Batch3NetworkTests
             onUpload: (bytes, _, _) =>
             {
                 phase = "up";
+                uploaded.TrySetResult();
                 // Instantaneous upload exhausts budget before probes can land inside the payload window
                 var t = clock.Elapsed;
                 return Task.FromResult(new TransferResult(bytes, TimeSpan.FromMilliseconds(50), FirstPayloadByteAt: t + TimeSpan.FromSeconds(10), LastPayloadByteAt: t + TimeSpan.FromSeconds(10), ClientObservedBytes: bytes));
