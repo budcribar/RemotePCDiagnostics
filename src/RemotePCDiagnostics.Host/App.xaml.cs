@@ -83,6 +83,34 @@ public partial class App : Application
     private const string InstanceMutexName = @"Global\RemotePCDiagnostics.Host";
     private static Mutex? _instance;
 
+    private static bool TryAcquireInstanceMutex(string[] args, out bool unauthorized)
+    {
+        unauthorized = false;
+        var first = false;
+        try
+        {
+            _instance = new Mutex(true, InstanceMutexName, out first);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            unauthorized = true;
+            return false;
+        }
+        // Restarted after the remote user's browser refreshed or elevated relaunch: the old copy is shutting down, so wait for it.
+        if (!first && RemotePCDiagnostics.Core.Session.SessionLaunchOptions.IsRestarted(args))
+        {
+            Log("Restarted: waiting for the previous copy to exit");
+            try { first = _instance.WaitOne(RemotePCDiagnostics.Core.Session.SessionLaunchOptions.RestartWait); }
+            catch (AbandonedMutexException) { first = true; } // the old copy ended without releasing it: we own it now
+        }
+        if (!first)
+        {
+            _instance.Dispose();
+            _instance = null;
+        }
+        return first;
+    }
+
     public static bool IsAdministrator() =>
         RemotePCDiagnostics.Core.Session.ElevationService.DetectProcessElevated();
 
@@ -127,31 +155,12 @@ public partial class App : Application
 
         // One instance per PC (local window and remote session share it); --undo-all also waits its turn.
         // If an elevated instance already holds Global\RemotePCDiagnostics.Host with an admin-only DACL, opening the mutex from a standard user throws UnauthorizedAccessException.
-        var first = false;
-        try
+        if (!TryAcquireInstanceMutex(e.Args, out var unauthorized))
         {
-            _instance = new Mutex(true, InstanceMutexName, out first);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            Log("Another (elevated) instance already owns the instance mutex: exiting");
+            Log(unauthorized
+                ? "Another (elevated) instance already owns the instance mutex: exiting"
+                : "Another instance is already running: exiting");
             if (!isUndoAll) TryActivateExistingWindow();
-            Shutdown(ExitAlreadyRunning);
-            return;
-        }
-        // Restarted after the remote user's browser refreshed or elevated relaunch: the old copy is shutting down, so wait for it.
-        if (!first && RemotePCDiagnostics.Core.Session.SessionLaunchOptions.IsRestarted(e.Args))
-        {
-            Log("Restarted: waiting for the previous copy to exit");
-            try { first = _instance.WaitOne(RemotePCDiagnostics.Core.Session.SessionLaunchOptions.RestartWait); }
-            catch (AbandonedMutexException) { first = true; } // the old copy ended without releasing it: we own it now
-        }
-        if (!first)
-        {
-            Log("Another instance is already running: exiting");
-            if (!isUndoAll) TryActivateExistingWindow();
-            _instance.Dispose();
-            _instance = null;
             Shutdown(ExitAlreadyRunning);
             return;
         }
