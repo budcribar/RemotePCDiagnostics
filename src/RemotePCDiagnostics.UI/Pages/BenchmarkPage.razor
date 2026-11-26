@@ -8,7 +8,7 @@
 @inject ISessionContext Session
 @inject BenchmarkUploader Uploader
 @inject IJSRuntime JS
-@* Before/after performance benchmarks for a service call: shows the client what the fixes actually changed. *@
+@* Simplified step-by-step performance benchmark: (1) Select or capture & save a baseline, (2) Pick modifications, (3) Run comparison, (4) Review, save, undo, or upload results. *@
 @{
     var s = Bench.Settings;
     var running = Bench.Running is not null || Bench.Settling is not null || Bench.RunningDeveloperAction || Bench.ExperimentRunning;
@@ -16,119 +16,298 @@
     var before = Bench.Before;
     var after = Bench.After;
     var available = Bench.AvailableBenchmarks;
+    var hasDevEnv = Bench.IsKindAvailable(BenchmarkKind.DeveloperCSharp);
+    var savedBaselines = Bench.SavedBaselines;
+    var activeBaseline = Bench.ActiveBaseline;
+    var hasUnsavedBaseline = before is not null && activeBaseline is null && after is null;
+
+    // Determine current wizard stage (one clean screen at a time)
+    var stage = running
+        ? (Bench.ExperimentRunning || Bench.Running == BenchmarkPhase.After || Bench.Settling == BenchmarkPhase.After ? "running-comparison" : "running-baseline")
+        : after is not null
+            ? "results"
+            : _forceSetup
+                ? "setup"
+                : hasUnsavedBaseline
+                    ? "review-baseline"
+                    : before is not null
+                        ? "modify"
+                        : "setup";
+
+    var stepIndex = stage switch
+    {
+        "setup" or "running-baseline" or "review-baseline" => 0,
+        "modify" => 1,
+        "running-comparison" => 2,
+        "results" => 3,
+        _ => 0,
+    };
 }
 <div class="toolbar">
-    <span class="icon-badge page-icon"><Icon Name="health" Size="20" /></span><h1 data-rpcd-page="benchmark" data-rpcd-contract="@BrowserContract.Benchmark" data-testid="bench-title">Performance benchmark</h1>
+    <span class="icon-badge page-icon"><Icon Name="health" Size="20" /></span>
+    <h1 data-rpcd-page="benchmark" data-rpcd-contract="@BrowserContract.Benchmark" data-testid="bench-title">Performance benchmark</h1>
 </div>
-<p class="meta">Quick standalone performance snapshots to verify manual changes. Running a full automated tune-up?
-    <a href="/workflow">Use Service workflow →</a></p>
 
-<section class="card bench-hero" data-testid="bench-hero">
-    <div class="bench-hero-main">
-        <div class="bench-hero-title">
-            @(before is null
-                ? "Take a performance snapshot"
-                : after is null
-                    ? "Baseline captured — take next snapshot to compare"
-                    : "Comparison ready")
+@* 4-stage clickable stepper *@
+<nav class="bench-stepper" data-testid="bench-stepper" aria-label="Benchmark workflow steps">
+    @{
+        var canClickBaseline = !running && (stepIndex > 0 || (stage == "setup" && savedBaselines.Count > 0 && (_newBaselineSelected || _setupCategory is not null)));
+        var canClickModify = !running && stepIndex > 1 && before is not null;
+    }
+    @if (canClickBaseline)
+    {
+        <button type="button" class="bench-step @(stepIndex > 0 ? "is-done" : "is-active") is-clickable" data-testid="bench-step-baseline" @onclick="GoToBaselineSetup">
+            <span class="bench-step-dot">@(stepIndex > 0 ? "✓" : "1")</span>
+            <span class="bench-step-text"><strong>Baseline</strong><span class="meta">@(stage == "running-baseline" ? "Running…" : stage == "review-baseline" ? "Save or delete" : "Select or capture")</span></span>
+        </button>
+    }
+    else
+    {
+        <div class="bench-step @(stepIndex == 0 ? "is-active" : stepIndex > 0 ? "is-done" : "is-todo")" data-testid="bench-step-baseline">
+            <span class="bench-step-dot">@(stepIndex > 0 ? "✓" : "1")</span>
+            <span class="bench-step-text"><strong>Baseline</strong><span class="meta">@(stage == "running-baseline" ? "Running…" : stage == "review-baseline" ? "Save or delete" : "Select or capture")</span></span>
         </div>
-        <label class="bench-restart-toggle">
-            @* Read-only: the start buttons below choose, and the choice is saved once that pass starts. *@
-            <input type="checkbox" data-testid="bench-restart" checked="@s.RestartBeforeAfter" disabled aria-readonly="true"
-                   title="Set by the button you start a pass with" />
-            <span>Restart the PC first (needed for a fair start-up time). The button you start with sets this.</span>
-        </label>
+    }
+
+    @if (canClickModify)
+    {
+        <button type="button" class="bench-step is-done is-clickable" data-testid="bench-step-modify" @onclick="GoToModify">
+            <span class="bench-step-dot">✓</span>
+            <span class="bench-step-text"><strong>Modifications</strong><span class="meta">Pick changes to test</span></span>
+        </button>
+    }
+    else
+    {
+        <div class="bench-step @(stepIndex == 1 ? "is-active" : stepIndex > 1 ? "is-done" : "is-todo")" data-testid="bench-step-modify">
+            <span class="bench-step-dot">@(stepIndex > 1 ? "✓" : "2")</span>
+            <span class="bench-step-text"><strong>Modifications</strong><span class="meta">Pick changes to test</span></span>
+        </div>
+    }
+
+    <div class="bench-step @(stepIndex == 2 ? "is-active" : stepIndex > 2 ? "is-done" : "is-todo")" data-testid="bench-step-compare">
+        <span class="bench-step-dot">@(stepIndex > 2 ? "✓" : "3")</span>
+        <span class="bench-step-text"><strong>Compare</strong><span class="meta">@(stage == "running-comparison" ? "Applying & measuring…" : "Run After pass")</span></span>
     </div>
-    <div class="bench-hero-actions">
-        @if (running)
+
+    <div class="bench-step @(stepIndex == 3 ? "is-active" : "is-todo")" data-testid="bench-step-results">
+        <span class="bench-step-dot">4</span>
+        <span class="bench-step-text"><strong>Results</strong><span class="meta">Save, undo, or upload</span></span>
+    </div>
+</nav>
+
+<AgentData TestId="bench-report-data" Json="@RemotePCDiagnostics.Core.Areas.AgentExports.Benchmark(Bench)" />
+@if (!running && Bench.Message is { } msg) { <p class="notice" data-testid="bench-message">@msg</p> }
+
+@* ===================== STAGE 1: SETUP BASELINE ===================== *@
+@if (stage == "setup")
+{
+    var hasSaved = savedBaselines.Count > 0;
+    var showNewFlow = !hasSaved || _newBaselineSelected;
+
+    @if (!showNewFlow)
+    {
+        @* 1a. Saved baselines exist: show ONLY the Baseline picker dropdown *@
+        <section class="card bench-wizard-card" data-testid="bench-baseline-picker">
+            <div class="bench-inline-field">
+                <label for="bench-baseline-select"><strong>Baseline</strong></label>
+                <select id="bench-baseline-select" data-testid="bench-baseline-select" class="bench-select" @onchange="OnBaselineSelected">
+                    <option value="" selected>Choose a baseline…</option>
+                    <option value="__new__">+ New baseline</option>
+                    @foreach (var sb in savedBaselines)
+                    {
+                        <option value="@sb.Id">@sb.Name (@sb.SavedUtc.ToLocalTime().ToString("g"))</option>
+                    }
+                </select>
+            </div>
+        </section>
+    }
+    else if (_setupCategory is null)
+    {
+        @* 1b. New baseline: first choose category (no tests shown yet) *@
+        <section class="card bench-wizard-card" data-testid="bench-goals">
+            <div class="card-head">
+                <strong>Choose a baseline category</strong>
+                <span class="meta">Pick what you want to benchmark.</span>
+            </div>
+            <div class="bench-category-grid">
+                @if (hasDevEnv)
+                {
+                    <button type="button" class="bench-category-card" data-testid="bench-goal-build" @onclick="() => SelectCategory(BenchmarkGoals.Build)">
+                        <strong>Build speed</strong>
+                        <span class="meta">C# clean build &amp; disk latency</span>
+                    </button>
+                }
+                <button type="button" class="bench-category-card" data-testid="bench-goal-browsing" @onclick="() => SelectCategory(BenchmarkGoals.Browsing)">
+                    <strong>Web browsing</strong>
+                    <span class="meta">DNS lookup &amp; web browsing speed</span>
+                </button>
+                <button type="button" class="bench-category-card" data-testid="bench-goal-tuneup" @onclick="() => SelectCategory(BenchmarkGoals.TuneUp)">
+                    <strong>Full tune-up</strong>
+                    <span class="meta">Start-up, memory, CPU, disk &amp; web</span>
+                </button>
+            </div>
+        </section>
+    }
+    else
+    {
+        @* 1c. Category chosen: choose tests to include & run baseline *@
+        var catTitle = _setupCategory switch
         {
-            <button class="btn btn-stop" data-testid="bench-stop" @onclick="Bench.Stop">Stop</button>
-        }
-        else if (before is null)
+            BenchmarkGoals.Build => "Build speed",
+            BenchmarkGoals.Browsing => "Web browsing",
+            _ => "Full tune-up",
+        };
+        var includesBoot = s.IsEnabled(BenchmarkKind.BootTime);
+        var enabledCount = s.Enabled.Count(Bench.IsKindAvailable);
+        <section class="card bench-wizard-card" data-testid="bench-settings">
+            <div class="bench-card-header-row">
+                <div>
+                    <strong>@catTitle — choose tests to include</strong>
+                    <div class="meta">@enabledCount of @available.Count selected · @s.Runs @(s.Runs == 1 ? "run" : "runs") each · about @Minutes(s.EstimatedSeconds())</div>
+                </div>
+                <div class="bench-header-controls">
+                    <label class="meta">Runs
+                        <select data-testid="bench-runs" @onchange="SetRuns">
+                            @foreach (var n in BenchmarkSettings.RunChoices) { <option value="@n" selected="@(n == s.Runs)">@n</option> }
+                        </select>
+                    </label>
+                    <button type="button" class="linklike" data-testid="bench-change-category" @onclick="() => _setupCategory = null">← Change category</button>
+                </div>
+            </div>
+
+            <div class="bench-kinds" style="margin-top:12px">
+                @foreach (var info in available)
+                {
+                    var k = info.Kind;
+                    <label class="bench-kind" title="@info.ClientMeaning">
+                        <input type="checkbox" data-testid="@BenchmarkTestRules.Control(k)" data-bench-test="@k"
+                               data-enabled="@(s.IsEnabled(k) ? "true" : "false")" checked="@s.IsEnabled(k)" disabled="@running"
+                               @onclick="() => Toggle(k, !s.IsEnabled(k))" @onclick:preventDefault="true" />
+                        <span>
+                            @info.Title
+                            @if (k == BenchmarkKind.BootTime)
+                            {
+                                <span class="meta"> · restarts PC to measure fresh boot</span>
+                            }
+                        </span>
+                    </label>
+                }
+            </div>
+
+            @if (s.HasDeveloperKindEnabled)
+            {
+                <div class="bench-inline-field" style="margin-top:12px">
+                    <label for="bench-custom-solution" class="meta"><strong>Solution / project (optional):</strong></label>
+                    <input id="bench-custom-solution"
+                           type="text"
+                           class="bench-input"
+                           data-testid="bench-custom-solution"
+                           value="@(s.CustomSolutionPath ?? string.Empty)"
+                           @onchange="OnBaselineSolutionChanged"
+                           placeholder="Leave blank for built-in C# benchmark, or paste path to .sln / .slnx / .csproj" />
+                </div>
+                <p class="notice" data-testid="bench-dev-warning" style="margin-top:10px">@DeveloperScoring.BusyPcWarning</p>
+            }
+
+            <div class="bench-wizard-footer">
+                @if (includesBoot)
+                {
+                    <span class="meta">Includes a Windows restart for Start-up time.</span>
+                }
+                else
+                {
+                    <span></span>
+                }
+                @StartButton(BenchmarkPhase.Before, includesBoot, true, includesBoot ? "Restart & Run Baseline →" : "Run Baseline Benchmark →")
+            </div>
+        </section>
+    }
+}
+
+@* ===================== STAGE 2 / 4: RUNNING (DISTRACTION-FREE, FIXED HEIGHT) ===================== *@
+else if (stage is "running-baseline" or "running-comparison")
+{
+    var runTitle = stage == "running-baseline" ? "Capturing baseline benchmark…" : "Applying changes & running comparison…";
+    var liveLine = Bench.ExperimentRunning && !string.IsNullOrWhiteSpace(Bench.ExperimentStep)
+        ? (Bench.Progress ?? Bench.ExperimentStep)
+        : (Bench.Progress ?? "Starting…");
+    <section class="card bench-running-card" data-testid="bench-live-progress">
+        <div class="bench-running-pill">
+            <span class="dot dot-running"></span>
+            <span>Running — keep the PC idle for repeatable results</span>
+        </div>
+        <h2 class="bench-running-title">@runTitle</h2>
+        @if (Bench.Settling is { } && Bench.SettleFraction is { } sf && Bench.SettleRemaining is { } rem && Bench.SettleTotal is { } total)
         {
-            @if (s.RestartBeforeAfter)
-            {
-                @StartButton(BenchmarkPhase.Before, true, true, "Restart & Run Snapshot")
-            }
-            else
-            {
-                @StartButton(BenchmarkPhase.Before, false, true, "Run Benchmark Snapshot")
-            }
-            @StartButton(BenchmarkPhase.Before, !s.RestartBeforeAfter, false, s.RestartBeforeAfter ? "Run Benchmark Snapshot" : "Restart & Run Snapshot")
+            <p class="meta bench-running-line" data-testid="bench-settle-status">Letting Windows finish starting up… @BenchmarkService.FormatCountdown(rem) left</p>
+            <div class="progress run-progress bench-running-bar" data-testid="bench-settle-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@((int)Math.Ceiling(total.TotalSeconds))" aria-valuenow="@((int)Math.Round(total.TotalSeconds - rem.TotalSeconds))">
+                <div class="progress-bar" style="width:@($"{sf * 100:0.#}%")"></div>
+            </div>
         }
         else
         {
-            @if (s.RestartBeforeAfter)
-            {
-                @StartButton(BenchmarkPhase.After, true, true, after is null ? "Restart & Run Next Snapshot" : "Restart & Re-run After")
-                @StartButton(BenchmarkPhase.Before, true, false, "Re-run baseline")
-            }
-            else
-            {
-                @StartButton(BenchmarkPhase.After, false, true, after is null ? "Run Next Snapshot" : "Re-run After")
-                @StartButton(BenchmarkPhase.Before, false, false, "Re-run baseline")
-            }
-            <button class="btn-small" data-testid="bench-clear" @onclick="Bench.Clear">Start over</button>
-            @StartButton(BenchmarkPhase.After, !s.RestartBeforeAfter, false, s.RestartBeforeAfter
-                ? (after is null ? "Run Next Snapshot" : "Re-run After")
-                : (after is null ? "Restart & Run Next Snapshot" : "Restart & Re-run After"))
-            @StartButton(BenchmarkPhase.Before, !s.RestartBeforeAfter, false, s.RestartBeforeAfter ? "Re-run baseline without restart" : "Restart and re-run baseline")
+            <p class="meta bench-running-line" data-testid="bench-progress">@liveLine</p>
+            <div class="run-progress run-progress-indeterminate bench-running-bar" data-testid="bench-run-progress" aria-hidden="true"><div></div></div>
         }
-    </div>
-</section>
 
-@{
-    var hasDevEnv = Bench.IsKindAvailable(BenchmarkKind.DeveloperCSharp);
-    var activeGoal = BenchmarkGoals.Normalize(s.Goal);
-    var latestRun = BenchmarkUpload.LatestRun(before, after);
-    var currentPowerMode = latestRun?.Conditions.PowerMode ?? latestRun?.Conditions.PowerPlan;
-}
-<section class="card" data-testid="bench-goals" style="margin-bottom:12px">
-    <div class="bench-presets" style="margin:0">
-        <div class="bench-preset-group" role="tablist" aria-label="Benchmark goal preset">
-            <button type="button"
-                    class="@(activeGoal is null or BenchmarkGoals.TuneUp ? "btn-small btn-primary" : "btn-small")"
-                    data-testid="bench-goal-tuneup"
-                    disabled="@running"
-                    @onclick="() => ApplyGoalPreset(BenchmarkGoals.TuneUp)">
-                Full tune-up
-            </button>
-            <button type="button"
-                    class="@(activeGoal == BenchmarkGoals.Browsing ? "btn-small btn-primary" : "btn-small")"
-                    data-testid="bench-goal-browsing"
-                    disabled="@running"
-                    @onclick="() => ApplyGoalPreset(BenchmarkGoals.Browsing)">
-                Web browsing
-            </button>
-            @if (hasDevEnv)
+        <div class="bench-progress-log" data-testid="bench-progress-log">
+            @for (var i = 0; i < _progressLog.Count; i++)
             {
-                <button type="button"
-                        class="@(activeGoal == BenchmarkGoals.Build ? "btn-small btn-primary" : "btn-small")"
-                        data-testid="bench-goal-build"
-                        disabled="@running"
-                        @onclick="() => ApplyGoalPreset(BenchmarkGoals.Build)">
-                    Build speed
-                </button>
+                var isLast = i == _progressLog.Count - 1;
+                <div class="@(isLast ? "bench-log-current" : "meta")">@(isLast ? "▸" : "✓") @_progressLog[i]</div>
             }
         </div>
-        <span class="meta" data-testid="bench-goal-context">
-            @if (activeGoal == BenchmarkGoals.Browsing)
-            {
-                <span>DNS lookup &amp; web browsing speed@(currentPowerMode is { Length: > 0 } pm ? $" · {pm}" : "") · <a href="/checks">Network &amp; Wi-Fi →</a> · <a href="/stress">Bufferbloat test →</a></span>
-            }
-            else if (activeGoal == BenchmarkGoals.Build && hasDevEnv)
-            {
-                <span>C# clean build &amp; disk latency@(currentPowerMode is { Length: > 0 } pm2 ? $" · {pm2}" : "") · <a href="/checks">Dev Drive &amp; setup →</a></span>
-            }
-            else
-            {
-                <span>Before / After tune-up suite@(currentPowerMode is { Length: > 0 } pm3 ? $" · {pm3}" : "") · customize tests under Advanced below</span>
-            }
-        </span>
-    </div>
-</section>
 
-@{
+        <div class="bench-running-actions">
+            <button type="button" class="btn btn-stop" data-testid="bench-stop" @onclick="Bench.Stop">Stop</button>
+        </div>
+    </section>
+}
+
+@* ===================== STAGE 2B: REVIEW & SAVE NEW BASELINE ===================== *@
+else if (stage == "review-baseline" && before is not null)
+{
+    EnsureBaselineNameDefault(before);
+    <section class="card bench-wizard-card" data-testid="bench-review-baseline">
+        <div class="bench-inline-field">
+            <label for="bench-baseline-name"><strong>Baseline:</strong></label>
+            <input id="bench-baseline-name"
+                   type="text"
+                   class="bench-input"
+                   data-testid="bench-baseline-name"
+                   value="@_baselineNameInput"
+                   @oninput="e => _baselineNameInput = e.Value?.ToString() ?? string.Empty"
+                   placeholder="Name this baseline…" />
+        </div>
+
+        @{
+            var beforeCautions = before.Conditions.FormatCautions();
+        }
+        @if (beforeCautions.Count > 0)
+        {
+            <p class="notice" data-testid="bench-conditions-warning" style="margin-top:10px">@string.Join(" · ", beforeCautions)</p>
+        }
+
+        <div class="bench-wizard-footer">
+            <div class="bench-btn-group">
+                <button type="button" class="btn btn-secondary" data-testid="bench-rerun-baseline" @onclick="RerunBaselineAsync">
+                    <Icon Name="refresh" Size="12" /> Re-run
+                </button>
+                <button type="button" class="btn btn-danger-outline" data-testid="bench-delete-unsaved" @onclick="DiscardUnsavedBaseline">
+                    Delete
+                </button>
+            </div>
+            <button type="button" class="btn btn-primary" data-testid="bench-save-baseline" @onclick="SaveBaselineAndContinue">
+                Save &amp; Continue →
+            </button>
+        </div>
+    </section>
+}
+
+@* ===================== STAGE 3: SELECT MODIFICATIONS ===================== *@
+else if (stage == "modify" && before is not null)
+{
+    var activeGoal = BenchmarkGoals.Normalize(before.Goal ?? s.Goal) ?? BenchmarkGoals.TuneUp;
     var impCtx = Bench.GetImprovementContext();
     var allImprovements = BenchmarkImprovements.ForGoal(activeGoal, impCtx);
     var actionableImprovements = allImprovements.Where(i => !i.AlreadyApplied).ToList();
@@ -140,43 +319,83 @@
         alreadyNotes.Add($"Dev Drive on {existingDevDriveRoot}");
     foreach (var applied in allImprovements.Where(i => i.AlreadyApplied))
         alreadyNotes.Add(string.IsNullOrWhiteSpace(applied.AlreadyAppliedNote) ? applied.Title : $"{applied.Title} ({applied.AlreadyAppliedNote})");
-    var showSdkChoice = activeGoal == BenchmarkGoals.Build && hasDevEnv;
+
+    var baselineSdkMajor = before.Get(BenchmarkKind.DeveloperCSharp)?.DeveloperBuild?.ToolchainMajor ?? impCtx.DotNetSdkMajorVersion;
+    var showSdkOption = activeGoal == BenchmarkGoals.Build && hasDevEnv;
     var installedSdks = impCtx.InstalledDotNetSdkMajors ?? [];
-    var hasSdk10 = installedSdks.Contains(10);
-    var hasSdk11 = installedSdks.Contains(11);
-    var selectedImprovements = actionableImprovements.Where(i => _selectedImprovements.Contains(i.Id)).ToList();
-    var selectedDevDriveRoot = existingDevDriveRoot is not null && _useExistingDevDrive ? existingDevDriveRoot : null;
-    var selectedSdkTarget = showSdkChoice && _targetDotNetSdkMajor is 10 or 11 ? _targetDotNetSdkMajor : null;
+    int? singleAltSdkMajor = baselineSdkMajor == 10 ? 11 : baselineSdkMajor == 11 ? 10 : null;
+    var selectedImprovements = _manualChangesMode ? [] : actionableImprovements.Where(i => _selectedImprovements.Contains(i.Id)).ToList();
+    var selectedDevDriveRoot = !_manualChangesMode && existingDevDriveRoot is not null && _useExistingDevDrive ? existingDevDriveRoot : null;
+    int? selectedSdkTarget = _manualChangesMode || !showSdkOption
+        ? null
+        : singleAltSdkMajor is { } alt
+            ? (_switchOtherSdk ? alt : null)
+            : (_targetDotNetSdkMajor is 10 or 11 ? _targetDotNetSdkMajor : null);
+    var afterSolutionClean = string.IsNullOrWhiteSpace(_afterSolutionPath) ? null : _afterSolutionPath.Trim();
+    var baselineSolutionClean = string.IsNullOrWhiteSpace(s.CustomSolutionPath) ? null : s.CustomSolutionPath.Trim();
+    var hasCustomSolution = afterSolutionClean is not null;
+    var solutionChanged = !string.Equals(afterSolutionClean, baselineSolutionClean, StringComparison.OrdinalIgnoreCase);
     var totalSelected = selectedImprovements.Count
         + (selectedDevDriveRoot is not null ? 1 : 0)
-        + (selectedSdkTarget is not null ? 1 : 0);
-}
-@if (actionableImprovements.Count > 0 || existingDevDriveRoot is not null || showSdkChoice || alreadyNotes.Count > 0)
-{
-    <section class="card" data-testid="bench-improvements" style="margin-bottom:12px">
-        <div class="card-head">
-            <strong>Improvements to test &amp; apply for the After pass</strong>
-            <span class="meta">Choose the improvements you want to measure, then click Start to run Before → Apply → After automatically.</span>
+        + (selectedSdkTarget is not null ? 1 : 0)
+        + (solutionChanged ? 1 : 0);
+
+    <section class="card bench-active-baseline-bar" data-testid="bench-active-baseline">
+        <div class="bench-active-baseline-info">
+            <span class="chip chip-na">Baseline</span>
+            <strong>@(activeBaseline?.Name ?? BenchmarkService.SuggestRunName(before))</strong>
+            <span class="meta">· @before.TimeUtc.ToLocalTime().ToString("g")</span>
         </div>
-        @if (alreadyNotes.Count > 0)
+        @if (activeBaseline is not null)
         {
-            <p class="meta" data-testid="bench-already-applied" style="margin:6px 0 0">Already in place: @string.Join(" · ", alreadyNotes)</p>
+            <button type="button" class="btn-small btn-danger-outline" data-testid="bench-delete-baseline" @onclick="() => DeleteActiveBaseline(activeBaseline.Id)">Delete</button>
         }
-        @if (existingDevDriveRoot is not null || actionableImprovements.Count > 0)
-        {
-            <div class="bench-kinds" style="margin-top:8px">
-                @if (existingDevDriveRoot is not null)
+    </section>
+
+    <section class="card bench-wizard-card" data-testid="bench-improvements">
+        <div class="bench-card-header-row">
+            <div>
+                <strong>Select modifications to test</strong>
+                @if (alreadyNotes.Count > 0)
                 {
-                    <label class="bench-kind" title="Runs the Before build on the standard drive and the After build on your existing Dev Drive (@existingDevDriveRoot) without creating a new drive.">
+                    <div class="meta" data-testid="bench-already-applied">Already in place: @string.Join(" · ", alreadyNotes)</div>
+                }
+            </div>
+            <label class="bench-kind meta">
+                <input type="checkbox" data-testid="bench-manual-mode" checked="@_manualChangesMode" @onchange="() => _manualChangesMode = !_manualChangesMode" />
+                <span>I made manual changes myself</span>
+            </label>
+        </div>
+
+        @if (activeGoal == BenchmarkGoals.Build && hasDevEnv)
+        {
+            <div class="bench-inline-field" style="margin-top:12px">
+                <label for="bench-after-solution" class="meta"><strong>Solution / project:</strong></label>
+                <input id="bench-after-solution"
+                       type="text"
+                       class="bench-input"
+                       data-testid="bench-after-solution"
+                       value="@_afterSolutionPath"
+                       @oninput="e => _afterSolutionPath = e.Value?.ToString() ?? string.Empty"
+                       placeholder="Built-in C# benchmark (or paste path to .sln / .slnx / .csproj)" />
+            </div>
+        }
+
+        @if (_manualChangesMode)
+        {
+            <p class="meta" style="margin:12px 0">No automatic changes will be applied. Clicking <strong>Run Comparison →</strong> measures the After pass directly against your baseline.</p>
+        }
+        else
+        {
+            <div class="bench-kinds" style="margin-top:12px">
+                @if (existingDevDriveRoot is not null && !hasCustomSolution)
+                {
+                    <label class="bench-kind" title="Runs the After build on your existing Dev Drive (@existingDevDriveRoot) without creating a new drive.">
                         <input type="checkbox"
                                data-testid="bench-use-devdrive"
                                checked="@_useExistingDevDrive"
-                               disabled="@running"
                                @onchange="() => _useExistingDevDrive = !_useExistingDevDrive" />
-                        <span>
-                            Use existing Dev Drive (@existingDevDriveRoot) for the After build
-                            <span class="meta"> · no new drive created</span>
-                        </span>
+                        <span>Use existing Dev Drive (@existingDevDriveRoot) for the comparison build <span class="meta">· no new drive created</span></span>
                     </label>
                 }
                 @foreach (var imp in actionableImprovements)
@@ -186,7 +405,6 @@
                         <input type="checkbox"
                                data-testid="bench-imp-@imp.Id"
                                checked="@isChecked"
-                               disabled="@running"
                                @onchange="() => ToggleImprovement(imp, actionableImprovements)" />
                         <span>
                             @imp.Title
@@ -197,247 +415,217 @@
                         </span>
                     </label>
                 }
+                @if (showSdkOption && singleAltSdkMajor is { } altMajor)
+                {
+                    var altInstalled = installedSdks.Contains(altMajor);
+                    var altLabel = altMajor == 10 ? ".NET 10 LTS SDK" : ".NET 11 SDK";
+                    <label class="bench-kind" title="Runs the comparison build on @altLabel (installed silently via Agent if missing).">
+                        <input type="checkbox"
+                               data-testid="bench-sdk-@altMajor"
+                               checked="@_switchOtherSdk"
+                               @onchange="() => _switchOtherSdk = !_switchOtherSdk" />
+                        <span>Test on @altLabel <span class="meta">· @(altInstalled ? "installed" : "silent install if missing")</span></span>
+                    </label>
+                }
             </div>
-        }
-        @if (showSdkChoice)
-        {
-            <div data-testid="bench-sdk-choice" style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border, #e5e7eb)">
-                <div class="meta" style="margin-bottom:6px"><strong>.NET SDK for the After pass</strong> (mutually exclusive — installs automatically if not yet on this PC):</div>
-                <div class="bench-kinds" role="radiogroup" aria-label=".NET SDK for the After pass">
-                    <label class="bench-kind">
-                        <input type="radio"
-                               name="bench-sdk-target"
-                               data-testid="bench-sdk-keep"
-                               checked="@(selectedSdkTarget is null)"
-                               disabled="@running"
-                               @onchange="() => _targetDotNetSdkMajor = null" />
-                        <span>Keep current@(impCtx.DotNetSdkMajorVersion is int cur ? $" (.NET {cur})" : "")</span>
-                    </label>
-                    <label class="bench-kind" title="@(impCtx.DotNetSdkMajorVersion == 9 ? ".NET 9 SDK reaches end-of-support on Nov 10, 2026. Runs the After build on .NET 10 LTS." : "Runs the After build on .NET 10 LTS SDK (installed side-by-side if missing).")">
-                        <input type="radio"
-                               name="bench-sdk-target"
-                               data-testid="bench-sdk-10"
-                               checked="@(selectedSdkTarget == 10)"
-                               disabled="@running"
-                               @onchange="() => _targetDotNetSdkMajor = 10" />
-                        <span>.NET 10 LTS SDK <span class="meta">@(hasSdk10 ? "(installed)" : "(will install side-by-side)")</span></span>
-                    </label>
-                    <label class="bench-kind" title="Runs the After build on .NET 11 SDK (installed side-by-side if missing).">
-                        <input type="radio"
-                               name="bench-sdk-target"
-                               data-testid="bench-sdk-11"
-                               checked="@(selectedSdkTarget == 11)"
-                               disabled="@running"
-                               @onchange="() => _targetDotNetSdkMajor = 11" />
-                        <span>.NET 11 SDK <span class="meta">@(hasSdk11 ? "(installed)" : "(will install side-by-side)")</span></span>
-                    </label>
-                </div>
-            </div>
-        }
-        <div class="bench-hero-actions" style="margin-top:10px">
-            <button type="button"
-                    class="btn btn-primary"
-                    data-testid="bench-run-experiment"
-                    disabled="@(running || totalSelected == 0 || s.Enabled.Count == 0)"
-                    @onclick="() => RunExperimentAsync(selectedImprovements, selectedSdkTarget, selectedDevDriveRoot)">
-                <Icon Name="play" Size="12" />
-                @(totalSelected == 0
-                    ? "Select improvements above to run Before → Apply → After"
-                    : $"Start: Before → Apply {totalSelected} {(totalSelected == 1 ? "improvement" : "improvements")} → After")
-            </button>
-            @if (Bench.ExperimentRunning)
+
+            @if (showSdkOption && singleAltSdkMajor is null)
             {
-                <button type="button" class="btn btn-stop" data-testid="bench-experiment-stop" @onclick="Bench.Stop">Stop</button>
+                <div data-testid="bench-sdk-choice" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+                    <div class="meta" style="margin-bottom:6px"><strong>.NET SDK for comparison</strong></div>
+                    <div class="bench-kinds" role="radiogroup" aria-label=".NET SDK for comparison">
+                        <label class="bench-kind">
+                            <input type="radio" name="bench-sdk-target" data-testid="bench-sdk-10" checked="@(_targetDotNetSdkMajor == 10)" @onchange="() => _targetDotNetSdkMajor = 10" />
+                            <span>.NET 10 LTS SDK <span class="meta">@(installedSdks.Contains(10) ? "(installed)" : "(silent install)")</span></span>
+                        </label>
+                        <label class="bench-kind">
+                            <input type="radio" name="bench-sdk-target" data-testid="bench-sdk-11" checked="@(_targetDotNetSdkMajor == 11)" @onchange="() => _targetDotNetSdkMajor = 11" />
+                            <span>.NET 11 SDK <span class="meta">@(installedSdks.Contains(11) ? "(installed)" : "(silent install)")</span></span>
+                        </label>
+                    </div>
+                </div>
             }
-        </div>
-        @if (Bench.ExperimentRunning && !string.IsNullOrWhiteSpace(Bench.ExperimentStep))
-        {
-            <p class="status-line is-running" data-testid="bench-experiment-status" style="margin-top:8px">
-                <span class="dot dot-running"></span>@Bench.ExperimentStep
-            </p>
         }
-        @if (Bench.LastExperiment is { Outcomes.Count: > 0 } exp)
+
+        @if (Bench.LastExperiment is { Outcomes.Count: > 0 } prevExp && !prevExp.Completed)
         {
             <div data-testid="bench-experiment-summary" style="margin-top:10px">
-                <div class="meta"><strong>Improvements applied in last run:</strong></div>
+                <div class="meta"><strong>Last attempt:</strong></div>
                 <ul class="meta" style="margin:4px 0 0 18px;padding:0">
-                    @foreach (var o in exp.Outcomes)
+                    @foreach (var o in prevExp.Outcomes)
                     {
                         <li>@(o.Succeeded ? "✓" : o.Skipped ? "–" : "✗") <strong>@o.Title</strong> — @o.Message</li>
                     }
                 </ul>
             </div>
         }
+
+        <div class="bench-wizard-footer">
+            <span class="meta">
+                @(_manualChangesMode
+                    ? "Ready to measure against your baseline."
+                    : totalSelected == 0
+                        ? (hasCustomSolution ? "Tweaked your solution? Click Run Comparison → or select modifications above." : "Select at least one modification above (or check manual changes).")
+                        : $"{totalSelected} {(totalSelected == 1 ? "modification" : "modifications")} selected")
+            </span>
+            @if (_manualChangesMode)
+            {
+                @StartButton(BenchmarkPhase.After, s.IsEnabled(BenchmarkKind.BootTime), true, s.IsEnabled(BenchmarkKind.BootTime) ? "Restart & Run Comparison →" : "Run Comparison →")
+            }
+            else
+            {
+                <button type="button"
+                        class="btn btn-primary"
+                        data-testid="bench-run-experiment"
+                        disabled="@((totalSelected == 0 && !hasCustomSolution) || s.Enabled.Count == 0)"
+                        @onclick="() => RunComparisonAsync(selectedImprovements, selectedSdkTarget, selectedDevDriveRoot, afterSolutionClean)">
+                    <Icon Name="play" Size="12" /> @(totalSelected == 0 ? "Run Comparison →" : $"Apply {totalSelected} & Run Comparison →")
+                </button>
+            }
+        </div>
     </section>
 }
 
-<details class="card bench-customize" data-testid="bench-settings" open="@_customizeOpen">
-    @* The click saves the open state, so a view-only mirror and a controlling mirror show the same panel the start buttons do. *@
-    <summary class="bench-customize-summary" data-testid="bench-settings-toggle" aria-expanded="@(_customizeOpen ? "true" : "false")"
-             @onclick="ToggleCustomize" @onclick:preventDefault="true">
-        <span class="bench-customize-title">
-            <span class="bench-customize-caret" aria-hidden="true">▸</span>
-            <span>Advanced: customize tests</span>
-            <span class="meta">(@s.Enabled.Count(Bench.IsKindAvailable) of @available.Count selected · @s.Runs @(s.Runs == 1 ? "run" : "runs") each · about @Minutes(s.EstimatedSeconds()))</span>
-        </span>
-    </summary>
-    <div class="bench-customize-body">
-        <div class="bench-presets">
-            <div class="bench-preset-group">
-                <button type="button" class="btn-small" data-testid="bench-preset-standard" disabled="@running" @onclick="ApplyStandardPreset">Standard (All · 3 runs)</button>
-                <button type="button" class="btn-small" data-testid="bench-preset-quick" disabled="@running" @onclick="ApplyQuickPreset">Quick (Core · 1 run)</button>
-                <button type="button" class="btn-small" data-testid="bench-select-all" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Goal = BenchmarkGoals.TuneUp, Enabled = available.Select(i => i.Kind).ToList() })">Select all</button>
-                <button type="button" class="btn-small" data-testid="bench-select-none" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Goal = null, Enabled = [] })">Select none</button>
-            </div>
-            <label class="meta">Runs per test
-                <select data-testid="bench-runs" disabled="@running" @onchange="SetRuns">
-                    @foreach (var n in BenchmarkSettings.RunChoices) { <option value="@n" selected="@(n == s.Runs)">@n</option> }
-                </select>
-            </label>
-        </div>
-        <div class="bench-kinds">
-            @foreach (var info in available)
-            {
-                var k = info.Kind;
-                <label class="bench-kind" title="@info.ClientMeaning">
-                    @* Click saves the enabled list (UpdateSettings). preventDefault keeps the box on that saved value until the redraw. *@
-                    <input type="checkbox" data-testid="@BenchmarkTestRules.Control(k)" data-bench-test="@k"
-                           data-enabled="@(s.IsEnabled(k) ? "true" : "false")" checked="@s.IsEnabled(k)" disabled="@running"
-                           @onclick="() => Toggle(k, !s.IsEnabled(k))" @onclick:preventDefault="true" /> @info.Title
-                </label>
-            }
-        </div>
-        @if (s.HasDeveloperKindEnabled)
-        {
-            <p class="notice" data-testid="bench-dev-warning">@DeveloperScoring.BusyPcWarning</p>
-        }
-    </div>
-</details>
-
-@if (before is not null && !running) { <UndoAllPanel /> }
-
-@if (Bench.Running is not null)
+@* ===================== STAGE 5: RESULTS ===================== *@
+else if (stage == "results" && before is not null && after is not null)
 {
-    <p class="status-line is-running" data-testid="bench-progress"><span class="dot dot-running"></span>@(Bench.Running == BenchmarkPhase.Before ? "Before" : "After"): @(Bench.Progress ?? "Starting…")<span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span></p>
-    <div class="run-progress run-progress-indeterminate" data-testid="bench-run-progress" aria-hidden="true"><div></div></div>
-    <div class="cards">
-        <div class="card is-running card-with-visual" data-testid="bench-live-progress">
-            <div class="card-main">
-                <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-                <div class="headline">@(Bench.Running == BenchmarkPhase.Before ? "Before benchmark" : "After benchmark")</div>
-                <div class="meta">@(Bench.Progress ?? "Starting…")</div>
-            </div>
-            <TestRunningVisual Slug="benchmark" TestId="bench-visual" />
-        </div>
-    </div>
-}
-else if (Bench.Settling is { } settlePhase && Bench.SettleFraction is { } sf && Bench.SettleRemaining is { } rem && Bench.SettleTotal is { } total)
-{
-    <p class="status-line is-running" data-testid="bench-settle-status"><span class="dot dot-running"></span>@(settlePhase == BenchmarkPhase.Before ? "Before" : "After"): Letting Windows finish starting up…<span class="running-badge" data-testid="bench-settle-countdown"><span class="running-badge-dot"></span>@BenchmarkService.FormatCountdown(rem) left</span></p>
-    <div class="progress run-progress" data-testid="bench-settle-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@((int)Math.Ceiling(total.TotalSeconds))" aria-valuenow="@((int)Math.Round(total.TotalSeconds - rem.TotalSeconds))">
-        <div class="progress-bar" style="width:@($"{sf * 100:0.#}%")"></div>
-    </div>
-}
-<AgentData TestId="bench-report-data" Json="@RemotePCDiagnostics.Core.Areas.AgentExports.Benchmark(Bench)" />
-@if (Bench.Message is { } msg) { <p class="notice" data-testid="bench-message">@msg</p> }
-@{
-    var condCautions = new List<string>();
-    if (before is not null)
-        foreach (var c in before.Conditions.FormatCautions())
-            condCautions.Add(after is not null ? $"Before: {c}" : c);
-    if (after is not null)
-        foreach (var c in after.Conditions.FormatCautions())
-            condCautions.Add($"After: {c}");
-}
-@if (condCautions.Count > 0)
-{
-    <p class="notice" data-testid="bench-conditions-warning">@string.Join(" · ", condCautions)</p>
-}
-
-@if (before is not null && after is not null)
-{
+    EnsureAfterNameDefault(after);
     var kind = cmp.OverallPercent switch { >= 2 => "ok", <= -2 => "err", _ => "na" };
-    <section class="banner banner-@(kind == "ok" ? "ok" : kind == "err" ? "warn" : "run") bench-overall" data-testid="bench-overall">
-        <span class="banner-icon"><Icon Name="health" Size="24" /></span>
-        <div class="banner-text">
-            <div class="banner-title">@cmp.OverallText</div>
-            <div class="banner-sub">@cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.Better) better · @cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.NoChange) unchanged · @cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.Worse) worse · @cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.Uncertain) need confirmation
-                — weighted across the tests below; unconfirmed changes count as neutral in the overall score.</div>
-        </div>
-    </section>
-    @foreach (var w in cmp.Warnings) { <p class="notice" data-testid="bench-warning">@w</p> }
-}
+    var condCautions = new List<string>();
+    foreach (var c in before.Conditions.FormatCautions()) condCautions.Add($"Before: {c}");
+    foreach (var c in after.Conditions.FormatCautions()) condCautions.Add($"After: {c}");
 
-@if (before is not null)
-{
-    <div class="table-scroll">
-    <table class="detail grid bench-table" data-testid="bench-table">
-        <tr><th scope="col">Test</th><th scope="col">Before</th><th scope="col">After</th><th scope="col">Change</th></tr>
-        @foreach (var info in Benchmarks.All)
+    <section class="card bench-results-card" data-testid="bench-results">
+        <div class="bench-results-head" data-testid="bench-overall">
+            <div class="bench-card-header-row">
+                <h2 class="bench-verdict bench-verdict-@kind">@cmp.OverallText</h2>
+                <span class="meta">Baseline: <strong>@(activeBaseline?.Name ?? BenchmarkService.SuggestRunName(before))</strong></span>
+            </div>
+            <div class="bench-inline-field" style="margin-top:10px">
+                <label for="bench-after-name"><strong>After:</strong></label>
+                <input id="bench-after-name"
+                       type="text"
+                       class="bench-input"
+                       data-testid="bench-after-name"
+                       value="@_afterNameInput"
+                       @oninput="e => _afterNameInput = e.Value?.ToString() ?? string.Empty"
+                       placeholder="Name this result…" />
+            </div>
+        </div>
+
+        @if (condCautions.Count > 0)
         {
-            var b = before.Get(info.Kind);
-            var a = after?.Get(info.Kind);
-            if (b is null && a is null) continue;
-            var d = cmp.Deltas.FirstOrDefault(x => x.Info.Kind == info.Kind);
-            <tr data-testid="bench-row-@info.Kind.ToString().ToLowerInvariant()">
-                <td><strong>@info.Title</strong><div class="meta">@info.ClientMeaning</div></td>
-                <td>@Cell(info, b)</td>
-                <td>@if (after is null) { <span class="meta">—</span> } else { @Cell(info, a) }</td>
-                <td>
-                    @if (d is null || after is null) { <span class="meta">—</span> }
-                    else
-                    {
-                        <span class="chip chip-@(d.Verdict switch { BenchmarkVerdict.Better => "ok", BenchmarkVerdict.Worse => "err", _ => "na" })">
-                            @d.ChangeSummary</span>
-                        @if (d.Note is { } n) { <div class="meta">@n</div> }
-                    }
-                </td>
-            </tr>
+            <p class="notice" data-testid="bench-conditions-warning" style="margin:10px 16px 0">@string.Join(" · ", condCautions)</p>
         }
-    </table>
-    </div>
-    <p class="meta" data-testid="bench-conditions">@RunLine("Before", before)
-        @if (after is not null) { <br />@RunLine("After", after) }</p>
+        @foreach (var w in cmp.Warnings)
+        {
+            <p class="notice" data-testid="bench-warning" style="margin:8px 16px 0">@w</p>
+        }
 
-    <section class="card bench-upload" data-testid="bench-upload-card">
-        <div class="card-head"><strong>Compare with other computers</strong></div>
-        <p class="meta">Uploads the @(after is null ? "baseline" : "latest (after)") results with this PC's model, processor, memory and graphics card to your shop's Admin site,
-            where your computers are ranked side by side for each test.</p>
-        <div class="bench-hero-actions">
-            <button class="btn-small" data-testid="bench-upload" disabled="@(running || Uploader.Uploading || !(Uploader.CanUpload || _isRemoteDisplay))" @onclick="UploadResultsAsync">
-                <Icon Name="upload" Size="12" /> @(Uploader.Uploading ? "Uploading…" : "Upload results")</button>
-            @if (Uploader.CompareUrl is { } compareUrl)
-            {
-                <a class="linklike" data-testid="bench-upload-link" href="@compareUrl" target="_blank" rel="noopener noreferrer">Open the comparison →</a>
-            }
+        <div class="table-scroll">
+            <table class="detail grid bench-table" data-testid="bench-table">
+                <tr><th scope="col">Test</th><th scope="col">Baseline</th><th scope="col">After</th><th scope="col">Change</th></tr>
+                @foreach (var info in Benchmarks.All)
+                {
+                    var b = before.Get(info.Kind);
+                    var a = after.Get(info.Kind);
+                    if (b is null && a is null) continue;
+                    var d = cmp.Deltas.FirstOrDefault(x => x.Info.Kind == info.Kind);
+                    <tr data-testid="bench-row-@info.Kind.ToString().ToLowerInvariant()">
+                        <td><strong>@info.Title</strong><div class="meta">@info.ClientMeaning</div></td>
+                        <td>@Cell(info, b)</td>
+                        <td>@Cell(info, a)</td>
+                        <td>
+                            @if (d is null) { <span class="meta">—</span> }
+                            else
+                            {
+                                <span class="chip chip-@(d.Verdict switch { BenchmarkVerdict.Better => "ok", BenchmarkVerdict.Worse => "err", _ => "na" })">@d.ChangeSummary</span>
+                                @if (d.Note is { } n) { <div class="meta">@n</div> }
+                            }
+                        </td>
+                    </tr>
+                }
+            </table>
         </div>
+
+        @if (Bench.LastExperiment is { Outcomes.Count: > 0 } exp)
+        {
+            <div class="bench-results-meta" data-testid="bench-experiment-summary">
+                <strong>Changes tested:</strong>
+                @string.Join(" · ", exp.Outcomes.Select(o => $"{(o.Succeeded ? "✓" : o.Skipped ? "–" : "✗")} {o.Title}"))
+            </div>
+        }
+
+        <div class="bench-results-meta" data-testid="bench-conditions">
+            @RunLine("Baseline", before) · @RunLine("After", after)
+        </div>
+
         @if (Uploader.Message is { } um)
         {
             <p class="@(Uploader.Failed ? "notice notice-error" : "notice")" data-testid="bench-upload-status"
-               data-upload-seq="@Uploader.Seq" data-upload-failed="@(Uploader.Failed ? "true" : "false")" data-uploading="@(Uploader.Uploading ? "true" : "false")">@um</p>
+               data-upload-seq="@Uploader.Seq" data-upload-failed="@(Uploader.Failed ? "true" : "false")" data-uploading="@(Uploader.Uploading ? "true" : "false")"
+               style="margin:8px 16px 0">@um</p>
         }
+
+        <div class="bench-wizard-footer bench-results-footer">
+            <div class="bench-btn-group">
+                <button type="button" class="btn btn-secondary" data-testid="bench-toggle-undo" @onclick="() => _showUndo = !_showUndo">
+                    @(_showUndo ? "Hide Undo" : "Undo changes…")
+                </button>
+                <button type="button" class="btn btn-danger-outline" data-testid="bench-delete-after" @onclick="DeleteAfterResult">
+                    Delete
+                </button>
+            </div>
+            <div class="bench-btn-group">
+                @if (Uploader.CompareUrl is { } compareUrl)
+                {
+                    <a class="linklike" data-testid="bench-upload-link" href="@compareUrl" target="_blank" rel="noopener noreferrer">Open comparison →</a>
+                }
+                <button type="button" class="btn btn-secondary" data-testid="bench-upload"
+                        disabled="@(Uploader.Uploading || !(Uploader.CanUpload || _isRemoteDisplay))"
+                        @onclick="UploadResultsAsync">
+                    <Icon Name="upload" Size="12" /> @(Uploader.Uploading ? "Uploading…" : "Upload to Admin")
+                </button>
+                <button type="button" class="btn btn-primary" data-testid="bench-save-after-baseline" @onclick="SaveAfterAsBaseline">
+                    Save as Baseline →
+                </button>
+            </div>
+        </div>
     </section>
-}
-else if (!running)
-{
-    <p class="status-line" data-testid="bench-empty">No snapshot yet. Click the button above to capture a baseline, then run another snapshot after changes to compare.</p>
+
+    @if (_showUndo)
+    {
+        <UndoAllPanel />
+    }
 }
 
 @code {
-    private static readonly BenchmarkKind[] QuickCoreKinds =
-    [
-        BenchmarkKind.MemoryUsedMb,
-        BenchmarkKind.IdleCpu,
-        BenchmarkKind.CpuMulti,
-        BenchmarkKind.DiskLatency,
-        BenchmarkKind.EnabledStartupApps,
-    ];
-
-    private bool _customizeOpen;
     private bool _isRemoteDisplay;
+    private bool _forceSetup;
+    private bool _newBaselineSelected;
+    private string? _setupCategory;
+    private bool _manualChangesMode;
+    private bool _useExistingDevDrive;
+    private bool _switchOtherSdk;
+    private int? _targetDotNetSdkMajor;
+    private bool _showUndo;
+    private string _baselineNameInput = string.Empty;
+    private DateTimeOffset? _namedBeforeUtc;
+    private string _afterNameInput = string.Empty;
+    private DateTimeOffset? _namedAfterUtc;
+    private string _afterSolutionPath = string.Empty;
+    private readonly HashSet<string> _selectedImprovements = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _progressLog = [];
 
-    protected override void OnInitialized() { Bench.Changed += OnChanged; Uploader.Changed += OnChanged; }
+    protected override void OnInitialized()
+    {
+        Bench.Changed += OnChanged;
+        Uploader.Changed += OnChanged;
+        _afterSolutionPath = Bench.Settings.CustomSolutionPath ?? string.Empty;
+    }
+
     protected override Task OnInitializedAsync() => Bench.RefreshDeveloperEnvironmentAsync();
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
@@ -453,9 +641,25 @@ else if (!running)
         catch { }
     }
 
-    private Task UploadResultsAsync() =>
-        Uploader.CanUpload ? Uploader.UploadAsync() : Uploader.UploadViaBrowserAsync(JS);
-    private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
+    private void OnChanged()
+    {
+        try
+        {
+            var line = Bench.Progress ?? Bench.ExperimentStep;
+            if (!string.IsNullOrWhiteSpace(line) && (_progressLog.Count == 0 || !string.Equals(_progressLog[^1], line, StringComparison.Ordinal)))
+            {
+                _progressLog.Add(line);
+                if (_progressLog.Count > 50) _progressLog.RemoveAt(0);
+            }
+            if (Bench.Running is null && Bench.Settling is null && !Bench.ExperimentRunning && !Bench.RunningDeveloperAction)
+            {
+                _forceSetup = false;
+            }
+            _ = InvokeAsync(StateHasChanged);
+        }
+        catch { }
+    }
+
     public void Dispose() { Bench.Changed -= OnChanged; Uploader.Changed -= OnChanged; }
 
     [SupplyParameterFromQuery(Name = "goal")] public string? GoalQuery { get; set; }
@@ -468,23 +672,138 @@ else if (!running)
             _appliedGoalQuery = q;
             var norm = BenchmarkGoals.Normalize(q);
             if (norm is not null && BenchmarkGoals.IsGoalAvailable(norm, Bench.AvailableBenchmarks.Select(b => b.Kind)))
-                ApplyGoalPreset(norm);
+            {
+                _newBaselineSelected = true;
+                SelectCategory(norm);
+            }
         }
     }
 
-    private readonly HashSet<string> _selectedImprovements = new(StringComparer.OrdinalIgnoreCase);
-    private int? _targetDotNetSdkMajor;
-    private bool _useExistingDevDrive;
+    private void GoToBaselineSetup()
+    {
+        _forceSetup = true;
+        _newBaselineSelected = Bench.SavedBaselines.Count == 0;
+        _setupCategory = null;
+        _showUndo = false;
+    }
 
-    private void ApplyGoalPreset(string goal)
+    private void GoToModify()
+    {
+        Bench.DiscardAfter();
+        _forceSetup = false;
+        _showUndo = false;
+    }
+
+    private void OnBaselineSelected(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString();
+        if (string.IsNullOrEmpty(val)) return;
+        if (val == "__new__")
+        {
+            _newBaselineSelected = true;
+            _setupCategory = null;
+            return;
+        }
+        if (Bench.LoadSavedBaseline(val))
+        {
+            _forceSetup = false;
+            _newBaselineSelected = false;
+            _setupCategory = null;
+            ResetModificationSelections();
+        }
+    }
+
+    private void SelectCategory(string goal)
     {
         var avail = Bench.AvailableBenchmarks.Select(b => b.Kind).ToList();
         if (!BenchmarkGoals.IsGoalAvailable(goal, avail)) return;
+        var norm = BenchmarkGoals.Normalize(goal);
         var kinds = BenchmarkGoals.KindsFor(goal, avail);
+        _setupCategory = norm;
+        ResetModificationSelections();
+        Bench.UpdateSettings(Bench.Settings with { Goal = norm, Enabled = [.. kinds] });
+    }
+
+    private void OnBaselineSolutionChanged(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString()?.Trim();
+        var clean = string.IsNullOrWhiteSpace(val) ? null : val;
+        _afterSolutionPath = clean ?? string.Empty;
+        Bench.UpdateSettings(Bench.Settings with { CustomSolutionPath = clean });
+    }
+
+    private void ResetModificationSelections()
+    {
         _selectedImprovements.Clear();
-        _targetDotNetSdkMajor = null;
         _useExistingDevDrive = false;
-        Bench.UpdateSettings(Bench.Settings with { Goal = BenchmarkGoals.Normalize(goal), Enabled = [.. kinds] });
+        _switchOtherSdk = false;
+        _targetDotNetSdkMajor = null;
+        _manualChangesMode = false;
+        _showUndo = false;
+        _afterSolutionPath = Bench.Settings.CustomSolutionPath ?? string.Empty;
+    }
+
+    private void EnsureBaselineNameDefault(BenchmarkRun run)
+    {
+        if (_namedBeforeUtc != run.TimeUtc)
+        {
+            _namedBeforeUtc = run.TimeUtc;
+            _baselineNameInput = BenchmarkService.SuggestRunName(run);
+        }
+    }
+
+    private void EnsureAfterNameDefault(BenchmarkRun run)
+    {
+        if (_namedAfterUtc != run.TimeUtc)
+        {
+            _namedAfterUtc = run.TimeUtc;
+            _afterNameInput = BenchmarkService.SuggestRunName(run);
+        }
+    }
+
+    private void SaveBaselineAndContinue()
+    {
+        Bench.SaveCurrentBaseline(_baselineNameInput);
+        _forceSetup = false;
+        _newBaselineSelected = false;
+        _setupCategory = null;
+        ResetModificationSelections();
+    }
+
+    private void DiscardUnsavedBaseline()
+    {
+        Bench.Clear();
+        _forceSetup = true;
+        _newBaselineSelected = Bench.SavedBaselines.Count == 0;
+        _setupCategory = null;
+    }
+
+    private Task RerunBaselineAsync()
+    {
+        _progressLog.Clear();
+        return Bench.BeginPassAsync(BenchmarkPhase.Before, Bench.Settings.IsEnabled(BenchmarkKind.BootTime));
+    }
+
+    private void DeleteActiveBaseline(string id)
+    {
+        Bench.DeleteSavedBaseline(id);
+        _forceSetup = true;
+        _newBaselineSelected = Bench.SavedBaselines.Count == 0;
+        _setupCategory = null;
+        ResetModificationSelections();
+    }
+
+    private void DeleteAfterResult()
+    {
+        Bench.DiscardAfter();
+        _showUndo = false;
+    }
+
+    private void SaveAfterAsBaseline()
+    {
+        Bench.SaveAfterAsBaseline(_afterNameInput);
+        _showUndo = false;
+        ResetModificationSelections();
     }
 
     private void ToggleImprovement(BenchmarkImprovement imp, IReadOnlyList<BenchmarkImprovement> all)
@@ -493,7 +812,6 @@ else if (!running)
         if (!_selectedImprovements.Add(imp.Id))
         {
             _selectedImprovements.Remove(imp.Id);
-            // Unchecking Create persistent Dev Drive also unchecks dependent cache moves.
             if (string.Equals(imp.Id, BenchmarkImprovements.CreateDevDriveId, StringComparison.OrdinalIgnoreCase))
             {
                 foreach (var dep in all.Where(x => x.RequiresDevDrive))
@@ -502,34 +820,37 @@ else if (!running)
         }
         else if (imp.RequiresDevDrive)
         {
-            // Checking a Dev Drive cache move when no Dev Drive exists auto-checks Create persistent Dev Drive.
             if (all.Any(x => string.Equals(x.Id, BenchmarkImprovements.CreateDevDriveId, StringComparison.OrdinalIgnoreCase) && !x.AlreadyApplied))
                 _selectedImprovements.Add(BenchmarkImprovements.CreateDevDriveId);
         }
     }
 
-    private Task RunExperimentAsync(IReadOnlyList<BenchmarkImprovement> selected, int? targetDotNetSdkMajor, string? afterBuildWorkRoot) =>
-        selected.Count == 0 && targetDotNetSdkMajor is null && string.IsNullOrWhiteSpace(afterBuildWorkRoot)
-            ? Task.CompletedTask
-            : Bench.RunExperimentAsync(selected, targetDotNetSdkMajor: targetDotNetSdkMajor, afterBuildWorkRoot: afterBuildWorkRoot);
-
-    private void ApplyStandardPreset() =>
-        Bench.UpdateSettings(Bench.Settings with { Goal = BenchmarkGoals.TuneUp, Enabled = [.. Benchmarks.DefaultEnabled], Runs = 3 });
-
-    private void ApplyQuickPreset() =>
-        Bench.UpdateSettings(Bench.Settings with { Goal = null, Enabled = [.. QuickCoreKinds], Runs = 1 });
-
-    private void ToggleCustomize() => _customizeOpen = !_customizeOpen;
+    private Task RunComparisonAsync(IReadOnlyList<BenchmarkImprovement> selected, int? targetDotNetSdkMajor, string? afterBuildWorkRoot, string? afterCustomSolutionPath)
+    {
+        if (selected.Count == 0 && targetDotNetSdkMajor is null && string.IsNullOrWhiteSpace(afterBuildWorkRoot) && string.IsNullOrWhiteSpace(afterCustomSolutionPath))
+            return Task.CompletedTask;
+        _progressLog.Clear();
+        _showUndo = false;
+        return Bench.RunComparisonAsync(selected, targetDotNetSdkMajor: targetDotNetSdkMajor, afterBuildWorkRoot: afterBuildWorkRoot, afterCustomSolutionPath: afterCustomSolutionPath);
+    }
 
     private void Toggle(BenchmarkKind k, bool on) =>
-        Bench.UpdateSettings(Bench.Settings with { Enabled = BenchmarkTestRules.WithEnabled(Bench.Settings, k, on, Bench.IsKindAvailable(k)), Goal = null });
+        Bench.UpdateSettings(Bench.Settings with { Enabled = BenchmarkTestRules.WithEnabled(Bench.Settings, k, on, Bench.IsKindAvailable(k)) });
 
     private void SetRuns(ChangeEventArgs e)
     {
         if (int.TryParse(e.Value?.ToString(), out var n)) Bench.UpdateSettings(Bench.Settings with { Runs = n });
     }
 
-    private Task Start(BenchmarkPhase phase, bool restart) => Bench.BeginPassAsync(phase, restart);
+    private Task UploadResultsAsync() =>
+        Uploader.CanUpload ? Uploader.UploadAsync() : Uploader.UploadViaBrowserAsync(JS);
+
+    private Task Start(BenchmarkPhase phase, bool restart)
+    {
+        _progressLog.Clear();
+        _forceSetup = false;
+        return Bench.BeginPassAsync(phase, restart);
+    }
 
     private RenderFragment StartButton(BenchmarkPhase phase, bool restart, bool primary, string label) => __builder =>
     {
@@ -556,7 +877,7 @@ else if (!running)
         if (m?.Median is { } v)
         {
             <span>@info.Show(v)</span>
-            @if (m.Samples.Count > 1) { <div class="meta" title="@string.Join(", ", m.Samples.Select(x => info.Show(x)))">@m.Samples.Count runs · @((m.Spread * 100).ToString("0"))% full range</div> }
+            @if (m.Samples.Count > 1) { <div class="meta" title="@string.Join(", ", m.Samples.Select(x => info.Show(x)))">@m.Samples.Count runs · @((m.Spread * 100).ToString("0"))% spread</div> }
             @if (m.Detail is { } detail) { <div class="meta">@detail</div> }
         }
         else { <span class="meta">@(m?.Note ?? "—")</span> }
