@@ -13,16 +13,16 @@ public sealed record GpuStressOptions
     public TimeSpan Duration { get; init; } = TimeSpan.FromMinutes(1);
     /// <summary>The adapter to stress (<see cref="GpuAdapterInfo.Id"/>); null = the first hardware adapter.</summary>
     public string? AdapterId { get; init; }
-    /// <summary>Aim for dispatches this long: busy enough to load the GPU, far below Windows' 2-second TDR timeout.</summary>
-    public TimeSpan TargetDispatch { get; init; } = TimeSpan.FromMilliseconds(150);
+    /// <summary>Aim for dispatches this long: keeps GPU utilization near 95%+ while staying far below Windows' 2-second TDR timeout.</summary>
+    public TimeSpan TargetDispatch { get; init; } = TimeSpan.FromMilliseconds(400);
     /// <summary>A dispatch slower than this is cut back hard (half) right away.</summary>
-    public TimeSpan SlowDispatch { get; init; } = TimeSpan.FromMilliseconds(500);
+    public TimeSpan SlowDispatch { get; init; } = TimeSpan.FromMilliseconds(850);
     public uint StartIterations { get; init; } = 64;
-    public uint MaxIterations { get; init; } = 1 << 15;
+    public uint MaxIterations { get; init; } = 1 << 16;
     /// <summary>Values verified against the CPU reference per dispatch (rotating through the buffer).</summary>
-    public int ChecksPerBatch { get; init; } = 512;
-    /// <summary>Pause between dispatches (keeps the desktop responsive; also where Stop/temperature are checked).</summary>
-    public TimeSpan Gap { get; init; } = TimeSpan.FromMilliseconds(5);
+    public int ChecksPerBatch { get; init; } = 64;
+    /// <summary>Optional pause between dispatches (0 = back-to-back with a cooperative yield to keep GPU near 95%+ without 15.6 ms Windows timer stalls).</summary>
+    public TimeSpan Gap { get; init; } = TimeSpan.Zero;
     public TimeSpan SensorInterval { get; init; } = TimeSpan.FromSeconds(1);
 }
 

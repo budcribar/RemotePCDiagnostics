@@ -52,7 +52,7 @@ internal sealed class FakeGpuFactory(GpuOpenResult result) : IGpuDeviceFactory
 
 public class GpuStressTests
 {
-    private static GpuStressOptions Opts(int minutes = 1) => new() { Duration = TimeSpan.FromMinutes(minutes), Gap = TimeSpan.FromSeconds(1), SensorInterval = TimeSpan.Zero };
+    private static GpuStressOptions Opts(int minutes = 1) => new() { Duration = TimeSpan.FromMinutes(minutes), Gap = TimeSpan.FromSeconds(1), MaxIterations = 1024, SensorInterval = TimeSpan.Zero };
     private static GpuStressTest Make(IGpuDeviceFactory f, ISensorProvider? s = null) => new(f, s ?? SequenceSensorProvider.Unavail(), new FakeStressClock());
 
     private static SensorSnapshot GpuSnap(double? gpuTemp, double cpuTemp = 60, double? gpuFan = null) => new(
@@ -78,12 +78,13 @@ public class GpuStressTests
     {
         var dev = new FakeGpuDevice();
         var progress = new List<GpuStressProgress>();
-        var r = await Make(FakeGpuFactory.With(dev)).RunAsync(Opts(), new SyncProgress<GpuStressProgress>(progress.Add));
+        var opts = Opts();
+        var r = await Make(FakeGpuFactory.With(dev)).RunAsync(opts, new SyncProgress<GpuStressProgress>(progress.Add));
         Assert.Equal(GpuStressOutcome.Passed, r.Outcome);
         Assert.Equal("Passed", r.Headline);
         Assert.Equal(0, r.Mismatches);
         Assert.True(r.Batches >= 50);
-        Assert.Equal(r.Batches * 512, r.ValuesChecked);
+        Assert.Equal(r.Batches * opts.ChecksPerBatch, r.ValuesChecked);
         Assert.Equal("AMD Radeon(TM) Graphics", r.AdapterName);
         Assert.NotEmpty(progress);
         Assert.True(progress[^1].Fraction > 0.9);
@@ -214,8 +215,8 @@ public class GpuStressTests
     {
         var o = new GpuStressOptions();
         Assert.Equal(128u, GpuStressTest.NextIterations(64, TimeSpan.FromMilliseconds(10), o));    // fast: at most double
-        Assert.Equal(64u, GpuStressTest.NextIterations(64, TimeSpan.FromMilliseconds(150), o));    // on target: keep
-        Assert.Equal(48u, GpuStressTest.NextIterations(64, TimeSpan.FromMilliseconds(200), o));    // a bit slow: scale down
+        Assert.Equal(64u, GpuStressTest.NextIterations(64, o.TargetDispatch, o));                                           // on target: keep
+        Assert.Equal(48u, GpuStressTest.NextIterations(64, TimeSpan.FromMilliseconds(o.TargetDispatch.TotalMilliseconds * 4 / 3), o)); // a bit slow: scale down
         Assert.Equal(32u, GpuStressTest.NextIterations(64, TimeSpan.FromMilliseconds(1500), o));   // slow: halve now
         Assert.Equal(1u, GpuStressTest.NextIterations(1, TimeSpan.FromSeconds(1), o));
         Assert.Equal(o.MaxIterations, GpuStressTest.NextIterations(o.MaxIterations, TimeSpan.FromMilliseconds(1), o));
