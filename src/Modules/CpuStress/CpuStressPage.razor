@@ -65,7 +65,7 @@ else if (report is not null)
         <div class="card" data-testid="cpustress-result">
             <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
             <div class="headline">@report.Explanation</div>
-            <CardList Items="@([ $"Ran for {Clock(report.Ran)} on {report.Threads} processor threads", report.MaxCpuTemperatureC is { } mt ? $"Hottest {mt:0}°C" : null, $"Finished {r.Timestamp.ToLocalTime():g}" ])" />
+            <CardList Items="@([ $"Ran for {Clock(report.Ran)} on {report.Threads} processor threads", report.MaxCpuTemperatureC is { } mt ? $"Hottest {mt:0}°C" : null, report.SlowNote, $"Finished {r.Timestamp.ToLocalTime():g}" ])" />
 
         </div>
     </div>

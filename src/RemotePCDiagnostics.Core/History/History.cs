@@ -435,7 +435,9 @@ public static class HistoryLabels
     };
 
     /// <summary>Measurements not worth showing to a person (already shown elsewhere on the row).</summary>
-    public static bool IsHidden(string name) => name.Equals("Outcome", StringComparison.OrdinalIgnoreCase);
+    public static bool IsHidden(string name) =>
+        name.Equals("Outcome", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("Processors", StringComparison.OrdinalIgnoreCase); // CPU stress per-core list: only its count is stored, and the result text names any bad core
 
     /// <summary>Known label, otherwise the raw name split into words ("EarlyThroughput" → "Early throughput").</summary>
     public static string Measurement(string name)

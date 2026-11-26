@@ -6,10 +6,14 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// CPU stress test: one worker per logical core runs <see cref="ICpuWorkload"/> chunks and verifies each checksum
 /// against a value precomputed before load. A sampler watches time, stop requests and CPU temperature
 /// (<see cref="ISensorProvider"/>, aborting at <see cref="SensorLevel.Critical"/>) and records throughput to detect slowing.
+/// When there is one worker per logical processor, each worker is pinned to its own processor (<see cref="ICpuPinning"/>), so a wrong
+/// checksum or a slow worker names the core it came from.
 /// </summary>
-public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock = null, ICpuWorkload? workload = null, ILogger? log = null, StressCleanup? cleanup = null)
+public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock = null, ICpuWorkload? workload = null, ILogger? log = null, StressCleanup? cleanup = null, ICpuPinning? pinning = null)
 {
     private readonly ICpuWorkload _workload = workload ?? DeterministicCpuWorkload.Instance;
+    private readonly ICpuPinning _pinning = pinning ?? WindowsCpuPinning.Instance;
+    private const int Stride = 16; // longs per worker counter: 128 bytes, so workers never share a cache line
 
     public static ulong SeedFor(int index) => 0x9E3779B97F4A7C15UL * (ulong)(index + 1);
 
@@ -26,11 +30,20 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
         var sensorsOk = SafeAvailability();
         long chunks = 0, errors = 0;
         int stop = 0;
+        var processors = SafeProcessors();
+        var cpus = processors.Count == threads ? processors : null; // pin only when every logical processor gets exactly one worker
+        if (processors.Count > 0 && cpus is null) log.Info($"CPU stress: not pinning, {threads} threads for {processors.Count} logical processors");
+        var perChunks = new long[threads * Stride];
+        var perErrors = new long[threads * Stride];
+        var pinned = new bool[threads];
         var start = clk.Elapsed;
         using var cancelReg = cancellationToken.Register(() => Volatile.Write(ref stop, 1));
 
         var workers = StressTaskScheduler.RunParallel(threads, t =>
         {
+            using var pin = cpus is null ? null : SafePin(cpus[t]);
+            pinned[t] = pin is not null;
+            var where = cpus is null ? "" : pin is null ? $" cpu={cpus[t].Index}(unpinned)" : $" cpu={cpus[t].Index} core={cpus[t].Core}";
             int n = t;
             while (Volatile.Read(ref stop) == 0)
             {
@@ -38,9 +51,11 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
                 var got = _workload.Compute(SeedFor(s), options.ChunkIterations);
                 if (got != expected[s])
                 {
+                    perErrors[t * Stride]++;
                     var e = Interlocked.Increment(ref errors);
-                    if (e <= 10) log.Warn($"CPU stress: checksum mismatch thread={t} seed#{s} expected={expected[s]:X16} got={got:X16}");
+                    if (e <= 10) log.Warn($"CPU stress: checksum mismatch thread={t}{where} seed#{s} expected={expected[s]:X16} got={got:X16}");
                 }
+                perChunks[t * Stride]++;
                 Interlocked.Increment(ref chunks);
             }
         });
@@ -84,8 +99,14 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
         if (errs > 0) outcome = CpuStressOutcome.ComputationErrors;
         else if (outcome == CpuStressOutcome.Passed && IsThrottled(early, late, options.ThrottleRatio)) outcome = CpuStressOutcome.Throttled;
 
-        var report = new CpuStressReport(outcome, ran, duration, threads, Interlocked.Read(ref chunks), errs, maxTemp, early, late, sensorsOk);
-        log.Info($"CPU stress: done outcome={outcome} ran={ran} chunks={report.ChunksDone} errors={errs} maxTemp={maxTemp} early={early:0.0}/s late={late:0.0}/s samples={samples.Count}");
+        // Workers have finished (awaited above), so their own counters are complete and visible here.
+        var perCpu = cpus is null ? null : Enumerable.Range(0, threads).Where(t => pinned[t])
+            .Select(t => new CpuProcessorResult(cpus[t].Index, cpus[t].Core, cpus[t].EfficiencyClass, perChunks[t * Stride], perErrors[t * Stride])).ToList();
+        if (perCpu is { Count: 0 }) perCpu = null;
+        var report = new CpuStressReport(outcome, ran, duration, threads, Interlocked.Read(ref chunks), errs, maxTemp, early, late, sensorsOk, perCpu);
+        log.Info($"CPU stress: done outcome={outcome} ran={ran} chunks={report.ChunksDone} errors={errs} maxTemp={maxTemp} early={early:0.0}/s late={late:0.0}/s samples={samples.Count} pinned={perCpu?.Count ?? 0}/{threads}");
+        if (perCpu is not null) log.Info("CPU stress: per cpu chunks/errors " + string.Join(" ", perCpu.Select(p => $"{p.Cpu}:{p.Chunks}/{p.Errors}")));
+        if (report.SlowNote is { } slow) log.Warn($"CPU stress: {slow}");
         return report;
     }
 
@@ -100,6 +121,23 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
 
     public static bool IsThrottled(double? early, double? late, double ratio) =>
         early is > 0 && late is { } l && l < early.Value * ratio;
+
+    private IReadOnlyList<LogicalProcessor> SafeProcessors()
+    {
+        try { return _pinning.Processors; }
+        catch (Exception ex) { log.Warn($"CPU stress: couldn't read the processor layout, not pinning: {ex.Message}"); return []; }
+    }
+
+    private IDisposable? SafePin(LogicalProcessor p)
+    {
+        try
+        {
+            var pin = _pinning.Pin(p);
+            if (pin is null) log.Info($"CPU stress: couldn't pin a worker to cpu {p.Index}");
+            return pin;
+        }
+        catch (Exception ex) { log.Warn($"CPU stress: pinning to cpu {p.Index} failed: {ex.Message}"); return null; }
+    }
 
     private bool SafeAvailability()
     {
