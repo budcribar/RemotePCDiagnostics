@@ -755,7 +755,11 @@ public sealed class RemediationService(
             return new(true, $"{DotNetSdkDisplayName(pkgId)} installed silently side-by-side ({verNote}).");
         }
 
-        return new(false, Failure(pr, $"Could not install {DotNetSdkDisplayName(pkgId)} silently via the Agent."));
+        if (SystemCommandRunner.AgentFailure(pr) is { } agentWhy)
+            return new(false, agentWhy);
+        var detail = FirstUsefulLine(pr?.StdErr) ?? FirstUsefulLine(pr?.StdOut);
+        var failMsg = $"Could not install {DotNetSdkDisplayName(pkgId)} silently via the Agent.";
+        return new(false, detail is not null ? $"{failMsg} ({detail})" : Failure(pr, failMsg));
     }
 
     private async Task<RemediationResult> RunCreatePersistentDevDriveAsync(AreaAction action, CancellationToken ct)

@@ -298,6 +298,74 @@ public class Batch6BenchmarkExperimentsTests
     }
 
     [Fact]
+    public void AgentDotNetSdkInstaller_stages_atomically_repairs_partial_sdk_and_filters_incomplete_installs()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"rpcd-sdk-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        try
+        {
+            var installRoot = Path.Combine(tempRoot, "dotnet");
+            var sdkRoot = Path.Combine(installRoot, "sdk");
+            var broken10Dir = Path.Combine(sdkRoot, "10.0.404");
+            var good11Dir = Path.Combine(sdkRoot, "11.0.100");
+
+            // Simulate a half-extracted .NET 10 SDK (dotnet.dll exists, Microsoft.NET.Sdk missing) alongside healthy .NET 11.
+            Directory.CreateDirectory(broken10Dir);
+            File.WriteAllText(Path.Combine(broken10Dir, "dotnet.dll"), "partial");
+            Directory.CreateDirectory(Path.Combine(good11Dir, "Sdks", "Microsoft.NET.Sdk", "Sdk"));
+            File.WriteAllText(Path.Combine(good11Dir, "dotnet.dll"), "ok");
+            File.WriteAllText(Path.Combine(good11Dir, "Sdks", "Microsoft.NET.Sdk", "Sdk", "Sdk.props"), "<Project />");
+
+            Assert.False(AgentDotNetSdkInstaller.IsCompleteSdkInstall(broken10Dir));
+            Assert.True(AgentDotNetSdkInstaller.IsCompleteSdkInstall(good11Dir));
+
+            // ParseInstalledDotNetSdkMajors filters out the broken 10.0.404 install when verifying completeness.
+            var listOutput = $"10.0.404 [{sdkRoot}]\n11.0.100 [{sdkRoot}]\n";
+            var completeMajors = DeveloperToolchainDetector.ParseInstalledDotNetSdkMajors(
+                listOutput, AgentDotNetSdkInstaller.IsCompleteSdkInstall);
+            Assert.Equal([11], completeMajors);
+
+            // Extracting an incomplete zip must throw and leave no staging folder behind.
+            var badZip = Path.Combine(tempRoot, "bad.zip");
+            using (var z = System.IO.Compression.ZipFile.Open(badZip, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                using var w = new StreamWriter(z.CreateEntry("sdk/10.0.999/dotnet.dll").Open());
+                w.Write("incomplete");
+            }
+            Assert.Throws<InvalidOperationException>(() =>
+                AgentDotNetSdkInstaller.ExtractSideBySide(badZip, installRoot, "10.0.999"));
+            Assert.False(Directory.Exists(Path.Combine(sdkRoot, "10.0.999")));
+            Assert.Empty(Directory.GetDirectories(sdkRoot, ".rpcd-staging-*"));
+
+            // Extracting a complete zip replaces the broken 10.0.404 folder cleanly and leaves no staging dirs.
+            var goodZip = Path.Combine(tempRoot, "good.zip");
+            using (var z = System.IO.Compression.ZipFile.Open(goodZip, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                void Add(string entryPath, string text)
+                {
+                    using var w = new StreamWriter(z.CreateEntry(entryPath).Open());
+                    w.Write(text);
+                }
+                Add("dotnet.exe", "host");
+                Add("host/fxr/10.0.4/hostfxr.dll", "fxr");
+                Add("sdk/10.0.404/dotnet.dll", "full");
+                Add("sdk/10.0.404/Sdks/Microsoft.NET.Sdk/Sdk/Sdk.props", "<Project />");
+            }
+            AgentDotNetSdkInstaller.ExtractSideBySide(goodZip, installRoot, "10.0.404");
+
+            Assert.True(AgentDotNetSdkInstaller.IsCompleteSdkInstall(broken10Dir));
+            Assert.Empty(Directory.GetDirectories(sdkRoot, ".rpcd-staging-*"));
+            var repairedMajors = DeveloperToolchainDetector.ParseInstalledDotNetSdkMajors(
+                listOutput, AgentDotNetSdkInstaller.IsCompleteSdkInstall);
+            Assert.Equal([10, 11], repairedMajors);
+        }
+        finally
+        {
+            try { Directory.Delete(tempRoot, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
     public void DeveloperBuildResult_logs_toolchain_version_and_Spread_trims_single_outlier_for_five_runs()
     {
         var csharp = new DeveloperBuildResult(DeveloperLanguage.CSharp, "pin", "sha", "10.0.404", 10, 0.7, 2.5, [2.5], 2.2, [2.1, 2.2, 2.2, 2.3, 3.4]);
