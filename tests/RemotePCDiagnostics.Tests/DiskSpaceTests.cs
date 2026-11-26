@@ -75,13 +75,96 @@ public sealed class DiskSpaceTests : IDisposable
         Assert.Contains("Free", drivesCard.Columns);
 
         var filesCard = Assert.Single(report.Cards, c => c.Id == "files");
+        Assert.Equal(["File", "Size", "Type", "Modified", "Folder"], filesCard.Columns);
         Assert.Equal(2, filesCard.Rows.Count);
-        Assert.Contains(filesCard.Rows, r => r.Values[0] == "movie.mp4" && r.Values[2] == "Video" && r.Values[3] == "Local");
-        Assert.Contains(filesCard.Rows, r => r.Values[0] == "backup.zip" && r.Values[2] == "Archive / Backup" && r.Values[3] == "Local");
+        Assert.Contains(filesCard.Rows, r => r.Values[0] == "movie.mp4" && r.Values[2] == "Video" && r.Actions is [{ Kind: RemediationKind.DeleteLargeFile, ButtonText: "Delete" }]);
+        Assert.Contains(filesCard.Rows, r => r.Values[0] == "backup.zip" && r.Values[2] == "Archive / Backup" && r.Actions is [{ Kind: RemediationKind.DeleteLargeFile, ButtonText: "Delete" }]);
         Assert.DoesNotContain(filesCard.Rows, r => r.Values[0] == "readme.txt");
 
         var foldersCard = Assert.Single(report.Cards, c => c.Id == "folders");
         Assert.True(foldersCard.Rows.Count > 0);
+    }
+
+    [Fact]
+    public void Scan_Ignores_Vhdx_And_User_Ignored_Files()
+    {
+        var folder = Path.Combine(_tmp, "Disks");
+        Directory.CreateDirectory(folder);
+
+        var vhdx = Path.Combine(folder, "devdrive.vhdx");
+        File.WriteAllBytes(vhdx, new byte[40_000]);
+
+        var movie = Path.Combine(folder, "movie.mp4");
+        File.WriteAllBytes(movie, new byte[20_000]);
+
+        var archive = Path.Combine(folder, "backup.zip");
+        File.WriteAllBytes(archive, new byte[15_000]);
+
+        var ignoreStore = new LargeFileIgnoreStore(Path.Combine(_tmp, "ignored.json"));
+        ignoreStore.Ignore(archive);
+
+        var m = new DiskSpaceModule(targetRoot: _tmp, minFileSizeBytes: 10_000, ignoreStore: ignoreStore);
+        var report = m.Scan(_tmp, minSizeBytes: 10_000, progress: null, CancellationToken.None);
+
+        var filesCard = Assert.Single(report.Cards, c => c.Id == "files");
+        var only = Assert.Single(filesCard.Rows);
+        Assert.Equal("movie.mp4", only.Values[0]);
+        Assert.DoesNotContain(filesCard.Rows, r => r.Values[0] == "devdrive.vhdx");
+        Assert.DoesNotContain(filesCard.Rows, r => r.Values[0] == "backup.zip");
+
+        // Unignoring brings backup.zip back on the next scan while .vhdx stays ignored.
+        ignoreStore.Unignore(archive);
+        var report2 = m.Scan(_tmp, minSizeBytes: 10_000, progress: null, CancellationToken.None);
+        var filesCard2 = Assert.Single(report2.Cards, c => c.Id == "files");
+        Assert.Equal(2, filesCard2.Rows.Count);
+        Assert.Contains(filesCard2.Rows, r => r.Values[0] == "backup.zip");
+        Assert.DoesNotContain(filesCard2.Rows, r => r.Values[0] == "devdrive.vhdx");
+    }
+
+    [Fact]
+    public async Task DeleteLargeFile_Sends_Regular_File_To_RecycleBin_And_Refuses_Vhdx()
+    {
+        var video = Path.Combine(_tmp, "clip.mp4");
+        File.WriteAllBytes(video, new byte[12_345]);
+        var vhdx = Path.Combine(_tmp, "dev.vhdx");
+        File.WriteAllBytes(vhdx, new byte[12_345]);
+
+        var recycled = new List<string>();
+        var deleter = new FakeRecycleBin(recycled);
+        var rem = new RemediationService(
+            new SystemCommandRunner(new FakeLauncher()),
+            recycleBin: deleter);
+
+        var vhdxAction = new AreaAction(RemediationKind.DeleteLargeFile, "Delete", vhdx, "dev.vhdx");
+        Assert.False(rem.Plan(vhdxAction).Allowed);
+        var vhdxRes = await rem.ExecuteAsync(vhdxAction);
+        Assert.False(vhdxRes.Success);
+        Assert.Empty(recycled);
+
+        var videoAction = new AreaAction(RemediationKind.DeleteLargeFile, "Delete", video, "clip.mp4");
+        Assert.True(rem.Plan(videoAction).Allowed);
+        var videoRes = await rem.ExecuteAsync(videoAction);
+        Assert.True(videoRes.Success, videoRes.Message);
+        Assert.Equal([video], recycled);
+        Assert.Equal(1, videoRes.RemovedFiles);
+        Assert.Equal(12_345, videoRes.FreedDiskBytes);
+    }
+
+    private sealed class FakeRecycleBin(List<string> recycled) : IRecycleBinDeleter
+    {
+        public bool SendToRecycleBin(string path, out string? error)
+        {
+            recycled.Add(path);
+            File.Delete(path);
+            error = null;
+            return true;
+        }
+    }
+
+    private sealed class FakeLauncher : IProcessLauncher
+    {
+        public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> args, TimeSpan timeout, CancellationToken ct = default)
+            => Task.FromResult(new ProcessResult(0, "", "", false));
     }
 
     [Fact]
@@ -140,7 +223,7 @@ public sealed class DiskSpaceTests : IDisposable
     }
 
     [Fact]
-    public void CloudOnly_Files_Have_Zero_Disk_Bytes_And_Are_Marked()
+    public void CloudOnly_Files_Have_Zero_Disk_Bytes_And_Are_Excluded_From_Top_Large_Files()
     {
         var localFile = new LargeFileInfo("local.mp4", "C:\\Videos\\local.mp4", 5_000_000_000, DateTime.UtcNow, "Video", IsCloudOnly: false, DiskSizeBytes: 5_000_000_000);
         var cloudFile = new LargeFileInfo("cloud.mp4", "C:\\Users\\User\\Phone Link\\cloud.mp4", 10_000_000_000, DateTime.UtcNow, "Video", IsCloudOnly: true, DiskSizeBytes: 0);
@@ -153,15 +236,9 @@ public sealed class DiskSpaceTests : IDisposable
 
         var report = DiskSpaceModule.BuildReport("C:\\", 1_000_000, [localFile, cloudFile], []);
         var filesCard = Assert.Single(report.Cards, c => c.Id == "files");
-        Assert.Equal(2, filesCard.Rows.Count);
-
-        var localRow = Assert.Single(filesCard.Rows, r => r.Values[0] == "local.mp4");
-        Assert.Equal("Local", localRow.Values[3]);
-
-        var cloudRow = Assert.Single(filesCard.Rows, r => r.Values[0] == "cloud.mp4");
-        Assert.Equal("Cloud-only", cloudRow.Values[3]);
-        Assert.Contains("0 B", cloudRow.Values[1]);
-        Assert.Contains("cloud", cloudRow.Values[1]);
+        Assert.DoesNotContain("Storage", filesCard.Columns);
+        var only = Assert.Single(filesCard.Rows);
+        Assert.Equal("local.mp4", only.Values[0]);
     }
 
     [Fact]

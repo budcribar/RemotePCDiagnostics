@@ -109,7 +109,21 @@ else
                             var open = showingReviewed ? reviewedCard! : c;
                             var issueRows = open.Rows.Where(row => row.ReviewKeys is { Count: > 0 }).ToList();
                             var groupKeys = issueRows.SelectMany(row => row.ReviewKeys!).Distinct().ToList();
-                            var hasRowRemActions = remActions is not null && open.Rows.Any(rw => rw.Actions is { Count: > 0 });
+                            var isLargeFilesCard = m.Name == ModuleSlugs.DiskSpace && open.Id == "files";
+                            if (isLargeFilesCard && remActions?.LastRun is { Success: true, Action: { Kind: RemediationKind.DeleteLargeFile, Target: var delPath } } && !string.IsNullOrWhiteSpace(delPath))
+                            {
+                                _deletedLargeFiles.Add(delPath);
+                            }
+                            var ignoredLargeFiles = isLargeFilesCard ? LargeFileIgnoreStore.Default.GetIgnoredPaths() : null;
+                            var visibleRows = isLargeFilesCard
+                                ? open.Rows.Where(rw =>
+                                    (rw.FilePath is null || !_deletedLargeFiles.Contains(rw.FilePath))
+                                    && (_showIgnoredLargeFiles || rw.FilePath is null || !ignoredLargeFiles!.Contains(rw.FilePath))).ToList()
+                                : open.Rows;
+                            var ignoredInCardCount = isLargeFilesCard
+                                ? open.Rows.Count(rw => rw.FilePath is { } p && !_deletedLargeFiles.Contains(p) && ignoredLargeFiles!.Contains(p))
+                                : 0;
+                            var hasRowRemActions = (remActions is not null && visibleRows.Any(rw => rw.Actions is { Count: > 0 })) || isLargeFilesCard;
                             var isKeyValue = open.Columns is ["Detail", "Value"] && svcActions is null && !hasRowRemActions;
                         }
                         @if (remActions is not null && string.Equals(remBannerCardId, cardId, StringComparison.OrdinalIgnoreCase))
@@ -185,13 +199,27 @@ else
                                 }
                             </div>
                         }
+                        @if (isLargeFilesCard && ignoredLargeFiles is { Count: > 0 })
+                        {
+                            <div class="issue-group-actions" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">
+                                @if (ignoredInCardCount > 0)
+                                {
+                                    <button type="button" class="btn-small" data-testid="large-files-toggle-ignored" @onclick="() => _showIgnoredLargeFiles = !_showIgnoredLargeFiles">
+                                        @(_showIgnoredLargeFiles ? "Hide ignored" : $"Show ignored ({ignoredInCardCount})")
+                                    </button>
+                                }
+                                <button type="button" class="btn-small" data-testid="large-files-clear-ignored" @onclick="ClearIgnoredLargeFiles">
+                                    Clear ignored (@ignoredLargeFiles.Count)
+                                </button>
+                            </div>
+                        }
                         @if (open.ErrorText is not null) { <div class="notice notice-error" data-testid="detail-error">@open.ErrorText</div> }
-                        else if (open.Rows.Count == 0) { <p class="meta" data-testid="detail-empty">@(hasReviewed ? "No events need review." : open.EmptyText ?? "Nothing to show here.")</p> }
+                        else if (visibleRows.Count == 0) { <p class="meta" data-testid="detail-empty">@(hasReviewed ? "No events need review." : isLargeFilesCard && open.Rows.Count > 0 ? "All listed large files have been ignored or deleted." : open.EmptyText ?? "Nothing to show here.")</p> }
                         else if (isKeyValue)
                         {
                             <div class="card-details-scroll">
                                 <table class="detail" data-testid="area-table">
-                                    @foreach (var row in open.Rows)
+                                    @foreach (var row in visibleRows)
                                     {
                                         <tr @key="row">
                                             <th>@(row.Values.Count > 0 ? row.Values[0] : "")</th>
@@ -215,7 +243,7 @@ else
                                         }
                                         @if (svcActions is not null || hasRowRemActions) { <th>Actions</th> }
                                     </tr>
-                                    @foreach (var row in AreaSort.Sort(open.Rows, sc, sd))
+                                    @foreach (var row in AreaSort.Sort(visibleRows, sc, sd))
                                     {
                                         var svc = SvcInfo(svcModule, row);
                                         var level = svc is not null && _svcStatus.ContainsKey(svc.Name) ? (svc.IsRunning ? AreaLevel.Ok : svc.IsAutomatic ? AreaLevel.Warning : AreaLevel.Neutral) : row.Level;
@@ -254,12 +282,24 @@ else
                                             else if (hasRowRemActions)
                                             {
                                                 <td class="svc-actions" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">
-                                                    @if (row.Actions is { Count: > 0 })
+                                                    @if (remActions is not null && row.Actions is { Count: > 0 })
                                                     {
                                                         @foreach (var act in row.Actions)
                                                         {
                                                             var a = act;
                                                             <button data-testid="remediation-row-@a.Kind" data-action="remediate" data-card-id="@open.Id" data-row-key="@row.Key" data-action-kind="@a.Kind" data-action-target="@a.Target" @onclick="() => _remUi?.Ask(a, cardId)">@a.ButtonText</button>
+                                                        }
+                                                    }
+                                                    @if (isLargeFilesCard && row.FilePath is { } lfp)
+                                                    {
+                                                        var isIgnoredRow = ignoredLargeFiles?.Contains(lfp) == true;
+                                                        if (isIgnoredRow)
+                                                        {
+                                                            <button type="button" data-testid="large-file-unignore" @onclick="() => UnignoreLargeFile(lfp)">Unignore</button>
+                                                        }
+                                                        else
+                                                        {
+                                                            <button type="button" data-testid="large-file-ignore" @onclick="() => IgnoreLargeFile(lfp)">Ignore</button>
                                                         }
                                                     }
                                                 </td>
@@ -383,6 +423,26 @@ else
     private readonly HashSet<string> _showReviewedCards = new(StringComparer.OrdinalIgnoreCase);
     private bool _savingReview;
     private string? _reviewError;
+    private bool _showIgnoredLargeFiles;
+    private readonly HashSet<string> _deletedLargeFiles = new(StringComparer.OrdinalIgnoreCase);
+
+    private void IgnoreLargeFile(string path)
+    {
+        LargeFileIgnoreStore.Default.Ignore(path);
+        if (_expanded?.FilePath is { } ep && string.Equals(ep, path, StringComparison.OrdinalIgnoreCase))
+        {
+            _expanded = null;
+            _expandedKey = null;
+        }
+    }
+
+    private void UnignoreLargeFile(string path) => LargeFileIgnoreStore.Default.Unignore(path);
+
+    private void ClearIgnoredLargeFiles()
+    {
+        LargeFileIgnoreStore.Default.Clear();
+        _showIgnoredLargeFiles = false;
+    }
 
     private void ToggleReviewed(string cardId)
     {

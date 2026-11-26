@@ -53,6 +53,8 @@ public enum RemediationKind
     InstallBiosUpdate,
     /// <summary>Moves extra copies in one or more duplicate file sets to the Recycle Bin after re-verifying SHA-256 hashes against the kept copy. Target = JSON array of <c>DuplicateDeletionSet</c>.</summary>
     DeleteDuplicateFiles,
+    /// <summary>Moves a single user-selected large file from Top Large Files to the Recycle Bin. Target = full file path.</summary>
+    DeleteLargeFile,
     /// <summary>Stops a scheduled task from waking the PC by turning off its WakeToRun setting. Target = full Task Scheduler path (e.g. <c>\Hewlett-Packard\HP Diagnostics\SmartCheckTest</c>). Undo turns WakeToRun back on.</summary>
     DisableWakeTimer,
     /// <summary>Opens a Windows Settings or Windows Security page (<c>ms-settings:</c> or <c>windowsdefender:</c>) for settings Windows won't let apps change directly (such as Tamper Protection). Target = settings URI.</summary>

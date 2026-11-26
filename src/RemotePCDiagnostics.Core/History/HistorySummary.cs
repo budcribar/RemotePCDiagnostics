@@ -412,7 +412,7 @@ public static class HistorySummary
         RemediationKind.EndProcessGroup => "Memory / process",
         RemediationKind.DisableSystemProxy => "System proxy",
         RemediationKind.FlushDnsAndRenewIp or RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns => "DNS & network",
-        RemediationKind.CleanTempFiles or RemediationKind.DeleteDuplicateFiles => DiskCleanupCategory,
+        RemediationKind.CleanTempFiles or RemediationKind.DeleteDuplicateFiles or RemediationKind.DeleteLargeFile => DiskCleanupCategory,
         RemediationKind.OptimizeSsd => "SSD optimization",
         RemediationKind.DisableDeviceWake => "Device wake",
         RemediationKind.DisableWakeTimer => "Wake timer",

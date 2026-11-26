@@ -118,13 +118,18 @@ public sealed record FolderSpaceInfo(
 /// Scans storage drives to show where disk space went: surfaces the top largest files (>= 100 MB by default)
 /// and largest top-level / user folders.
 /// </summary>
-public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = null, long minFileSizeBytes = 100L * 1024 * 1024)
+public sealed class DiskSpaceModule(
+    ILogger? log = null,
+    string? targetRoot = null,
+    long minFileSizeBytes = 100L * 1024 * 1024,
+    LargeFileIgnoreStore? ignoreStore = null)
     : AreaModuleBase(log), ICancellableScan
 {
     public const string ModuleName = ModuleSlugs.DiskSpace;
     public const int MaxLargeFiles = 50;
     public const int MaxFolders = 20;
 
+    private readonly LargeFileIgnoreStore _ignoreStore = ignoreStore ?? LargeFileIgnoreStore.Default;
     private readonly object _scanGate = new();
     private CancellationTokenSource? _scanCts;
 
@@ -170,6 +175,7 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
         var largeFiles = new List<LargeFileInfo>();
         var folderSizes = new Dictionary<string, (long DiskBytes, int Files, long LogicalBytes)>(StringComparer.OrdinalIgnoreCase);
         var windowsDir = GetWindowsDirectory();
+        var ignoredPaths = _ignoreStore.GetIgnoredPaths();
         var drives = GetDrivesForScan(root, Logger);
 
         // Gather candidate top-level branches to measure (e.g. C:\Users, C:\Program Files, C:\Windows, C:\Users\<user>\*)
@@ -268,8 +274,12 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
                             }
                         }
 
-                        // Check if file qualifies as large file and is not a system file
-                        if (Math.Max(len, diskBytes) >= minSizeBytes && !IsSystemFile(file, windowsDir))
+                        // Check if file qualifies as a local large file on disk and is not a system file, virtual disk (.vhdx), or user-ignored file
+                        if (!isCloud
+                            && diskBytes >= minSizeBytes
+                            && !IsSystemFile(file, windowsDir)
+                            && !IsIgnoredLargeFileExtension(file.Extension)
+                            && !ignoredPaths.Contains(file.FullName))
                         {
                             largeFiles.Add(new LargeFileInfo(
                                 file.Name,
@@ -401,6 +411,13 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
                string.Equals(fileName, "dumpstack.log", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(fileName, "bootmgr", StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Extensions excluded from Top Large Files by default (e.g. <c>.vhdx</c> virtual disks used by Dev Drives,
+    /// WSL2, Docker Desktop, and Hyper-V). They still count toward folder totals.
+    /// </summary>
+    public static bool IsIgnoredLargeFileExtension(string? extension) =>
+        string.Equals(extension, ".vhdx", StringComparison.OrdinalIgnoreCase);
 
     public const long AttributeOffline = 0x1000L;
     public const long AttributeRecallOnOpen = 0x00040000L;
@@ -557,28 +574,30 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
             folderRows,
             EmptyText: "No folder details available."));
 
-        // Card 3: Top Large Files
-        string[] fileCols = ["File", "Size", "Type", "Storage", "Modified", "Folder"];
-        var fileRows = files.Select(f => new AreaRow(
+        // Card 3: Top Large Files (local files occupying space on disk)
+        var localFiles = files.Where(f => !f.IsCloudOnly).ToList();
+        totalLargeFilesDiskBytes = localFiles.Sum(f => f.ActualDiskBytes);
+        string[] fileCols = ["File", "Size", "Type", "Modified", "Folder"];
+        var fileRows = localFiles.Select(f => new AreaRow(
             AreaLevel.Neutral,
             [
                 f.Name,
-                f.IsCloudOnly ? $"0 B ({HardwareInventory.FormatBytes(f.SizeBytes)} cloud)" : HardwareInventory.FormatBytes(f.ActualDiskBytes),
+                HardwareInventory.FormatBytes(f.ActualDiskBytes),
                 f.Category,
-                f.StorageState,
                 f.LastModifiedUtc.ToString("yyyy-MM-dd"),
                 Path.GetDirectoryName(f.FullPath) ?? ""
             ],
-            SortKeys: [f.Name, f.ActualDiskBytes.ToString("D19"), f.Category, f.StorageState, f.LastModifiedUtc.ToString("s"), f.FullPath],
-            Detail: $"{f.FullPath}\nSize on disk: {HardwareInventory.FormatBytes(f.ActualDiskBytes)} ({f.ActualDiskBytes:N0} bytes)\nApparent size: {HardwareInventory.FormatBytes(f.SizeBytes)} ({f.SizeBytes:N0} bytes)\nStorage: {(f.IsCloudOnly ? "Cloud-only (remote/offline file, takes 0 bytes on disk)" : "Local")}\nType: {f.Category}\nModified: {f.LastModifiedUtc:yyyy-MM-dd HH:mm:ss} UTC",
+            SortKeys: [f.Name, f.ActualDiskBytes.ToString("D19"), f.Category, f.LastModifiedUtc.ToString("s"), f.FullPath],
+            Detail: $"{f.FullPath}\nSize on disk: {HardwareInventory.FormatBytes(f.ActualDiskBytes)} ({f.ActualDiskBytes:N0} bytes)\nApparent size: {HardwareInventory.FormatBytes(f.SizeBytes)} ({f.SizeBytes:N0} bytes)\nType: {f.Category}\nModified: {f.LastModifiedUtc:yyyy-MM-dd HH:mm:ss} UTC",
+            Actions: [new AreaAction(RemediationKind.DeleteLargeFile, "Delete", f.FullPath, f.Name)],
             FilePath: f.FullPath)).ToList();
 
         cards.Add(new AreaCard(
             "files",
             "Top Large Files",
             AreaLevel.Neutral,
-            files.Count > 0 ? $"{files.Count} files >= {HardwareInventory.FormatBytes(minSizeBytes)} (total {HardwareInventory.FormatBytes(totalLargeFilesDiskBytes)} on disk)" : $"No files >= {HardwareInventory.FormatBytes(minSizeBytes)} found",
-            files.Count > 0 ? $"Largest: {files[0].Name} ({HardwareInventory.FormatBytes(files[0].ActualDiskBytes)})" : "",
+            localFiles.Count > 0 ? $"{localFiles.Count} files >= {HardwareInventory.FormatBytes(minSizeBytes)} (total {HardwareInventory.FormatBytes(totalLargeFilesDiskBytes)} on disk)" : $"No files >= {HardwareInventory.FormatBytes(minSizeBytes)} found",
+            localFiles.Count > 0 ? $"Largest: {localFiles[0].Name} ({HardwareInventory.FormatBytes(localFiles[0].ActualDiskBytes)})" : "",
             fileCols,
             fileRows,
             EmptyText: $"No files larger than {HardwareInventory.FormatBytes(minSizeBytes)} were found."));
@@ -587,8 +606,8 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
             ? $"{drives[0].DriveName} ({HardwareInventory.FormatBytes(drives[0].UsedBytes)} used of {HardwareInventory.FormatBytes(drives[0].TotalBytes)}, {HardwareInventory.FormatBytes(drives[0].FreeBytes)} free) · "
             : "";
 
-        string summary = files.Count > 0
-            ? $"{drivePart}Found {files.Count} large files on {root} totaling {HardwareInventory.FormatBytes(totalLargeFilesDiskBytes)}"
+        string summary = localFiles.Count > 0
+            ? $"{drivePart}Found {localFiles.Count} large files on {root} totaling {HardwareInventory.FormatBytes(totalLargeFilesDiskBytes)}"
             : $"{drivePart}Scan complete on {root} · No files >= {HardwareInventory.FormatBytes(minSizeBytes)}";
 
         return new AreaReport(cards, summary, DiagnosticStatus.Ok);
