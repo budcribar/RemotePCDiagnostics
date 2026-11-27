@@ -161,6 +161,119 @@ public sealed class ScheduledMetricsTests : IDisposable
     }
 
     [Fact]
+    public async Task APendingAck_CanceledByAReconnect_SendsAgainOnTheNewStream_WithoutBackingOff()
+    {
+        var metrics = New(new FakeProbes());
+        _now += TimeSpan.FromHours(2);
+        await metrics.RunIfDueAsync(false, CancellationToken.None);
+
+        var firstSent = new TaskCompletionSource();
+        var newStream = new List<MetricsBatch>();
+        metrics.Attach((_, _) => { firstSent.TrySetResult(); return Task.CompletedTask; }); // a stream that dies before Admin answers
+        var upload = metrics.UploadAsync(CancellationToken.None);
+        await firstSent.Task;
+        metrics.Attach((m, _) =>
+        {
+            newStream.Add(m.Metrics);
+            metrics.Acknowledge(m.Metrics.Runs.Max(r => r.Seq));
+            return Task.CompletedTask;
+        });
+        await upload.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Single(newStream);
+        Assert.Equal(0, metrics.Waiting);
+    }
+
+    [Fact]
+    public async Task APutOffPass_StillUploadsWhatIsAlreadyMeasured()
+    {
+        var metrics = New(new FakeProbes());
+        _now += TimeSpan.FromHours(2);
+        await metrics.RunIfDueAsync(false, CancellationToken.None); // offline: 4 kept
+        var sent = 0;
+        metrics.Attach((m, _) => { sent++; metrics.Acknowledge(m.Metrics.Runs.Max(r => r.Seq)); return Task.CompletedTask; });
+        _now += metrics.Schedule.Interval + TimeSpan.FromHours(1); // the next pass is due, but a session is running
+
+        Assert.Equal(MetricsSkip.SessionRunning, await metrics.RunIfDueAsync(busy: true, CancellationToken.None));
+        Assert.Equal(1, sent);
+        Assert.Equal(0, metrics.Waiting);
+    }
+
+    [Fact]
+    public void Outbox_DropsNonFiniteValues_SoItCanStillBeSaved()
+    {
+        var path = Path.Combine(_dir, "outbox.json");
+        var box = new MetricsOutbox(path, () => _now);
+        var run = box.Add("Sensors", null, null, _now, "OK", "s",
+            [new("cpu.temp", "CPU", double.NaN, "°C", MetricTrend.LowerIsBetter), new("fan", "Fan", 1200, "RPM", MetricTrend.HigherIsBetter),
+             new("gpu.temp", "GPU", double.PositiveInfinity, "°C", MetricTrend.LowerIsBetter)], "1");
+        Assert.Equal(["fan"], run.Metrics.Select(m => m.Id));
+        Assert.Equal(1, new MetricsOutbox(path, () => _now).Count); // saved and read back
+    }
+
+    private sealed class HangingProbes : IMetricsProbes
+    {
+        public readonly List<string> Measured = [];
+        public readonly ManualResetEventSlim Release = new();
+        public Task<IReadOnlyList<DiagnosticResult>> MeasureAsync(string checkId, CancellationToken ct)
+        {
+            Measured.Add(checkId);
+            if (checkId == ModuleSlugs.DriveHealth)
+                Release.Wait(); // blocks and never looks at the token (a hung WMI call)
+            return Task.FromResult<IReadOnlyList<DiagnosticResult>>([new DiagnosticResult(checkId, DiagnosticStatus.Ok, "fine", DateTimeOffset.UtcNow, null)]);
+        }
+    }
+
+    [Fact]
+    public async Task APassMovesOn_WhenAProbeBlocksPastTheDeadline()
+    {
+        var probes = new HangingProbes();
+        var outbox = new MetricsOutbox(null, () => _now);
+        var pass = new ScheduledMetricsPass(probes, outbox, null, "1") { Timeout = TimeSpan.FromMilliseconds(200) };
+        var schedule = MetricsSchedule.From(1, true, 60, [ModuleSlugs.DriveHealth, ModuleSlugs.ResourceHogs]);
+
+        int added;
+        try { added = await pass.RunAsync(schedule, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)); }
+        finally { probes.Release.Set(); }
+
+        Assert.Equal(2, added);
+        Assert.Contains(ModuleSlugs.ResourceHogs, probes.Measured);
+        Assert.Equal("Couldn't run", outbox.NextBatch().Single(r => r.CheckId == ModuleSlugs.DriveHealth).Outcome);
+    }
+
+    private sealed class TwoBatteryWmi : RemotePCDiagnostics.Core.DataSources.IWmiSource
+    {
+        private static RemotePCDiagnostics.Core.DataSources.WmiRow Row(object values) =>
+            new(System.Text.Json.JsonSerializer.SerializeToElement(values).EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone()));
+
+        public Task<RemotePCDiagnostics.Core.DataSources.WmiQueryResult> QueryAsync(string ns, string wql, CancellationToken ct = default)
+        {
+            const long system = BatteryReader.SystemBatteryFlag;
+            IReadOnlyList<RemotePCDiagnostics.Core.DataSources.WmiRow> rows = wql switch
+            {
+                BatteryReader.StaticSql => [
+                    Row(new { InstanceName = "BAT0", Capabilities = system, Chemistry = 0, DesignedCapacity = 50000, DeviceName = "Main", ManufactureName = "A" }),
+                    Row(new { InstanceName = "BAT1", Capabilities = system, Chemistry = 0, DesignedCapacity = 20000, DeviceName = "Slice", ManufactureName = "A" })],
+                BatteryReader.FullChargeSql => [Row(new { InstanceName = "BAT0", FullChargedCapacity = 48000 }), Row(new { InstanceName = "BAT1", FullChargedCapacity = 10000 })],
+                _ => [],
+            };
+            return Task.FromResult(new RemotePCDiagnostics.Core.DataSources.WmiQueryResult(ns, wql, rows));
+        }
+    }
+
+    [Fact]
+    public async Task EachBatteryOfATwoBatteryPc_HasItsOwnSeries()
+    {
+        var probes = new CoreMetricsProbes(null, null, wmi: new TwoBatteryWmi());
+        var results = await probes.MeasureAsync(ModuleSlugs.BatteryPower, CancellationToken.None);
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal(["battery-0", "battery-1"], results.Select(r => r.InstanceKey));
+        Assert.Equal("Battery 2 (Slice)", results[1].InstanceLabel);
+        Assert.Equal(DiagnosticStatus.Warning, results[1].Status); // 50% health: the worn second pack is not hidden
+    }
+
+    [Fact]
     public void Schedule_FromAdmin_IsSaved_OlderRevisionsIgnored_AndCollectNowIsRateLimited()
     {
         var metrics = New(new FakeProbes());

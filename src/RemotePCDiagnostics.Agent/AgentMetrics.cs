@@ -45,6 +45,8 @@ public sealed class AgentMetrics
     private Func<AgentMessage, CancellationToken, Task>? _write;
     private TaskCompletionSource<long>? _pendingAck;
     private long _pendingThrough;
+    /// <summary>Counts relay streams: an upload that fails on a stream that has since been replaced must not back off the new one.</summary>
+    private long _streamGeneration;
     private DateTimeOffset _uploadNotBefore;
     private TimeSpan _uploadBackoff = MinUploadBackoff;
 
@@ -107,7 +109,9 @@ public sealed class AgentMetrics
         }
         if (skip != MetricsSkip.None)
         {
-            if (skip is MetricsSkip.NotDue or MetricsSkip.Disabled) await UploadAsync(ct).ConfigureAwait(false);
+            // Readings already measured still go to Admin while a new pass is put off (a busy session, a low battery); a pass that is
+            // running uploads by itself when it ends.
+            if (skip is not MetricsSkip.PassRunning) await UploadAsync(ct).ConfigureAwait(false);
             return skip;
         }
         if (Interlocked.Exchange(ref _passRunning, 1) == 1) return MetricsSkip.PassRunning;
@@ -133,6 +137,7 @@ public sealed class AgentMetrics
         lock (_gate)
         {
             _write = write;
+            _streamGeneration++;
             if (write is not null) { _uploadNotBefore = DateTimeOffset.MinValue; _uploadBackoff = MinUploadBackoff; }
             _pendingAck?.TrySetCanceled();
             _pendingAck = null;
@@ -195,8 +200,10 @@ public sealed class AgentMetrics
                 Func<AgentMessage, CancellationToken, Task>? write;
                 TaskCompletionSource<long> ack;
                 IReadOnlyList<MetricsRunRecord> batch;
+                long generation;
                 lock (_gate)
                 {
+                    generation = _streamGeneration;
                     write = _write;
                     if (write is null || _now() < _uploadNotBefore) return;
                     batch = _outbox.NextBatch();
@@ -206,13 +213,15 @@ public sealed class AgentMetrics
                 }
                 var message = new AgentMessage { Metrics = ToProto(batch) };
                 try { await write(message, ct).ConfigureAwait(false); }
-                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { BackOff($"send failed: {ex.Message}"); return; }
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { BackOff($"send failed: {ex.Message}", generation); return; }
 
                 var done = await Task.WhenAny(ack.Task, Task.Delay(AckTimeout, ct)).ConfigureAwait(false);
                 if (done != ack.Task || !ack.Task.IsCompletedSuccessfully)
                 {
                     lock (_gate) if (ReferenceEquals(_pendingAck, ack)) _pendingAck = null;
-                    BackOff("no acknowledgement from Admin");
+                    // Canceled because a new stream was attached: send again on it at once instead of waiting out a back-off.
+                    if (ack.Task.IsCanceled && !ct.IsCancellationRequested && IsStale(generation)) continue;
+                    BackOff("no acknowledgement from Admin", generation);
                     return;
                 }
                 lock (_gate) _uploadBackoff = MinUploadBackoff;
@@ -221,11 +230,14 @@ public sealed class AgentMetrics
         finally { _uploadGate.Release(); }
     }
 
-    private void BackOff(string why)
+    private bool IsStale(long generation) { lock (_gate) return generation != _streamGeneration; }
+
+    private void BackOff(string why, long generation)
     {
         TimeSpan wait;
         lock (_gate)
         {
+            if (generation != _streamGeneration) return; // that stream is gone; the new one starts without a back-off
             wait = _uploadBackoff;
             _uploadNotBefore = _now() + wait;
             _uploadBackoff = TimeSpan.FromTicks(Math.Min(MaxUploadBackoff.Ticks, _uploadBackoff.Ticks * 2));

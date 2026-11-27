@@ -237,6 +237,9 @@ public class BenchmarkTests
         public void Save(BenchmarkState s) => State = s;
     }
 
+    /// <summary>Windows has just started: the restart a pass was saved for has happened.</summary>
+    private static TimeSpan FreshBoot() => TimeSpan.Zero;
+
     [Fact]
     public async Task Service_BeforeSurvivesRestart_AfterRunsOnceOnStartup()
     {
@@ -260,7 +263,7 @@ public class BenchmarkTests
 
             // "App restarts": a new service instance loads the saved state.
             var delays = new List<TimeSpan>();
-            var svc2 = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, delay: (d, _) => { delays.Add(d); return Task.CompletedTask; });
+            var svc2 = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, delay: (d, _) => { delays.Add(d); return Task.CompletedTask; }) { Uptime = FreshBoot };
             Assert.NotNull(svc2.Before);
             await svc2.ResumeAfterRestartAsync();
             Assert.Equal([Fast.SettleAfterRestart], delays);
@@ -296,7 +299,7 @@ public class BenchmarkTests
             Assert.Contains(launcher.Calls, c => c.Args.Contains("/g"));
 
             var delays = new List<TimeSpan>();
-            var svc2 = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, delay: (d, _) => { delays.Add(d); return Task.CompletedTask; });
+            var svc2 = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, delay: (d, _) => { delays.Add(d); return Task.CompletedTask; }) { Uptime = FreshBoot };
             Assert.True(svc2.BeforePendingRestart);
             await svc2.ResumeAfterRestartAsync();
             Assert.Equal([Fast.SettleAfterRestart], delays);
@@ -362,7 +365,7 @@ public class BenchmarkTests
     {
         var store = new MemStore { State = new BenchmarkState(Fast, RunBeforeOnStartup: true, RestartRequestedUtc: DateTimeOffset.UtcNow) };
         var never = new TaskCompletionSource();
-        var first = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, _) => never.Task);
+        var first = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, _) => never.Task) { Uptime = FreshBoot };
         _ = first.ResumeAfterRestartAsync();
         Assert.Equal(BenchmarkPhase.Before, first.Settling);
         Assert.True(store.State!.RunBeforeOnStartup); // still saved while waiting
@@ -370,13 +373,13 @@ public class BenchmarkTests
         Assert.Null(store.State.Before);
 
         // The first copy is gone (never finishes); a new copy loads the saved state.
-        var second = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, _) => Task.CompletedTask);
+        var second = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, _) => Task.CompletedTask) { Uptime = FreshBoot };
         Assert.True(second.BeforePendingRestart);
         await second.ResumeAfterRestartAsync();
         Assert.NotNull(second.Before);
         Assert.False(store.State.RunBeforeOnStartup);
 
-        var third = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, _) => throw new InvalidOperationException("must not wait again"));
+        var third = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, _) => throw new InvalidOperationException("must not wait again")) { Uptime = FreshBoot };
         await third.ResumeAfterRestartAsync(); // once the pass has started it is not tried again
     }
 
@@ -900,7 +903,7 @@ public class BenchmarkTests
         // While ResumeAfterRestartAsync is settling, Settling/SettleRemaining/SettleFraction/Message are exposed and cleared afterwards.
         var store = new MemStore { State = new BenchmarkState(Fast, RunBeforeOnStartup: true, RestartRequestedUtc: DateTimeOffset.UtcNow) };
         var gate = new TaskCompletionSource();
-        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, _) => gate.Task);
+        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, _) => gate.Task) { Uptime = FreshBoot };
         var resume = svc.ResumeAfterRestartAsync();
         Assert.Equal(BenchmarkPhase.Before, svc.Settling);
         Assert.Equal(Fast.SettleAfterRestart, svc.SettleTotal);
@@ -914,6 +917,65 @@ public class BenchmarkTests
         Assert.Null(svc.SettleRemaining);
         Assert.Null(svc.SettleFraction);
         Assert.NotNull(svc.Before);
+    }
+
+    // ---- review fixes: canceled baseline, resume without a restart, DNS answers ----
+
+    [Fact]
+    public async Task A_before_pass_stopped_before_measuring_anything_keeps_the_earlier_pair()
+    {
+        var before = Run(BenchmarkPhase.Before, M(BenchmarkKind.BootTime, 30));
+        var after = Run(BenchmarkPhase.After, M(BenchmarkKind.BootTime, 25));
+        var store = new MemStore { State = new BenchmarkState(Fast, before, after) };
+        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var run = await svc.RunAsync(BenchmarkPhase.Before, cts.Token);
+
+        Assert.NotNull(run);
+        Assert.False(run!.Completed);
+        Assert.Equal(30, store.State!.Before!.Get(BenchmarkKind.BootTime)!.Median);
+        Assert.NotNull(store.State.After);
+        Assert.Contains("earlier results are kept", svc.Message);
+    }
+
+    [Fact]
+    public async Task A_pass_saved_for_after_a_restart_waits_when_the_app_starts_again_without_one()
+    {
+        var asked = DateTimeOffset.UtcNow;
+        var store = new MemStore { State = new BenchmarkState(Fast, Run(BenchmarkPhase.Before, M(BenchmarkKind.BootTime, 30)), null, RunAfterOnStartup: true, RestartRequestedUtc: asked) };
+        // Windows has been up for a day: the restart was canceled, or hasn't happened yet.
+        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store,
+            delay: (_, _) => throw new InvalidOperationException("must not start the settle wait")) { Uptime = () => TimeSpan.FromDays(1) };
+
+        await svc.ResumeAfterRestartAsync();
+
+        Assert.True(store.State!.RunAfterOnStartup); // still waiting for the restart
+        Assert.Null(svc.After);
+
+        var afterBoot = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, _) => Task.CompletedTask) { Uptime = FreshBoot };
+        await afterBoot.ResumeAfterRestartAsync();
+        Assert.NotNull(afterBoot.After);
+        Assert.False(store.State.RunAfterOnStartup);
+    }
+
+    [Theory]
+    [InlineData(System.Net.Sockets.SocketError.HostNotFound, true)]
+    [InlineData(System.Net.Sockets.SocketError.NoData, true)]
+    [InlineData(System.Net.Sockets.SocketError.NetworkUnreachable, false)]
+    [InlineData(System.Net.Sockets.SocketError.TryAgain, false)]
+    [InlineData(System.Net.Sockets.SocketError.ConnectionRefused, false)]
+    public void Only_a_real_negative_answer_counts_as_a_DNS_lookup_time(System.Net.Sockets.SocketError error, bool counted) =>
+        Assert.Equal(counted, BenchmarkRunner.IsDnsAnswer(new System.Net.Sockets.SocketException((int)error)));
+
+    [Fact]
+    public async Task A_resolver_that_fails_at_once_gives_no_DNS_result()
+    {
+        static Task Down(string name, CancellationToken ct) => throw new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.NetworkUnreachable);
+        var run = await new BenchmarkRunner(new FakeProbes(), resolve: Down).RunAsync(BenchmarkPhase.Before,
+            Fast with { Enabled = [BenchmarkKind.DnsLookup] }, null, null, default);
+        Assert.Empty(run.Get(BenchmarkKind.DnsLookup)!.Samples);
     }
 }
 

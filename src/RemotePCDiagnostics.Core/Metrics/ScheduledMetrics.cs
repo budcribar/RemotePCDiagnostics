@@ -82,7 +82,9 @@ public sealed class MetricsOutbox
         lock (_gate)
         {
             var run = new MetricsRunRecord(Guid.NewGuid().ToString("D"), _state.NextSeq, checkId, instanceId, instanceLabel, finished.ToUniversalTime(),
-                outcome, summary.Length > 300 ? summary[..300] : summary, metrics.Take(16).ToList(), appVersion);
+                outcome, summary.Length > 300 ? summary[..300] : summary,
+                // NaN and infinity have no JSON form: one would make every later save of the outbox fail.
+                metrics.Where(m => double.IsFinite(m.Value)).Take(16).ToList(), appVersion);
             _state = _state with { NextSeq = _state.NextSeq + 1 };
             _state.Runs.Add(run);
             TrimNoLock();

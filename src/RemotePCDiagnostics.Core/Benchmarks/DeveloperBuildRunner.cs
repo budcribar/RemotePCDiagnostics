@@ -518,6 +518,8 @@ public sealed class DeveloperBuildRunner(
         var devDriveExclusionAdded = false;
         var includeAv = options.IncludeAntivirusComparison && env.IsAgentConnected;
         var totalSteps = includeAv ? 9 : 7;
+        // Conditions that were asked for but not measured, reported with the result.
+        var notMeasured = new List<string>();
         var step = 0;
 
         try
@@ -555,7 +557,10 @@ public sealed class DeveloperBuildRunner(
                         if (exclFail is null && exclSamples.Count > 0)
                             ntfsExcludedWarm = DeveloperScoring.Median(exclSamples);
                         else
+                        {
                             Log((exclFail ?? CommandFailure.Empty).Format("NTFS warm dotnet build with temporary exclusion"));
+                            notMeasured.Add("NTFS + AV exclusion: the builds failed");
+                        }
                     }
                     finally
                     {
@@ -564,6 +569,8 @@ public sealed class DeveloperBuildRunner(
                         tempExclusionAdded = false;
                     }
                 }
+                else
+                    notMeasured.Add("NTFS + AV exclusion: Windows refused the temporary exclusion");
             }
 
             // 2. Ask Agent to create & mount temporary ~50 GB Dev Drive VHDX
@@ -610,7 +617,10 @@ public sealed class DeveloperBuildRunner(
                         if (ddExclFail is null && ddExclSamples.Count > 0)
                             devDriveExcludedWarm = DeveloperScoring.Median(ddExclSamples);
                         else
+                        {
                             Log((ddExclFail ?? CommandFailure.Empty).Format("Dev Drive warm dotnet build with temporary exclusion"));
+                            notMeasured.Add("Dev Drive + AV exclusion: the builds failed");
+                        }
                     }
                     finally
                     {
@@ -619,13 +629,28 @@ public sealed class DeveloperBuildRunner(
                         devDriveExclusionAdded = false;
                     }
                 }
+                else
+                    notMeasured.Add("Dev Drive + AV exclusion: Windows refused the temporary exclusion");
             }
+
+            // Removed here rather than only in finally, so a drive that is left behind is reported with the result.
+            var leftBehind = await RemoveTempDevDriveAsync(vhdxPath).ConfigureAwait(false);
+            vhdxPath = null;
+
+            var order = new List<string> { "NTFS" };
+            if (ntfsExcludedWarm is not null) order.Add("NTFS + AV exclusion");
+            order.Add("Dev Drive");
+            if (devDriveExcludedWarm is not null) order.Add("Dev Drive + AV exclusion");
+            var notes = new List<string>();
+            if (notMeasured.Count > 0) notes.Add("Not measured: " + string.Join("; ", notMeasured) + ".");
+            if (leftBehind is not null) notes.Add(leftBehind);
 
             return new(
                 Succeeded: true,
                 PinId: DeveloperCSharpPin.PinId,
                 PinSha256: sha256,
-                Order: includeAv ? "NTFS, NTFS + AV exclusion, Dev Drive, then Dev Drive + AV exclusion" : "NTFS, then Dev Drive",
+                Order: order.Count == 2 ? "NTFS, then Dev Drive" : string.Join(", ", order[..^1]) + ", then " + order[^1],
+                Note: notes.Count > 0 ? string.Join(" ", notes) : null,
                 NtfsColdMedianSeconds: ntfsCold,
                 NtfsWarmMedianSeconds: ntfsWarm,
                 DevDriveColdMedianSeconds: ddCold,
@@ -650,11 +675,25 @@ public sealed class DeveloperBuildRunner(
             TryDeleteDirectory(ntfsDir);
             if (devDriveBuildDir is not null) TryDeleteDirectory(devDriveBuildDir);
             if (vhdxPath is not null)
-            {
-                try { await machineTweaks.RemoveTempDevDriveAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false); }
-                catch (Exception ex) { Log("Failed to remove temporary Dev Drive VHDX: " + ex.Message); }
-            }
+                await RemoveTempDevDriveAsync(vhdxPath).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Asks the Agent to detach and delete the temporary Dev Drive. Null when it is gone; otherwise what to tell the person (the Agent's
+    /// start-up sweep removes a left-over drive the next time it starts).
+    /// </summary>
+    private async Task<string?> RemoveTempDevDriveAsync(string? vhdxPath)
+    {
+        if (vhdxPath is null || machineTweaks is null) return null;
+        try
+        {
+            if (await machineTweaks.RemoveTempDevDriveAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false))
+                return null;
+            Log("The Agent could not remove the temporary Dev Drive VHDX.");
+        }
+        catch (Exception ex) { Log("Failed to remove temporary Dev Drive VHDX: " + ex.Message); }
+        return "The temporary Dev Drive could not be removed; the Agent removes it the next time it starts.";
     }
 
     private async Task ShutdownBuildServersAsync(string dotnetExe, string workDir, CancellationToken ct)

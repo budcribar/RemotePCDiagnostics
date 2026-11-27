@@ -37,7 +37,8 @@ public sealed record BenchmarkUploadResult(
     double Weight,
     double Value,
     IReadOnlyList<double> Samples,
-    string? Detail = null);
+    string? Detail = null,
+    string? Comparable = null);
 
 public sealed record BenchmarkUploadConditions(
     bool? OnBattery,
@@ -85,7 +86,7 @@ public static class BenchmarkUpload
             if (m.Median is not { } value || !double.IsFinite(value)) continue;
             var info = Benchmarks.Info(m.Kind);
             results.Add(new BenchmarkUploadResult(m.Kind.ToString(), info.Title, info.Unit, info.LowerIsBetter, CompareWeight(info), value,
-                m.Samples.Where(double.IsFinite).ToList(), Detail(m)));
+                m.Samples.Where(double.IsFinite).ToList(), Detail(m), m.RunIdentity?.ComparableKey));
         }
         if (results.Count == 0) return null;
         return new BenchmarkUploadRequest(machineId, machineName, appVersion ?? AppBuildInfo.Release, hardware, run.Phase.ToString(), run.TimeUtc,

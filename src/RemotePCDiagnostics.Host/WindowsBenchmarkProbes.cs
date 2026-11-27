@@ -133,6 +133,11 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
     }
 
     // ---- idle CPU + paging (PDH, English counter names) ----
+    private const uint PDH_CSTATUS_VALID_DATA = 0, PDH_CSTATUS_NEW_DATA = 1;
+
+    /// <summary>Both "valid" statuses: NEW_DATA is a valid sample whose raw value changed since the last one.</summary>
+    internal static bool IsValidSample(uint status) => status is PDH_CSTATUS_VALID_DATA or PDH_CSTATUS_NEW_DATA;
+
     [StructLayout(LayoutKind.Explicit)]
     private struct PDH_FMT_COUNTERVALUE { [FieldOffset(0)] public uint CStatus; [FieldOffset(8)] public double doubleValue; }
     private const uint PDH_FMT_DOUBLE = 0x00000200, PDH_FMT_NOCAP100 = 0x00008000;
@@ -156,8 +161,8 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
             {
                 await Task.Delay(1000, ct).ConfigureAwait(false);
                 if (PdhCollectQueryData(q) != 0) continue;
-                if (PdhGetFormattedCounterValue(cpu, PDH_FMT_DOUBLE, out _, out var cv) == 0 && cv.CStatus == 0) c.Add(cv.doubleValue);
-                if (PdhGetFormattedCounterValue(pages, PDH_FMT_DOUBLE | PDH_FMT_NOCAP100, out _, out var pv) == 0 && pv.CStatus == 0) p.Add(pv.doubleValue);
+                if (PdhGetFormattedCounterValue(cpu, PDH_FMT_DOUBLE, out _, out var cv) == 0 && IsValidSample(cv.CStatus)) c.Add(cv.doubleValue);
+                if (PdhGetFormattedCounterValue(pages, PDH_FMT_DOUBLE | PDH_FMT_NOCAP100, out _, out var pv) == 0 && IsValidSample(pv.CStatus)) p.Add(pv.doubleValue);
             }
             Log($"idle: {c.Count} samples cpu={(c.Count > 0 ? c.Average() : double.NaN):0.0}% pages={(p.Count > 0 ? p.Average() : double.NaN):0}/s");
             return c.Count == 0 || p.Count == 0 ? null : new IdleSample(c.Average(), p.Average());
@@ -186,7 +191,14 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(20));
             await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-            return sw.Elapsed.TotalMilliseconds;
+            var elapsed = sw.Elapsed.TotalMilliseconds;
+            // A command that failed straight away would look like a fast start: only a clean exit counts.
+            if (p.ExitCode != 0)
+            {
+                Log($"program start: {program.Name} exited with {p.ExitCode}; not counted");
+                return null;
+            }
+            return elapsed;
         }
         finally
         {

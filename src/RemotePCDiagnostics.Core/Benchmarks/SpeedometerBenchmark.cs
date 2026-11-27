@@ -23,6 +23,11 @@ public sealed record SpeedometerRunIdentity(
 {
     public const string HeadlessNewMode = "headless-new";
 
+    /// <summary>
+    /// The parts <see cref="IsComparableTo"/> compares, as one key: Admin ranks a Speedometer score only against uploads with the same key.
+    /// </summary>
+    public string ComparableKey => string.Join('|', Engine, SpeedometerVersion, LaunchMode).ToLowerInvariant();
+
     public bool IsComparableTo(SpeedometerRunIdentity? other) =>
         other is not null
         && string.Equals(Engine, other.Engine, StringComparison.OrdinalIgnoreCase)

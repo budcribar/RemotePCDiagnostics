@@ -20,6 +20,9 @@ public sealed class ScheduledMetricsPass(IMetricsProbes probes, MetricsOutbox ou
     /// <summary>Longest one check may take before the pass moves on.</summary>
     public static readonly TimeSpan CheckTimeout = TimeSpan.FromMinutes(3);
 
+    /// <summary>This pass's limit per check (<see cref="CheckTimeout"/>; tests shorten it).</summary>
+    public TimeSpan Timeout { get; init; } = CheckTimeout;
+
     public async Task<int> RunAsync(MetricsSchedule schedule, CancellationToken ct)
     {
         var added = 0;
@@ -28,8 +31,14 @@ public sealed class ScheduledMetricsPass(IMetricsProbes probes, MetricsOutbox ou
             ct.ThrowIfCancellationRequested();
             IReadOnlyList<DiagnosticResult> results;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(CheckTimeout);
-            try { results = await probes.MeasureAsync(check, timeout.Token).ConfigureAwait(false); }
+            timeout.CancelAfter(Timeout);
+            try
+            {
+                // The token alone can't stop a probe that blocks (a hung WMI call): the pass stops waiting at the deadline and moves on,
+                // and the probe is left to finish or fail by itself.
+                var probe = Task.Run(() => probes.MeasureAsync(check, timeout.Token), CancellationToken.None);
+                results = await probe.WaitAsync(Timeout, ct).ConfigureAwait(false);
+            }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
@@ -89,13 +98,25 @@ public sealed class CoreMetricsProbes(string? appFolder, Func<CancellationToken,
     {
         var batteries = await BatteryReader.ReadWmiAsync(wmi ?? new DataSources.SystemWmiSource(log), ct).ConfigureAwait(false);
         if (batteries is null) return [CouldNotRun.Result(ModuleSlugs.BatteryPower, "Couldn't read the battery.")];
-        if (batteries.FirstOrDefault() is not { } b) return []; // no battery: nothing to track
-        var worn = b.HealthPercent is < BatteryStatus.LowHealthPercent;
-        var summary = b.HealthPercent is { } h ? $"Battery health {h}%" : "Battery present";
-        var status = worn ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
-        var report = new AreaReport([], summary, status) { KeyMetrics = CheckKeyMetrics.Battery(b) };
-        return [new DiagnosticResult(ModuleSlugs.BatteryPower, status, summary, DateTimeOffset.Now, report)];
+        if (batteries.Count == 0) return []; // no battery: nothing to track
+        // One result per pack, so a worn second battery has its own series. A PC with one battery keeps the series it always had
+        // (no instance); with more, each is keyed by its place in WMI's list, which follows the battery's instance name.
+        var list = new List<DiagnosticResult>(batteries.Count);
+        for (var i = 0; i < batteries.Count; i++)
+        {
+            var b = batteries[i];
+            var worn = b.HealthPercent is < BatteryStatus.LowHealthPercent;
+            var summary = b.HealthPercent is { } h ? $"Battery health {h}%" : "Battery present";
+            var status = worn ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
+            var report = new AreaReport([], summary, status) { KeyMetrics = CheckKeyMetrics.Battery(b) };
+            var result = new DiagnosticResult(ModuleSlugs.BatteryPower, status, summary, DateTimeOffset.Now, report);
+            list.Add(batteries.Count == 1 ? result : result with { InstanceKey = "battery-" + i, InstanceLabel = BatteryLabel(b, i) });
+        }
+        return list;
     }
+
+    private static string BatteryLabel(BatteryStatus b, int index) =>
+        string.IsNullOrWhiteSpace(b.Model) ? $"Battery {index + 1}" : $"Battery {index + 1} ({b.Model.Trim()})";
 
     private async Task<IReadOnlyList<DiagnosticResult>> SensorsAsync(CancellationToken ct)
     {
