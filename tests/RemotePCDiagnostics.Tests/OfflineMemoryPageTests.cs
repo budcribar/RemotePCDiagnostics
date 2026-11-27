@@ -67,6 +67,7 @@ public class OfflineMemoryPageTests : BunitContext
         Assert.Contains("\"confirming\":true", data);
         Assert.Contains("\"when\":\"next\"", data);
 
+        File.WriteAllText(Path.Combine(Path.GetTempPath(), "memdiag-confirm.html"), page.Markup);
         page.Find("[data-testid='memdiag-confirm-yes']").Click();
         page.WaitForAssertion(() => Assert.Equal("scheduled", page.Find("[data-testid='memdiag']").GetAttribute("data-phase")));
         Assert.Contains("schedule extended", source.Calls);

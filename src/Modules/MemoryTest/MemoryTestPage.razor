@@ -109,7 +109,7 @@ else if (report is not null)
         {
             <div class="meta" data-testid="memdiag-no-result">Windows has no boot memory test result on this PC yet.</div>
         }
-        <p class="meta" data-testid="memdiag-status">@OfflineStatus(os)</p>
+        @if (OfflineStatus(os) is { Length: > 0 } statusText) { <p class="meta" data-testid="memdiag-status">@statusText</p> }
         @if (os.Message is { } msg) { <div class="meta" data-testid="memdiag-message">@msg</div> }
         @if (os.CanCancel)
         {
