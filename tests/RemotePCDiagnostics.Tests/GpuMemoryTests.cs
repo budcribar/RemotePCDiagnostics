@@ -328,6 +328,68 @@ public sealed class GpuMemoryTests
     }
 
     [Fact]
+    public async Task A_critical_temperature_aborts_mid_moving_inversion()
+    {
+        var sim = new SimulatedGpuMemory(Discrete(1 * GB, 1 * GB));
+        var sensors = new SequenceSensorProvider(_ => Gpu(sim.Log.Any(l => l.Op == GpuMemoryOp.VerifyThenInvert) ? 110 : 70));
+        var m = Module(sim, sensors, new GpuMemoryOptions { OpWatchdog = TimeSpan.FromSeconds(10), SensorInterval = sim.PerRun });
+        m.Mode = GpuMemoryMode.Extended;
+        var (report, result) = await RunAsync(m);
+
+        Assert.Equal(DiagnosticStatus.Warning, result.Status);
+        Assert.Equal(GpuMemoryOutcome.Overheated, m.LastResults![0].Outcome);
+        Assert.Equal(1, sim.Log.Count(l => l.Op == GpuMemoryOp.VerifyThenInvert && !l.Inverted));
+        Assert.DoesNotContain(sim.Log, l => l.Op == GpuMemoryOp.VerifyThenInvert && l.Inverted);
+        Assert.Contains("too hot", report.Cards[0].Headline);
+        Assert.Equal(1, sim.Disposed);
+    }
+
+    [Fact]
+    public async Task Bit_errors_with_overheat_report_errors_found_not_overheated()
+    {
+        var sim = new SimulatedGpuMemory(Discrete(1 * GB, 1 * GB));
+        sim.StuckBits.Add((0, 0, false));
+        var sensors = new SequenceSensorProvider(_ => Gpu(sim.Log.Any(l => l.Op == GpuMemoryOp.Verify) ? 110 : 70));
+        var m = Module(sim, sensors, new GpuMemoryOptions { OpWatchdog = TimeSpan.FromSeconds(10), SensorInterval = sim.PerRun });
+        var (report, result) = await RunAsync(m);
+
+        Assert.Equal(DiagnosticStatus.Error, result.Status);
+        Assert.Equal(AreaLevel.Error, report.Cards[0].Level);
+        Assert.Equal(GpuMemoryOutcome.ErrorsFound, m.LastResults![0].Outcome);
+        Assert.True(m.LastResults![0].Errors > 0);
+        Assert.DoesNotContain("no errors so far", report.Cards[0].Headline);
+        Assert.Equal(1, sim.Disposed);
+    }
+
+    [Fact]
+    public void Zero_budget_falls_back_to_dedicated_and_shared_sizing()
+    {
+        var discreteZero = new GpuMemoryAdapter("D0", "Virtual GPU", 0x10DE, 8 * GB, 16 * GB, Integrated: false, BudgetBytes: 0, UsageBytes: 0);
+        Assert.Null(discreteZero.FreeBytes);
+        Assert.Equal(8 * GB, GpuMemoryPlan.MemoryBytes(discreteZero));
+        Assert.Equal(GpuMemoryPlan.Target(Discrete(8 * GB, free: null), 64 * MB), GpuMemoryPlan.Target(discreteZero, 64 * MB));
+        Assert.True(GpuMemoryPlan.Target(discreteZero, 64 * MB) > 0);
+
+        var integratedZero = new GpuMemoryAdapter("I0", "Virtual iGPU", 0x8086, 128 * MB, 8 * GB, Integrated: true, BudgetBytes: 0, UsageBytes: 0);
+        Assert.Null(integratedZero.FreeBytes);
+        Assert.Equal(GpuMemoryPlan.IntegratedCap, GpuMemoryPlan.MemoryBytes(integratedZero));
+        Assert.True(GpuMemoryPlan.Target(integratedZero, 64 * MB) > 0);
+    }
+
+    [Fact]
+    public async Task Slow_pass_zero_that_verified_patterns_cleanly_passes_instead_of_could_not_run()
+    {
+        var sim = new SimulatedGpuMemory(Discrete(1 * GB, 1 * GB)) { PerRun = TimeSpan.FromSeconds(1) };
+        var m = Module(sim, o: new GpuMemoryOptions { Duration = TimeSpan.FromSeconds(10), OpWatchdog = TimeSpan.FromSeconds(10) });
+        var (report, result) = await RunAsync(m);
+
+        Assert.Equal(DiagnosticStatus.Ok, result.Status);
+        Assert.Equal(GpuMemoryOutcome.Passed, m.LastResults![0].Outcome);
+        Assert.Equal(1, m.LastResults![0].Passes);
+        Assert.Null(report.CouldNotRunReason);
+    }
+
+    [Fact]
     public async Task Cancel_stops_the_test_frees_the_memory_and_reports_cancelled()
     {
         var sim = new SimulatedGpuMemory(Discrete());

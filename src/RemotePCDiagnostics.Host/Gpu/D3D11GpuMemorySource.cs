@@ -41,8 +41,11 @@ public sealed class D3D11GpuMemorySource(ILogger? log = null) : IGpuMemorySource
                         if (a3 is not null)
                         {
                             var info = a3.QueryVideoMemoryInfo(0, MemorySegmentGroup.Local);
-                            budget = (long)info.Budget;
-                            usage = (long)info.CurrentUsage;
+                            if (info.Budget > 0)
+                            {
+                                budget = (long)info.Budget;
+                                usage = (long)info.CurrentUsage;
+                            }
                         }
                     }
                     catch (Exception ex) { log.Warn($"GPU memory: memory budget of '{d.Description}' unreadable: {ex.Message}"); }
@@ -204,8 +207,12 @@ internal sealed class D3D11GpuMemoryDevice : IGpuMemoryDevice
         var u => $"0x{u:X8}",
     };
 
+    private bool _disposed;
+
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         _log.Info($"GPU memory: releasing {_blocks.Count} blocks on '{Adapter.Name}'");
         try { _context?.ClearState(); } catch { }
         foreach (var (buffer, uav, _) in _blocks) { uav.Dispose(); buffer.Dispose(); }

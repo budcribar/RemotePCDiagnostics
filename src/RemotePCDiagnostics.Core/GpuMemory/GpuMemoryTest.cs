@@ -105,6 +105,7 @@ public sealed class GpuMemoryTest(IGpuMemorySource source, ISensorProvider? sens
                 progress?.Report(new(adapter.Name, index, count, now > duration ? duration : now, duration, pass + 1, tested, run.Errors, run.Temp));
             }
 
+            int verifiedSteps = 0;
             for (var pass = 0; ; pass++)
             {
                 foreach (var step in GpuMemoryStep.ForPass(o.Mode, pass))
@@ -114,26 +115,33 @@ public sealed class GpuMemoryTest(IGpuMemorySource source, ISensorProvider? sens
                     if (run.Hot) break;
                     if (!step.MovingInversion)
                     {
-                        for (var b = 0; b < sizes.Count; b++) { run.Add(await Op(b, GpuMemoryOp.Verify, step, false).ConfigureAwait(false), startByte[b], step.Pattern, pass); Tick(pass); }
+                        for (var b = 0; b < sizes.Count; b++) { run.Add(await Op(b, GpuMemoryOp.Verify, step, false).ConfigureAwait(false), startByte[b], step.Pattern, pass); Tick(pass); if (run.Hot) break; }
                     }
                     else
                     {
                         // Check and complement upwards, check the complement and restore downwards, then check the pattern again.
-                        for (var b = 0; b < sizes.Count; b++) { run.Add(await Op(b, GpuMemoryOp.VerifyThenInvert, step, false).ConfigureAwait(false), startByte[b], step.Pattern, pass); Tick(pass); }
-                        for (var b = sizes.Count - 1; b >= 0; b--) { run.Add(await Op(b, GpuMemoryOp.VerifyThenInvert, step, true).ConfigureAwait(false), startByte[b], step.Pattern, pass); Tick(pass); }
-                        for (var b = 0; b < sizes.Count; b++) { run.Add(await Op(b, GpuMemoryOp.Verify, step, false).ConfigureAwait(false), startByte[b], step.Pattern, pass); Tick(pass); }
+                        for (var b = 0; b < sizes.Count; b++) { run.Add(await Op(b, GpuMemoryOp.VerifyThenInvert, step, false).ConfigureAwait(false), startByte[b], step.Pattern, pass); Tick(pass); if (run.Hot) break; }
+                        if (run.Hot) break;
+                        for (var b = sizes.Count - 1; b >= 0; b--) { run.Add(await Op(b, GpuMemoryOp.VerifyThenInvert, step, true).ConfigureAwait(false), startByte[b], step.Pattern, pass); Tick(pass); if (run.Hot) break; }
+                        if (run.Hot) break;
+                        for (var b = 0; b < sizes.Count; b++) { run.Add(await Op(b, GpuMemoryOp.Verify, step, false).ConfigureAwait(false), startByte[b], step.Pattern, pass); Tick(pass); if (run.Hot) break; }
                     }
                     if (run.Hot || run.Errors > 0) break;
+                    verifiedSteps++;
                     // A pass far over its time (a slow chip, a huge card): stop between steps rather than run on.
                     if (clk.Elapsed - start > duration * 1.5) break;
                 }
+                if (run.Errors > 0) { passes = pass + 1; break; }
                 if (run.Hot)
                 {
                     log.Warn($"GPU memory: {adapter.Name}: stopped, critical temperature: {run.HotWhat}");
                     return Result(GpuMemoryOutcome.Overheated, "stopped because the PC got too hot: " + run.HotWhat);
                 }
-                if (run.Errors > 0) { passes = pass + 1; break; }
-                if (clk.Elapsed - start > duration * 1.5) break;
+                if (clk.Elapsed - start > duration * 1.5)
+                {
+                    if (passes == 0 && verifiedSteps > 0) passes = 1;
+                    break;
+                }
                 passes = pass + 1;
                 if (clk.Elapsed - start >= duration) break;
             }

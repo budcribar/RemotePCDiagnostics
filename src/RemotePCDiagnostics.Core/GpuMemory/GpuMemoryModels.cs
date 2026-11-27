@@ -33,7 +33,7 @@ public enum GpuMemoryOp { Write, Verify, VerifyThenInvert }
 public sealed record GpuMemoryAdapter(
     string Id, string Name, uint VendorId, long DedicatedBytes, long SharedBytes, bool Integrated, long? BudgetBytes = null, long? UsageBytes = null)
 {
-    public long? FreeBytes => BudgetBytes is { } b ? Math.Max(0, b - (UsageBytes ?? 0)) : null;
+    public long? FreeBytes => BudgetBytes is > 0 and var b ? Math.Max(0, b - (UsageBytes ?? 0)) : null;
 }
 
 /// <summary>A word that didn't hold what was written. <see cref="ByteOffset"/> counts from the start of all the memory the test allocated.</summary>
@@ -106,7 +106,7 @@ public static class GpuMemoryPlan
 
     /// <summary>The memory the verdict is measured against: the dedicated memory of a discrete GPU, the capped shared budget of an integrated one.</summary>
     public static long MemoryBytes(GpuMemoryAdapter a) => a.Integrated
-        ? Math.Min(IntegratedCap, a.BudgetBytes ?? (a.SharedBytes > 0 ? a.SharedBytes : IntegratedCap))
+        ? Math.Min(IntegratedCap, a.BudgetBytes is > 0 and var b ? b : (a.SharedBytes > 0 ? a.SharedBytes : IntegratedCap))
         : a.DedicatedBytes;
 
     /// <summary>Bytes to allocate: 80 % of what is free (capped for integrated GPUs), whole blocks only, never more than the chip's memory.</summary>
