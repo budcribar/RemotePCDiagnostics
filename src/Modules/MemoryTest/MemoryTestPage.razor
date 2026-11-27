@@ -115,6 +115,10 @@ else if (report is not null)
         {
             <button class="btn" data-testid="memdiag-cancel" @onclick="CancelOfflineAsync" disabled="@_offlineBusy">Don't run it</button>
         }
+        @if (os.Phase != OfflineMemoryPhase.Loading)
+        {
+            <button class="btn" data-testid="memdiag-refresh" @onclick="RefreshOfflineAsync" disabled="@_offlineBusy">Check now</button>
+        }
         @if (os.CanSchedule)
         {
             <div class="toolbar" style="margin-top:8px">
@@ -176,12 +180,15 @@ else if (report is not null)
 </div>
 
 @code {
+    private static readonly TimeSpan OfflinePollInterval = TimeSpan.FromSeconds(15);
+
     private MemoryTestMode _mode = MemoryTestMode.Quick;
     private bool _confirm;
     private string? _launchMessage;
     private OfflineMemoryMix _mix = OfflineMemoryMix.Standard;
     private OfflineMemoryWhen _when = OfflineMemoryWhen.Now;
-    private bool _offlineConfirm, _offlineBusy;
+    private bool _offlineConfirm, _offlineBusy, _disposed;
+    private System.Threading.Timer? _offlinePoll;
 
     protected override void OnInitialized()
     {
@@ -197,19 +204,58 @@ else if (report is not null)
         {
             try { await off.RefreshAsync(); }
             catch (Exception) { }
+            UpdateOfflinePolling(off.State.Phase);
         }
     }
 
-    private void OnOfflineChanged(object? sender, EventArgs e) => _ = InvokeAsync(StateHasChanged);
+    private void OnOfflineChanged(object? sender, EventArgs e) => _ = InvokeAsync(() =>
+    {
+        if (_disposed) return;
+        UpdateOfflinePolling(Module?.Offline?.State.Phase);
+        StateHasChanged();
+    });
+
+    private void UpdateOfflinePolling(OfflineMemoryPhase? phase)
+    {
+        if (_disposed) return;
+        var shouldPoll = phase is OfflineMemoryPhase.WaitingForResult or OfflineMemoryPhase.Restarting;
+        if (shouldPoll && _offlinePoll is null)
+            _offlinePoll = new System.Threading.Timer(_ => _ = InvokeAsync(PollOfflineAsync), null, OfflinePollInterval, OfflinePollInterval);
+        else if (!shouldPoll)
+            Interlocked.Exchange(ref _offlinePoll, null)?.Dispose();
+    }
+
+    private async Task PollOfflineAsync()
+    {
+        if (_disposed || _offlineBusy || Module?.Offline is not { } off) return;
+        if (off.State.Phase is not (OfflineMemoryPhase.WaitingForResult or OfflineMemoryPhase.Restarting))
+        {
+            UpdateOfflinePolling(off.State.Phase);
+            return;
+        }
+        try { await off.RefreshAsync(); }
+        catch (Exception) { }
+    }
 
     public override void Dispose()
     {
+        _disposed = true;
+        Interlocked.Exchange(ref _offlinePoll, null)?.Dispose();
         if (Module?.Offline is { } off) off.Changed -= OnOfflineChanged;
         base.Dispose();
     }
 
     private void SetMix(ChangeEventArgs e) => _mix = e.Value?.ToString() == "extended" ? OfflineMemoryMix.Extended : OfflineMemoryMix.Standard;
     private void SetWhen(ChangeEventArgs e) => _when = e.Value?.ToString() == "next" ? OfflineMemoryWhen.NextRestart : OfflineMemoryWhen.Now;
+
+    private async Task RefreshOfflineAsync()
+    {
+        if (Module?.Offline is not { } off || _offlineBusy) return;
+        _offlineBusy = true;
+        try { await off.RefreshAsync(); }
+        catch (Exception) { }
+        finally { _offlineBusy = false; }
+    }
 
     private async Task ScheduleOfflineAsync()
     {

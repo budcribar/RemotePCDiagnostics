@@ -25,16 +25,19 @@ public class OfflineMemoryPageTests : BunitContext
             Calls.Add(string.Join(' ', args));
             if (args[0] == "schedule")
                 Status = new(Status.Answer! with { Scheduled = true, RequestedAtUtc = DateTimeOffset.UtcNow, Mix = AgentMemoryDiagnostic.ParseMix(args[1]) }, null);
+            if (args[0] == "clear")
+                Status = new(Status.Answer! with { Scheduled = false, RequestedAtUtc = null, Mix = null }, null);
             return Task.FromResult(Status);
         }
     }
 
-    private (IRenderedComponent<MemoryTestPage> Page, Source Source) RenderPage(Source? source = null, string events = "")
+    private (IRenderedComponent<MemoryTestPage> Page, Source Source) RenderPage(Source? source = null, Func<string>? events = null, Func<DateTimeOffset>? clock = null)
     {
         JSInterop.Mode = JSRuntimeMode.Loose;
         source ??= new Source();
-        var commands = new SystemCommandRunner(new ScriptedLauncher((file, _) => file == "wevtutil.exe" ? ScriptedLauncher.Ok(events) : ScriptedLauncher.Fail()));
-        var offline = new OfflineMemoryDiagnostic(source, new WindowsEventLog(commands));
+        var getEvents = events ?? (() => "");
+        var commands = new SystemCommandRunner(new ScriptedLauncher((file, _) => file == "wevtutil.exe" ? ScriptedLauncher.Ok(getEvents()) : ScriptedLauncher.Fail()));
+        var offline = new OfflineMemoryDiagnostic(source, new WindowsEventLog(commands), clock: clock);
         var module = new MemoryTestModule(new FakeMemoryInfo(16 * GB), new FakeHelperLauncher(), new SequenceSensorProvider(_ => throw new PlatformNotSupportedException(), available: false),
             new FakeMdsched(), offline: offline);
         var store = new ResultStore();
@@ -51,11 +54,14 @@ public class OfflineMemoryPageTests : BunitContext
     public void Shows_the_last_result_and_schedules_for_the_next_restart_after_the_warnings()
     {
         var events = EventLogTests.Ev(OfflineMemoryResult.Provider, 1202, 2, "2026-11-20T10:00:00.0000000Z", "The Windows Memory Diagnostic tested the computer's memory and detected hardware errors");
-        var (page, source) = RenderPage(events: events);
+        var (page, source) = RenderPage(events: () => events);
         page.WaitForAssertion(() => Assert.Equal("idle", page.Find("[data-testid='memdiag']").GetAttribute("data-phase")));
         Assert.Equal("errors", page.Find("[data-testid='memdiag-result']").GetAttribute("data-outcome"));
         Assert.Contains("Hardware problems were detected", page.Find("[data-testid='memdiag-result']").TextContent);
         Assert.Empty(page.FindAll("[data-testid='memtest-mdsched']")); // the Agent schedules it: no Windows dialog
+        // Default when="now" still surfaces fast-startup warning in memdiag-data for automation.
+        var initialData = page.Find("[data-testid='memdiag-data']").GetAttribute("data-report")!;
+        Assert.Contains("\"fast-startup\"", initialData);
 
         page.Find("[data-testid='memdiag-mode']").Change("extended");
         page.Find("[data-testid='memdiag-when']").Change("next");
@@ -67,13 +73,34 @@ public class OfflineMemoryPageTests : BunitContext
         Assert.Contains("\"confirming\":true", data);
         Assert.Contains("\"when\":\"next\"", data);
 
-        File.WriteAllText(Path.Combine(Path.GetTempPath(), "memdiag-confirm.html"), page.Markup);
         page.Find("[data-testid='memdiag-confirm-yes']").Click();
         page.WaitForAssertion(() => Assert.Equal("scheduled", page.Find("[data-testid='memdiag']").GetAttribute("data-phase")));
         Assert.Contains("schedule extended", source.Calls);
         Assert.Contains("extended test", page.Find("[data-testid='memdiag-status']").TextContent);
         Assert.NotNull(page.Find("[data-testid='memdiag-cancel']"));
-        File.WriteAllText(Path.Combine(Path.GetTempPath(), "memdiag-scheduled.html"), page.Markup);
+    }
+
+    [Fact]
+    public void Refresh_button_picks_up_result_while_waiting_for_result()
+    {
+        var requested = DateTimeOffset.Parse("2026-11-27T10:00:00Z");
+        var boot = requested.AddMinutes(5);
+        var currentEvents = "";
+        var source = new Source
+        {
+            Status = new(new MemoryDiagnosticAnswer { Scheduled = false, RequestedAtUtc = requested, Mix = OfflineMemoryMix.Standard, BootTimeUtc = boot }, null),
+        };
+        var (page, _) = RenderPage(source, events: () => currentEvents, clock: () => boot.AddMinutes(2));
+
+        page.WaitForAssertion(() => Assert.Equal("waiting-for-result", page.Find("[data-testid='memdiag']").GetAttribute("data-phase")));
+        Assert.NotNull(page.Find("[data-testid='memdiag-refresh']"));
+
+        currentEvents = EventLogTests.Ev(OfflineMemoryResult.Provider, 1201, 4, "2026-11-27T10:08:00.0000000Z", "The Windows Memory Diagnostic tested the computer's memory and detected no errors");
+        page.Find("[data-testid='memdiag-refresh']").Click();
+
+        page.WaitForAssertion(() => Assert.Equal("done", page.Find("[data-testid='memdiag']").GetAttribute("data-phase")));
+        Assert.Equal("no-errors", page.Find("[data-testid='memdiag-result']").GetAttribute("data-outcome"));
+        Assert.Contains("clear", source.Calls);
     }
 
     [Fact]

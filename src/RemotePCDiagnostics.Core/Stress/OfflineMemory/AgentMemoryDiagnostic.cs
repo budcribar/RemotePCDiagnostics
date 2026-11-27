@@ -339,7 +339,8 @@ public static class AgentMemoryDiagnosticHost
             var drive = (Environment.GetEnvironmentVariable("SystemDrive") ?? "C:").TrimEnd('\\');
             using var searcher = new ManagementObjectSearcher(new ManagementScope(VolumeNamespace),
                 new ObjectQuery($"SELECT * FROM Win32_EncryptableVolume WHERE DriveLetter = '{drive.Replace("'", "")}'"));
-            foreach (ManagementObject o in searcher.Get()) return o;
+            using var results = searcher.Get();
+            foreach (ManagementObject o in results) return o;
             return null;
         }
 

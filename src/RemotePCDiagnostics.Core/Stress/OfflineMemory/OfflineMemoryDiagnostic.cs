@@ -49,18 +49,19 @@ public sealed record OfflineMemoryResult(OfflineMemoryOutcome Outcome, DateTimeO
 
     /// <summary>
     /// The result an event reports. Windows writes event 1201 (older versions 1101) for no errors and 1202 (1102) when it found errors;
-    /// any other event from the provider counts by its level (error or critical = problems found).
+    /// any unknown event from the provider with warning, error, or critical level counts as problems found rather than assuming a pass.
     /// </summary>
     public static OfflineMemoryResult? FromEvent(WinEvent e)
     {
         if (!e.Provider.Equals(Provider, StringComparison.OrdinalIgnoreCase)) return null;
-        var outcome = e.EventId switch
+        OfflineMemoryOutcome? outcome = e.EventId switch
         {
             1101 or 1201 => OfflineMemoryOutcome.NoErrors,
             1102 or 1202 => OfflineMemoryOutcome.Errors,
-            _ => e.Level is 1 or 2 ? OfflineMemoryOutcome.Errors : OfflineMemoryOutcome.NoErrors,
+            _ when e.Level is 1 or 2 or 3 => OfflineMemoryOutcome.Errors,
+            _ => null,
         };
-        return new(outcome, e.Time.ToUniversalTime(), e.EventId, e.ShortMessage);
+        return outcome is { } o ? new(o, e.Time.ToUniversalTime(), e.EventId, e.ShortMessage) : null;
     }
 
     public static OfflineMemoryResult? Latest(IEnumerable<WinEvent>? events) =>
@@ -116,13 +117,20 @@ public sealed record OfflineMemoryState(
 public sealed class OfflineMemoryDiagnostic(IMemoryDiagnosticSource source, WindowsEventLog events, Func<RemediationService?>? remediation = null,
     ILogger? log = null, Func<DateTimeOffset>? clock = null)
 {
-    /// <summary>After this long since the restart without a result, the test counts as not run (Windows writes it soon after sign-in).</summary>
+    /// <summary>After this long since the later of boot and sign-in/first check without a result, the test counts as not run.</summary>
     public static readonly TimeSpan ResultGrace = TimeSpan.FromMinutes(20);
+
+    /// <summary>Shown when Fast Startup is enabled (Shut down + power on skips the boot test; Restart is required).</summary>
+    public static readonly OfflineMemoryWarning FastStartupWarning = new("fast-startup",
+        "Fast Startup is on, so Shut down and then turning the PC on skips the test. Use Restart.", false);
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private OfflineMemoryState _state = OfflineMemoryState.Initial;
     private DateTimeOffset? _restartScheduledUtc;
     private DateTimeOffset? _completedRequestUtc;
+    private DateTimeOffset? _notRunRequestUtc;
+    private DateTimeOffset? _firstSeenAfterBootUtc;
+    private DateTimeOffset? _firstSeenRequestUtc;
 
     public OfflineMemoryState State => _state;
     public event EventHandler? Changed;
@@ -147,7 +155,29 @@ public sealed class OfflineMemoryDiagnostic(IMemoryDiagnosticSource source, Wind
             {
                 // Matched: the request is finished. The Agent drops it (its test mix is already back).
                 _completedRequestUtc = requested;
+                _notRunRequestUtc = null;
+                _firstSeenAfterBootUtc = null;
+                _firstSeenRequestUtc = null;
                 log.Info($"Memory test: boot test result {result!.Outcome} at {result.TimeUtc:O} for the request of {requested:O}");
+                var cleared = await source.RunAsync(["clear"], ct).ConfigureAwait(false);
+                if (cleared.Answer is { } after) state = state with { Agent = after };
+            }
+            else if (state.Phase == OfflineMemoryPhase.NotRun && reply.Answer?.RequestedAtUtc is { } notRunReq)
+            {
+                // Grace elapsed without a result: keep NotRun for this session, and clear memdiag.json so future sessions don't stay stuck.
+                _notRunRequestUtc = notRunReq;
+                _firstSeenAfterBootUtc = null;
+                _firstSeenRequestUtc = null;
+                log.Info($"Memory test: no boot test result arrived for the request of {notRunReq:O}; clearing saved request");
+                var cleared = await source.RunAsync(["clear"], ct).ConfigureAwait(false);
+                if (cleared.Answer is { } after) state = state with { Agent = after };
+            }
+            else if (state.Phase == OfflineMemoryPhase.Idle && reply.Answer is { Scheduled: false, RequestedAtUtc: { } removedReq, BootTimeUtc: { } boot } && boot <= removedReq)
+            {
+                // External BCD removal before any reboot: clear the stale saved request so a later reboot won't falsely report NotRun.
+                _firstSeenAfterBootUtc = null;
+                _firstSeenRequestUtc = null;
+                log.Info($"Memory test: boot test request of {removedReq:O} was removed outside this app; clearing saved request");
                 var cleared = await source.RunAsync(["clear"], ct).ConfigureAwait(false);
                 if (cleared.Answer is { } after) state = state with { Agent = after };
             }
@@ -177,10 +207,28 @@ public sealed class OfflineMemoryDiagnostic(IMemoryDiagnosticSource source, Wind
         {
             if (result is not null && result.TimeUtc > requested) return new(OfflineMemoryPhase.Done, a, result);
             if (a.BootTimeUtc is { } boot && boot > requested)
-                return new(now - boot > ResultGrace ? OfflineMemoryPhase.NotRun : OfflineMemoryPhase.WaitingForResult, a, result);
+            {
+                if (_firstSeenRequestUtc != requested)
+                {
+                    _firstSeenRequestUtc = requested;
+                    _firstSeenAfterBootUtc = now;
+                }
+                var graceStart = _firstSeenAfterBootUtc is { } seen && seen > boot ? seen : boot;
+                return new(now - graceStart > ResultGrace ? OfflineMemoryPhase.NotRun : OfflineMemoryPhase.WaitingForResult, a, result);
+            }
         }
         // A result already matched in this session stays the run's result.
         if (_completedRequestUtc is { } done && result is not null && result.TimeUtc > done) return new(OfflineMemoryPhase.Done, a, result);
+        if (_notRunRequestUtc is { } notRun)
+        {
+            if (result is not null && result.TimeUtc > notRun)
+            {
+                _completedRequestUtc = notRun;
+                _notRunRequestUtc = null;
+                return new(OfflineMemoryPhase.Done, a, result);
+            }
+            return new(OfflineMemoryPhase.NotRun, a, result);
+        }
         return new(OfflineMemoryPhase.Idle, a, result, Message: message);
     }
 
@@ -195,7 +243,7 @@ public sealed class OfflineMemoryDiagnostic(IMemoryDiagnosticSource source, Wind
             list.Add(new("bitlocker-key", "BitLocker is on. The test doesn't normally ask for the recovery key, but make sure you know where it is "
                 + "saved (for a Microsoft account: aka.ms/myrecoverykey) before you restart. This app can't see whether it was backed up.", false));
         if (a?.FastStartup == true && when == OfflineMemoryWhen.NextRestart)
-            list.Add(new("fast-startup", "Fast Startup is on, so Shut down and then turning the PC on skips the test. Use Restart.", false));
+            list.Add(FastStartupWarning);
         if (mix == OfflineMemoryMix.Extended)
             list.Add(new("extended-long", "The extended test can take several hours on a PC with a lot of memory. Keep it plugged in.", false));
         return list;
@@ -221,6 +269,9 @@ public sealed class OfflineMemoryDiagnostic(IMemoryDiagnosticSource source, Wind
                 return failed;
             }
             _completedRequestUtc = null;
+            _notRunRequestUtc = null;
+            _firstSeenAfterBootUtc = null;
+            _firstSeenRequestUtc = null;
         }
         finally { _gate.Release(); }
 
@@ -289,8 +340,13 @@ public static class OfflineMemoryExport
     public static string Mix(OfflineMemoryMix m) => AgentMemoryDiagnostic.MixArg(m);
     public static string When(OfflineMemoryWhen w) => w == OfflineMemoryWhen.Now ? "now" : "next";
 
-    public static string ToJson(OfflineMemoryState s, OfflineMemoryMix mix, OfflineMemoryWhen when, bool confirming) =>
-        JsonSerializer.Serialize(new
+    public static string ToJson(OfflineMemoryState s, OfflineMemoryMix mix, OfflineMemoryWhen when, bool confirming)
+    {
+        var warnings = OfflineMemoryDiagnostic.Warnings(s.Agent, when, mix).ToList();
+        if (s.Agent?.FastStartup == true && warnings.All(w => w.Id != OfflineMemoryDiagnostic.FastStartupWarning.Id))
+            warnings.Add(OfflineMemoryDiagnostic.FastStartupWarning);
+
+        return JsonSerializer.Serialize(new
         {
             schema = 1,
             phase = Phase(s.Phase),
@@ -312,8 +368,9 @@ public static class OfflineMemoryExport
             bitLockerOn = s.Agent?.BitLockerOn,
             recoveryPassword = s.Agent?.RecoveryPassword,
             fastStartup = s.Agent?.FastStartup,
-            warnings = OfflineMemoryDiagnostic.Warnings(s.Agent, when, mix).Select(w => new { id = w.Id, text = w.Text, serious = w.Serious }).ToList(),
+            warnings = warnings.Select(w => new { id = w.Id, text = w.Text, serious = w.Serious }).ToList(),
             error = AreaReportExport.Text(s.Error, AreaReportExport.MaxTextLength),
             message = AreaReportExport.Text(s.Message, AreaReportExport.MaxTextLength),
         }, Json);
+    }
 }

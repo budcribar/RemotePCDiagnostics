@@ -316,17 +316,68 @@ public sealed class OfflineMemoryDiagnosticTests : IDisposable
         var old = ResultEvent(1201, 4, "2026-10-01T10:20:00.0000000Z", "older run");
         var boot = Requested.AddMinutes(5);
         var answer = new MemoryDiagnosticAnswer { RequestedAtUtc = Requested, Mix = OfflineMemoryMix.Standard, BootTimeUtc = boot };
+        var now = boot.AddMinutes(3);
 
-        var (soon, s1) = Make(old, boot.AddMinutes(3));
-        s1.Status = new(answer, null);
-        Assert.Equal(OfflineMemoryPhase.WaitingForResult, (await soon.RefreshAsync()).Phase);
+        var launcher = new ScriptedLauncher((file, _) => file == "wevtutil.exe" ? ScriptedLauncher.Ok(old) : ScriptedLauncher.Fail());
+        var source = new FakeSource { Status = new(answer, null) };
+        var diag = new OfflineMemoryDiagnostic(source, new WindowsEventLog(new SystemCommandRunner(launcher)), clock: () => now);
 
-        var (later, s2) = Make(old, boot + OfflineMemoryDiagnostic.ResultGrace + TimeSpan.FromMinutes(1));
-        s2.Status = new(answer, null);
-        var s = await later.RefreshAsync();
+        Assert.Equal(OfflineMemoryPhase.WaitingForResult, (await diag.RefreshAsync()).Phase);
+        Assert.DoesNotContain("clear", source.Calls);
+
+        // Once ResultGrace elapses after first check, it marks NotRun and clears memdiag.json so future sessions aren't stuck.
+        now = now + OfflineMemoryDiagnostic.ResultGrace + TimeSpan.FromMinutes(1);
+        var s = await diag.RefreshAsync();
         Assert.Equal(OfflineMemoryPhase.NotRun, s.Phase);
         Assert.True(s.CanSchedule);
-        Assert.DoesNotContain("clear", s2.Calls);
+        Assert.Contains("clear", source.Calls);
+
+        // Current session keeps showing NotRun even after memdiag.json is cleared.
+        Assert.Equal(OfflineMemoryPhase.NotRun, (await diag.RefreshAsync()).Phase);
+    }
+
+    [Fact]
+    public async Task Sitting_at_lock_screen_past_grace_still_waits_after_sign_in()
+    {
+        var old = ResultEvent(1201, 4, "2026-10-01T10:20:00.0000000Z", "older run");
+        var boot = Requested.AddMinutes(5);
+        var answer = new MemoryDiagnosticAnswer { RequestedAtUtc = Requested, Mix = OfflineMemoryMix.Standard, BootTimeUtc = boot };
+        // User signed in 2 hours after the 2nd restart.
+        var now = boot.AddHours(2);
+
+        var launcher = new ScriptedLauncher((file, _) => file == "wevtutil.exe" ? ScriptedLauncher.Ok(old) : ScriptedLauncher.Fail());
+        var source = new FakeSource { Status = new(answer, null) };
+        var diag = new OfflineMemoryDiagnostic(source, new WindowsEventLog(new SystemCommandRunner(launcher)), clock: () => now);
+
+        Assert.Equal(OfflineMemoryPhase.WaitingForResult, (await diag.RefreshAsync()).Phase);
+
+        now = now.AddMinutes(10);
+        Assert.Equal(OfflineMemoryPhase.WaitingForResult, (await diag.RefreshAsync()).Phase);
+
+        now = now + OfflineMemoryDiagnostic.ResultGrace;
+        Assert.Equal(OfflineMemoryPhase.NotRun, (await diag.RefreshAsync()).Phase);
+        Assert.Contains("clear", source.Calls);
+    }
+
+    [Fact]
+    public async Task External_bcd_removal_before_reboot_clears_saved_request()
+    {
+        var (diag, source) = Make("", Requested.AddMinutes(5));
+        source.Status = new(new MemoryDiagnosticAnswer { Scheduled = false, RequestedAtUtc = Requested, Mix = OfflineMemoryMix.Standard, BootTimeUtc = Requested.AddHours(-1) }, null);
+
+        var s = await diag.RefreshAsync();
+        Assert.Equal(OfflineMemoryPhase.Idle, s.Phase);
+        Assert.Contains("clear", source.Calls);
+    }
+
+    [Fact]
+    public void Unknown_event_ids_never_map_to_no_errors()
+    {
+        var warn = new WinEvent(DateTimeOffset.UtcNow, "System", OfflineMemoryResult.Provider, 1999, 3, "Unexpected warning", [], new Dictionary<string, string>());
+        Assert.Equal(OfflineMemoryOutcome.Errors, OfflineMemoryResult.FromEvent(warn)?.Outcome);
+
+        var info = new WinEvent(DateTimeOffset.UtcNow, "System", OfflineMemoryResult.Provider, 1999, 4, "Unexpected info", [], new Dictionary<string, string>());
+        Assert.Null(OfflineMemoryResult.FromEvent(info));
     }
 
     [Fact]
@@ -340,6 +391,12 @@ public sealed class OfflineMemoryDiagnosticTests : IDisposable
         var withKey = OfflineMemoryDiagnostic.Warnings(new MemoryDiagnosticAnswer { BitLockerOn = true, RecoveryPassword = true, FastStartup = true },
             OfflineMemoryWhen.Now, OfflineMemoryMix.Standard);
         Assert.Equal(["bitlocker-key"], withKey.Select(w => w.Id));
+
+        // JSON export always surfaces fast-startup when enabled, even for default when="now".
+        var exported = OfflineMemoryExport.ToJson(
+            new OfflineMemoryState(OfflineMemoryPhase.Idle, new MemoryDiagnosticAnswer { FastStartup = true }, null),
+            OfflineMemoryMix.Standard, OfflineMemoryWhen.Now, false);
+        Assert.Contains("\"fast-startup\"", exported);
 
         Assert.Empty(OfflineMemoryDiagnostic.Warnings(new MemoryDiagnosticAnswer { BitLockerOn = false, FastStartup = false }, OfflineMemoryWhen.NextRestart, OfflineMemoryMix.Standard));
     }
