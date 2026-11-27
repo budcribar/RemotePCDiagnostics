@@ -33,8 +33,8 @@ public static class InteractiveExport
     private static string? T(string? v) => AreaReportExport.Text(v, AreaReportExport.MaxTextLength);
 
     public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
-        ModuleState? soundCheck = null, SoundCheckHelp? help = null) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help), Json);
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? charger = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, charger), Json);
 
     /// <summary>The Sound check pane's helper lists: what it shows and why (Can't hear sound, or only one side heard).</summary>
     /// <param name="Mode">"cant-hear", "one-side" or null when no list shows.</param>
@@ -42,7 +42,7 @@ public static class InteractiveExport
     public sealed record SoundCheckHelp(string? Mode, bool Reading, IReadOnlyList<SoundCheckStep> Steps, bool ServicesOk);
 
     public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
-        ModuleState? soundCheck = null, SoundCheckHelp? help = null) => new
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? charger = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -60,6 +60,7 @@ public static class InteractiveExport
             SpeakerToMicTest(page, speakerToMic),
             MicToSpeakerTest(page, micToSpeaker),
             SoundCheckTest(page, soundCheck ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.SoundCheck), false), help),
+            ChargerTest(page, charger ?? DiagnosticResult.NotRun(ModuleSlugs.ChargerReplug)),
         },
     };
 
@@ -256,6 +257,40 @@ public static class InteractiveExport
         };
     }
 
+    /// <summary>The charger replug test: measured only (Windows saw each change or not), with no verdict a person enters.</summary>
+    private static object ChargerTest(PageState page, DiagnosticResult r)
+    {
+        var rep = r.Payload as ChargerReplugReport;
+        static double? Secs(TimeSpan? t) => t is { } v ? Math.Round(v.TotalSeconds, 1) : null;
+        return new
+        {
+            id = "charger",
+            name = "Charger replug",
+            @checked = page.CheckedTestIds.Contains("charger"),
+            open = page.SelectedTestId == "charger",
+            state = r.Status == DiagnosticStatus.Running ? "running" : rep is not null ? "done" : "waiting-for-person",
+            runId = r.RunId,
+            // While running, the message is the step the person is asked to do now ("Unplug the charger now.").
+            step = r.Status == DiagnosticStatus.Running ? T(r.Message) : null,
+            measured = rep is null ? null : new
+            {
+                outcome = rep.Outcome.ToString(),
+                unplugSeenAfterSeconds = Secs(rep.UnplugSeenAfter),
+                plugSeenAfterSeconds = Secs(rep.PlugSeenAfter),
+                startedCharging = rep.StartedCharging,
+                batteryPercent = rep.Percent,
+            },
+            result = r.Status == DiagnosticStatus.Running || rep is null ? null
+                : rep.RunEnd == RunEnd.CouldNotRun ? "not-applicable"
+                : r.Status switch { DiagnosticStatus.Ok => "passed", DiagnosticStatus.Error => "failed", _ => "warning" },
+            message = T(r.Message),
+            instructions = $"Press Start replug test with the charger plugged in. When asked, unplug the charger, then plug it back in: Windows "
+                + $"must see each change within {ChargerReplug.StepWindow.TotalSeconds:0} seconds, and the battery must start charging "
+                + "(a full battery passes). RPCD decides the result; the person only follows the prompts.",
+            reportIf = ReportIf.Charger,
+        };
+    }
+
     /// <summary>
     /// When an agent coaching a test should report a learning (Admin's report_learning tool): the test's instructions or screen did not
     /// match what the person has. One line each, written for the agent, not the person.
@@ -272,6 +307,8 @@ public static class InteractiveExport
             + "the test cannot start.";
         public const string SoundCheck = "The person hears the chime on the wrong side, hears nothing although the Can't hear sound list is "
             + "empty, or the list shows a problem the person doesn't have.";
+        public const string Charger = "The person unplugged or plugged in the charger but the test didn't see it, the battery charged but "
+            + "the test said it didn't, or the PC charges only from a dock the test doesn't account for.";
         public const string MicToSpeaker = "The person's microphone or speaker is not listed, there is no playback, or feedback makes the test "
             + "unusable.";
     }

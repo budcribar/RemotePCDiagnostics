@@ -25,6 +25,9 @@
     var scResult = Store.Get(ModuleSlugs.SoundCheck);
     var scRep = scResult.Payload as SoundCheckReport;
     var scRunning = scResult.Status == DiagnosticStatus.Running;
+    var chResult = Store.Get(ModuleSlugs.ChargerReplug);
+    var chRep = chResult.Payload as ChargerReplugReport;
+    var chRunning = chResult.Status == DiagnosticStatus.Running;
     var soundResult = Store.Get(ModuleSlugs.Sound);
     var soundRep = soundResult.Report() as AreaReport;
     var soundReading = soundResult.Status == DiagnosticStatus.Running;
@@ -32,14 +35,14 @@
     var scServicesOk = soundRep is not null && SoundCheck.ServicesOk(soundRep);
 
     var kbSnap = ActivePhysicalQa.Current;
-    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning || scRunning;
+    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning || scRunning || chRunning;
 
     var allSelected = _selected.Count == AllTestIds.Length;
     var mixedSelected = _selected.Count > 0 && _selected.Count < AllTestIds.Length;
 }
 
 <div class="ct-page">
-    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk))" />
+    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), chResult)" />
     <div class="toolbar">
         <span class="icon-badge page-icon"><Icon Name="eye" Size="20" /></span>
         <h1 data-rpcd-page="interactive" data-rpcd-contract="@BrowserContract.Interactive" data-testid="interactive-title">Interactive tests</h1>
@@ -262,6 +265,32 @@
                         </div>
                         <div class="ct-row-side">
                             <span class="chip chip-@scChip" data-testid="interactive-status-soundcheck">@scLabel</span>
+                        </div>
+                    </div>
+
+                    @* 7. Charger replug: unplug, then plug back in *@
+                    @{
+                        var chIsSel = _selectedTestId == "charger";
+                        var chNa = chRep?.RunEnd == RunEnd.CouldNotRun;
+                        var chChip = chNa ? "na" : OutcomeChip(chResult.Status);
+                        var chLabel = chNa ? "Not applicable" : OutcomeLabel(chResult.Status);
+                        var chSummary = chResult.Status == DiagnosticStatus.NotRun ? "Unplug and plug back in the charger; Windows must see both" : chResult.Message;
+                    }
+                    <div class="ct-row @(chIsSel ? "selected" : "") @(chRunning ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(chIsSel ? "true" : "false")"
+                         data-testid="interactive-row-charger" @onclick='() => SelectTest("charger")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("charger") ? "true" : "false")"
+                                aria-label="Include Charger replug test"
+                                data-testid="interactive-check-charger"
+                                @onclick='() => ToggleItem("charger")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("charger") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@(chNa ? "na" : DotKind(chResult.Status))"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">Charger replug</div>
+                            <div class="ct-row-summary meta" title="@chSummary">@chSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@chChip" data-testid="interactive-status-charger">@chLabel</span>
                         </div>
                     </div>
                 </div>
@@ -718,6 +747,47 @@
                     </div>
                 </div>
             }
+            else if (_selectedTestId == "charger")
+            {
+                var chNaPane = chRep?.RunEnd == RunEnd.CouldNotRun;
+                <div class="phys-qa-pane" data-testid="interactive-charger-pane">
+                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                        <strong>Charger replug</strong>
+                        <span class="chip chip-@(chNaPane ? "na" : OutcomeChip(chResult.Status))" data-testid="charger-status-chip">@(chNaPane ? "Not applicable" : OutcomeLabel(chResult.Status))</span>
+                        @if (chRunning)
+                        {
+                            <button type="button" class="btn-small" data-testid="charger-cancel-btn" @onclick="CancelCharger">Cancel</button>
+                        }
+                    </div>
+                    <p class="meta" style="margin-top: 0">
+                        With the charger plugged in, press Start. Unplug the charger when asked, then plug it back in. Windows must see each change
+                        within @ChargerReplug.StepWindow.TotalSeconds.ToString("0") seconds, and the battery must start charging. Nothing on the PC is changed.
+                    </p>
+                    <div class="toolbar">
+                        <button type="button" class="btn-small btn-primary" data-testid="charger-start-btn"
+                                disabled="@(chRunning || Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)"
+                                title="@(_isRemoteDisplay ? "The person at the PC has to unplug the charger" : null)" @onclick="StartChargerAsync">
+                            ▶ @(chResult.Status == DiagnosticStatus.NotRun ? "Start replug test" : "Run again")
+                        </button>
+                    </div>
+                    @if (chRunning)
+                    {
+                        <p class="notice" data-testid="charger-step" aria-live="assertive"><b>@chResult.Message</b></p>
+                    }
+                    else
+                    {
+                        <p data-testid="charger-status" class="status-line"><span class="@DotClass(chResult.Status)"></span><span>@(chResult.Status == DiagnosticStatus.NotRun ? "Not run. Press Start replug test to begin." : chResult.Message)</span></p>
+                    }
+                    @if (!chRunning && chRep is { } cr && !chNaPane)
+                    {
+                        <ul class="meta" data-testid="charger-measured">
+                            <li data-testid="charger-unplug-seen">Unplugged: @(cr.UnplugSeenAfter is { } u ? $"seen after {u.TotalSeconds:0.0} s" : "not seen")</li>
+                            <li data-testid="charger-plug-seen">Plugged back in: @(cr.PlugSeenAfter is { } pl ? $"seen after {pl.TotalSeconds:0.0} s" : "not seen")</li>
+                            <li data-testid="charger-charging">Charging: @(cr.StartedCharging == true ? "started" : cr.Percent is >= ChargerReplug.FullPercent ? $"battery full ({cr.Percent}%)" : cr.PlugSeenAfter is null ? "not checked" : "didn't start")</li>
+                        </ul>
+                    }
+                </div>
+            }
         </section>
     </div>
 </div>
@@ -726,8 +796,8 @@
     private readonly PhysicalBenchQaService _fallbackPhysicalQa = new();
     private PhysicalBenchQaService ActivePhysicalQa => App.PhysicalQa ?? _fallbackPhysicalQa;
 
-    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck"];
-    private readonly HashSet<string> _selected = new(["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck"], StringComparer.OrdinalIgnoreCase);
+    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "charger"];
+    private readonly HashSet<string> _selected = new(["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "charger"], StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Opens a test's pane from a link ("interactive?test=soundcheck"); help=cant-hear also opens the Can't hear sound list.</summary>
     [SupplyParameterFromQuery(Name = "test")] public string? TestQuery { get; set; }
@@ -756,10 +826,10 @@
 
     /// <summary>The page's state for browser agents (interactive-data): measured evidence and person-entered verdicts kept apart.</summary>
     private string InteractiveJson(RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaSnapshot kb, DiagnosticResult cam, DiagnosticResult s2m, DiagnosticResult m2s,
-        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help) =>
+        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, DiagnosticResult charger) =>
         InteractiveExport.ToJson(
             new InteractiveExport.PageState(_selectedTestId, _selected, _isBatchRunning, _isRemoteDisplay, Session.Mode == SessionMode.Remote || _hasRemoteSession, _technicianHasControl),
-            kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help);
+            kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help, charger);
 
     private IReadOnlyList<AudioDevice> _outputs = [];
     private IReadOnlyList<AudioDevice> _inputs = [];
@@ -943,6 +1013,9 @@
                     case "soundcheck":
                         await StartSoundCheckAsync();
                         break;
+                    case "charger":
+                        await StartChargerAsync();
+                        break;
                 }
             }
         }
@@ -964,6 +1037,7 @@
         CancelSpeakerToMic();
         CancelMicToSpeaker();
         CancelSoundCheck();
+        CancelCharger();
         Diagnostics.CancelStressSuite();
     }
 
@@ -1019,6 +1093,18 @@
     }
 
     private void CancelSoundCheck() => GetSoundCheckModule()?.Cancel();
+
+    private OnDemandModuleBase? GetChargerModule() =>
+        Diagnostics.Modules.FirstOrDefault(m => string.Equals(m.Name, ModuleSlugs.ChargerReplug, StringComparison.OrdinalIgnoreCase)) as OnDemandModuleBase
+        ?? (Diagnostics.Catalog.Find(ModuleSlugs.ChargerReplug) is { } d ? Diagnostics.Catalog.ModuleFor(d.Id) as OnDemandModuleBase : null);
+
+    private async Task StartChargerAsync()
+    {
+        if (Diagnostics.IsStressSuiteRunning || _isRemoteDisplay) return;
+        await Diagnostics.RunAsync(ModuleSlugs.ChargerReplug);
+    }
+
+    private void CancelCharger() => GetChargerModule()?.Cancel();
 
     /// <summary>Records what the person heard. Only one side opens the balance list; Nothing opens Can't hear sound.</summary>
     private async Task AnswerSoundCheckAsync(SoundCheckAnswer answer)
