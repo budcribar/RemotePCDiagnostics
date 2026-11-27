@@ -268,7 +268,10 @@ public static class InteractiveExport
             name = "Charger replug",
             @checked = page.CheckedTestIds.Contains("charger"),
             open = page.SelectedTestId == "charger",
-            state = r.Status == DiagnosticStatus.Running ? "running" : rep is not null ? "done" : "waiting-for-person",
+            state = r.Status == DiagnosticStatus.Running ? "running"
+                : r.Cancelled ? "cancelled"
+                : rep is not null ? "done"
+                : "waiting-for-person",
             runId = r.RunId,
             // While running, the message is the step the person is asked to do now ("Unplug the charger now.").
             step = r.Status == DiagnosticStatus.Running ? T(r.Message) : null,
@@ -280,7 +283,9 @@ public static class InteractiveExport
                 startedCharging = rep.StartedCharging,
                 batteryPercent = rep.Percent,
             },
-            result = r.Status == DiagnosticStatus.Running || rep is null ? null
+            result = r.Status == DiagnosticStatus.Running ? null
+                : r.Cancelled ? "cancelled"
+                : rep is null ? null
                 : rep.RunEnd == RunEnd.CouldNotRun ? "not-applicable"
                 : r.Status switch { DiagnosticStatus.Ok => "passed", DiagnosticStatus.Error => "failed", _ => "warning" },
             message = T(r.Message),

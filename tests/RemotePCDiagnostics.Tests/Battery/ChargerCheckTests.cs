@@ -110,10 +110,29 @@ public sealed class ChargerCheckTests
     [Fact]
     public void A_usb_c_connector_manager_problem_warns()
     {
-        var card = ChargerCheck.Card([OnAc], Reading(usbC: [new("UCM-UCSI ACPI Device", "Error", 10)]));
+        var reading = Reading(usbC: [new("UCM-UCSI ACPI Device", "Error", 10)]);
+        var card = ChargerCheck.Card([OnAc], reading);
         Assert.Equal(AreaLevel.Warning, card.Level);
+        Assert.Equal("USB-C port issue", card.Headline);
+        Assert.Equal("USB-C port issue", Row(card, "state"));
         Assert.Equal(AreaLevel.Warning, card.Rows[0].Level);
         Assert.Contains("Code 10", Row(card, "usbc-device"));
+
+        var report = BatteryPowerModule.Build([OnAc], "Balanced", charger: reading);
+        Assert.Contains("charger usb-c port issue", report.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("charger ok", report.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Zero_charge_or_discharge_rate_does_not_print_zero_watts()
+    {
+        var zeroCharge = OnAc with { ChargeRateMw = 0 };
+        var card = ChargerCheck.Card([zeroCharge], Reading());
+        Assert.Equal("Yes", Row(card, "charging"));
+
+        var zeroDischarge = OnAc with { IsCharging = false, IsDischarging = true, ChargeRateMw = null, DischargeRateMw = 0 };
+        var drainCard = ChargerCheck.Card([zeroDischarge], Reading(), dischargingOnAc: true);
+        Assert.Equal("No, the battery is draining", Row(drainCard, "charging"));
     }
 
     [Fact]
@@ -130,15 +149,29 @@ public sealed class ChargerCheckTests
         var wmi = new FakeWmi((_, q) => q == ChargerCheck.AdapterSql
             ? new WmiQueryResult(@"root\cimv2", q, [WmiRow.From([new("Name", "Microsoft AC Adapter"), new("Status", "OK"), new("ConfigManagerErrorCode", 0)])])
             : new WmiQueryResult(@"root\cimv2", q, []));
-        const string sys = """
+        const string powerXml = """
             <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><System><Provider Name="Microsoft-Windows-Kernel-Power"/><EventID>105</EventID><Level>4</Level><TimeCreated SystemTime="2026-11-05T20:15:20.000Z"/><Channel>System</Channel></System><EventData><Data Name="AcOnline">true</Data><Data Name="RemainingCapacity">39560</Data><Data Name="FullChargeCapacity">39670</Data></EventData></Event>
             <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><System><Provider Name="Microsoft-Windows-Kernel-Power"/><EventID>105</EventID><Level>4</Level><TimeCreated SystemTime="2026-11-05T20:15:19.000Z"/><Channel>System</Channel></System><EventData><Data Name="AcOnline">false</Data></EventData></Event>
+            """;
+        const string fwXml = """
             <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><System><Provider Name="Microsoft-Windows-Kernel-Processor-Power"/><EventID>37</EventID><Level>3</Level><TimeCreated SystemTime="2026-11-05T21:00:00.000Z"/><Channel>System</Channel></System><EventData><Data>0</Data></EventData></Event>
             """;
-        var launcher = new ScriptedLauncher((file, args) => file == "wevtutil.exe" && args[1] == "System" ? ScriptedLauncher.Ok(sys) : ScriptedLauncher.Fail("The specified channel could not be found."));
+        var systemQueries = 0;
+        var launcher = new ScriptedLauncher((file, args) =>
+        {
+            if (file == "wevtutil.exe" && args[1] == "System")
+            {
+                systemQueries++;
+                var queryArg = string.Join(" ", args);
+                if (queryArg.Contains("EventID=105")) return ScriptedLauncher.Ok(powerXml);
+                if (queryArg.Contains("EventID=37")) return ScriptedLauncher.Ok(fwXml);
+            }
+            return ScriptedLauncher.Fail("The specified channel could not be found.");
+        });
 
         var r = await ChargerCheck.ReadAsync(wmi, new WindowsEventLog(new SystemCommandRunner(launcher)), TestContext.Current.CancellationToken);
 
+        Assert.Equal(2, systemQueries);
         Assert.Equal([GoodAdapter], r.Adapters);
         Assert.Empty(r.UsbC!);
         Assert.Equal([true, false], r.SourceChanges!.Select(c => c.AcOnline));
@@ -149,12 +182,17 @@ public sealed class ChargerCheckTests
     }
 
     [Fact]
-    public void The_system_query_asks_for_power_source_and_firmware_limit_events()
+    public void The_system_queries_ask_for_power_source_and_firmware_limit_events_separately()
     {
-        var q = ChargerCheck.SystemEventQuery(7);
-        Assert.Contains("Microsoft-Windows-Kernel-Power'] and EventID=105", q);
-        Assert.Contains("Microsoft-Windows-Kernel-Processor-Power'] and EventID=37", q);
-        Assert.Contains("604800000", q);
+        var powerQuery = ChargerCheck.SourceChangeQuery(7);
+        Assert.Contains("Microsoft-Windows-Kernel-Power'] and EventID=105", powerQuery);
+        Assert.DoesNotContain("EventID=37", powerQuery);
+        Assert.Contains("604800000", powerQuery);
+
+        var fwQuery = ChargerCheck.FirmwareLimitQuery(7);
+        Assert.Contains("Microsoft-Windows-Kernel-Processor-Power'] and EventID=37", fwQuery);
+        Assert.DoesNotContain("EventID=105", fwQuery);
+        Assert.Contains("604800000", fwQuery);
     }
 
     private sealed class FakeWmi(Func<string, string, WmiQueryResult> answer) : IWmiSource

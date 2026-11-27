@@ -36,7 +36,7 @@ public sealed class ChargerReplugTests
         var rep = Assert.IsType<ChargerReplugReport>(r.Payload);
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
         Assert.Equal(ReplugOutcome.Passed, rep.Outcome);
-        Assert.Equal(TimeSpan.FromSeconds(2), rep.UnplugSeenAfter);
+        Assert.Equal(TimeSpan.FromSeconds(2) + ChargerReplug.Poll, rep.UnplugSeenAfter);
         Assert.Equal(TimeSpan.FromSeconds(3), rep.PlugSeenAfter);
         Assert.True(rep.StartedCharging);
         Assert.Equal([ChargerReplug.UnplugPrompt, ChargerReplug.PlugBackPrompt, ChargerReplug.ChargingPrompt], prompts);
@@ -52,9 +52,21 @@ public sealed class ChargerReplugTests
     }
 
     [Fact]
-    public async Task An_unplug_windows_never_sees_fails()
+    public async Task An_unplug_windows_never_sees_fails_without_overshooting_the_window()
     {
-        var (r, _) = await RunAsync(new ScriptedPower(_ => Ac));
+        var power = new ScriptedPower(_ => Ac);
+        var (r, _) = await RunAsync(power);
+        Assert.Equal(DiagnosticStatus.Error, r.Status);
+        Assert.Equal(ReplugOutcome.UnplugNotSeen, ((ChargerReplugReport)r.Payload!).Outcome);
+        Assert.Equal(ChargerReplug.StepWindow, power.Now);
+    }
+
+    [Fact]
+    public async Task A_single_transient_poll_glitch_does_not_count_as_an_unplug()
+    {
+        // A single 250 ms dip to battery at t = 1 s, then back on AC forever.
+        var power = new ScriptedPower(t => t == TimeSpan.FromSeconds(1) ? Battery : Ac);
+        var (r, _) = await RunAsync(power);
         Assert.Equal(DiagnosticStatus.Error, r.Status);
         Assert.Equal(ReplugOutcome.UnplugNotSeen, ((ChargerReplugReport)r.Payload!).Outcome);
     }
@@ -75,9 +87,30 @@ public sealed class ChargerReplugTests
         Assert.Equal(ReplugOutcome.NotCharging, ((ChargerReplugReport)notCharging.Result.Payload!).Outcome);
 
         PowerLineState full = new(true, false, 100), fullOff = new(false, false, 100);
-        var fullBattery = await RunAsync(new ScriptedPower(t => t < TimeSpan.FromSeconds(1) ? full : t < TimeSpan.FromSeconds(2) ? fullOff : full));
+        var fullPower = new ScriptedPower(t => t < TimeSpan.FromSeconds(1) ? full : t < TimeSpan.FromSeconds(2) ? fullOff : full);
+        var fullBattery = await RunAsync(fullPower);
         Assert.Equal(DiagnosticStatus.Ok, fullBattery.Result.Status);
         Assert.Contains("full", fullBattery.Result.Message);
+        // Full battery (>=95% on AC) passes promptly without stalling for the 15 s charging window.
+        Assert.True(fullPower.Now < TimeSpan.FromSeconds(4), $"Expected fast pass on full battery, took {fullPower.Now}");
+    }
+
+    [Fact]
+    public async Task Unplugging_during_step_4_at_full_battery_does_not_false_pass()
+    {
+        // Replug confirmed at t = 2.25 s (while briefly at 94% on AC so Step 4 doesn't exit on poll 0),
+        // then unplugged during Step 4 with battery at 95% (OnAc = false).
+        PowerLineState ac94 = new(true, false, 94), batt95 = new(false, false, 95);
+        var power = new ScriptedPower(t =>
+            t < TimeSpan.FromSeconds(1) ? ac94
+            : t < TimeSpan.FromSeconds(2) ? batt95
+            : t <= TimeSpan.FromSeconds(2) + ChargerReplug.Poll ? ac94
+            : batt95);
+        var (r, _) = await RunAsync(power);
+        var rep = Assert.IsType<ChargerReplugReport>(r.Payload);
+        Assert.Equal(DiagnosticStatus.Warning, r.Status);
+        Assert.Equal(ReplugOutcome.NotCharging, rep.Outcome);
+        Assert.False(rep.StartedCharging);
     }
 
     [Fact]

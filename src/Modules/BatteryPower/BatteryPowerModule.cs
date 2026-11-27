@@ -78,7 +78,7 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
         var policy = await source.ReadPowerPolicyAsync(ct).ConfigureAwait(false);
         if (batteries is null && plan is null) return AreaReport.Failed(FailedMessage);
         ChargerReading? charger = null;
-        if (batteries is { Count: > 0 })
+        if (batteries is not { Count: 0 })
         {
             try { charger = await source.ReadChargerAsync(ct).ConfigureAwait(false); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

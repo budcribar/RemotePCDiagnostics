@@ -74,11 +74,13 @@ public static class ChargerCheck
     public const string UsbCSql = "SELECT Name, Status, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE Name LIKE '%UCSI%'";
     public const string UsbCChannel = "Microsoft-Windows-USB-UCMUCSICX/Operational";
 
-    /// <summary>Kernel-Power 105 (power source change) and Kernel-Processor-Power 37 (speed limited by firmware) in the last <paramref name="days"/> days.</summary>
-    public static string SystemEventQuery(int days) =>
-        "*[System[((Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=105)"
-        + " or (Provider[@Name='Microsoft-Windows-Kernel-Processor-Power'] and EventID=37))"
-        + $" and TimeCreated[timediff(@SystemTime) <= {(long)days * 86_400_000}]]]";
+    /// <summary>Kernel-Power 105 (power source change) in the last <paramref name="days"/> days.</summary>
+    public static string SourceChangeQuery(int days) =>
+        $"*[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=105 and TimeCreated[timediff(@SystemTime) <= {(long)days * 86_400_000}]]]";
+
+    /// <summary>Kernel-Processor-Power 37 (speed limited by firmware) in the last <paramref name="days"/> days.</summary>
+    public static string FirmwareLimitQuery(int days) =>
+        $"*[System[Provider[@Name='Microsoft-Windows-Kernel-Processor-Power'] and EventID=37 and TimeCreated[timediff(@SystemTime) <= {(long)days * 86_400_000}]]]";
 
     public static string RecentQuery(int days) => $"*[System[TimeCreated[timediff(@SystemTime) <= {(long)days * 86_400_000}]]]";
 
@@ -98,12 +100,12 @@ public static class ChargerCheck
         IReadOnlyList<WinEvent>? limits = null, slow = null;
         if (events is not null)
         {
-            if (await events.QueryAsync("System", SystemEventQuery(EventDays), 400, ct).ConfigureAwait(false) is { } sys)
-            {
-                changes = sys.Where(e => e.EventId == 105 && e.Provider.EndsWith("Kernel-Power", StringComparison.OrdinalIgnoreCase))
+            // Query Event 105 and Event 37 separately so Event 37 bursts cannot starve 7-day Event 105 history.
+            if (await events.QueryAsync("System", SourceChangeQuery(EventDays), 400, ct).ConfigureAwait(false) is { } powerEvents)
+                changes = powerEvents.Where(e => e.EventId == 105 && e.Provider.EndsWith("Kernel-Power", StringComparison.OrdinalIgnoreCase))
                     .Select(e => new PowerSourceChange(e.Time, Flag(e.DataAt(0, "AcOnline")))).ToList();
-                limits = sys.Where(e => e.EventId == 37 && e.Provider.EndsWith("Kernel-Processor-Power", StringComparison.OrdinalIgnoreCase)).ToList();
-            }
+            if (await events.QueryAsync("System", FirmwareLimitQuery(EventDays), 200, ct).ConfigureAwait(false) is { } fwEvents)
+                limits = fwEvents.Where(e => e.EventId == 37 && e.Provider.EndsWith("Kernel-Processor-Power", StringComparison.OrdinalIgnoreCase)).ToList();
             // Only PCs with USB-C charging have this log; on others wevtutil fails and the row says "Not reported".
             if (await events.QueryAsync(UsbCChannel, RecentQuery(EventDays), 200, ct).ConfigureAwait(false) is { } ucm)
                 slow = ucm.Where(IsSlowChargerEvent).ToList();
@@ -206,8 +208,8 @@ public static class ChargerCheck
         {
             var charging = b0.IsCharging == true || b0.ChargeRateMw is > 0;
             Add("charging", "Charging", charging
-                ? b0.ChargeRateMw is { } mw ? $"Yes, at {Watts(mw)}" : "Yes"
-                : dischargingOnAc ? b0.DischargeRateMw is { } d ? $"No, the battery is draining at {Watts(d)}" : "No, the battery is draining"
+                ? b0.ChargeRateMw is > 0 and var mw ? $"Yes, at {Watts(mw)}" : "Yes"
+                : dischargingOnAc ? b0.DischargeRateMw is > 0 and var d ? $"No, the battery is draining at {Watts(d)}" : "No, the battery is draining"
                 : b0.PercentRemaining is >= 95 ? "No (battery full)" : "No", dischargingOnAc ? AreaLevel.Error : AreaLevel.Neutral);
         }
         if (heldBackOnAc && perf?.PerformanceLimitPercent is { } limit)
@@ -264,9 +266,10 @@ public static class ChargerCheck
         if (state == ChargerState.Ok && reading?.UsbC?.Any(u => u.HasProblem) == true)
         {
             level = AreaLevel.Warning;
+            headline = "USB-C port issue";
             meta = "Windows reports a problem with USB-C charging";
             note = "The USB-C connector manager has a problem in Device Manager, so charging over USB-C may not work. Update the chipset and USB-C (UCSI) drivers from the PC maker.";
-            rows[0] = rows[0] with { Level = level };
+            rows[0] = rows[0] with { Level = level, Values = [rows[0].Values[0], headline] };
         }
         return new(CardId, "Charger (AC adapter)", level, headline, meta, ["Detail", "Value"], rows, Note: note, PreserveRowOrder: true);
     }
