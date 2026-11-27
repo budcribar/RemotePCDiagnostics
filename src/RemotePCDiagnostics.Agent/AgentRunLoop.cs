@@ -26,6 +26,8 @@ internal static class AgentRunLoop
         if (OperatingSystem.IsWindows() && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(AgentLayout.ConfigPathEnvVar)))
             try { ProtectedStateFolder.Ensure(null); } catch { }
         try { AgentPaths.EnsureSessionsDirectory(); } catch { }
+        // A drive self-test that was running when the PC restarted or the Agent stopped: put its power settings back.
+        if (OperatingSystem.IsWindows()) RemotePCDiagnostics.Core.Storage.AgentDriveSelfTestHost.RecoverAtStart(RemotePCDiagnostics.Core.Logging.AppLoggerFactory.From(log).CreateLogger("DriveSelfTest"));
         // An in-app update may have replaced this service mid-way (Setup's Agent MSI step): bring the session's app back.
         try { platform.ResumePendingRelaunch(); } catch { }
         var publisher = new AgentStatusPublisher();

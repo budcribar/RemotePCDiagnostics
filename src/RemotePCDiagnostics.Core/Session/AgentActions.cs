@@ -185,6 +185,7 @@ public sealed partial class WindowsAgentNativeOps : IAgentNativeOps
                 SetCapturePrivacyAction privacy => Task.FromResult(SetCapturePrivacy(privacy)),
                 AudioServicesAction audio => RunAudioServicesAsync(audio.Verb, ct),
                 InstallDotNetSdkAction sdk => AgentDotNetSdkInstaller.InstallAsync(sdk.MajorVersion, ct),
+                Storage.DriveSelfTestAction selfTest => Task.FromResult(Storage.AgentDriveSelfTestHost.Run(selfTest)),
                 _ => RunOtherAsync(action, ct),
             };
         }

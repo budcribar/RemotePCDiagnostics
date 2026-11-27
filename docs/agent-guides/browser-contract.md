@@ -43,6 +43,7 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 | checks | 5 | Mark as reviewed on crash and event rows. `area-report-data` rows that can be reviewed carry `reviewId`, and each card lists its `reviewedRows` (rows a technician already marked, which the card no longer counts). In a card's drawer the row is `[data-action="review-expand"][data-card-id][data-review-id]` (click it to show its buttons), its button is `[data-action="review-row"][data-card-id][data-review-id]`, and the whole group's is `[data-action="review-group"][data-card-id]`. Both buttons carry `data-state` (`open` marks as reviewed, `reviewed` puts back). `area-show-reviewed` switches the drawer between rows that need review and reviewed rows (`data-state` `open` or `reviewed`). The check runs again after each change |
 | checks | 6 | Check profiles. `checks-report-data` gains top-level `profiles` (`id`, `name`, `summary`, `checks`, `active`) and a `profiles` list on each check. Each profile button `checks-profile-{id}` (`checks-profile-gamer`) sits in `checks-profiles` inside `checks-settings` and carries `aria-pressed`. A click adds or removes that profile and saves the whole on/off set in one update; with no profile left every available check is on, and turning a check on or off by hand clears the profiles |
 | stress | 1 | Same, including `stress-data` |
+| stress | 2 | Drive self-test options while `DriveSelfTest` is selected: `selftest-options` (`data-mode` short or extended), the `selftest-mode-short` and `selftest-mode-extended` radios, the `selftest-drives` table with one `selftest-drive` row per disk (`data-disk`, `data-supported`) and its `selftest-disk-{n}` checkbox, `selftest-loading`, `selftest-preview-error`, and the `selftest-data` JSON copy. See Drive self-test below |
 | interactive | 1 | Same, including `interactive-data` with `reportIf` hints |
 | security-audit | 1 | Same, including `audit-report-data` |
 | benchmark | 1 | Same, including `bench-report-data` |
@@ -201,6 +202,12 @@ run_benchmark
 ```
 
 If a named test is unavailable (no checkbox; `reason` on that `tests` row), `set_benchmark_tests` returns `invalid_argument` and changes nothing. Say why and leave the pass unstarted. An unavailable kind that is still saved as enabled has no checkbox to clear. When `settings.enabled` still contains it after the empty call, the list does not match, so leave the pass unstarted.
+
+## Drive self-test (`selftest-data`)
+
+`DriveSelfTest` is an on-demand long scan on the Stress tests page; Run all never starts it. With the check selected and not running, the detail panel shows `selftest-options`, and `[data-testid="selftest-data"]` holds JSON: `mode` (`short` or `extended`), `disks` (the chosen disk numbers, or null for every supported drive), `error` (why the drives could not be read, such as the Agent being missing), and `drives`, each with `disk`, `model`, `bus`, `supported`, `unsupported` (why not, such as a USB bridge or a RAID volume), `chosen`, `shortMinutes`, `extendedMinutes` (the drive's own estimates), `running`, `percentDone` and `lastResult` (the newest entry in the drive's self-test log).
+
+To start it, click `selftest-mode-short` or `selftest-mode-extended` and wait until `data-mode` on `selftest-options` matches, make each `selftest-disk-{n}` checkbox match the requested drives and wait until `chosen` agrees, then click `checks-run-one`. While it runs the controls are disabled and the scan's progress text names the drive, percent done and time left; `cancel-check` sends each drive the abort. The finished report is the generic one in `area-report-data`: one `disk-{n}` card per drive with that drive's self-test log, and the status Passed, Error (a failure, with the failing LBA and a link to `DriveHealth`) or Warning (aborted, interrupted, or a past failure in the log). Without the Agent the check is Skipped with "Needs the Agent". The Agent keeps the PC and its disks awake for the run and puts the power settings back afterwards.
 
 ## Hardware inventory report
 
