@@ -426,3 +426,16 @@ public class LhmSensorProviderElevationTests
         Assert.Null(result.Note);
     }
 }
+
+public class LhmCpuSupportTests
+{
+    // LHM's CPU group executes x86 CPUID; on ARM64 (Snapdragon laptops) Computer.Open() throws an SEHException
+    // and no sensor at all can be read, so the CPU group must stay off there.
+    [Theory]
+    [InlineData(System.Runtime.InteropServices.Architecture.X64, true)]
+    [InlineData(System.Runtime.InteropServices.Architecture.X86, true)]
+    [InlineData(System.Runtime.InteropServices.Architecture.Arm64, false)]
+    [InlineData(System.Runtime.InteropServices.Architecture.Arm, false)]
+    public void SupportsLhmCpu_OnlyOnX86AndX64(System.Runtime.InteropServices.Architecture arch, bool expected) =>
+        Assert.Equal(expected, LhmSensorProvider.SupportsLhmCpu(arch));
+}

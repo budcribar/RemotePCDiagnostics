@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using LibreHardwareMonitor.Hardware;
 using RemotePCDiagnostics.Core;
@@ -87,9 +88,12 @@ public sealed class LhmSensorProvider(
         try
         {
             var elevated = _isLocalElevated();
+            var cpuSupported = SupportsLhmCpu(RuntimeInformation.ProcessArchitecture);
+            if (!cpuSupported) _logger?.Info($"LibreHardwareMonitor CPU sensors skipped: they use x86 CPUID, which crashes in a {RuntimeInformation.ProcessArchitecture} process. CPU temperature comes from the ACPI thermal zone instead.");
             var c = new Computer
             {
-                IsCpuEnabled = true,
+                // LHM's CPU group runs x86 CPUID code; on ARM64 (Snapdragon) it throws an SEHException that aborts Open() for every device.
+                IsCpuEnabled = cpuSupported,
                 IsGpuEnabled = true,
                 // SuperIO / embedded-controller probes require ring-0 driver access; skip in un-elevated Store launches.
                 IsMotherboardEnabled = elevated,
@@ -103,6 +107,10 @@ public sealed class LhmSensorProvider(
         }
         catch (Exception ex) { _openError = ex.Message; _logger?.Error($"LibreHardwareMonitor open failed: {ex}"); }
     }
+
+    /// <summary>LibreHardwareMonitor's CPU sensors only work in x86/x64 processes (they execute the CPUID instruction).</summary>
+    public static bool SupportsLhmCpu(Architecture processArchitecture) =>
+        processArchitecture is Architecture.X64 or Architecture.X86;
 
     private static void Collect(IHardware hw, List<SensorReading> list)
     {
