@@ -63,10 +63,14 @@ public static class UsbAnalysis
         return parts.Count == 0 ? "Unknown port" : string.Join(" · ", parts);
     }
 
+    private static Dictionary<string, UsbNode> IndexById(IReadOnlyList<UsbNode> nodes) =>
+        nodes.GroupBy(n => n.Id, StringComparer.OrdinalIgnoreCase)
+             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
     /// <summary>The USB devices (not their functions, the controllers or the root hubs), each with its hub port.</summary>
     public static IReadOnlyList<UsbDeviceView> Devices(UsbSnapshot tree)
     {
-        var byId = tree.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
+        var byId = IndexById(tree.Nodes);
         return [.. tree.Nodes.Where(n => n.Kind is UsbNodeKind.Device or UsbNodeKind.Hub).Select(n =>
         {
             var hub = n.ParentId is { } p && byId.TryGetValue(p, out var h) && h.IsHub ? h : null;
@@ -116,7 +120,7 @@ public static class UsbAnalysis
     {
         if (before.Error is not null || after.Error is not null) return [];
         var still = after.Nodes.Select(n => n.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var byId = before.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
+        var byId = IndexById(before.Nodes);
         var gone = before.Nodes.Where(n => n.Kind == UsbNodeKind.Device && !still.Contains(n.Id)).ToList();
         // The hub itself still there: unplugging a hub or dock takes its devices with it, and that's the person, not a drop.
         return [.. gone.Select(n => (Node: n, Hub: ExternalHub(n, byId)))
@@ -143,7 +147,7 @@ public static class UsbAnalysis
             var failedPorts = FailedPorts(tree);
             AddDevices(cards, parts, devices, failedPorts);
             AddSpeed(cards, parts, devices);
-            AddHubs(cards, tree);
+            AddHubs(cards, parts, tree);
             AddDocks(cards, tree);
         }
         if (drops is { Count: > 0 }) AddDrops(cards, parts, drops);
@@ -219,7 +223,7 @@ public static class UsbAnalysis
         if (slow.Count > 0) parts.Add($"{Plural(slow.Count, "slow USB link")}");
     }
 
-    private static void AddHubs(List<AreaCard> cards, UsbSnapshot tree)
+    private static void AddHubs(List<AreaCard> cards, List<string> parts, UsbSnapshot tree)
     {
         var rows = new List<AreaRow>();
         foreach (var c in tree.Nodes.Where(n => n.Kind is UsbNodeKind.Controller or UsbNodeKind.RootHub or UsbNodeKind.Hub))
@@ -240,6 +244,7 @@ public static class UsbAnalysis
             bad > 0 ? $"{Plural(bad, "controller or hub")} with a problem" : $"{Plural(controllers, "USB controller")} working",
             "Ports in use counts the hub's ports with a device on them, including the hidden USB 2 half of each USB 3 port",
             ["Controller or hub", "Kind", "Type", "Ports in use", "Status"], rows, EmptyText: "No USB controllers were found.", PreserveRowOrder: true));
+        if (bad > 0) parts.Add($"{Plural(bad, "controller or hub")} with a problem");
     }
 
     private static readonly (string Word, string Kind)[] FunctionKinds =
@@ -248,7 +253,7 @@ public static class UsbAnalysis
 
     private static void AddDocks(List<AreaCard> cards, UsbSnapshot tree)
     {
-        var byId = tree.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
+        var byId = IndexById(tree.Nodes);
         // The top-most external hub of each chain: a dock's own hubs sit under it.
         var groups = tree.Nodes.Where(n => n.Kind is UsbNodeKind.Device or UsbNodeKind.Function)
             .Select(n => (Node: n, Hub: TopHub(n, byId)))
@@ -276,7 +281,13 @@ public static class UsbAnalysis
     private static UsbNode? TopHub(UsbNode n, IReadOnlyDictionary<string, UsbNode> byId)
     {
         UsbNode? top = null;
-        for (var hub = ExternalHub(n, byId); hub is not null; hub = ExternalHub(hub, byId)) top = hub;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < 20; i++)
+        {
+            var hub = ExternalHub(top ?? n, byId);
+            if (hub is null || !seen.Add(hub.Id)) break;
+            top = hub;
+        }
         return top;
     }
 

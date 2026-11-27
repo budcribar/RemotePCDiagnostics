@@ -288,14 +288,64 @@ public class UsbPortsTests
     [Fact]
     public void Scrubber_replaces_usb_serials_in_the_tree_and_keeps_the_links()
     {
-        var scrubbed = new RecordingScrubber("PC1", ["bud"]).Scrub(RecordedCall.FromUsb(Laptop()));
+        var usbStor = @"USBSTOR\DISK&VEN_SANDISK&PROD_ULTRA&REV_1.00\4C530001230815115453&0";
+        var withStor = Laptop() with
+        {
+            Nodes = [.. Laptop().Nodes, new(usbStor, Stick, UsbNodeKind.Function, "SanDisk Ultra USB Device", "DiskDrive")],
+        };
+        var scrubbed = new RecordingScrubber("PC1", ["bud"]).Scrub(RecordedCall.FromUsb(withStor));
         Assert.DoesNotContain("4C530001230815115453", scrubbed.StdOut);
         var tree = UsbSnapshot.FromJson(scrubbed.StdOut);
         var stick = tree.Nodes.Single(n => n.Name == "SanDisk Ultra USB 3.0");
+        var disk = tree.Nodes.Single(n => n.Name == "SanDisk Ultra USB Device");
         var root = tree.Nodes.Single(n => n.Kind == UsbNodeKind.RootHub);
         Assert.Equal(root.Id, stick.ParentId);
+        Assert.Equal(stick.Id, disk.ParentId);
+        Assert.StartsWith("<device:", disk.Id);
         Assert.Equal(Xhci, root.ParentId); // a PCI path holds no serial
         Assert.Equal(DiagnosticStatus.Ok, UsbAnalysis.Build(tree, [], null).Status);
+    }
+
+    [Fact]
+    public void SuperSpeedPlus_device_on_5Gbps_port_is_not_flagged_as_downgraded()
+    {
+        var port5Gbps = new UsbPortInfo(5, UsbPortStatus.Connected, UsbSpeed.Super, false,
+            SuperSpeedCapable: true, AtSuperSpeed: true, SuperSpeedPlusCapable: true, AtSuperSpeedPlus: false);
+        Assert.False(port5Gbps.SpeedDowngraded);
+        var ok = Build(Laptop(stickPort: port5Gbps));
+        Assert.Equal(DiagnosticStatus.Ok, ok.Status);
+        Assert.Empty(Card(ok, "speed").Rows);
+
+        var portUsb2 = new UsbPortInfo(5, UsbPortStatus.Connected, UsbSpeed.High, false,
+            SuperSpeedCapable: false, AtSuperSpeed: false, SuperSpeedPlusCapable: true, AtSuperSpeedPlus: false);
+        Assert.True(portUsb2.SpeedDowngraded);
+        var slow = Build(Laptop(stickPort: portUsb2));
+        Assert.Equal(DiagnosticStatus.Warning, slow.Status);
+        Assert.Single(Card(slow, "speed").Rows);
+    }
+
+    [Fact]
+    public void Cyclic_hubs_and_duplicate_node_ids_do_not_throw_or_hang()
+    {
+        var hubA = @"USB\VID_1111&PID_0001\HUBA";
+        var hubB = @"USB\VID_1111&PID_0002\HUBB";
+        var dev = @"USB\VID_1111&PID_0003\DEV1";
+        var cyclic = new UsbSnapshot([
+            Controller(),
+            new(hubA, hubB, UsbNodeKind.Hub, "Hub A", "USB"),
+            new(hubB, hubA, UsbNodeKind.Hub, "Hub B", "USB"),
+            new(hubA, hubB, UsbNodeKind.Hub, "Hub A duplicate", "USB"),
+            new(dev, hubA, UsbNodeKind.Device, "Device behind cycle", "USB"),
+        ]);
+
+        var report = Build(cyclic);
+        Assert.Equal(DiagnosticStatus.Ok, report.Status);
+        Assert.Single(Card(report, "docks").Rows);
+        Assert.Empty(UsbAnalysis.Drops(cyclic, cyclic, DateTimeOffset.UnixEpoch));
+
+        var failedController = Build(new UsbSnapshot([Controller(problem: 43)]));
+        Assert.Equal(DiagnosticStatus.Error, failedController.Status);
+        Assert.Contains("1 controller or hub with a problem", failedController.Summary);
     }
 
     // ---------------------------------------------------------------- the interactive port check

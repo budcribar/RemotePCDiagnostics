@@ -46,6 +46,7 @@ public sealed class UsbPortCheckModule(IUsbTreeSource usb, ILogger? log = null, 
             {
                 await Task.WhenAny(finish.Task, Task.Delay(_poll, ct)).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
+                if (finish.Task.IsCompleted) break;
                 var now = await usb.ReadAsync(ct).ConfigureAwait(false);
                 if (now.Error is not null) continue;
                 var at = DateTimeOffset.Now;

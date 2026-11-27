@@ -891,6 +891,8 @@
     }
 
     private DotNetObjectReference<InteractiveTestsPage>? _dotNetRef;
+    private IUsbPortCheckModule? _usbPortCheckModule;
+    private bool _disposed;
     private bool _isRemoteDisplay;
     private bool _hasRemoteSession;
     private bool _technicianHasControl;
@@ -901,7 +903,8 @@
     {
         base.OnInitialized();
         LoadDevices();
-        if (GetUsbPortCheckModule() is { } usbCheck) usbCheck.Changed += OnUsbPortCheckChanged;
+        _usbPortCheckModule = GetUsbPortCheckModule();
+        if (_usbPortCheckModule is not null) _usbPortCheckModule.Changed += OnUsbPortCheckChanged;
         if (TestQuery is { Length: > 0 } t && AllTestIds.Contains(t, StringComparer.OrdinalIgnoreCase)) _selectedTestId = t.ToLowerInvariant();
         if (_selectedTestId == "soundcheck" && HelpQuery == "cant-hear") _ = OpenCantHearAsync();
     }
@@ -935,8 +938,13 @@
 
     public override void Dispose()
     {
+        _disposed = true;
         base.Dispose();
-        if (GetUsbPortCheckModule() is { } usbCheck) usbCheck.Changed -= OnUsbPortCheckChanged;
+        if (_usbPortCheckModule is not null)
+        {
+            _usbPortCheckModule.Changed -= OnUsbPortCheckChanged;
+            _usbPortCheckModule = null;
+        }
         _batchCts?.Cancel();
         _interactiveWaitTcs?.TrySetCanceled();
         _batchCts?.Dispose();
@@ -1135,7 +1143,11 @@
         Diagnostics.Modules.OfType<IUsbPortCheckModule>().FirstOrDefault()
         ?? (Diagnostics.Catalog.Find(ModuleSlugs.UsbPortCheck) is { } d ? Diagnostics.Catalog.ModuleFor(d.Id) as IUsbPortCheckModule : null);
 
-    private void OnUsbPortCheckChanged(object? sender, EventArgs e) => InvokeAsync(StateHasChanged);
+    private void OnUsbPortCheckChanged(object? sender, EventArgs e)
+    {
+        if (_disposed) return;
+        _ = InvokeAsync(() => { if (!_disposed) StateHasChanged(); });
+    }
 
     /// <summary>Watches the USB tree until the person presses Finish; each device they plug in shows live with its port and speed.</summary>
     private async Task StartUsbPortCheckAsync()

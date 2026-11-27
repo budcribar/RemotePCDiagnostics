@@ -36,7 +36,7 @@ public sealed record UsbPortInfo(
 
     /// <summary>The device connected at a speed below what it can do (a USB 3 device on a USB 2 link).</summary>
     public bool SpeedDowngraded =>
-        HasDevice && (SuperSpeedCapable == true && AtSuperSpeed == false || SuperSpeedPlusCapable == true && AtSuperSpeedPlus == false && AtSuperSpeed == true);
+        HasDevice && (SuperSpeedCapable == true || SuperSpeedPlusCapable == true) && AtSuperSpeed != true && AtSuperSpeedPlus != true;
 }
 
 /// <summary><c>USB_CONNECTION_STATUS</c> names.</summary>

@@ -44,7 +44,9 @@ public sealed class RecordingScrubber
     public static readonly IReadOnlySet<string> DeviceIdNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "DeviceID", "InstanceId", "ParentInstanceId" };
 
     private static bool IsPersonalDeviceId(string s) =>
-        s.StartsWith("BTH", StringComparison.OrdinalIgnoreCase) || s.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase);
+        s.StartsWith("BTH", StringComparison.OrdinalIgnoreCase)
+        || s.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase)
+        || s.StartsWith(@"USBSTOR\", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>One string value under property <paramref name="name"/>, scrubbed.</summary>
     private string Scalar(string name, string s) =>

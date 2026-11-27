@@ -56,6 +56,7 @@ public static class WindowsUsbTreeReader
         // Host controllers are the USB-class devices not enumerated by USB itself; everything under them is the USB tree.
         var children = all.Values.Where(r => r.ParentId is not null).ToLookup(r => r.ParentId!, StringComparer.OrdinalIgnoreCase);
         var nodes = new List<UsbNode>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var controller in all.Values.Where(IsController).OrderBy(r => r.Id, StringComparer.OrdinalIgnoreCase))
         {
             ct.ThrowIfCancellationRequested();
@@ -65,21 +66,23 @@ public static class WindowsUsbTreeReader
 
         void Walk(Raw r, int depth, bool underUsbDevice)
         {
-            if (depth > 16) return;
+            if (depth > 16 || !visited.Add(r.Id)) return;
             var usb = r.Id.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase);
+            var isRootHub = depth > 0 && usb && r.Id.Contains("ROOT_HUB", StringComparison.OrdinalIgnoreCase);
+            var hubPath = depth > 0 && usb ? HubPath(r.Id) : null;
             var kind = depth == 0 ? UsbNodeKind.Controller
-                : usb && r.Id.Contains("ROOT_HUB", StringComparison.OrdinalIgnoreCase) ? UsbNodeKind.RootHub
-                : usb && HubPath(r.Id) is not null ? UsbNodeKind.Hub
+                : isRootHub ? UsbNodeKind.RootHub
+                : hubPath is not null ? UsbNodeKind.Hub
                 : usb && !underUsbDevice ? UsbNodeKind.Device
                 : UsbNodeKind.Function;
-            var hubPath = kind is UsbNodeKind.RootHub or UsbNodeKind.Hub ? HubPath(r.Id) : null;
             int? hubType = null;
             IReadOnlyList<UsbPortInfo>? ports = null;
             if (hubPath is not null) (hubType, ports) = ReadHub(hubPath, ct);
-            CM_Get_DevNode_Status(out var status, out var problem, r.Inst, 0);
+            var problemCode = CM_Get_DevNode_Status(out var status, out var problem, r.Inst, 0) == CrSuccess && (status & DnHasProblem) != 0
+                ? (int)problem : 0;
             var (vid, pid) = VidPid(r.Id);
             nodes.Add(new UsbNode(r.Id, depth == 0 ? null : r.ParentId, kind, Name(r.Inst, kind), r.Class, vid, pid,
-                (status & DnHasProblem) != 0 ? (int)problem : 0,
+                problemCode,
                 kind is UsbNodeKind.Hub or UsbNodeKind.Device ? UintProp(r.Inst, Address) is { } a ? (int)a : null : null,
                 GuidProp(r.Inst, ContainerId), ports, hubType));
             // Bluetooth devices paired with a USB radio aren't USB devices, and they're named after their owners ("Bud's AirPods"): left out.
@@ -153,10 +156,10 @@ public static class WindowsUsbTreeReader
 
     private static (int? HubType, IReadOnlyList<UsbPortInfo>? Ports) ReadHub(string path, CancellationToken ct)
     {
-        using var hub = CreateFileW(path, GenericWrite, FileShareWrite, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
+        using var hub = CreateFileW(path, GenericWrite, FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
         if (hub.IsInvalid) return (null, null);
         var info = new byte[512];
-        if (!Ioctl(hub, IoctlHubInfoEx, info, out _)) return (null, null);
+        if (!Ioctl(hub, IoctlHubInfoEx, info, out var got) || got < 6) return (null, null);
         var hubType = BinaryPrimitives.ReadInt32LittleEndian(info);
         var count = Math.Min((int)BinaryPrimitives.ReadUInt16LittleEndian(info.AsSpan(4)), MaxPorts);
         var ports = new List<UsbPortInfo>(count);
@@ -178,9 +181,12 @@ public static class WindowsUsbTreeReader
         var status = UsbPortStatus.Name(BinaryPrimitives.ReadInt32LittleEndian(buf.AsSpan(31)));
         var connected = status != UsbPortStatus.NoDevice;
         var speed = buf[23] switch { 0 => UsbSpeed.Low, 1 => UsbSpeed.Full, 2 => UsbSpeed.High, 3 => UsbSpeed.Super, _ => UsbSpeed.Unknown };
-        int? bcd = connected ? BinaryPrimitives.ReadUInt16LittleEndian(buf.AsSpan(4 + 2)) : null;
-        string? vid = connected ? BinaryPrimitives.ReadUInt16LittleEndian(buf.AsSpan(4 + 8)).ToString("X4") : null;
-        string? pid = connected ? BinaryPrimitives.ReadUInt16LittleEndian(buf.AsSpan(4 + 10)).ToString("X4") : null;
+        var rawBcd = connected ? BinaryPrimitives.ReadUInt16LittleEndian(buf.AsSpan(4 + 2)) : (ushort)0;
+        var rawVid = connected ? BinaryPrimitives.ReadUInt16LittleEndian(buf.AsSpan(4 + 8)) : (ushort)0;
+        var rawPid = connected ? BinaryPrimitives.ReadUInt16LittleEndian(buf.AsSpan(4 + 10)) : (ushort)0;
+        int? bcd = rawBcd != 0 ? rawBcd : null;
+        string? vid = rawVid != 0 ? rawVid.ToString("X4") : null;
+        string? pid = rawVid != 0 ? rawPid.ToString("X4") : null;
         var isHub = buf[24] != 0;
 
         // USB_NODE_CONNECTION_INFORMATION_EX_V2: ConnectionIndex, Length, SupportedUsbProtocols (in: 1.1 | 2.0 | 3.0), Flags.
@@ -261,7 +267,7 @@ public static class WindowsUsbTreeReader
         public readonly uint Pid = pid;
     }
 
-    private const uint GenericWrite = 0x40000000, FileShareWrite = 0x2, OpenExisting = 3;
+    private const uint GenericWrite = 0x40000000, FileShareRead = 0x1, FileShareWrite = 0x2, OpenExisting = 3;
 
     [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
     private static extern uint CM_Get_Device_ID_List_SizeW(out uint pulLen, string? pszFilter, uint ulFlags);
