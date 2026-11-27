@@ -53,7 +53,7 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
             {
                 var batteries2 = await source.ReadBatteriesAsync(ct).ConfigureAwait(false);
                 if (batteries2 is not null) batteries = batteries2;
-                confirmedDischargingOnAc = batteries2 is { Count: > 0 } && batteries2.Any(b => b.IsDischargingOnAc);
+                confirmedDischargingOnAc = discharging1 && batteries2 is { Count: > 0 } && batteries2.Any(b => b.IsDischargingOnAc);
             }
 
             if (heldBack1)
@@ -91,7 +91,8 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
         var limit = BatteryCondition.ChargeLimitPercent(hp);
         var last = first;
         var watched = TimeSpan.Zero;
-        if (first.Any(b => BatteryCondition.NeedsChargeWatch(b, limit)))
+        var watchedBatteries = first.Select((b, i) => (b, i)).Where(x => BatteryCondition.NeedsChargeWatch(x.b, limit)).ToList();
+        if (watchedBatteries.Count > 0)
         {
             while (watched < BatteryCondition.ChargeWatch)
             {
@@ -100,9 +101,9 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
                 watched += BatteryCondition.ChargeSampleEvery;
                 if (await source.ReadBatteriesAsync(ct).ConfigureAwait(false) is not { Count: > 0 } next) break;
                 last = next;
-                // Unplugged meanwhile, or every battery now shows charge going in: nothing more to wait for.
+                // Unplugged meanwhile, or every watched battery now shows charge going in: nothing more to wait for.
                 var w = watched;
-                if (!next.Any(b => b.IsOnAc) || first.Select((b, i) => BatteryCondition.JudgeCharging(b, Same(next, b, i) ?? b, w, limit))
+                if (!next.Any(b => b.IsOnAc) || watchedBatteries.Select(x => BatteryCondition.JudgeCharging(x.b, Same(next, x.b, x.i) ?? x.b, w, limit))
                         .All(c => c.Outcome is not (ChargeOutcome.NotCharging or ChargeOutcome.HeldBelowFull)))
                     break;
             }
@@ -192,8 +193,8 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
                 metrics.AddRange(CheckKeyMetrics.Battery(b, i));
             }
             var b0 = batteries[0];
-            var card0 = cards[^batteries.Count];
-            parts.Add(card0.Level == AreaLevel.Error ? card0.Headline
+            var errorCard = cards.TakeLast(batteries.Count).FirstOrDefault(c => c.Level == AreaLevel.Error);
+            parts.Add(errorCard is not null ? errorCard.Headline
                 : dischargingOnAc ? "Plugged in, discharging"
                 : b0.HealthPercent is { } h2 ? $"Battery health {h2}%" + (b0.PercentRemaining is { } pr ? $" · {pr}% charged" : "") : "Battery present");
             if (batteries.Count > 1) parts.Add($"{batteries.Count} batteries");

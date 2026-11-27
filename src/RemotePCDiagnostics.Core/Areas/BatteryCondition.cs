@@ -52,7 +52,6 @@ public static class BatteryCondition
     public static readonly TimeSpan ChargeSampleEvery = TimeSpan.FromSeconds(10);
 
     public const string ChargeForAnHour = "Charge for 60 minutes and retest.";
-    public const string UnplugForTwenty = "Unplug for 20 minutes and retest.";
     public const string LetItCool = "Battery too hot to test: let it cool for 20 minutes and retest.";
     public const string Calibrate = "Calibrate the battery: charge it to 100%, unplug and use it until it's below 5%, then charge it to 100% without unplugging. Then retest.";
 
@@ -94,7 +93,7 @@ public static class BatteryCondition
         }
 
         var ratio = VoltageRatio(b);
-        var deep = ratio is < DeepDischargeVoltageRatio && (b.PercentRemaining is <= 2 || b.RemainingMwh is { } r && b.DesignCapacity is > 0 && r * 100 <= b.DesignCapacity);
+        var deep = ratio is < DeepDischargeVoltageRatio && (b.PercentRemaining is <= 2 || b.RemainingMwh is { } r && b.DesignCapacity is > 0 && (long)r * 100 <= b.DesignCapacity);
         if (deep)
             list.Add(new("Deep discharge", AreaLevel.Error, $"Deeply discharged: {Volts(b.VoltageMv)} of {Volts(b.DesignVoltageMv)} design",
                 "The battery ran down far enough that its voltage collapsed. " + ChargeForAnHour + " If it won't take a charge, replace the battery."));
@@ -127,7 +126,7 @@ public static class BatteryCondition
         if (b.RemainingMwh is { } rem && b.MaxCapacity is > 0 && rem > b.MaxCapacity.Value * 1.05)
             reasons.Add($"charge left ({N(rem)} mWh) is more than its full capacity ({N(b.MaxCapacity.Value)} mWh)");
         if (previous is { Mwh: > 0 } prev && b.MaxCapacity is > 0 && Math.Abs(b.MaxCapacity.Value - prev.Mwh) / prev.Mwh > CapacityJumpRatio)
-            reasons.Add($"full charge capacity went from {N((long)prev.Mwh)} to {N(b.MaxCapacity.Value)} mWh since the check on {prev.When.ToLocalTime():d MMM yyyy}");
+            reasons.Add($"full charge capacity went from {N((long)prev.Mwh)} to {N(b.MaxCapacity.Value)} mWh since the check on {prev.When.ToLocalTime().ToString("d MMM yyyy", CultureInfo.InvariantCulture)}");
         return reasons.Count == 0 ? null
             : new("Calibration", AreaLevel.Warning, "Calibration needed: " + string.Join("; ", reasons), Calibrate);
     }
@@ -145,7 +144,7 @@ public static class BatteryCondition
     /// <summary>True when one reading can't tell whether the battery charges: on AC, showing no charge going in, and low enough that not
     /// charging would be a failure.
     /// Only below the level a charge limit could hold it at (the known limit, else <see cref="NoLimitBelowPercent"/>): above that, not
-    /// charging can't fail the check, so it isn't worth the wait.
+    /// charging can't fail the check, so it isn't worth the wait.</summary>
     public static bool NeedsChargeWatch(BatteryStatus b, int? limitPercent) =>
         b.PowerOnline == true && !b.IsDischargingOnAc && b.PercentRemaining is { } p && p < FailBelow(limitPercent)
         && b.IsCharging != true && b.ChargeRateMw is null;
@@ -168,14 +167,18 @@ public static class BatteryCondition
         if (last.ChargeRateMw is { } rate)
             return new(ChargeOutcome.Charging, AreaLevel.Ok, $"Charging at {W(rate)}", watched);
         if (rose)
-            return new(ChargeOutcome.Charging, AreaLevel.Ok,
-                $"Charging: {first.PercentRemaining}% to {last.PercentRemaining}% in {Seconds(watched)}", watched);
+        {
+            var text = last.PercentRemaining > first.PercentRemaining
+                ? $"Charging: {first.PercentRemaining}% to {last.PercentRemaining}% in {Seconds(watched)}"
+                : $"Charging: {N(first.RemainingMwh!.Value)} to {N(last.RemainingMwh!.Value)} mWh in {Seconds(watched)}";
+            return new(ChargeOutcome.Charging, AreaLevel.Ok, text, watched);
+        }
         if (last.IsCharging == true)
             return new(ChargeOutcome.Charging, AreaLevel.Ok, "Charging", watched);
         if (last.PercentRemaining is not { } p)
             return new(ChargeOutcome.NotChecked, AreaLevel.Neutral, "Not checked: the battery doesn't report its charge", watched);
         if (p >= FullPercent)
-            return new(ChargeOutcome.FullyCharged, AreaLevel.Ok, $"Fully charged ({p}%)", watched, UnplugForTwenty);
+            return new(ChargeOutcome.FullyCharged, AreaLevel.Ok, $"Fully charged ({p}%)", watched);
         if (limitPercent is { } l && p >= l - LimitSlackPercent)
             return new(ChargeOutcome.AtChargeLimit, AreaLevel.Ok, $"Held at the {l}% charge limit ({p}%)", watched);
         if (p >= FailBelow(limitPercent))
@@ -200,7 +203,8 @@ public static class BatteryCondition
         var levels = new List<AreaLevel> { dischargingOnAc ? AreaLevel.Warning : healthLevel };
         levels.AddRange(faults.Select(f => f.Level));
         if (calibration is not null) levels.Add(calibration.Level);
-        if (charging is not null && charging.Outcome != ChargeOutcome.DrainingOnAc) levels.Add(charging.Level == AreaLevel.Ok && healthLevel == AreaLevel.Neutral ? AreaLevel.Neutral : charging.Level);
+        var showCharging = charging is not null && !(dischargingOnAc && charging.Outcome == ChargeOutcome.DrainingOnAc);
+        if (showCharging) levels.Add(charging!.Level == AreaLevel.Ok && healthLevel == AreaLevel.Neutral ? AreaLevel.Neutral : charging.Level);
         var level = levels.Max();
 
         var worstFault = faults.Where(f => f.Level == AreaLevel.Error).Select(f => f.Text).FirstOrDefault();
@@ -230,8 +234,8 @@ public static class BatteryCondition
         Add("Cycle count", b.CycleCount is > 0 ? N(b.CycleCount.Value) : "Not reported");
         Add("Battery model", model);
         Add("Chemistry", b.Chemistry);
-        if (charging is not null && charging.Outcome != ChargeOutcome.DrainingOnAc)
-            Add("Charging check", charging.Text, charging.Level);
+        if (showCharging)
+            Add("Charging check", charging!.Text, charging.Level);
         foreach (var f in faults) Add(f.Label, f.Text, f.Level);
         if (calibration is not null) Add(calibration.Label, calibration.Text, calibration.Level);
         if (b.VoltageMv is { } v)

@@ -297,6 +297,71 @@ public sealed class BatteryConditionTests
         Assert.Equal(DiagnosticStatus.Warning, report.Status); // the second one is worn
     }
 
+    [Fact]
+    public async Task FaultRetry_SingleUnconfirmedDischargingOnAc_DoesNotConfirmDrain()
+    {
+        var src = new Source([Bat(percent: 70) with { Critical = true }], [Bat(percent: 70, discharging: true)]);
+        var (report, waits) = await Run(src);
+        Assert.Equal([BatteryPowerModule.ConfirmationDelay], waits);
+        var card = report.Cards.Single(c => c.Id == "battery");
+        Assert.Null(Row(card, "Charger warning"));
+        Assert.Equal("90% battery health", card.Headline);
+        Assert.DoesNotContain("Plugged in, discharging", report.Summary);
+    }
+
+    [Fact]
+    public async Task MidWatch_StartsDrainingOnAc_SurfacesWarning()
+    {
+        var src = new Source([Bat(percent: 30)], [Bat(percent: 30, discharging: true)]);
+        var (report, waits) = await Run(src);
+        Assert.Single(waits);
+        Assert.Equal(DiagnosticStatus.Warning, report.Status);
+        var card = report.Cards.Single(c => c.Id == "battery");
+        Assert.Equal(AreaLevel.Warning, card.Level);
+        Assert.Equal("Draining while plugged in", Row(card, "Charging check"));
+    }
+
+    [Fact]
+    public async Task TwoBatteries_WatchedBatteryStartsCharging_StopsEarlyEvenWhenOtherIsHeldBelowFull()
+    {
+        var b1Start = Bat(percent: 30);
+        var b1Charging = Bat(percent: 31);
+        var b2Held = Bat(percent: 80) with { InstanceName = @"ACPI\PNP0C0A\2_0", Model = "BAT2" };
+        var (report, waits) = await Run(new Source([b1Start, b2Held], [b1Charging, b2Held]));
+        Assert.Single(waits);
+        Assert.Equal("Charging: 30% to 31% in 10 s", Row(report.Cards.Single(c => c.Id == "battery"), "Charging check"));
+        Assert.Equal("Holding at 80% while plugged in (a charge limit may be set)", Row(report.Cards.Single(c => c.Id == "battery-2"), "Charging check"));
+    }
+
+    [Fact]
+    public void JudgeCharging_RemainingMwhRisesWithoutPercentIncrease_FormatsMwh()
+    {
+        var samePct = BatteryCondition.JudgeCharging(
+            Bat(percent: 30) with { RemainingMwh = 13500 },
+            Bat(percent: 30) with { RemainingMwh = 13650 },
+            TimeSpan.FromSeconds(10), null);
+        Assert.Equal(ChargeOutcome.Charging, samePct.Outcome);
+        Assert.Equal(AreaLevel.Ok, samePct.Level);
+        Assert.Equal("Charging: 13,500 to 13,650 mWh in 10 s", samePct.Text);
+
+        var nullPct = BatteryCondition.JudgeCharging(
+            Bat(percent: null) with { RemainingMwh = 13500 },
+            Bat(percent: null) with { RemainingMwh = 13650 },
+            TimeSpan.FromSeconds(10), null);
+        Assert.Equal(ChargeOutcome.Charging, nullPct.Outcome);
+        Assert.Equal("Charging: 13,500 to 13,650 mWh in 10 s", nullPct.Text);
+    }
+
+    [Fact]
+    public async Task TwoBatteries_SecondBatteryError_AppearsInReportSummary()
+    {
+        var b1 = Bat(percent: 100);
+        var b2 = Bat(percent: 70) with { InstanceName = @"ACPI\PNP0C0A\2_0", Model = "BAT2", Critical = true };
+        var (report, _) = await Run(new Source([b1, b2], [b1, b2]));
+        Assert.Equal(DiagnosticStatus.Error, report.Status);
+        Assert.StartsWith("Battery reports a critical state at 70% charge", report.Summary);
+    }
+
     // Identity and the reader
 
     [Fact]
