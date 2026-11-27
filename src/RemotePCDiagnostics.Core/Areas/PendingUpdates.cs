@@ -23,7 +23,8 @@ public sealed record PendingUpdateList(
     IReadOnlyList<PendingUpdate> Updates,
     bool RebootRequired,
     IReadOnlyList<FailedUpdate>? FailedUpdates = null,
-    IReadOnlyList<string>? RebootReasons = null);
+    IReadOnlyList<string>? RebootReasons = null,
+    bool CheckedOnline = false);
 
 /// <summary>
 /// Reads pending updates and recent failed update history directly from Windows Update Agent's local COM cache
@@ -33,6 +34,10 @@ public sealed record PendingUpdateList(
 public static class PendingUpdates
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(20);
+    /// <summary>How long the Device drivers check waits for Windows Update's online driver search before it uses the cached list.</summary>
+    public static readonly TimeSpan OnlineTimeout = TimeSpan.FromSeconds(90);
+    /// <summary>Online search for driver updates only (what "Check & install driver updates" installs).</summary>
+    public const string OnlineDriverCriteria = "IsInstalled=0 and Type='Driver' and IsHidden=0";
     /// <summary>The Programs and Device drivers checks both ask; one answer serves both when they run together.</summary>
     public static readonly TimeSpan CacheFor = TimeSpan.FromSeconds(60);
     public const int MaxRows = 50;
@@ -72,8 +77,9 @@ public static class PendingUpdates
     {
         try
         {
-            var list = await Session.AgentWindowsUpdate.RunSerializedSearchAsync(() => ReadWindows(DateTimeOffset.UtcNow), Timeout, ct)
-                .ConfigureAwait(false);
+            // Waits behind an online driver search (which fills the same cache) instead of giving up on it.
+            var list = await Session.AgentWindowsUpdate.RunSerializedSearchAsync(() => ReadWindows(DateTimeOffset.UtcNow, online: false), Timeout, ct,
+                gateWait: OnlineTimeout + Timeout).ConfigureAwait(false);
             if (list is null) Invalidate();
             return list;
         }
@@ -94,8 +100,25 @@ public static class PendingUpdates
         }
     }
 
+    /// <summary>
+    /// Asks Windows Update online for driver updates (the Device drivers check), so the card doesn't depend on when Windows last checked.
+    /// Null when it couldn't be asked in <see cref="OnlineTimeout"/> (offline, Windows Update off or busy): callers fall back to
+    /// <see cref="ReadAsync"/>. The list holds driver updates only and no failed history.
+    /// </summary>
+    public static async Task<PendingUpdateList?> ReadDriversOnlineAsync(SystemCommandRunner commands, CancellationToken ct)
+    {
+        if (commands.IsScripted || !OperatingSystem.IsWindows()) return null;
+        try
+        {
+            return await Session.AgentWindowsUpdate.RunSerializedSearchAsync(
+                () => OperatingSystem.IsWindows() ? ReadWindows(DateTimeOffset.UtcNow, online: true) : null, OnlineTimeout, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception) { return null; }
+    }
+
     [SupportedOSPlatform("windows")]
-    private static PendingUpdateList? ReadWindows(DateTimeOffset now)
+    private static PendingUpdateList? ReadWindows(DateTimeOffset now, bool online)
     {
         object? sessionObj = null;
         object? searcherObj = null;
@@ -111,18 +134,18 @@ public static class PendingUpdates
 
             searcherObj = session.CreateUpdateSearcher();
             dynamic searcher = searcherObj;
-            TryRunCom(() => searcher.Online = false);
+            TryRunCom(() => searcher.Online = online);
 
-            searchResultObj = searcher.Search("IsInstalled=0 and IsHidden=0");
+            searchResultObj = searcher.Search(online ? OnlineDriverCriteria : "IsInstalled=0 and IsHidden=0");
             dynamic searchResult = searchResultObj;
             updatesObj = searchResult.Updates;
             dynamic updates = updatesObj;
 
             var pending = ReadPendingUpdatesCom(updates);
-            var failed = ReadFailedHistoryWindows(searcher, now);
+            var failed = online ? null : ReadFailedHistoryWindows(searcher, now);
             var (rebootRequired, rebootReasons) = ReadRebootStateWindows();
 
-            return new(pending, rebootRequired, failed, rebootReasons.Count > 0 ? rebootReasons : null);
+            return new(pending, rebootRequired, failed, rebootReasons.Count > 0 ? rebootReasons : null, CheckedOnline: online);
         }
         finally
         {
@@ -539,12 +562,13 @@ public static class PendingUpdates
     /// The card listing the pending Windows updates (<paramref name="drivers"/> false) or driver updates (true), one Install button per
     /// update. A list that couldn't be read gives a neutral card that says so: it doesn't change the check's result.
     /// </summary>
-    public static AreaCard Card(PendingUpdateList? list, bool drivers)
+    public static AreaCard Card(PendingUpdateList? list, bool drivers, Drivers.VendorDriverScan? vendor = null)
     {
         var id = drivers ? DriverCardId : SoftwareCardId;
         var title = drivers ? "Pending driver updates" : "Pending Windows updates";
         var word = drivers ? "driver update" : "update";
         string[] columns = drivers ? ["Driver update", "Device", "Size", "Restart"] : ["Update", "Category", "Size", "Restart"];
+        if (drivers && vendor is not null) return DriverCard(list, vendor, columns);
         if (list is null)
             return new(id, title, AreaLevel.Neutral, "Not available", "", columns, [],
                 EmptyText: "Windows couldn't be asked which updates are waiting. Use \"Check & install\" to check with Windows Update.");
@@ -560,8 +584,72 @@ public static class PendingUpdates
 
         return new(id, title, mine.Count == 0 && !list.RebootRequired ? AreaLevel.Ok : AreaLevel.Neutral, headline, meta, columns, rows,
             EmptyText: mine.Count == 0 ? "Windows lists nothing waiting. \"Check & install\" asks Windows Update for anything newer." : null,
-            Note: "From Windows' last check with Windows Update. \"Check & install\" checks again online.",
+            Note: list.CheckedOnline ? "Windows Update was checked online just now."
+                : "From Windows' last check with Windows Update. \"Check & install\" checks again online.",
             Actions: actions.Count > 0 ? actions : null);
+    }
+
+    /// <summary>
+    /// The driver-updates card with the PC maker's newer packages after Windows Update's: one card for every out-of-date driver. The
+    /// maker's rows have no Install button (they're downloaded from the maker's site); Windows Update's keep theirs.
+    /// </summary>
+    private static AreaCard DriverCard(PendingUpdateList? list, Drivers.VendorDriverScan vendor, string[] columns)
+    {
+        var wu = list?.Updates.Where(u => u.Driver).OrderByDescending(u => u.Severity.Length > 0)
+            .ThenBy(u => u.Title, StringComparer.CurrentCultureIgnoreCase).ToList() ?? [];
+        var maker = vendor.Updates.OrderBy(u => u.Title, StringComparer.CurrentCultureIgnoreCase).ToList();
+        var rows = wu.Select(u => BuildUpdateRow(u, drivers: true)).Concat(maker.Select(u => VendorRow(vendor.Vendor, u))).Take(MaxRows).ToList();
+        var total = wu.Count + maker.Count;
+
+        var headline = total == 0 ? "No driver updates waiting" : AreaModuleBase.Plural(total, "driver update") + " waiting";
+        var parts = new List<string>();
+        if (list is null) parts.Add("Windows Update couldn't be asked");
+        else if (list.RebootRequired) parts.Add(BuildCardMeta(wu.Count, list));
+        else if (wu.Count > 0) parts.Add($"{wu.Count} from Windows Update");
+        if (maker.Count > 0) parts.Add($"{maker.Count} newer from {vendor.Vendor}");
+        if (parts.Count == 0) parts.Add(list!.CheckedOnline ? $"Checked online with Windows Update and {vendor.Vendor} just now" : $"Checked with Windows Update and {vendor.Vendor}");
+
+        var notes = new List<string>
+        {
+            list is null ? "Windows Update couldn't be asked: \"Check & install\" checks again online."
+                : list.CheckedOnline ? "Windows Update was checked online just now."
+                : "Windows Update: from Windows' last check. \"Check & install\" checks again online.",
+        };
+        notes.Add(vendor.Problem is { } problem
+            ? $"{vendor.Vendor}: {problem}"
+            : $"{vendor.Vendor}: from {vendor.Vendor}'s driver catalog for this model ({AreaModuleBase.Plural(vendor.Compared, "package")} matched this PC). Download and run them from {vendor.Vendor}. When Windows Update also offers that driver, install Windows Update's first and check again.");
+
+        var actions = new List<AreaAction>();
+        if (wu.Count > 0) actions.Add(new(RemediationKind.CheckAndInstallDriverUpdates, wu.Count > 1 ? "Check & install all driver updates" : "Check & install driver updates"));
+        if (list?.RebootRequired == true) actions.Add(RestartAction);
+
+        return new(DriverCardId, "Pending driver updates", total == 0 && list is { RebootRequired: false } ? AreaLevel.Ok : AreaLevel.Neutral,
+            headline, string.Join(" · ", parts), columns, rows,
+            EmptyText: total == 0 ? $"Neither Windows Update nor {vendor.Vendor} lists a newer driver. \"Check & install\" asks Windows Update again." : null,
+            Note: string.Join(" ", notes),
+            Actions: actions.Count > 0 ? actions : null,
+            PreserveRowOrder: false);
+    }
+
+    private static AreaRow VendorRow(string vendor, Drivers.VendorDriverUpdate u)
+    {
+        var size = u.SizeBytes > 0 ? Osquery.HardwareInventory.FormatBytes(u.SizeBytes) : "";
+        var detail = string.Join("\n", new[]
+        {
+            $"{u.Title} ({u.Category})",
+            $"Installed: {u.InstalledVersion} · {vendor}: {u.AvailableVersion}",
+            u.Released is { } d ? $"Released: {d.ToString("d", CultureInfo.CurrentCulture)}" : null,
+            u.PackageId.Length > 0 ? $"Package: {u.PackageId}" : null,
+            $"Download: {u.DownloadUrl}",
+            u.DetailsUrl is { } notes ? $"Release notes: {notes}" : null,
+        }.Where(l => l is not null));
+        return new(AreaLevel.Neutral,
+            [$"{u.Title} {u.AvailableVersion}", $"Newer from {vendor} (installed {u.InstalledVersion})", size, "May be needed"],
+            [null, null, u.SizeBytes.ToString("D20", CultureInfo.InvariantCulture), null],
+            Key: $"{vendor.ToLowerInvariant()}:{u.PackageId}",
+            Detail: detail,
+            LinkUri: u.DownloadUrl,
+            LinkText: $"Download from {vendor}");
     }
 
     private static AreaRow BuildUpdateRow(PendingUpdate u, bool drivers)
@@ -599,7 +687,8 @@ public static class PendingUpdates
             var rebootSuffix = list.RebootReasons is { Count: > 0 } ? $" ({string.Join(", ", list.RebootReasons)})" : "";
             return $"Windows is waiting for a restart to finish installing updates{rebootSuffix}";
         }
-        return count == 0 ? "As of Windows' last check with Windows Update" : "Install one at a time, or all at once";
+        if (count > 0) return "Install one at a time, or all at once";
+        return list.CheckedOnline ? "Checked online with Windows Update just now" : "As of Windows' last check with Windows Update";
     }
 
     /// <summary>

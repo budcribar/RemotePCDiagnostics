@@ -1,13 +1,16 @@
 using System.Globalization;
+using RemotePCDiagnostics.Core.Drivers;
 using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>
 /// Device Manager problems (devices with a non-zero <c>ConfigManagerErrorCode</c>) and hardware driver versions, read from
-/// <paramref name="source"/> (WMI in the app, osquery and PowerShell in the Store edition without an Agent).
+/// <paramref name="source"/> (WMI in the app, osquery and PowerShell in the Store edition without an Agent), plus the driver updates
+/// Windows Update offers (asked online) and the newer packages in the PC maker's catalog (<paramref name="vendor"/>).
 /// </summary>
-public sealed class DeviceDriversModule(IDeviceDriverSource source, SystemCommandRunner? commands = null, ILogger? log = null) : AreaModuleBase(log)
+public sealed class DeviceDriversModule(IDeviceDriverSource source, SystemCommandRunner? commands = null, ILogger? log = null,
+    VendorDriverUpdates? vendor = null) : AreaModuleBase(log)
 {
     public const string ModuleName = ModuleSlugs.DeviceDrivers;
 
@@ -20,24 +23,39 @@ public sealed class DeviceDriversModule(IDeviceDriverSource source, SystemComman
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        // Asked alongside the other reads; scripted test runners aren't asked.
-        var pendingRead = commands is { IsScripted: false } ? PendingUpdates.ReadAsync(commands, ct) : null;
-        progress.ReportStep(1, 2, "Checking Device Manager for problem devices…");
+        // Asked alongside the other reads; scripted test runners (recordings) aren't asked, since both go online.
+        var pendingRead = commands is { IsScripted: false } ? ReadDriverUpdatesAsync(commands, ct) : null;
+        var vendorRead = commands is { IsScripted: false } && vendor is not null ? vendor.ScanAsync(ct) : null;
+        var steps = pendingRead is null ? 2 : 3;
+        progress.ReportStep(1, steps, "Checking Device Manager for problem devices…");
         var problems = await source.ReadProblemDevicesAsync(ct).ConfigureAwait(false);
-        progress.ReportStep(2, 2, "Reading hardware drivers…");
+        progress.ReportStep(2, steps, "Reading hardware drivers…");
         var drivers = await source.ReadDriversAsync(ct).ConfigureAwait(false);
         var report = Build(problems, drivers);
         if (pendingRead is null) return report;
+        progress.ReportStep(3, steps, "Checking Windows Update and the PC maker for newer drivers…");
         PendingUpdateList? pending = null;
         try { pending = await pendingRead.ConfigureAwait(false); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) { LogWarn($"{Name}: pending driver updates unreadable: {ex.Message}"); }
-        return WithPendingUpdates(report, pending);
+        VendorDriverScan? scan = null;
+        if (vendorRead is not null)
+        {
+            try { scan = await vendorRead.ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex) { LogWarn($"{Name}: PC maker's driver catalog unreadable: {ex.Message}"); }
+        }
+        return WithPendingUpdates(report, pending, scan);
     }
 
-    /// <summary>Adds the pending-driver-updates card. It never changes the check's result.</summary>
-    public static AreaReport WithPendingUpdates(AreaReport report, PendingUpdateList? pending) =>
-        report.Cards.Count == 0 ? report : report with { Cards = [.. report.Cards, PendingUpdates.Card(pending, drivers: true)] };
+    /// <summary>Windows Update asked online for driver updates, or its last answer when it can't be asked now.</summary>
+    private static async Task<PendingUpdateList?> ReadDriverUpdatesAsync(SystemCommandRunner commands, CancellationToken ct) =>
+        await PendingUpdates.ReadDriversOnlineAsync(commands, ct).ConfigureAwait(false)
+        ?? await PendingUpdates.ReadAsync(commands, ct).ConfigureAwait(false);
+
+    /// <summary>Adds the driver-updates card (Windows Update's and the PC maker's). It never changes the check's result.</summary>
+    public static AreaReport WithPendingUpdates(AreaReport report, PendingUpdateList? pending, VendorDriverScan? vendor = null) =>
+        report.Cards.Count == 0 ? report : report with { Cards = [.. report.Cards, PendingUpdates.Card(pending, drivers: true, vendor)] };
 
     private static readonly HashSet<string> KeyClasses = new(StringComparer.OrdinalIgnoreCase)
     {

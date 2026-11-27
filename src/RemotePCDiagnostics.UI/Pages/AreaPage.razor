@@ -256,7 +256,7 @@ else
                                         var svc = SvcInfo(svcModule, row);
                                         var level = svc is not null && _svcStatus.ContainsKey(svc.Name) ? (svc.IsRunning ? AreaLevel.Ok : svc.IsAutomatic ? AreaLevel.Warning : AreaLevel.Neutral) : row.Level;
                                         var rowRef = row;
-                                        var expandable = row.Detail is not null || row.GetHelpUri is not null || row.EventCopyText is not null || row.ReviewKeys is { Count: > 0 };
+                                        var expandable = row.Detail is not null || row.GetHelpUri is not null || row.EventCopyText is not null || row.ReviewKeys is { Count: > 0 } || row.LinkUri is not null;
                                         var expanded = expandable && _expandedCardId == cardId && (ReferenceEquals(_expanded, row) || (_expandedKey is not null && _expandedKey == RowId(row)));
                                         <tr @key="row" data-testid="@(row.Key is null ? null : "svc-row-" + row.Key)" class="@(expandable ? "row-expandable" : null)"
                                             data-action="@(AreaReportExport.ReviewId(row) is null ? null : "review-expand")" data-card-id="@(AreaReportExport.ReviewId(row) is null ? null : open.Id)" data-review-id="@AreaReportExport.ReviewId(row)"
@@ -320,6 +320,7 @@ else
                                                 || row.ReviewKeys is { Count: > 0 }
                                                 || row.EventCopyText is not null
                                                 || row.GetHelpUri is not null
+                                                || SafeLink(row.LinkUri) is not null
                                                 || row.DumpPath is not null
                                                 || row.FilePath is not null;
                                             <tr class="row-detail" data-testid="area-row-detail"><td colspan="@(open.Columns.Count + (svcActions is not null || hasRowRemActions ? 1 : 0))">
@@ -359,6 +360,10 @@ else
                                                         @if (row.GetHelpUri is { } helpUri)
                                                         {
                                                             <button type="button" class="btn-small" @onclick="() => OpenGetHelp(helpUri)">Open in Get Help</button>
+                                                        }
+                                                        @if (SafeLink(row.LinkUri) is { } link)
+                                                        {
+                                                            <a class="btn-small" data-testid="row-link" href="@link" target="_blank" rel="noopener noreferrer">@(row.LinkText ?? "Open link")</a>
                                                         }
                                                         @if (row.DumpPath is { } dumpPath)
                                                         {
@@ -787,6 +792,10 @@ else
     }
 
 
+    /// <summary>A row's link only when it's an https URL: rows come from a check's report, and a link opens in the browser.</summary>
+    private static string? SafeLink(string? uri) =>
+        Uri.TryCreate(uri, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps ? u.AbsoluteUri : null;
+
     private void OpenGetHelp(string uri)
     {
         _getHelpError = null;
@@ -836,7 +845,7 @@ else
     private static string RowId(AreaRow r) => r.Key ?? string.Join("\u001f", r.Values);
     private void ToggleRow(string cardId, AreaRow r)
     {
-        if (r.Detail is null && r.GetHelpUri is null && r.EventCopyText is null && r.ReviewKeys is not { Count: > 0 } && r.FilePath is null) return;
+        if (r.Detail is null && r.GetHelpUri is null && r.EventCopyText is null && r.ReviewKeys is not { Count: > 0 } && r.FilePath is null && r.LinkUri is null) return;
         _copyStatus = null;
         var open = _expandedCardId == cardId && (ReferenceEquals(_expanded, r) || _expandedKey == RowId(r));
         _expanded = open ? null : r;
