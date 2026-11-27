@@ -426,3 +426,116 @@ public class LhmSensorProviderElevationTests
         Assert.Null(result.Note);
     }
 }
+
+public class LhmCpuSupportTests
+{
+    // LHM's CPU group executes x86 CPUID; on ARM64 (Snapdragon laptops) Computer.Open() throws an SEHException
+    // and no sensor at all can be read, so the CPU group must stay off there.
+    [Theory]
+    [InlineData(System.Runtime.InteropServices.Architecture.X64, true)]
+    [InlineData(System.Runtime.InteropServices.Architecture.X86, true)]
+    [InlineData(System.Runtime.InteropServices.Architecture.Arm64, false)]
+    [InlineData(System.Runtime.InteropServices.Architecture.Arm, false)]
+    public void SupportsLhmCpu_OnlyOnX86AndX64(System.Runtime.InteropServices.Architecture arch, bool expected) =>
+        Assert.Equal(expected, LhmSensorProvider.SupportsLhmCpu(arch));
+}
+
+public class OwnSensorSourcesTests
+{
+    private static SensorReading Temp(HardwareKind k, string hw, double v, string sensor = "Temperature") =>
+        new(hw, k, sensor, SensorKind.Temperature, v, null, null, "°C");
+
+    [Fact]
+    public void Merge_KeepsOwnReadings_DropsLhmTemperaturesForTheSameDevice_KeepsTheRest()
+    {
+        var own = new List<SensorReading>
+        {
+            Temp(HardwareKind.Gpu, "NVIDIA GeForce RTX 4060 Laptop GPU", 55, GpuTemperatureFallback.SensorName),
+            Temp(HardwareKind.Storage, "SAMSUNG MZAL8512HDLU", 38),
+        };
+        var lhm = new List<SensorReading>
+        {
+            Temp(HardwareKind.Gpu, "NVIDIA NVIDIA GeForce RTX 4060 Laptop GPU", 54, "GPU Core"),      // same GPU, vendor prefix
+            new("NVIDIA NVIDIA GeForce RTX 4060 Laptop GPU", HardwareKind.Gpu, "GPU Fan", SensorKind.Fan, 2100, null, null, "RPM"),
+            Temp(HardwareKind.Storage, "SAMSUNG MZAL8512HDLU", 37, "Composite Temperature"),
+            Temp(HardwareKind.Storage, "SAMSUNG MZAL8512HDLU", 82, "Warning Temperature"),          // a limit, not a reading
+            Temp(HardwareKind.Storage, "WD Blue SN580", 41),                                         // only LHM sees it
+            Temp(HardwareKind.Cpu, "Intel Core i7-13700H", 70, "CPU Package"),                       // no reader of ours
+        };
+
+        var merged = OwnSensorSources.Merge(own, lhm);
+
+        Assert.Equal(
+            ["GPU temperature (from Windows)", "Temperature", "GPU Fan", "Warning Temperature", "Temperature", "CPU Package"],
+            merged.Select(r => r.SensorName));
+        Assert.DoesNotContain(merged, r => r.SensorName is "GPU Core" or "Composite Temperature");
+        Assert.Contains(merged, r => r.HardwareName == "WD Blue SN580");
+    }
+
+    [Fact]
+    public void Merge_WithNoOwnReadings_IsLhmUnchanged()
+    {
+        var lhm = new List<SensorReading> { Temp(HardwareKind.Cpu, "AMD Ryzen 5 7520U", 60, "Core (Tctl/Tdie)") };
+        Assert.Equal(lhm, OwnSensorSources.Merge([], lhm));
+    }
+
+    [Theory]
+    [InlineData("NVIDIA GeForce RTX 4060", "NVIDIA NVIDIA GeForce RTX 4060", true)]
+    [InlineData("Samsung SSD 980", "samsung ssd 980", true)]
+    [InlineData("Samsung SSD 980", "WD Blue SN580", false)]
+    [InlineData("", "WD Blue SN580", false)]
+    public void SameDevice(string a, string b, bool expected) => Assert.Equal(expected, OwnSensorSources.SameDevice(a, b));
+
+    private sealed class FakeDrives(Func<IReadOnlyList<DriveTemperatureSample>> read) : IDriveTemperatureSource
+    {
+        public IReadOnlyList<DriveTemperatureSample> Read() => read();
+    }
+
+    [Fact]
+    public void ReadDrives_KeepsPlausibleNamedTemperatures_AndSurvivesAFailure()
+    {
+        var drives = OwnSensorSources.ReadDrives(new FakeDrives(() =>
+            [new("KIOXIA KBG50ZNV512G", 36), new("No temp", null), new("Zero", 0), new("  ", 40)]));
+        var only = Assert.Single(drives);
+        Assert.Equal(("KIOXIA KBG50ZNV512G", HardwareKind.Storage, 36.0), (only.HardwareName, only.HardwareType, only.Value!.Value));
+        Assert.True(only.IsLive);
+
+        Assert.Empty(OwnSensorSources.ReadDrives(new FakeDrives(() => throw new IOException("WMI down"))));
+        Assert.Empty(OwnSensorSources.ReadDrives(null));
+    }
+
+    private sealed class StorageWmi : RemotePCDiagnostics.Core.DataSources.IWmiSource
+    {
+        public int DiskQueries { get; private set; }
+        public Task<RemotePCDiagnostics.Core.DataSources.WmiQueryResult> QueryAsync(string ns, string wql, CancellationToken ct = default)
+        {
+            IEnumerable<KeyValuePair<string, object?>>[] rows;
+            if (wql == DriveReader.DiskSql)
+            {
+                DiskQueries++;
+                rows = [new Dictionary<string, object?> { ["ObjectId"] = "disk-1", ["DeviceId"] = "0", ["FriendlyName"] = "KIOXIA KBG50ZNV512G" }];
+            }
+            else if (wql.StartsWith("ASSOCIATORS", StringComparison.Ordinal))
+                rows = [new Dictionary<string, object?> { ["Temperature"] = 37 }];
+            else rows = [];
+            return Task.FromResult(new RemotePCDiagnostics.Core.DataSources.WmiQueryResult(ns, wql,
+                [.. rows.Select(RemotePCDiagnostics.Core.DataSources.WmiRow.From)]));
+        }
+    }
+
+    [Fact]
+    public void WmiDriveTemperatureSource_ReadsReliabilityCounters_AndReusesARecentRead()
+    {
+        var wmi = new StorageWmi();
+        var now = new DateTime(2026, 11, 27, 15, 0, 0, DateTimeKind.Utc);
+        var source = new WmiDriveTemperatureSource(wmi, reuseFor: TimeSpan.FromSeconds(10), utcNow: () => now);
+
+        Assert.Equal([new DriveTemperatureSample("KIOXIA KBG50ZNV512G", 37)], source.Read());
+        now = now.AddSeconds(5);
+        source.Read();
+        Assert.Equal(1, wmi.DiskQueries);
+        now = now.AddSeconds(6);
+        source.Read();
+        Assert.Equal(2, wmi.DiskQueries);
+    }
+}
