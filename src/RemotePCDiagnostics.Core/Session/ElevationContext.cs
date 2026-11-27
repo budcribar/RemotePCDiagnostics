@@ -356,7 +356,10 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         return await client.GetRpcdUpdateStatusAsync(requestId, ct).ConfigureAwait(false);
     }
 
-    public async Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, CancellationToken ct = default)
+    public Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, CancellationToken ct = default) =>
+        RunSecurityAuditAsync(timeout, [], ct);
+
+    public async Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, IReadOnlyList<string> onlyIds, CancellationToken ct = default)
     {
         AdminPipeClient? client;
         lock (_stateLock)
@@ -365,7 +368,7 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         if (client is not { IsConnected: true })
             return null;
 
-        return await client.RunSecurityAuditAsync(timeout, ct).ConfigureAwait(false);
+        return await client.RunSecurityAuditAsync(timeout, onlyIds, ct).ConfigureAwait(false);
     }
 
 

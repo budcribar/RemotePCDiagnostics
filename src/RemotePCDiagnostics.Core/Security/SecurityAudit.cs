@@ -58,10 +58,25 @@ public sealed record SecurityAuditReport(IReadOnlyList<AuditFinding> Findings, s
         && (f.Severity.Equals("High", StringComparison.OrdinalIgnoreCase) || f.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>
-    /// Critical only for high-risk failures. The baseline is strict (enterprise hardening), so a typical home PC fails
-    /// many medium checks; those are a warning to review, not an alarm.
+    /// A failed setting (one the baseline rates Medium or higher) fails the audit; low-risk differences are a warning. On a home PC only the
+    /// settings a home PC can sensibly change are counted (<see cref="HomeAuditProfile"/>), so a failure here is one worth fixing.
     /// </summary>
-    public DiagnosticStatus Status => HighRisk > 0 ? DiagnosticStatus.Error : Failed > 0 || Warnings > 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
+    public DiagnosticStatus Status => Failed > 0 ? DiagnosticStatus.Error : Warnings > 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
+
+    /// <summary>The shown findings that failed or have a warning, failed first: the ones to fix and re-check.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyList<AuditFinding> NeedsAttention => Shown.Where(f => f.Outcome is AuditOutcome.Failed or AuditOutcome.Warning)
+        .OrderBy(f => f.Outcome == AuditOutcome.Failed ? 0 : 1).ThenBy(f => f.Id, StringComparer.OrdinalIgnoreCase).ToList();
+
+    /// <summary>This report with <paramref name="rechecked"/> (a re-check of some of its findings) in place of the findings with the same IDs.</summary>
+    public SecurityAuditReport Merge(IReadOnlyList<AuditFinding> rechecked)
+    {
+        var byId = new Dictionary<string, AuditFinding>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in rechecked) byId.TryAdd(f.Id, f);
+        var merged = Findings.Select(f => byId.Remove(f.Id, out var again) ? again : f).ToList();
+        merged.AddRange(byId.Values);
+        return this with { Findings = merged };
+    }
 
     public string Summary => Findings.Count == 0
         ? "The audit finished but returned no results."

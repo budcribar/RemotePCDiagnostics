@@ -371,6 +371,102 @@ public sealed class BenchQaRunner(
         }
     }
 
+    /// <summary>The checks behind a QA item that Re-run can run again without anyone at the bench; empty for the interactive ones (keyboard, display).</summary>
+    public static IReadOnlyList<string> SlugsForItem(string itemId)
+    {
+        if (BaseCheckItems.FirstOrDefault(b => string.Equals(b.ItemId, itemId, StringComparison.OrdinalIgnoreCase)) is { Slug: { } baseSlug }) return [baseSlug];
+        if (StressItemToSlug.TryGetValue(itemId, out var stress)) return [stress];
+        return itemId.ToLowerInvariant() switch
+        {
+            "integrity" => IntegritySlugs,
+            "audio" => [ModuleSlugs.SpeakerToMic],
+            "webcam" => [ModuleSlugs.Webcam],
+            "npu" => [ModuleSlugs.NpuTest],
+            "security" => [ModuleSlugs.SecurityAudit],
+            _ => [],
+        };
+    }
+
+    public static bool CanRerun(string itemId) => SlugsForItem(itemId).Count > 0;
+
+    /// <summary>The items of <paramref name="snapshot"/> that failed or have a note and can run again: what "Re-run failed" runs.</summary>
+    public static IReadOnlyList<HardwareQaItem> RerunnableProblems(HardwareQaSnapshot snapshot) =>
+        snapshot.Items.Where(i => !i.Cancelled && i.Status is DiagnosticStatus.Error or DiagnosticStatus.Warning && CanRerun(i.Id)).ToList();
+
+    /// <summary>
+    /// Runs the checks behind <paramref name="itemIds"/> again (normally the ones that failed), then saves the certificate again. The
+    /// security audit re-checks only the settings that failed or warned; stress tests run as the short guarded pass, as in the QA check.
+    /// Does nothing while a QA check or another re-run is running.
+    /// </summary>
+    public Task RerunAsync(IReadOnlyCollection<string> itemIds, CancellationToken ct = default) => Task.Run(() => RerunCoreAsync(itemIds, ct), ct);
+
+    private async Task RerunCoreAsync(IReadOnlyCollection<string> itemIds, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(itemIds);
+        if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return;
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        lock (_gate) _cts = cts;
+        var token = cts.Token;
+        var slugs = itemIds.SelectMany(SlugsForItem).Where(diag.CanRun).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var stress = slugs.Where(s => StressItemToSlug.Values.Contains(s, StringComparer.OrdinalIgnoreCase) && diag.StressOrder.Contains(s, StringComparer.OrdinalIgnoreCase)).ToList();
+        var others = slugs.Except(stress, StringComparer.OrdinalIgnoreCase).ToList();
+        TotalSteps = others.Count + (stress.Count > 0 ? 1 : 0) + (workflow is not null ? 1 : 0);
+        CompletedSteps = 0;
+        Status = "Re-running the checks that failed…";
+        Raise();
+        try
+        {
+            log.Info($"[bench-qa] Re-run: {string.Join(", ", itemIds)} -> {string.Join(", ", slugs)}");
+            foreach (var slug in others)
+            {
+                token.ThrowIfCancellationRequested();
+                if (slug == ModuleSlugs.SecurityAudit
+                    && diag.Catalog.ModuleFor(ModuleIds.SecurityAudit) is Security.SecurityAuditModule audit
+                    && store.Get(slug).Payload is Security.SecurityAuditReport rep && rep.NeedsAttention.Count > 0)
+                    audit.RecheckOnNextRun(rep.NeedsAttention.Select(f => f.Id));
+                Status = $"Re-running {diag.Catalog.DisplayName(slug)}…";
+                Raise();
+                await RunModuleSafeAsync(slug, token).ConfigureAwait(false);
+                CompletedSteps++;
+                Raise();
+            }
+            if (stress.Count > 0)
+            {
+                token.ThrowIfCancellationRequested();
+                Status = "Re-running short thermal-guarded hardware stress…";
+                Raise();
+                var suite = await diag.RunStressSuiteAsync(StressSuiteMode.Short, null, token, only: stress, runQuickChecks: false).ConfigureAwait(false);
+                if (suite.Outcome == StressSuiteOutcome.Cancelled) throw new OperationCanceledException(token);
+                CompletedSteps++;
+                Raise();
+            }
+            token.ThrowIfCancellationRequested();
+            if (workflow is not null)
+            {
+                Status = "Saving the updated certificate…";
+                Raise();
+                LastSavedCertificatePath = workflow.SaveHardwareQaCertificate(prefs?.Current.Branding, physicalQa?.Current);
+                CompletedSteps = TotalSteps;
+            }
+            Status = LastSavedCertificatePath is { Length: > 0 } saved ? $"Re-run finished · Certificate saved to {saved}" : "Re-run finished.";
+        }
+        catch (OperationCanceledException)
+        {
+            Status = "Re-run stopped.";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Re-run stopped: {ex.Message}";
+            log.Warn($"[bench-qa] Re-run failed: {ex}");
+        }
+        finally
+        {
+            lock (_gate) _cts = null;
+            Volatile.Write(ref _running, 0);
+            Raise();
+        }
+    }
+
     public void Cancel()
     {
         CancellationTokenSource? cts;

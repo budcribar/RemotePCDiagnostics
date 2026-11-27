@@ -17,7 +17,14 @@ internal static class ReplayServices
     {
         services.AddSingleton<ISessionContext>(new SessionContext(SessionMode.Local));
         services.AddSingleton<ResultStore>();
-        services.AddSingleton(sp => new DiagnosticsService(sp.GetRequiredService<ResultStore>(), Checks(pc, options.Store)));
+        services.AddSingleton(sp =>
+        {
+            var diag = new DiagnosticsService(sp.GetRequiredService<ResultStore>(), Checks(pc, options.Store));
+            // Its page is the module's own (it ships as a module DLL), so it's attached here as the plugin would.
+            if (pc.HasSecurityAudit && !options.Store)
+                diag.Catalog.SetDetailsComponent(ModuleIds.SecurityAudit, typeof(RemotePCDiagnostics.Modules.SecurityAudit.SecurityAuditPage));
+            return diag;
+        });
         services.AddSingleton(sp => new ChecksScreenState(sp.GetRequiredService<DiagnosticsService>(), sp.GetRequiredService<ResultStore>()));
         services.AddSingleton<IHistoryStore, NullHistoryStore>();
         services.AddSingleton<IChangeJournal, MemoryChangeJournal>();
@@ -31,7 +38,8 @@ internal static class ReplayServices
 
     /// <summary>The checks the recordings hold answers for, as the Setup edition (WMI through the Agent) or the Store edition without one runs them.</summary>
     private static IDiagnosticModule[] Checks(ReplayedPc pc, bool store) =>
-        pc.HasAudio ? [.. Edition(pc, store), pc.Sound()] : Edition(pc, store);
+        [.. Edition(pc, store), .. pc.HasAudio ? [pc.Sound()] : Array.Empty<IDiagnosticModule>(),
+            .. pc.HasSecurityAudit && !store ? [pc.SecurityAudit()] : Array.Empty<IDiagnosticModule>()];
 
     private static IDiagnosticModule[] Edition(ReplayedPc pc, bool store) => store
         ?

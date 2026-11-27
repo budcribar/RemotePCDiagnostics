@@ -192,9 +192,11 @@ public sealed class SecurityAuditElevatedTests : IDisposable
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var seen = TimeSpan.Zero;
-        var (server, serverTask, client) = await StartAsync((t, _) =>
+        IReadOnlyList<string>? seenIds = ["not called"];
+        var (server, serverTask, client) = await StartAsync((t, ids, _) =>
         {
             seen = t;
+            seenIds = ids;
             return Task.FromResult(new SecurityAuditRun(new ProcessResult(0, SkippedOutput, ""), FullCsv));
         }, cts.Token);
         // The server ends once the client closes; it's disposed only after that, so its last write isn't cut off.
@@ -207,6 +209,9 @@ public sealed class SecurityAuditElevatedTests : IDisposable
                 Assert.Equal(FullCsv, run!.ReportCsv);
                 Assert.Equal(SkippedOutput, run.Process.StdOut);
                 Assert.Equal(TimeSpan.FromMinutes(5), seen);
+                Assert.Null(seenIds); // the whole audit
+                Assert.NotNull(await client.RunSecurityAuditAsync(TimeSpan.FromMinutes(5), ["1601", "1704"], cts.Token));
+                Assert.Equal(["1601", "1704"], seenIds); // a re-check of just these
                 Assert.True((await client.PingAsync(cts.Token)).Ok);
             }
             await serverTask;
@@ -227,7 +232,7 @@ public sealed class SecurityAuditElevatedTests : IDisposable
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var started = new TaskCompletionSource();
         var stopped = new TaskCompletionSource();
-        var (server, serverTask, client) = await StartAsync(async (_, ct) =>
+        var (server, serverTask, client) = await StartAsync(async (_, _, ct) =>
         {
             started.SetResult();
             try { await Task.Delay(Timeout.Infinite, ct); }
@@ -268,14 +273,90 @@ public sealed class SecurityAuditElevatedTests : IDisposable
             File.WriteAllText(report, FullCsv);
             return ScriptedLauncher.Ok("out");
         });
-        var run = await SecurityAuditModule.ElevatedRunner(app, launcher: launcher)(TimeSpan.FromMinutes(1), CancellationToken.None);
+        var run = await SecurityAuditModule.ElevatedRunner(app, launcher: launcher)(TimeSpan.FromMinutes(1), null, CancellationToken.None);
         Assert.Equal(FullCsv, run.ReportCsv);
         Assert.False(Directory.Exists(Path.GetDirectoryName(report!)));
 
-        await Assert.ThrowsAsync<FileNotFoundException>(() => SecurityAuditModule.ElevatedRunner(Path.Combine(_dir, "none"), launcher: launcher)(TimeSpan.FromMinutes(1), CancellationToken.None));
+        await Assert.ThrowsAsync<FileNotFoundException>(() => SecurityAuditModule.ElevatedRunner(Path.Combine(_dir, "none"), launcher: launcher)(TimeSpan.FromMinutes(1), null, CancellationToken.None));
     }
 
-    private static async Task<(AdminPipeServer, Task, AdminPipeClient)> StartAsync(Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>>? auditor, CancellationToken ct)
+    [Fact]
+    public async Task Elevated_runner_rechecks_only_the_named_findings_and_drops_ids_that_are_not_digits()
+    {
+        var app = Path.Combine(_dir, "app");
+        Directory.CreateDirectory(Path.Combine(app, SecurityAuditModule.RelativeFolder));
+        File.WriteAllText(Path.Combine(app, SecurityAuditModule.RelativeFolder, SecurityAuditModule.ManifestFile), "");
+        var scripts = new List<string>();
+        var launcher = new ScriptedLauncher((_, args) =>
+        {
+            scripts.Add(args[^1]);
+            var start = args[^1].IndexOf("-ReportFile '", StringComparison.Ordinal) + "-ReportFile '".Length;
+            File.WriteAllText(args[^1][start..args[^1].IndexOf('\'', start)], FullCsv);
+            return ScriptedLauncher.Ok("out");
+        });
+        var runner = SecurityAuditModule.ElevatedRunner(app, launcher: launcher);
+        await runner(TimeSpan.FromMinutes(1), ["1601", "1704';Remove-Item C:\\", "x", "1601"], CancellationToken.None);
+        Assert.Contains("-Filter {$_.ID -in @('1601')}", scripts[0]);
+        Assert.DoesNotContain("Remove-Item", scripts[0]);
+
+        await runner(TimeSpan.FromMinutes(1), ["abc"], CancellationToken.None);
+        Assert.DoesNotContain("-Filter", scripts[1]); // nothing valid: the whole audit
+        Assert.Equal([], SecurityAuditModule.RecheckIds(Enumerable.Range(1000, SecurityAuditModule.MaxRecheckIds + 1).Select(i => i.ToString())));
+    }
+
+    private const string HomeCsv =
+        "ID,Category,Name,Severity,Result,Recommended,TestResult,SeverityFinding\n" +
+        "1601,Administrative Templates: Network,DNS Client: Turn off multicast name resolution (LLMNR),Medium,,0,Failed,Medium\n" +
+        "1704,Administrative Templates: Windows Components,AutoPlay Policies: Turn off Autoplay,Passed,255,255,Passed,Medium\n" +
+        "1100,Account Policies,Account lockout threshold,Low,Never,10,Failed,Low\n";
+
+    private const string HomeProfile = "RPD_PROFILE=domain=False;entra=False;mdm=False;edition=Professional\r\n";
+
+    [Fact]
+    public async Task Recheck_runs_only_the_failed_settings_in_the_Agent_and_merges_them_into_the_last_report()
+    {
+        var bridge = new FakeBridge { Run = new SecurityAuditRun(new ProcessResult(0, HomeProfile, ""), HomeCsv) };
+        var m = Module(NoLocalRun(), bridge);
+        var first = await m.RefreshAsync(null);
+        var rep = Assert.IsType<SecurityAuditReport>(first.Payload);
+        Assert.Equal(DiagnosticStatus.Error, first.Status); // one Medium setting failed: the audit fails
+        Assert.StartsWith("1 failed, 1 warning, 1 passed", first.Message);
+        Assert.Equal(["1601", "1100"], rep.NeedsAttention.Select(f => f.Id));
+        Assert.Contains(_log, l => l.Contains("needs attention: 1601 DNS Client"));
+
+        // LLMNR was fixed; the re-check reads only it and the warning.
+        bridge.RecheckRun = new SecurityAuditRun(new ProcessResult(0, HomeProfile, ""),
+            "ID,Category,Name,Severity,Result,Recommended,TestResult,SeverityFinding\n" +
+            "1601,Administrative Templates: Network,DNS Client: Turn off multicast name resolution (LLMNR),Passed,0,0,Passed,Medium\n" +
+            "1100,Account Policies,Account lockout threshold,Low,Never,10,Failed,Low\n");
+        m.RecheckOnNextRun(rep.NeedsAttention.Select(f => f.Id));
+        Assert.Equal(["1601", "1100"], m.PendingRecheck);
+        var again = await m.RefreshAsync(null);
+        Assert.Equal(["1601", "1100"], bridge.RecheckIds);
+        var merged = Assert.IsType<SecurityAuditReport>(again.Payload);
+        Assert.Equal(3, merged.Findings.Count); // 1704 kept from the first run
+        Assert.Equal(DiagnosticStatus.Warning, again.Status);
+        Assert.Equal(["1100"], merged.NeedsAttention.Select(f => f.Id));
+        Assert.Empty(m.PendingRecheck);
+
+        // The next run audits everything again.
+        await m.RefreshAsync(null);
+        Assert.Equal(3, bridge.Calls);
+        Assert.Equal(["1601", "1100"], bridge.RecheckIds); // unchanged: that run was the whole audit
+    }
+
+    [Fact]
+    public async Task Recheck_before_any_audit_runs_the_whole_audit()
+    {
+        var bridge = new FakeBridge { Run = new SecurityAuditRun(new ProcessResult(0, HomeProfile, ""), HomeCsv) };
+        var m = Module(NoLocalRun(), bridge);
+        m.RecheckOnNextRun(["1601"]);
+        await m.RefreshAsync(null);
+        Assert.Null(bridge.RecheckIds);
+        Assert.Equal(1, bridge.Calls);
+    }
+
+    private static async Task<(AdminPipeServer, Task, AdminPipeClient)> StartAsync(Func<TimeSpan, IReadOnlyList<string>?, CancellationToken, Task<SecurityAuditRun>>? auditor, CancellationToken ct)
     {
         var pipeName = $"rpd-test-{Guid.NewGuid():N}";
         var server = new AdminPipeServer(new AdminPipeServerOptions { PipeName = pipeName, ExpectedClientPid = Environment.ProcessId },
@@ -298,6 +379,16 @@ public sealed class SecurityAuditElevatedTests : IDisposable
         public int Calls { get; private set; }
         public TimeSpan Timeout { get; private set; }
         public bool IsConnected => Connected;
+
+        public IReadOnlyList<string>? RecheckIds { get; private set; }
+        public SecurityAuditRun? RecheckRun { get; set; }
+
+        public async Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, IReadOnlyList<string> onlyIds, CancellationToken ct = default)
+        {
+            RecheckIds = onlyIds;
+            await RunSecurityAuditAsync(timeout, ct);
+            return RecheckRun;
+        }
 
         public async Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, CancellationToken ct = default)
         {

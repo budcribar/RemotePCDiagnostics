@@ -68,6 +68,10 @@ public interface IElevatedCommandBridge
     Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, CancellationToken ct = default) =>
         Task.FromResult<SecurityAuditRun?>(null);
 
+    /// <summary>The security audit for only these finding IDs (a re-check of the ones that failed). Null when the Agent can't.</summary>
+    Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, IReadOnlyList<string> onlyIds, CancellationToken ct = default) =>
+        Task.FromResult<SecurityAuditRun?>(null);
+
     /// <summary>
     /// Has the Agent run RemotePCDiagnostics.ModuleHost with administrator rights for a module that ships with the app and needs them
     /// (<paramref name="module"/> is its DLL path, or "--shared"), and returns the app's end of it (<see cref="AgentModuleHost"/>). Throws
@@ -1410,10 +1414,15 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
     /// <summary>How long after cancelling the client waits for the helper to answer the cancelled request before dropping the pipe.</summary>
     public static TimeSpan CancelGrace { get; set; } = TimeSpan.FromSeconds(20);
 
-    public async Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, CancellationToken ct = default)
+    public Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, CancellationToken ct = default) =>
+        RunSecurityAuditAsync(timeout, [], ct);
+
+    /// <param name="onlyIds">Finding IDs to re-check (sent as the request's arguments); empty audits everything.</param>
+    public async Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, IReadOnlyList<string> onlyIds, CancellationToken ct = default)
     {
         var timeoutMs = (int)Math.Clamp(timeout.TotalMilliseconds, 1_000, 3_600_000);
-        var response = await SendCancellableAsync(new AdminPipeRequest(AdminPipeFraming.OpSecurityAudit, TimeoutMs: timeoutMs),
+        var response = await SendCancellableAsync(new AdminPipeRequest(AdminPipeFraming.OpSecurityAudit, TimeoutMs: timeoutMs,
+                Arguments: onlyIds.Count > 0 ? onlyIds : null),
             TimeSpan.FromMilliseconds(timeoutMs) + TimeSpan.FromMinutes(1), ct).ConfigureAwait(false);
         if (response is null) return null;
         if (response.Cancelled) throw new OperationCanceledException(ct);
@@ -1600,7 +1609,7 @@ public sealed class AdminPipeServer(
     Func<CancellationToken, Task<SensorSnapshot?>>? sensorReader = null,
     ILogger? log = null,
     Func<AppUpdateChannel, IReadOnlyList<string>?, CancellationToken, Task<AppUpdateResult>>? selfUpdater = null,
-    Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>>? securityAuditor = null,
+    Func<TimeSpan, IReadOnlyList<string>?, CancellationToken, Task<SecurityAuditRun>>? securityAuditor = null,
     AgentModuleHost? moduleHost = null,
     IAdminSettingsBackend? adminSettings = null,
     IMachineTweaks? machineTweaks = null,
@@ -2767,7 +2776,8 @@ public sealed class AdminPipeServer(
             return Fail("The security audit is not supported by this elevated helper.", allowed: false);
         try
         {
-            var run = await securityAuditor(TimeSpan.FromMilliseconds(Math.Clamp(request.TimeoutMs, 1_000, 3_600_000)), ct).ConfigureAwait(false);
+            // Finding IDs to re-check; the runner keeps only digit IDs (SecurityAuditModule.RecheckIds).
+            var run = await securityAuditor(TimeSpan.FromMilliseconds(Math.Clamp(request.TimeoutMs, 1_000, 3_600_000)), request.Arguments, ct).ConfigureAwait(false);
             return new AdminPipeResponse(
                 Ok: !run.Process.TimedOut && run.ReportCsv is not null,
                 Allowed: true,

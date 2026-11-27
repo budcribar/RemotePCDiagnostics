@@ -1,4 +1,5 @@
 @* The security audit module's own page, shown at /security-audit (SecurityAuditRoute in the app's UI) and on its module page. *@
+@using RemotePCDiagnostics.Core.Areas
 @using RemotePCDiagnostics.Core.Security
 @inherits ModuleDetailsBase
 @* On-demand security baseline audit (bundled HardeningKitty, read-only Audit mode). Only friendly text here; detail goes to the log. *@
@@ -54,6 +55,42 @@ else
         <AgentData TestId="audit-report-data" CheckId="@m.Name" RunId="r.RunId" Json="@RemotePCDiagnostics.Core.Areas.AgentExports.Audit(rep)" />
     }
     @if (!running && rep?.Notice is { } notice) { <p class="notice" data-testid="audit-notice">@notice</p> }
+    @* Always mounted, so a fix's result stays visible while the re-check that follows it runs. *@
+    @if (Fixes is { } fixService) { <RemediationActions @ref="_fixUi" Actions="fixService" ShowRecent="false" Origin="@m.Name" OnCompleted="() => RecheckAttention(m)" /> }
+
+    @if (!running && rep is not null && rep.NeedsAttention is { Count: > 0 } attention)
+    {
+        var recheckable = attention.Count <= SecurityAuditModule.MaxRecheckIds;
+        <section class="card audit-attention" data-testid="audit-attention" data-count="@attention.Count">
+            <div class="toolbar">
+                <strong>@(attention.Count == 1 ? "1 setting needs attention" : $"{attention.Count} settings need attention")</strong>
+                <button class="btn-small" data-testid="audit-recheck-failed" disabled="@(suiteBusy || !recheckable)"
+                        title="Checks only these settings again, without running the whole audit"
+                        @onclick="() => RecheckAttention(m)">Re-check @(attention.Count == 1 ? "it" : $"these {attention.Count}")</button>
+            </div>
+            <ul class="audit-attention-list">
+                @foreach (var f in attention)
+                {
+                    var finding = f;
+                    var fix = OfferableFix(finding);
+                    <li data-testid="audit-attention-@finding.Id" data-outcome="@finding.Outcome.ToString().ToLowerInvariant()">
+                        <span class="dot dot-@Dot(finding.Outcome)"></span>
+                        <button type="button" class="link-button" data-testid="audit-attention-open-@finding.Id" @onclick="() => _open = finding">@finding.Name</button>
+                        <span class="meta"> · @finding.OutcomeText · now @Show(finding.CurrentValue), recommended @Show(finding.RecommendedValue)</span>
+                        @if (fix is not null)
+                        {
+                            <button class="btn-small" data-testid="audit-fix-@finding.Id" data-action="remediate" data-action-kind="@fix.Kind" data-action-target="@fix.Target"
+                                    disabled="@(Fixes?.Running is not null)" @onclick="() => _fixUi?.Ask(fix)">@fix.ButtonText</button>
+                        }
+                        else
+                        {
+                            <span class="meta" data-testid="audit-nofix-@finding.Id"> · no automatic fix: change it in Windows, then re-check</span>
+                        }
+                    </li>
+                }
+            </ul>
+        </section>
+    }
 
     @if (!running && rep is not null)
     {
@@ -127,12 +164,38 @@ else
                     <tr><th>Current value</th><td>@Show(o.CurrentValue)</td></tr>
                     <tr><th>Recommended value</th><td>@Show(o.RecommendedValue)</td></tr>
                 </table>
+                @if (OfferableFix(o) is { } drawerFix)
+                {
+                    <div class="buttons">
+                        <button class="btn-small" data-testid="audit-drawer-fix" data-action="remediate" data-action-kind="@drawerFix.Kind" data-action-target="@drawerFix.Target"
+                                disabled="@(Fixes?.Running is not null)" @onclick="() => { _open = null; _fixUi?.Ask(drawerFix); }">@drawerFix.ButtonText</button>
+                    </div>
+                }
             </aside>
         }
     }
 }
 
 @code {
+    private RemediationActions? _fixUi;
+
+    /// <summary>The app's fix runner (null where the page shows results only).</summary>
+    private RemediationService? Fixes => App?.Remediation;
+    private AppServices? App => Services.GetService(typeof(AppServices)) as AppServices;
+
+    /// <summary>The fix for a finding, when the app can run it here (a setting the Agent changes needs the Agent).</summary>
+    private AreaAction? OfferableFix(AuditFinding f) =>
+        Fixes is not null && SecurityAuditFixes.For(f) is { } a && FixAccess.CanOffer(a, App?.AgentFixes == true) ? a : null;
+
+    /// <summary>Checks again only the settings that failed or warned (the whole audit when this page has only a stand-in for the module).</summary>
+    private void RecheckAttention(IDiagnosticModule m)
+    {
+        if (Diagnostics.IsRunning(m.Name)) return;
+        if (Store.Get(m.Name).Payload is SecurityAuditReport rep && m is SecurityAuditModule audit)
+            audit.RecheckOnNextRun(rep.NeedsAttention.Select(f => f.Id));
+        Start(m);
+    }
+
     private AuditOutcome? _outcome;
     private bool _showAll;
 

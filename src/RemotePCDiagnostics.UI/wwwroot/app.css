@@ -154,6 +154,22 @@ p.meta { max-width: 820px; font-size: 13px; }
 .progress > div { height: 100%; background: var(--progress-fill); border-radius: 99px; transition: width .5s; box-shadow: var(--glow); }
 svg.chart { background: var(--chart-bg); border: 1px solid var(--border); border-radius: 10px; }
 .audit-filters { gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+/* QA certificate: the items that failed or have a note, with Open, Re-run and the security audit's fixes. */
+.qa-attention-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.qa-attention-top .btn-outline { width: auto; }
+.qa-attention-list, .qa-attention-findings { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.qa-attention-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.qa-attention-actions { margin-left: auto; display: inline-flex; gap: 6px; }
+.qa-attention-findings { margin: 6px 0 0 18px; gap: 6px; }
+.qa-attention-findings li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.qa-attention-findings .btn-small { margin-left: auto; }
+/* Security audit: the settings that failed or warned, each with its fix, and Re-check for just those. */
+.audit-attention { margin: 12px 0; }
+.audit-attention .toolbar { justify-content: space-between; margin-bottom: 6px; }
+.audit-attention-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.audit-attention-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.audit-attention-list .btn-small { margin-left: auto; }
+.link-button { background: none; border: 0; padding: 0; color: var(--accent, #22d3ee); cursor: pointer; font: inherit; text-align: left; text-decoration: underline; }
 
 /* Chips & icon badges */
 .chip { flex: none; display: inline-flex; gap: 5px; align-items: center; white-space: nowrap; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; }
