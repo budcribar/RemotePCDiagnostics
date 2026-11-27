@@ -597,6 +597,11 @@
                 <div id="ct-trend-@m.Name"><CheckTrendPanel Module="@m.Name" Entries="@_trendEntries" Days="TrendDays" HistoryHref="@history" /></div>
             }
         </div>
+        @* The graphics memory test's choices (Quick or Extended, the chips it will test), shown until a run starts. *@
+        @if (m is RemotePCDiagnostics.Core.GpuMemory.GpuMemoryModule gpuMemory && kind != RowKind.Running)
+        {
+            <GpuMemoryChoices Module="gpuMemory" Disabled="@(!canRun)" />
+        }
         @* Collapsed details stay in the page (hidden), so the result data is still there for the shop's tools; they expand it to click. *@
         <div class="ct-detail-body" id="ct-detail-body-@m.Name" @key="m.Name" hidden="@(Collapsible(kind) && !DetailsOpen(m.Name, kind))" data-testid="checks-detail-body">
             @* The Windows integrity scans (DISM, SFC) show their result here, not on an area page: their single repair steps and the fix

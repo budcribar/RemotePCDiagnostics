@@ -75,6 +75,8 @@ public static class ModuleIds
     public static readonly Guid SoundCheck = new("b81b0a57-43d2-4ad4-8572-1480fbe6cf0f");
     /// <summary>Slug <c>WindowsMaintenance</c>.</summary>
     public static readonly Guid WindowsMaintenance = new("f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41");
+    /// <summary>Slug <c>GpuMemory</c>.</summary>
+    public static readonly Guid GpuMemory = new("fe79a8ac-1fca-4933-9ae8-f8016d4ba216");
 
     /// <summary>Every built-in id with its slug (the module's Name). Includes modules that are not registered on every build.</summary>
     public static IReadOnlyDictionary<Guid, string> BuiltIn { get; } = new Dictionary<Guid, string>
@@ -113,6 +115,7 @@ public static class ModuleIds
         [Sound] = ModuleSlugs.Sound,
         [WindowsMaintenance] = ModuleSlugs.WindowsMaintenance,
         [SoundCheck] = ModuleSlugs.SoundCheck,
+        [GpuMemory] = ModuleSlugs.GpuMemory,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -163,4 +166,6 @@ public static class ModuleSlugs
     public const string WindowsMaintenance = "WindowsMaintenance";
     /// <summary>The interactive left/right test sound and the "Can't hear sound" helper (Interactive tests page).</summary>
     public const string SoundCheck = "SoundCheck";
+    /// <summary>The graphics memory (VRAM) test: patterns written and checked in each graphics chip's memory.</summary>
+    public const string GpuMemory = "GpuMemory";
 }

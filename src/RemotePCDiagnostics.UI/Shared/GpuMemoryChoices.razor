@@ -1,0 +1,107 @@
+@using System.Text.Json
+@using RemotePCDiagnostics.Core.GpuMemory
+@* The graphics memory test's choices before it starts: Quick or Extended, and the graphics chips it will test with how much memory each
+   has free. The run starts from the card's Run button like any on-demand scan. Browser agents read the same state, and the last run's
+   numbers per chip, from gpumemory-data. *@
+<div class="card gpumem-options" data-testid="gpumemory-options" data-mode="@GpuMemoryModule.ModeArg(Module.Mode)">
+    <fieldset class="gpumem-mode" disabled="@Disabled">
+        <legend>Which test</legend>
+        <label>
+            <input type="radio" name="gpumemory-mode" data-testid="gpumemory-mode-quick" checked="@(Module.Mode == GpuMemoryMode.Quick)"
+                   @onchange="() => SetMode(GpuMemoryMode.Quick)" />
+            Quick <span class="meta">(about @Minutes(GpuMemoryMode.Quick) per graphics chip)</span>
+        </label>
+        <label>
+            <input type="radio" name="gpumemory-mode" data-testid="gpumemory-mode-extended" checked="@(Module.Mode == GpuMemoryMode.Extended)"
+                   @onchange="() => SetMode(GpuMemoryMode.Extended)" />
+            Extended <span class="meta">(about @Minutes(GpuMemoryMode.Extended) per graphics chip; adds moving inversions and repeats)</span>
+        </label>
+    </fieldset>
+    @if (_adapters is { Count: > 0 } adapters)
+    {
+        <table class="gpumem-adapters" data-testid="gpumemory-adapters">
+            <thead><tr><th>Graphics chip</th><th>Memory</th><th>Free now</th><th>Will test</th></tr></thead>
+            <tbody>
+                @foreach (var a in adapters)
+                {
+                    var target = GpuMemoryPlan.Target(a, BlockBytes);
+                    <tr data-testid="gpumemory-adapter" data-adapter-id="@a.Id">
+                        <td>@a.Name</td>
+                        <td>@(a.Integrated ? $"Built-in (shares the PC's memory, up to {GpuMemoryModule.Mb(GpuMemoryPlan.MemoryBytes(a))})" : GpuMemoryModule.Mb(a.DedicatedBytes))</td>
+                        <td>@(a.FreeBytes is { } f ? GpuMemoryModule.Mb(f) : "not reported")</td>
+                        <td>@(target > 0 ? GpuMemoryModule.Mb(target) : "too little free memory")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p class="meta">Close games and video apps first: the test uses up to 80% of the free graphics memory. The screen keeps working while it runs, and nothing on the PC is changed. Cancel stops it and frees the memory.</p>
+    }
+    else if (_adapters is not null)
+    {
+        <p class="meta" data-testid="gpumemory-none">Windows made no graphics chip available to this app. If the PC is reached through Remote Desktop, or only the basic display driver is installed, there is nothing to test.</p>
+    }
+    <AgentData TestId="gpumemory-data" CheckId="@Module.Name" Json="@DataJson()" />
+</div>
+
+@code {
+    [Parameter, EditorRequired] public GpuMemoryModule Module { get; set; } = default!;
+    /// <summary>True while a run is going: the choice is fixed until it ends.</summary>
+    [Parameter] public bool Disabled { get; set; }
+
+    private static readonly long BlockBytes = new GpuMemoryOptions().BlockBytes;
+    private IReadOnlyList<GpuMemoryAdapter>? _adapters;
+
+    protected override void OnInitialized()
+    {
+        _adapters = Module.LastAdapters;
+        try { _adapters = Module.Preview(); }
+        catch (Exception) { /* the preview is a convenience; the run lists the chips again */ }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (Module.LastAdapters is { } latest) _adapters = latest;
+    }
+
+    private void SetMode(GpuMemoryMode mode) { if (!Disabled) Module.Mode = mode; }
+
+    private static string Minutes(GpuMemoryMode mode)
+    {
+        var d = GpuMemoryOptions.DefaultDuration(mode);
+        return d.TotalMinutes < 2 ? $"{d.TotalMinutes:0.#} min" : $"{d.TotalMinutes:0} min";
+    }
+
+    private string DataJson() => JsonSerializer.Serialize(new
+    {
+        mode = GpuMemoryModule.ModeArg(Module.Mode),
+        minutesPerChip = GpuMemoryOptions.DefaultDuration(Module.Mode).TotalMinutes,
+        adapters = (_adapters ?? []).Select(a => new
+        {
+            id = a.Id,
+            name = a.Name,
+            integrated = a.Integrated,
+            dedicatedMb = a.DedicatedBytes / GpuMemoryPlan.MB,
+            memoryMb = GpuMemoryPlan.MemoryBytes(a) / GpuMemoryPlan.MB,
+            freeMb = a.FreeBytes / GpuMemoryPlan.MB,
+            plannedMb = GpuMemoryPlan.Target(a, BlockBytes) / GpuMemoryPlan.MB,
+        }),
+        results = Module.LastResults?.Select(r => new
+        {
+            adapterId = r.Adapter.Id,
+            adapter = r.Adapter.Name,
+            outcome = r.Outcome.ToString(),
+            level = GpuMemoryModule.Level(r).ToString(),
+            mode = GpuMemoryModule.ModeArg(r.Mode),
+            memoryMb = r.MemoryBytes / GpuMemoryPlan.MB,
+            testedMb = r.TestedMb,
+            testedPercent = Math.Round(r.TestedFraction * 100, 1),
+            passes = r.Passes,
+            errors = r.Errors,
+            flippedBits = r.FlippedBits == 0 ? null : GpuMemoryModule.Bits(r.FlippedBits),
+            firstErrors = r.FirstErrors.Select(e => new { offset = e.ByteOffset, expected = $"0x{e.Expected:X8}", actual = $"0x{e.Actual:X8}", pattern = e.Pattern.ToString(), pass = e.Pass }),
+            maxTemperatureC = r.MaxTemperatureC,
+            seconds = Math.Round(r.Ran.TotalSeconds),
+            reason = r.Reason,
+        }),
+    });
+}
