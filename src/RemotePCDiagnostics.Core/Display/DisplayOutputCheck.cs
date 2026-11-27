@@ -108,9 +108,17 @@ public static class DisplayOutputCheck
             if (has.TryGetValue(a.Key, out var o))
             {
                 var fresh = From(o, now, a.At);
-                list.Add(fresh with { PictureAppeared = a.PictureAppeared, Unplugged = a.Unplugged });
+                list.Add(fresh with
+                {
+                    Active = a.Active || fresh.Active,
+                    Mode = fresh.Active ? fresh.Mode : a.Mode,
+                    RefreshHz = fresh.Active ? fresh.RefreshHz : a.RefreshHz,
+                    BelowNative = fresh.Active ? fresh.BelowNative : a.BelowNative,
+                    PictureAppeared = a.PictureAppeared,
+                    Unplugged = a.Unplugged,
+                });
             }
-            else list.Add(had.Contains(a.Key) ? a with { Active = false, Unplugged = a.Unplugged + 1 } : a);
+            else list.Add(had.Contains(a.Key) ? a with { Unplugged = a.Unplugged + 1 } : a);
         }
         foreach (var o in now.Monitors.Where(o => !had.Contains(o.Key) && arrivals.All(a => a.Key != o.Key)))
             list.Add(From(o, now, at));

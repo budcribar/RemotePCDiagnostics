@@ -271,13 +271,14 @@ public static class InteractiveExport
         var running = r.Status == DiagnosticStatus.Running;
         var rep = running ? s.Live : r.Payload as Display.DisplayOutputCheckReport;
         var answered = rep is not null && !rep.Watching && rep.Unanswered == 0 && (rep.Arrivals.Count > 0 || rep.NoSignal.Count > 0);
+        var done = answered || (s.Module.PersonEntered && (rep is null || rep.Unanswered == 0));
         return new
         {
             id = "displayoutputs",
             name = "Video output check",
             @checked = page.CheckedTestIds.Contains("displayoutputs"),
             open = page.SelectedTestId == "displayoutputs",
-            state = running ? "in-progress" : answered || s.Module.PersonEntered ? "done"
+            state = running ? "in-progress" : done ? "done"
                 : rep is not null ? "waiting-for-person-verdict" : "waiting-for-person",
             runId = r.RunId,
             measured = rep is null ? null : new
@@ -301,7 +302,7 @@ public static class InteractiveExport
                 unanswered = rep.Unanswered,
                 notice = T(rep.Notice),
             },
-            personOutcome = answered || s.Module.PersonEntered ? Person(r.Status) : null,
+            personOutcome = !running && done ? Person(r.Status) : null,
             message = T(running ? Display.DisplayOutputCheck.Outcome(s.Live).Message : r.Message),
             instructions = "Start watching, then the person plugs a monitor into each video port in turn (HDMI, DisplayPort, USB-C, VGA, the "
                 + "dock's). Each monitor shows with its connector, mode and whether its EDID is valid, and the person answers Did the picture "

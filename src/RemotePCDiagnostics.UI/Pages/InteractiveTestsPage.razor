@@ -769,7 +769,9 @@
                         else
                         {
                             <button type="button" class="btn-small btn-primary" data-testid="displayoutputs-start-btn"
-                                    disabled="@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay || dvModule is null)" @onclick="StartDisplayOutputCheckAsync">
+                                    disabled="@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay || dvModule is null)"
+                                    title="@(_isRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                                    @onclick="StartDisplayOutputCheckAsync">
                                 @(dvRep is null ? "Start watching" : "Start again")
                             </button>
                         }
@@ -906,6 +908,7 @@
     }
 
     private DotNetObjectReference<InteractiveTestsPage>? _dotNetRef;
+    private bool _disposed;
     private bool _isRemoteDisplay;
     private bool _hasRemoteSession;
     private bool _technicianHasControl;
@@ -950,6 +953,7 @@
 
     public override void Dispose()
     {
+        _disposed = true;
         base.Dispose();
         if (GetDisplayOutputCheckModule() is { } dvCheck) dvCheck.Changed -= OnDisplayOutputCheckChanged;
         _batchCts?.Cancel();
@@ -1150,7 +1154,12 @@
         Diagnostics.Modules.OfType<IDisplayOutputCheckModule>().FirstOrDefault()
         ?? (Diagnostics.Catalog.Find(ModuleSlugs.DisplayOutputCheck) is { } d ? Diagnostics.Catalog.ModuleFor(d.Id) as IDisplayOutputCheckModule : null);
 
-    private void OnDisplayOutputCheckChanged(object? sender, EventArgs e) => InvokeAsync(StateHasChanged);
+    private void OnDisplayOutputCheckChanged(object? sender, EventArgs e)
+    {
+        if (_disposed) return;
+        try { _ = InvokeAsync(() => { if (!_disposed) StateHasChanged(); }); }
+        catch (ObjectDisposedException) { }
+    }
 
     private string _noSignalPort = "";
 
@@ -1174,7 +1183,10 @@
         if (latest.Status == DiagnosticStatus.Running) { GetDisplayOutputCheckModule()?.Answer(key, pictureAppeared); return; }
         if (DisplayOutputCheck.Answer(latest, key, pictureAppeared) is not { } updated) return;
         Store.Set(updated);
-        _personResults[ModuleSlugs.DisplayOutputCheck] = updated;
+        if (updated.Payload is DisplayOutputCheckReport { Unanswered: 0 })
+            _personResults[ModuleSlugs.DisplayOutputCheck] = updated;
+        else
+            _personResults.Remove(ModuleSlugs.DisplayOutputCheck);
     }
 
     /// <summary>Records a port where the person plugged a monitor in and nothing was seen at all.</summary>
@@ -1186,7 +1198,10 @@
         if (latest.Status == DiagnosticStatus.Running) { GetDisplayOutputCheckModule()?.ReportNoSignal(port); return; }
         if (DisplayOutputCheck.NoSignal(latest, port) is not { } updated) return;
         Store.Set(updated);
-        _personResults[ModuleSlugs.DisplayOutputCheck] = updated;
+        if (updated.Payload is DisplayOutputCheckReport { Unanswered: 0 })
+            _personResults[ModuleSlugs.DisplayOutputCheck] = updated;
+        else
+            _personResults.Remove(ModuleSlugs.DisplayOutputCheck);
     }
 
     private void ResetDisplayOutputCheck() => Store.Set(DiagnosticResult.NotRun(ModuleSlugs.DisplayOutputCheck));

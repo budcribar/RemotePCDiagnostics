@@ -173,6 +173,34 @@ public class DisplaysTests
     }
 
     [Fact]
+    public void Clamshell_inactive_internal_display_does_not_warn()
+    {
+        var lidClosed = Laptop(primary: false) with { Active = false, Width = null, Height = null, RefreshHz = null, X = null, Y = null, ScalePercent = null };
+        var external = Monitor() with { Primary = true, X = 0, Y = 0 };
+        var r = Build(new DisplaySnapshot([lidClosed, Empty(Igpu, 2, 5), external]));
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+        Assert.Equal(AreaLevel.Ok, Card(r, "displays").Level);
+        Assert.Equal(AreaLevel.Ok, Card(r, "outputs").Level);
+
+        // When no other display is active, an inactive internal screen still warns.
+        var alone = Build(new DisplaySnapshot([lidClosed, Empty(Igpu, 2, 5)]));
+        Assert.Equal(DiagnosticStatus.Warning, alone.Status);
+        Assert.Equal(AreaLevel.Warning, Card(alone, "displays").Level);
+        Assert.Equal(AreaLevel.Warning, Card(alone, "outputs").Level);
+    }
+
+    [Fact]
+    public void Native_prefers_driver_preferred_mode_over_base_edid()
+    {
+        var fiveK = Monitor(w: 5120, h: 2880) with { PreferredWidth = 5120, PreferredHeight = 2880 };
+        Assert.Equal((5120, 2880), Displays.Native(fiveK));
+        Assert.False(Displays.BelowNative(fiveK));
+
+        var edidOnly = Monitor() with { PreferredWidth = null, PreferredHeight = null };
+        Assert.Equal((2560, 1440), Displays.Native(edidOnly));
+    }
+
+    [Fact]
     public void Headless_pc_still_reports_its_outputs()
     {
         var r = Build(new DisplaySnapshot([Empty(Gpu, 1, 5), Empty(Gpu, 2, 10), new(Gpu, 9, 17, false, false, "NVIDIA GeForce RTX 3060")]));
@@ -334,6 +362,28 @@ public class DisplaysTests
         Assert.Empty(DisplayOutputCheck.Next([], Desk(), Desk(), t)); // a monitor there from the start isn't an arrival
     }
 
+    [Fact]
+    public void Unplugging_port_1_to_test_port_2_preserves_active_state()
+    {
+        var t = DateTimeOffset.UnixEpoch;
+        var empty = new DisplaySnapshot([Laptop(), Empty(Gpu, 4, 10), Empty(Gpu, 5, 5)]);
+        var onPort1 = new DisplaySnapshot([Laptop(), Monitor(Gpu, 4, 10), Empty(Gpu, 5, 5)]);
+        var onPort2 = new DisplaySnapshot([Laptop(), Empty(Gpu, 4, 10), Monitor(Gpu, 5, 5)]);
+
+        var a = DisplayOutputCheck.Next([], empty, onPort1, t);
+        a = DisplayOutputCheck.Next(a, onPort1, empty, t.AddSeconds(1));
+        a = DisplayOutputCheck.Next(a, empty, onPort2, t.AddSeconds(2));
+
+        Assert.Equal(2, a.Count);
+        Assert.True(a[0].Active);
+        Assert.Equal("2560×1440", a[0].Mode);
+        Assert.Equal(60, a[0].RefreshHz);
+        Assert.Equal(1, a[0].Unplugged);
+        Assert.False(a[0].Flapping);
+        Assert.True(a[1].Active);
+        Assert.Equal("2560×1440", a[1].Mode);
+    }
+
     private static DisplayArrival Arrived(string key, bool? picture = null, string? edid = null, bool low = false) =>
         new(DateTimeOffset.UnixEpoch, key, "Monitor", "HDMI", "GPU", true, "1920×1080", 60, edid, low, picture);
 
@@ -403,6 +453,37 @@ public class DisplaysTests
         Assert.Equal("rear VGA", measured.GetProperty("noSignal")[0].GetString());
         Assert.Equal("No EDID", measured.GetProperty("ports")[0].GetProperty("edidProblem").GetString());
         Assert.True(measured.GetProperty("ports")[1].GetProperty("pictureAppeared").GetBoolean());
+    }
+
+    [Fact]
+    public void Interactive_export_waits_until_all_ports_are_answered()
+    {
+        var page = new InteractiveExport.PageState("displayoutputs", ["displayoutputs"], false, false, false, false);
+        var partial = DisplayOutputCheck.ToResult(new DisplayOutputCheckReport([Arrived("k1", true), Arrived("k2", null)], [], false));
+        var partialJson = InteractiveExport.ToJson(page, new Core.Workflow.PhysicalBenchQaSnapshot(),
+            new(DiagnosticResult.NotRun(ModuleSlugs.Webcam), false), new(DiagnosticResult.NotRun(ModuleSlugs.SpeakerToMic), false),
+            new(DiagnosticResult.NotRun(ModuleSlugs.MicToSpeaker), false), null, null,
+            new(new(partial, PersonEntered: true), DisplayOutputCheckReport.Empty));
+        using (var doc = JsonDocument.Parse(partialJson))
+        {
+            var t = doc.RootElement.GetProperty("tests").EnumerateArray().Single(x => x.GetProperty("id").GetString() == "displayoutputs");
+            Assert.Equal("waiting-for-person-verdict", t.GetProperty("state").GetString());
+            Assert.False(t.TryGetProperty("personOutcome", out _));
+            Assert.Equal(1, t.GetProperty("measured").GetProperty("unanswered").GetInt32());
+        }
+
+        var complete = DisplayOutputCheck.Answer(partial, "k2", true)!;
+        var completeJson = InteractiveExport.ToJson(page, new Core.Workflow.PhysicalBenchQaSnapshot(),
+            new(DiagnosticResult.NotRun(ModuleSlugs.Webcam), false), new(DiagnosticResult.NotRun(ModuleSlugs.SpeakerToMic), false),
+            new(DiagnosticResult.NotRun(ModuleSlugs.MicToSpeaker), false), null, null,
+            new(new(complete, PersonEntered: true), DisplayOutputCheckReport.Empty));
+        using (var doc = JsonDocument.Parse(completeJson))
+        {
+            var t = doc.RootElement.GetProperty("tests").EnumerateArray().Single(x => x.GetProperty("id").GetString() == "displayoutputs");
+            Assert.Equal("done", t.GetProperty("state").GetString());
+            Assert.Equal("passed", t.GetProperty("personOutcome").GetString());
+            Assert.Equal(0, t.GetProperty("measured").GetProperty("unanswered").GetInt32());
+        }
     }
 
     // ---------------------------------------------------------------- fakes

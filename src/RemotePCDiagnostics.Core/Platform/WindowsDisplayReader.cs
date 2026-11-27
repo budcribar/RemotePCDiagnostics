@@ -43,7 +43,7 @@ public static unsafe class WindowsDisplayReader
             foreach (var g in paths.GroupBy(p => (p.TargetAdapter, p.TargetId)))
             {
                 ct.ThrowIfCancellationRequested();
-                var p = g.FirstOrDefault(x => x.Active) ?? g.First();
+                var p = g.FirstOrDefault(x => x.Active) ?? g.FirstOrDefault(x => x.Available) ?? g.First();
                 if (!adapterNames.TryGetValue(p.TargetAdapter, out var adapterName))
                     adapterNames[p.TargetAdapter] = adapterName = AdapterName(p.TargetAdapter);
                 outputs.Add(Output(p, adapterName, modes));
@@ -62,6 +62,7 @@ public static unsafe class WindowsDisplayReader
         {
             var rc = GetDisplayConfigBufferSizes(QdcAllPaths, out var numPaths, out var numModes);
             if (rc != ErrorSuccess) throw new Win32Exception(rc, "GetDisplayConfigBufferSizes failed");
+            if (numPaths == 0) return ([], []);
             var pathBuf = new byte[Math.Max(1, numPaths) * PathSize];
             var modeBuf = new byte[Math.Max(1, numModes) * ModeSize];
             fixed (byte* pp = pathBuf)

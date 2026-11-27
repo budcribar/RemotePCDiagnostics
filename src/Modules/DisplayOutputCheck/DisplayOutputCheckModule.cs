@@ -69,6 +69,7 @@ public sealed class DisplayOutputCheckModule(IDisplaySource displays, ILogger? l
             {
                 await Task.WhenAny(finish.Task, Task.Delay(_poll, ct)).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
+                if (finish.Task.IsCompleted) break;
                 var now = await displays.ReadAsync(ct).ConfigureAwait(false);
                 if (now.Error is not null) continue;
                 DisplayOutputCheckReport live;

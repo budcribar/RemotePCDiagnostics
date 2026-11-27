@@ -66,10 +66,10 @@ public static class Displays
 
     public static string Hz(double? hz) => hz is > 0 ? Math.Round(hz.Value, hz.Value % 1 is > 0.05 and < 0.95 ? 2 : 0).ToString(CultureInfo.InvariantCulture) + " Hz" : "";
 
-    /// <summary>The monitor's native resolution: the EDID's preferred timing, else the driver's preferred mode.</summary>
+    /// <summary>The monitor's native resolution: the driver's preferred mode (supports 5K/6K/8K DisplayID/CTA-861), else the base EDID's preferred timing.</summary>
     public static (int? W, int? H) Native(DisplayOutput o) =>
-        o.Edid is { Valid: true, PreferredWidth: > 0, PreferredHeight: > 0 } e ? (e.PreferredWidth, e.PreferredHeight)
-        : o.PreferredWidth is > 0 && o.PreferredHeight is > 0 ? (o.PreferredWidth, o.PreferredHeight) : (null, null);
+        o.PreferredWidth is > 0 && o.PreferredHeight is > 0 ? (o.PreferredWidth, o.PreferredHeight)
+        : o.Edid is { Valid: true, PreferredWidth: > 0, PreferredHeight: > 0 } e ? (e.PreferredWidth, e.PreferredHeight) : (null, null);
 
     /// <summary>Running at fewer pixels than the monitor's native mode (rotation allowed for).</summary>
     public static bool BelowNative(DisplayOutput o)
@@ -94,11 +94,15 @@ public static class Displays
         return o.Connector == DisplayConnector.Internal ? null : "The monitor didn't send its identity (no EDID): often the cable, an adapter or a KVM switch";
     }
 
+    /// <summary>Connected but inactive is a warning, except for a laptop's built-in screen while another display is active (clamshell / lid closed).</summary>
+    public static bool IsInactiveWarning(DisplayOutput o, bool anotherActive = false) =>
+        o.Available && !o.Active && !(o.Connector == DisplayConnector.Internal && anotherActive);
+
     /// <summary>What to look at on one monitor, most important first; empty when nothing.</summary>
-    public static IReadOnlyList<string> Problems(DisplayOutput o)
+    public static IReadOnlyList<string> Problems(DisplayOutput o, bool anotherActive = false)
     {
         var list = new List<string>();
-        if (o.Available && !o.Active) list.Add("Connected, but Windows isn't showing anything on it");
+        if (IsInactiveWarning(o, anotherActive)) list.Add("Connected, but Windows isn't showing anything on it");
         if (EdidProblem(o) is { } edid) list.Add(edid);
         if (BelowNative(o))
         {
@@ -160,10 +164,11 @@ public static class DisplayAnalysis
     private static void AddDisplays(List<AreaCard> cards, List<string> parts, DisplaySnapshot s)
     {
         var monitors = s.Monitors.OrderByDescending(o => o.Primary).ThenByDescending(o => o.Active).ThenBy(o => o.X ?? int.MaxValue).ToList();
+        var anyActive = monitors.Any(o => o.Active);
         var rows = new List<AreaRow>();
         foreach (var o in monitors)
         {
-            var problems = Displays.Problems(o);
+            var problems = Displays.Problems(o, anyActive);
             var (nw, nh) = Displays.Native(o);
             var resolution = o.Active ? Displays.Mode(o.Width, o.Height) : "Not in use";
             if (o.Active && nw is not null && Displays.Mode(nw, nh) is { Length: > 0 } native && native != Displays.Mode(o.Width, o.Height)
@@ -230,11 +235,12 @@ public static class DisplayAnalysis
     {
         var outputs = s.Outputs.Where(o => o.Connector != DisplayConnector.Virtual || o.Available).ToList();
         if (outputs.Count == 0) return;
+        var anyActive = s.Monitors.Any(o => o.Active);
         var rows = outputs.OrderBy(o => o.AdapterName, StringComparer.CurrentCultureIgnoreCase).ThenBy(o => o.Connector).ThenBy(o => o.ConnectorInstance)
-            .Select(o => new AreaRow(o.Available && !o.Active ? AreaLevel.Warning : AreaLevel.Neutral,
+            .Select(o => new AreaRow(Displays.IsInactiveWarning(o, anyActive) ? AreaLevel.Warning : AreaLevel.Neutral,
                 [o.AdapterName ?? "Graphics adapter", Displays.Where(o, s), o.Available ? Displays.Name(o) : "",
                  o.Active ? "In use" : o.Available ? "Monitor connected, not in use" : "Nothing connected"], Key: o.Key)).ToList();
-        var inactive = outputs.Count(o => o.Available && !o.Active);
+        var inactive = outputs.Count(o => Displays.IsInactiveWarning(o, anyActive));
         var adapters = outputs.Select(o => o.AdapterId).Distinct().Count();
         var inUse = outputs.Count(o => o.Active);
         cards.Add(new("outputs", "Video outputs", inactive > 0 ? AreaLevel.Warning : AreaLevel.Ok,
