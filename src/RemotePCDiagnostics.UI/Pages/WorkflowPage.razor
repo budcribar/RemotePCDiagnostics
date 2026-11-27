@@ -73,7 +73,8 @@
     </div>
 </section>
 
-@if (App.Elevation is { HasAdminCapabilities: false })
+@* Only when an Agent is installed but not connected: with no Agent at all, the workflow simply offers the fixes that run without one. *@
+@if (App.Elevation is { HasAdminCapabilities: false } && !App.NoAgent)
 {
     <section class="banner banner-warn wf-admin-callout" role="region" aria-label="Administrator repair permissions" data-testid="wf-admin-callout">
         <span class="banner-icon"><Icon Name="sec" Size="20" /></span>

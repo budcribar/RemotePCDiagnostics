@@ -634,10 +634,10 @@
                 @foreach (var card in integrity.Cards)
                 {
                     <p class="meta">@card.Meta</p>
-                    @if (App.Remediation is not null && card.Actions is { Count: > 0 })
+                    @if (App.Remediation is not null && FixAccess.Offerable(card.Actions, App.AgentFixes) is { Count: > 0 } scanActs)
                     {
                         <div class="svc-actions" data-testid="checks-scan-fixes">
-                            @foreach (var act in card.Actions)
+                            @foreach (var act in scanActs)
                             {
                                 var a = act;
                                 <button class="btn-small" data-testid="remediation-card-@card.Id-@a.Kind" data-action="remediate" data-card-id="@card.Id" data-action-kind="@a.Kind" data-action-target="@a.Target" @onclick="() => _scanFixUi?.Ask(a)">@a.ButtonText</button>

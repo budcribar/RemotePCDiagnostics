@@ -34,4 +34,19 @@ public sealed record AppServices(
     IAppUpdateService? AppUpdate = null,
     SystemCommandRunner? Commands = null,
     CheckSettingsService? CheckSettings = null,
-    IBiosUpdateService? Bios = null);
+    IBiosUpdateService? Bios = null,
+    RemotePCDiagnostics.Agent.Core.AgentModeMonitor? AgentLink = null)
+{
+    /// <summary>
+    /// No Agent on this PC: none is installed and none does admin work for the app (the Microsoft Store app on its own). The app then just
+    /// offers less: features that need the Agent are hidden, with no warnings, and only the Dashboard mentions what the Agent adds.
+    /// False when the host doesn't say (tests).
+    /// </summary>
+    public bool NoAgent => AgentShopPillState.NoAgent(Elevation, AgentLink?.Current.Kind);
+
+    /// <summary>
+    /// Fixes that need administrator rights can run: the Agent is connected (or the host has no elevation service, as in tests). When false
+    /// the pages leave those fixes out (<see cref="FixAccess"/>) instead of offering buttons that fail.
+    /// </summary>
+    public bool AgentFixes => Elevation is not { HasAdminCapabilities: false };
+}

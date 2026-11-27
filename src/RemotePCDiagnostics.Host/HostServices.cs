@@ -51,9 +51,17 @@ public static class HostServices
         services.AddSingleton(_ => AgentModeHost.CreateMonitor()); // Local only / agent link, separate from the session badge
         if (session.Mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
         services.AddSingleton<ResultStore>();
+#if RPCD_STORE
+        // The Store edition may have no Agent: WMI goes to the Agent when it is connected, else the app reads it as the signed-in user, so
+        // checks without a legacy reader (Sound, Sleep & wake, Windows maintenance) still read what a standard user can.
+        services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IWmiSource>(sp => new RemotePCDiagnostics.Core.DataSources.NotingWmiSource(
+            new RemotePCDiagnostics.Core.DataSources.AgentOrLocalWmiSource(sp.GetRequiredService<IElevatedCommandBridge>(),
+                new RemotePCDiagnostics.Core.DataSources.SystemWmiSource(L<RemotePCDiagnostics.Core.DataSources.SystemWmiSource>()))));
+#else
         // WMI is read by the Agent, never by the app (it has the rights some classes need).
         services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IWmiSource>(sp => new RemotePCDiagnostics.Core.DataSources.NotingWmiSource(
             new RemotePCDiagnostics.Core.DataSources.AgentWmiSource(sp.GetRequiredService<IElevatedCommandBridge>())));
+#endif
         // The registry keys checks read need no administrator rights, so the app reads them itself.
         services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IRegistrySource>(_ => new RemotePCDiagnostics.Core.DataSources.SystemRegistrySource(L<RemotePCDiagnostics.Core.DataSources.SystemRegistrySource>()));
         services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IPackageSource>(_ => new RemotePCDiagnostics.Host.Platform.SystemPackageSource(L<RemotePCDiagnostics.Host.Platform.SystemPackageSource>()));
@@ -165,7 +173,10 @@ public static class HostServices
             new RemotePCDiagnostics.Core.Preferences.FilePreferencesStore(RemotePCDiagnostics.Core.Preferences.FilePreferencesStore.DefaultPath(), L<RemotePCDiagnostics.Core.Preferences.FilePreferencesStore>())));
         services.AddSingleton(sp => new ChecksScreenState(sp.GetRequiredService<DiagnosticsService>(), sp.GetRequiredService<ResultStore>(),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Preferences.PreferencesService>(),
-            sp.GetRequiredService<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>()));
+            sp.GetRequiredService<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>())
+        {
+            HasAgent = () => sp.GetService<IElevationContext>() is not { HasAdminCapabilities: false },
+        });
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService(
             sp.GetRequiredService<IMemorySystem>(), sp.GetRequiredService<ServicesModule>(), sp.GetRequiredService<ServiceActionService>(),
             sp.GetRequiredService<ISessionContext>(), (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.MemorySuggestion, level, text), L<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(),
@@ -197,7 +208,10 @@ public static class HostServices
             sp.GetRequiredService<RemediationService>(), sp.GetRequiredService<ISessionContext>(),
             (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Benchmark, level, text), L<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>(),
             devRunner: sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.DeveloperBuildRunner>(),
-            devEnv: sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.IDeveloperEnvironmentProbe>()));
+            devEnv: sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.IDeveloperEnvironmentProbe>())
+        {
+            HasAgent = () => sp.GetService<IElevationContext>() is not { HasAdminCapabilities: false },
+        });
         // Service workflow: checks → tech review → restart → before benchmark → fixes → restart → after benchmark → report.
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Workflow.WorkflowService(
             sp.GetRequiredService<DiagnosticsService>(), sp.GetRequiredService<ResultStore>(), sp.GetRequiredService<RemediationService>(),
@@ -263,7 +277,8 @@ public static class HostServices
             sp.GetService<IAppUpdateService>(),
             sp.GetService<SystemCommandRunner>(),
             sp.GetService<CheckSettingsService>(),
-            sp.GetService<IBiosUpdateService>()));
+            sp.GetService<IBiosUpdateService>(),
+            sp.GetService<RemotePCDiagnostics.Agent.Core.AgentModeMonitor>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
         // RPCD_REPLAY (Debug builds): the checks read a recording instead of this PC. RPCD_LOG: they also record what they read.

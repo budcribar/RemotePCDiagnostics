@@ -71,7 +71,8 @@ if ([string]::IsNullOrWhiteSpace($PublisherDisplayName)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($StageDir)) {
-    $StageDir = Join-Path $RepoRoot 'artifacts/installer-stage'
+    # The Store edition's stage (installer/Build-Installer.ps1 -Edition Store -StageOnly), not the Setup edition's.
+    $StageDir = Join-Path $RepoRoot 'artifacts/installer-stage-store'
 }
 if ([string]::IsNullOrWhiteSpace($MsixStageDir)) {
     $MsixStageDir = Join-Path $RepoRoot 'artifacts/msix-stage'
@@ -100,6 +101,7 @@ if (-not $SkipPublish) {
         StageDir   = $StageDir
         OutputDir  = $OutputDir
         StageOnly  = $true
+        Edition    = 'Store'
         SkipVerify = $SkipVerify.IsPresent
     }
     if (-not [string]::IsNullOrWhiteSpace($RbwvSourceRoot)) { $StageParams['RbwvSourceRoot'] = $RbwvSourceRoot }
@@ -113,6 +115,12 @@ if (-not (Test-Path -LiteralPath $StageDir)) {
 }
 
 $StageDir = (Resolve-Path -LiteralPath $StageDir).Path
+# The Store app may run with no Agent installed, so it must be the Store edition (legacy readers + osquery), never the Setup edition.
+foreach ($StoreFile in @('tools/osquery/osqueryi.exe', 'RemotePCDiagnostics.Legacy.dll')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $StageDir $StoreFile))) {
+        throw "$StageDir is not the Store edition (missing $StoreFile). Stage it with installer/Build-Installer.ps1 -Edition Store -StageOnly."
+    }
+}
 $OutputDir = (Resolve-Path -LiteralPath $OutputDir).Path
 
 # 3) Assert ZERO .sys kernel drivers exist anywhere in the staged directory (Store Policy 10.2.9).

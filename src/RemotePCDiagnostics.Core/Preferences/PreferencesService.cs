@@ -25,6 +25,9 @@ public sealed record UserPreferences
     /// <summary>The ticked checks and tests, by module id.</summary>
     public List<Guid>? SelectedModuleIds { get; init; }
 
+    /// <summary>The Dashboard's "more with the Agent" note was closed (shown only on a PC with no Agent, such as the Store app on its own).</summary>
+    public bool? AgentNoticeDismissed { get; init; }
+
     /// <summary>White-label shop or refurbisher branding applied to client service reports and 1-page buyer Hardware QA certificates.</summary>
     public Workflow.ShopBranding? Branding { get; init; }
 

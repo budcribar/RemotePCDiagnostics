@@ -84,6 +84,13 @@ public class SecurityEssentialsTests
     }
 
     [Fact]
+    public void Without_an_agent_the_summary_does_not_count_fixes_it_cannot_offer()
+    {
+        var rep = SecurityEssentialsModule.Build(new(false, "UEFI", "Core", 0, TpmReader.Parse(TpmOutput)), canFix: false);
+        Assert.StartsWith("5 settings worth changing · Drive C: isn't encrypted", rep.Summary);
+    }
+
+    [Fact]
     public void Secure_boot_off_explains_why_device_encryption_is_missing()
     {
         var rep = SecurityEssentialsModule.Build(new(false, "UEFI", "Core", 0, TpmReader.Parse(TpmOutput)));

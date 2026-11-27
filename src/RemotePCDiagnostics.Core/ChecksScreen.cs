@@ -215,11 +215,19 @@ public sealed class ChecksScreenState
     /// <remarks>Built from the catalog: stress tests in suite order, then on-demand tests by group and order.</remarks>
     public IReadOnlyList<IDiagnosticModule> StressModules => GetStressModules();
 
+    /// <summary>
+    /// True while the Agent can do admin work. False hides the DISM and SFC scans: they only run with administrator rights, so without an
+    /// Agent (the Store app with none installed) the page lists fewer tests instead of ones that can't run. Null (tests) lists them all.
+    /// </summary>
+    public Func<bool>? HasAgent { get; init; }
+
     private IReadOnlyList<IDiagnosticModule> GetStressModules()
     {
         var order = _diag.StressOrder.ToList();
+        var noAgent = HasAgent?.Invoke() == false;
         var listed = _diag.Modules.Select(m => (Module: m, Descriptor: _diag.Catalog.Get(m.Id)))
-            .Where(x => x.Descriptor is { OnStressPage: true } && !ExcludedFromStress.Contains(x.Module.Name)).ToList();
+            .Where(x => x.Descriptor is { OnStressPage: true } && !ExcludedFromStress.Contains(x.Module.Name)
+                        && !(noAgent && x.Module is Areas.WindowsIntegrityModule)).ToList();
         var stress = listed.Where(x => x.Descriptor!.Kind == ModuleKind.StressTest)
             .OrderBy(x => order.FindIndex(n => string.Equals(n, x.Module.Name, StringComparison.OrdinalIgnoreCase)) is var i and >= 0 ? i : int.MaxValue)
             .ThenBy(x => ModuleGroups.Rank(x.Descriptor!.Group)).ThenBy(x => x.Descriptor!.Order);

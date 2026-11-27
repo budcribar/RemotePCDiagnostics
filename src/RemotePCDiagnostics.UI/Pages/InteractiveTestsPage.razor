@@ -660,7 +660,7 @@
                                             <div class="sc-step-text">
                                                 <b>@step.Title</b>
                                                 @if (step.Text.Length > 0) { <div class="meta">@step.Text</div> }
-                                                @if (App.Remediation is not null && step.Row.Actions is { Count: > 0 } acts)
+                                                @if (App.Remediation is not null && FixAccess.Offerable(step.Row.Actions, App.AgentFixes) is { Count: > 0 } acts)
                                                 {
                                                     <div class="phys-qa-actions">
                                                         @foreach (var a in acts)

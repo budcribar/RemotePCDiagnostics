@@ -89,6 +89,29 @@
         </button>
     </section>
 
+    @* No Agent on this PC (the Store app on its own): the one place that says what the Agent adds. Everything that needs it is just hidden. *@
+    @if (ShowAgentNotice)
+    {
+        <section class="card dash-identity-strip dash-agent-notice" role="note" data-testid="dashboard-agent-notice">
+            <div class="dash-identity-main">
+                <span class="icon-badge"><Icon Name="sec" /></span>
+                <div class="dash-identity-text">
+                    <div class="dash-identity-host"><strong>Get more with the Remote PC Diagnostics Agent</strong></div>
+                    <div class="meta">Repairs, temperature sensors, Windows integrity scans, drive health counters and check history use administrator rights, which the Agent provides.</div>
+                </div>
+            </div>
+            <div class="banner-actions">
+                @if (App.Elevation is not null)
+                {
+                    <button type="button" class="btn btn-outline" data-testid="dashboard-agent-enable" disabled="@_agentStarting" @onclick="StartAgentAsync">
+                        @(_agentStarting ? "Starting…" : "Turn on Admin Repair Mode")
+                    </button>
+                }
+                <button type="button" class="linklike" data-testid="dashboard-agent-dismiss" @onclick="DismissAgentNotice">Dismiss</button>
+            </div>
+        </section>
+    }
+
     @* Zone 2: Health Verdict Bar + Collapsible Needs Attention List + Single Refresh/Stop Action *@
     <section class="card dash-verdict-bar" data-testid="dashboard-controls">
         <div class="dash-verdict-head">
@@ -378,10 +401,13 @@
                 <span class="meta">Security audit</span>
                 <strong>@(summary.AuditNotRun ? "Not run" : "Completed")</strong>
             </a>
-            <a class="card dash-tool-tile" href="history" data-testid="dashboard-tool-history">
-                <span class="meta">History</span>
-                <strong>View past runs →</strong>
-            </a>
+            @if (!App.NoAgent)
+            {
+                <a class="card dash-tool-tile" href="history" data-testid="dashboard-tool-history">
+                    <span class="meta">History</span>
+                    <strong>View past runs →</strong>
+                </a>
+            }
         </div>
     </section>
 </div>
@@ -467,12 +493,32 @@
     private bool ChecksLocked => Screen.IsBusy || Diagnostics.IsAnyRunning;
     private bool PersistToHost => Session.Mode != SessionMode.Remote;
 
+    private bool _agentStarting;
+
+    /// <summary>At the PC only (Windows' permission prompt can't be answered remotely), with no Agent here, until closed.</summary>
+    private bool ShowAgentNotice =>
+        App.NoAgent && Session.Mode == SessionMode.Local && App.Preferences?.Current.AgentNoticeDismissed != true;
+
     protected override void OnInitialized()
     {
         base.OnInitialized();
         Screen.Changed += OnScreenChanged;
         if (App.CheckSettings is { } cs) cs.Changed += OnScreenChanged;
+        if (App.Elevation is { } elevation) elevation.Changed += OnScreenChanged;
+        if (App.AgentLink is { } link) link.Changed += OnScreenChanged;
     }
+
+    /// <summary>Starts the Agent's on-demand helper (Windows asks for permission). Declining leaves the app as it was, without a message.</summary>
+    private async Task StartAgentAsync()
+    {
+        if (App.Elevation is not { } elevation || _agentStarting) return;
+        _agentStarting = true;
+        try { await elevation.EnableAdminModeAsync(); }
+        catch { }
+        finally { _agentStarting = false; }
+    }
+
+    private void DismissAgentNotice() => App.Preferences?.Update(p => p with { AgentNoticeDismissed = true });
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -533,6 +579,8 @@
     {
         Screen.Changed -= OnScreenChanged;
         if (App.CheckSettings is { } cs) cs.Changed -= OnScreenChanged;
+        if (App.Elevation is { } elevation) elevation.Changed -= OnScreenChanged;
+        if (App.AgentLink is { } link) link.Changed -= OnScreenChanged;
         Dispose();
         return ValueTask.CompletedTask;
     }

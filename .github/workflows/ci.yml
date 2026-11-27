@@ -965,6 +965,14 @@ jobs:
           pwsh -NoProfile -File installer/Build-Installer.ps1 -StageOnly
           if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 -StageOnly failed ($LASTEXITCODE)" }
 
+      - name: Publish the Store edition for the MSIX
+        if: env.FULL_RELEASE == 'true'
+        shell: pwsh
+        run: |
+          # The Store app may have no Agent, so it ships the legacy readers and osquery (-p:RpcdEdition=Store).
+          pwsh -NoProfile -File installer/Build-Installer.ps1 -StageOnly -Edition Store
+          if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 -StageOnly -Edition Store failed ($LASTEXITCODE)" }
+
       - name: Build Microsoft Store MSIX package
         if: env.FULL_RELEASE == 'true'
         shell: pwsh

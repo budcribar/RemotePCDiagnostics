@@ -3,7 +3,9 @@ using RemotePCDiagnostics.Core.Session;
 namespace RemotePCDiagnostics.Core.Sensors;
 
 /// <summary>Live temperatures and fan speeds (LibreHardwareMonitorLib via <see cref="ISensorProvider"/>).</summary>
-public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiagnosticModule
+/// <param name="noAgent">True when no Agent is installed (the Store app on its own): the sensors that need administrator rights are
+/// just left out, so the check reports what it could read without a warning or a hint to turn on Admin Repair Mode.</param>
+public sealed class LibreHardwareMonitorModule(ISensorProvider provider, Func<bool>? noAgent = null) : IDiagnosticModule
 {
     public const string ModuleName = ModuleSlugs.Sensors;
     public string Name => ModuleName;
@@ -19,7 +21,8 @@ public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiag
         progress?.Report("Reading sensors…");
         var snap = await Task.Run(provider.Read, cancellationToken).ConfigureAwait(false);
         var report = BuildReport(snap);
-        return new DiagnosticResult<SensorReport>(Name, ToStatus(report, snap), Summarize(report), DateTimeOffset.Now, report);
+        var quiet = noAgent?.Invoke() == true && !snap.IsElevated;
+        return new DiagnosticResult<SensorReport>(Name, ToStatus(report, quiet), Summarize(report, quiet), DateTimeOffset.Now, report);
     }
 
     public static readonly (string Id, string Title, string MissingLabel, Func<SensorReading, bool> Match)[] GroupDefs =
@@ -41,19 +44,21 @@ public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiag
 
     public static DiagnosticStatus ToStatus(SensorReport report, SensorSnapshot snap) => ToStatus(report);
 
-    public static DiagnosticStatus ToStatus(SensorReport report) => report.Level switch
+    public static DiagnosticStatus ToStatus(SensorReport report, bool noAgent = false) => report.Level switch
     {
         SensorLevel.Critical => DiagnosticStatus.Error,
         SensorLevel.Warning => DiagnosticStatus.Warning,
-        _ when report.Snapshot.Readings.Count == 0 => DiagnosticStatus.Warning,
+        _ when report.Snapshot.Readings.Count == 0 && !noAgent => DiagnosticStatus.Warning,
         _ => DiagnosticStatus.Ok,
     };
 
-    public static string Summarize(SensorReport report)
+    public static string Summarize(SensorReport report, bool noAgent = false)
     {
         var s = report.Snapshot; // already filtered to readings with data by BuildReport
         if (s.Readings.Count == 0)
-            return s.IsElevated ? "No temperature or fan sensors found" : "No sensors found. " + ElevationService.AdminRepairHint;
+            return s.IsElevated ? "No temperature or fan sensors found"
+                : noAgent ? "No temperature or fan sensors readable on this PC"
+                : "No sensors found. " + ElevationService.AdminRepairHint;
         var parts = new List<string>(4);
         if (report.Groups.FirstOrDefault(g => g.Id == "cpu")?.Hottest is { } cpu) parts.Add($"CPU {cpu:0}°C");
         if (report.Groups.FirstOrDefault(g => g.Id == "gpu")?.Hottest is { } gpu) parts.Add($"GPU {gpu:0}°C");
@@ -63,9 +68,11 @@ public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiag
         var fansText = FansText(fans.Count, fans.Count(r => r.Value == 0));
         if (!string.IsNullOrEmpty(fansText)) parts.Add(fansText);
         if (parts.Count == 0)
-            return s.IsElevated ? "No temperature or fan sensors found" : "No sensors found. " + ElevationService.AdminRepairHint;
+            return s.IsElevated ? "No temperature or fan sensors found"
+                : noAgent ? "No temperature or fan sensors readable on this PC"
+                : "No sensors found. " + ElevationService.AdminRepairHint;
         var text = string.Join(" · ", parts);
-        return s.IsElevated ? text : text + " (some sensors need administrator rights)";
+        return s.IsElevated || noAgent ? text : text + " (some sensors need administrator rights)";
     }
 
     /// <summary>"" when no fans are reported, otherwise "1 fan", "3 fans"; stopped (0 RPM) fans are

@@ -8,7 +8,8 @@ public sealed class SensorsPlugin : IModulePlugin
 {
     public void Register(IServiceCollection services, IPluginContext context) =>
         services.AddModule(context, sp => new LibreHardwareMonitorModule(
-            sp.GetService<RemotePCDiagnostics.Core.Plugins.IHostQueries>() is { } host ? new RemotePCDiagnostics.Core.Plugins.HostSensorProvider(host) : sp.GetRequiredService<ISensorProvider>()),
+            sp.GetService<RemotePCDiagnostics.Core.Plugins.IHostQueries>() is { } host ? new RemotePCDiagnostics.Core.Plugins.HostSensorProvider(host) : sp.GetRequiredService<ISensorProvider>(),
+            RemotePCDiagnostics.Core.Session.AgentShopPillState.NoAgent(sp)),
             ModuleIds.Sensors, typeof(LibreHardwareMonitorPage));
 }
 

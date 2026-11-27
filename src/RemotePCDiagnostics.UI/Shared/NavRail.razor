@@ -1,5 +1,6 @@
 @using RemotePCDiagnostics.Core.Checks
 @inherits StoreAwareComponent
+@inject AppServices App
 @{
     var checkResults = Diagnostics.Modules
         .Where(m => m.IncludeInRunAll)
@@ -33,7 +34,11 @@
     <NavLink title="Security audit" href="security-audit" data-testid="nav-security-audit"><Icon Name="sec" /><span class="nav-text">Security audit</span></NavLink>
     <NavLink title="Benchmark" href="benchmark" data-testid="nav-benchmark"><Icon Name="health" /><span class="nav-text">Benchmark</span></NavLink>
     <NavLink title="QA &amp; branding" href="certificates" data-testid="nav-certificates"><Icon Name="cert" /><span class="nav-text">QA &amp; branding</span></NavLink>
-    <NavLink title="History" href="history" data-testid="nav-history"><Icon Name="hist" /><span class="nav-text">History</span></NavLink>
+    @* History and the undo list are kept by the Agent; without one the PC just has no History page. *@
+    @if (!App.NoAgent)
+    {
+        <NavLink title="History" href="history" data-testid="nav-history"><Icon Name="hist" /><span class="nav-text">History</span></NavLink>
+    }
     <NavLink title="About" href="about" data-testid="nav-about"><Icon Name="pc" /><span class="nav-text">About</span></NavLink>
 </nav>
 
