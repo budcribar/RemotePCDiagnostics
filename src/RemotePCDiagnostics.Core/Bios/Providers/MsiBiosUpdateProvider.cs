@@ -290,36 +290,21 @@ public sealed partial class MsiBiosUpdateProvider : IBiosUpdateProvider
         var ordered = OrderCandidates(compatibleTrusted, parsedCurrent);
         var best = ordered[0];
 
-        if (compatibleUntrusted.Count > 0)
+        var isNewer = IsCandidateNewer(parsedCurrent, current.ReleaseDate, best.ParsedVersion, best.ReleaseDate);
+        if (CheckUntrustedCandidatesFailClosed(
+                VendorId,
+                DisplayName,
+                best,
+                compatibleUntrusted,
+                isNewer,
+                static (b, bad) => IsCandidateNewer(b.ParsedVersion, b.ReleaseDate, bad.ParsedVersion, bad.ReleaseDate),
+                static (bad, b) => CompareMsiVersions(bad.ParsedVersion, b.ParsedVersion)) is { } untrustedFailure)
         {
-            foreach (var bad in compatibleUntrusted)
-            {
-                if (IsCandidateNewer(best.ParsedVersion, best.ReleaseDate, bad.ParsedVersion, bad.ReleaseDate))
-                {
-                    return BiosLatestInfo.Failed(
-                        VendorId,
-                        "MSI BIOS catalog contained a newer BIOS entry whose download URL failed HTTPS/domain security validation.");
-                }
-            }
+            return untrustedFailure;
         }
 
-        var isNewer = IsCandidateNewer(parsedCurrent, current.ReleaseDate, best.ParsedVersion, best.ReleaseDate);
         if (!isNewer)
         {
-            if (compatibleUntrusted.Count > 0)
-            {
-                foreach (var bad in compatibleUntrusted)
-                {
-                    var cmp = CompareMsiVersions(bad.ParsedVersion, best.ParsedVersion);
-                    if (cmp is null or >= 0)
-                    {
-                        return BiosLatestInfo.Failed(
-                            VendorId,
-                            "MSI BIOS catalog contained BIOS entries whose download URL failed HTTPS/domain security validation.");
-                    }
-                }
-            }
-
             var meta = BuildMetadata(productToken, expectedBoardCode ?? best.ParsedVersion.BoardCode, best.ParsedVersion);
             return BiosLatestInfo.UpToDate(
                 VendorId,
@@ -832,18 +817,7 @@ public sealed partial class MsiBiosUpdateProvider : IBiosUpdateProvider
             candidates,
             getPrefRank: c => GetCandidatePreferenceRank(c.ParsedVersion, current),
             getClassKey: static c => c.ParsedVersion.ClassKey,
-            getReleaseDate: static c => c.ReleaseDate,
             compareWithinClass: static (a, b) => CompareWithinClass(a.ParsedVersion, b.ParsedVersion),
-            compareTieBreakers: static (a, b) => CompareCandidateTieBreakers(
-                a.ReleaseDate, b.ReleaseDate,
-                a.DisplayVersion, b.DisplayVersion,
-                a.DownloadUrl, b.DownloadUrl,
-                a.PackageId, b.PackageId,
-                a.Sha256, b.Sha256,
-                a.ReleaseNotesUrl, b.ReleaseNotesUrl,
-                a.ReleaseSummary, b.ReleaseSummary,
-                a.SizeBytes, b.SizeBytes,
-                a.Severity, b.Severity),
             comparePrefRankFirst: true,
             prefRankDescending: true);
 
@@ -874,26 +848,8 @@ public sealed partial class MsiBiosUpdateProvider : IBiosUpdateProvider
         if (IsDottedNumeric(normalized) && TryParseDottedInt64(normalized, out var numSegs))
             return (GenericVersionKind.Numeric, "1:NUM", numSegs);
 
-        var digitMatches = DigitRunsRegex().Matches(normalized);
-        if (digitMatches.Count > 0)
-        {
-            var runs = new long[digitMatches.Count];
-            var allFit = true;
-            for (var i = 0; i < digitMatches.Count; i++)
-            {
-                if (!long.TryParse(digitMatches[i].Value, NumberStyles.None, CultureInfo.InvariantCulture, out runs[i]))
-                {
-                    allFit = false;
-                    break;
-                }
-            }
-
-            if (allFit)
-            {
-                var skeleton = BuildBijectiveSkeleton(normalized);
-                return (GenericVersionKind.Skeleton, $"3:SKEL:{runs.Length}:{skeleton}", runs);
-            }
-        }
+        if (TryExtractSkeletonVersion(normalized, classPrefix: 3, out var skelKey, out var runs))
+            return (GenericVersionKind.Skeleton, skelKey, runs);
 
         return (GenericVersionKind.Literal, "4:LIT:" + normalized, []);
     }
@@ -1066,5 +1022,5 @@ public sealed partial class MsiBiosUpdateProvider : IBiosUpdateProvider
         string? ReleaseNotesUrl,
         string? DownloadUrl,
         string? Sha256,
-        long? SizeBytes);
+        long? SizeBytes) : IBiosCatalogCandidateTieBreak;
 }

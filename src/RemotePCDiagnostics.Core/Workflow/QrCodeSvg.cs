@@ -18,7 +18,6 @@ public static class QrCodeSvg
         public int Size => 17 + 4 * Version;
         public int DataCodewords => G1Blocks * G1DataCw + G2Blocks * G2DataCw;
         public int CharCountBits => Version <= 9 ? 8 : 16;
-        public int MaxByteCapacity => DataCodewords - (4 + CharCountBits) / 8 - ((4 + CharCountBits) % 8 == 0 ? 0 : 1);
     }
 
     private static readonly VersionSpec[] Specs =

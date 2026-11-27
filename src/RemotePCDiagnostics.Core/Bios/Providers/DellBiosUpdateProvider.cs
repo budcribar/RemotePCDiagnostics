@@ -39,12 +39,6 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
     private static readonly TimeSpan InstallerTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan DcuScanTimeout = TimeSpan.FromMinutes(3);
 
-    private static readonly char[] ForbiddenPathChars =
-    [
-        '&', '|', ';', '>', '<', '`', '$', '%', '"', '\'', '^', '!', '*', '?',
-    ];
-
-
     private readonly HttpClient _httpClient;
     private readonly SystemCommandRunner? _commands;
     private readonly IBiosSignatureVerifier _signatureVerifier;
@@ -337,25 +331,12 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
             [MetadataKeySource] = "dell-catalog",
         };
 
-        var isNewer = BiosVersionComparer.IsNewer(
-            current.Version,
-            best.Version,
-            current.ReleaseDate,
-            best.ReleaseDate);
-
-        if (!isNewer)
-        {
-            return BiosLatestInfo.UpToDate(
-                providerId: VendorId,
-                latestVersion: best.Version,
-                releaseDate: best.ReleaseDate,
-                metadata: metadata);
-        }
-
-        return BiosLatestInfo.UpdateAvailable(
-            providerId: VendorId,
+        return BuildLatestInfoFromCandidate(
+            vendorId: VendorId,
+            currentVersion: current.Version,
+            currentReleaseDate: current.ReleaseDate,
             latestVersion: best.Version,
-            releaseDate: best.ReleaseDate,
+            latestReleaseDate: best.ReleaseDate,
             severity: best.Severity,
             packageId: best.PackageId,
             releaseSummary: best.ReleaseSummary,
@@ -363,7 +344,6 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
             downloadUrl: best.DownloadUrl,
             sha256: best.Sha256,
             sizeBytes: best.SizeBytes,
-            requiresReboot: true,
             metadata: metadata);
     }
 
@@ -570,111 +550,23 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
         IProgress<BiosInstallProgress>? progress,
         CancellationToken ct)
     {
-        var prev = request.Current?.Version;
-        var target = request.Target?.LatestVersion;
-
-        string? autoStagingDir = null;
-        var effectiveRequest = request;
-        if (string.IsNullOrWhiteSpace(request.StagingDirectory))
-        {
-            autoStagingDir = Path.Combine(Path.GetTempPath(), $"rpd-bios-dell-{Guid.NewGuid():N}");
-            effectiveRequest = request with { StagingDirectory = autoStagingDir };
-        }
-
-        try
-        {
-            var verified = await BiosPackageVerification.DownloadAndVerifyAsync(
-                _httpClient,
-                effectiveRequest,
-                VendorId,
-                AllowedHostSuffixes,
-                "dell-bios-update.exe",
-                _signatureVerifier,
-                progress,
-                _log,
-                ct).ConfigureAwait(false);
-
-            if (!verified.Succeeded || string.IsNullOrWhiteSpace(verified.FilePath))
-            {
-                var err = verified.ErrorMessage ?? "Dell BIOS package download or verification failed.";
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, err));
-                return BiosInstallResult.Failed(err, prev, target);
-            }
-
-            if (!TryEnsureExecutableExtension(verified.FilePath, out var packagePath, out var extError))
-            {
-                TryDeleteFile(verified.FilePath);
-                var safeExtError = BiosInstallerRunner.RedactSerialNumber(extError, request.System?.SerialNumber);
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, safeExtError));
-                return BiosInstallResult.Failed(safeExtError, prev, target);
-            }
-
-            var bitLocker = await BiosBitLockerSuspender.SuspendForOneRebootWithResultAsync(
-                effectiveRequest,
-                _commands,
-                progress,
-                _log,
-                ct,
-                bridge: _elevatedBridge,
-                isProcessElevated: _isProcessElevated).ConfigureAwait(false);
-
-            if (bitLocker.BlocksInstall)
-            {
-                var msg = bitLocker.Message
-                    ?? $"Administrator rights (or the elevated Agent service) are required to suspend BitLocker. {ElevationService.AdminRepairHint}";
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, msg));
-                return BiosInstallResult.Failed(msg, prev, target, exitCode: SystemCommandRunner.AgentFailedExitCode);
-            }
-
-            progress?.Report(new BiosInstallProgress(
-                BiosInstallStage.Staging,
-                0,
-                "Staging Dell BIOS update…"));
-
-            var args = BiosAgentInstallModes.BuildArguments(BiosAgentInstallModes.DellBiosExe, request.AllowReboot);
-            var expectedSha256 = !string.IsNullOrWhiteSpace(verified.ActualSha256)
-                ? verified.ActualSha256
-                : await BiosPackageVerifier.ComputeSha256HexAsync(packagePath, ct).ConfigureAwait(false);
-
-            var agentRequest = new BiosAgentInstallRequest(
-                VendorId: VendorId,
-                InstallMode: BiosAgentInstallModes.DellBiosExe,
-                PackagePath: packagePath,
-                ExpectedSha256: expectedSha256,
-                AllowReboot: request.AllowReboot,
-                InfRelativePath: null,
-                TimeoutMs: (int)InstallerTimeout.TotalMilliseconds);
-
-            var result = await BiosInstallerRunner.RunInstallerAsync(
-                commands: _commands,
-                executablePath: packagePath,
-                arguments: args,
-                request: effectiveRequest,
-                bitLockerSuspended: bitLocker.Suspended,
-                rebootSuccessExitCodes: DellExeRebootExitCodes,
-                completedSuccessExitCodes: null,
-                timeout: InstallerTimeout,
-                log: _log,
-                ct: ct,
-                workingDirectory: Path.GetDirectoryName(packagePath),
-                agentRequest: agentRequest,
-                bridge: _elevatedBridge,
-                isProcessElevated: _isProcessElevated).ConfigureAwait(false);
-
-            if (result.Succeeded && result.RequiresReboot)
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.RebootRequired, 100, result.Message));
-            else if (result.Succeeded)
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Completed, 100, result.Message));
-            else
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, result.Message));
-
-            return result;
-        }
-        finally
-        {
-            if (autoStagingDir is not null)
-                TryDeleteDirectoryRecursive(autoStagingDir);
-        }
+        return await DownloadVerifyAndRunExecutableInstallerAsync(
+            httpClient: _httpClient,
+            request: request,
+            vendorId: VendorId,
+            displayName: DisplayName,
+            allowedHostSuffixes: AllowedHostSuffixes,
+            defaultFileName: "dell-bios-update.exe",
+            signatureVerifier: _signatureVerifier,
+            commands: _commands,
+            elevatedBridge: _elevatedBridge,
+            isProcessElevated: _isProcessElevated,
+            log: _log,
+            progress: progress,
+            resolveInstallMode: static (_, _) => BiosAgentInstallModes.DellBiosExe,
+            rebootSuccessExitCodes: DellExeRebootExitCodes,
+            installerTimeout: InstallerTimeout,
+            ct: ct).ConfigureAwait(false);
     }
 
     private async Task<BiosInstallResult> InstallViaDcuCliAsync(
@@ -928,41 +820,17 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
             return false;
         }
 
-        if (rawPath.StartsWith(@"\\", StringComparison.Ordinal)
-            || rawPath.StartsWith("//", StringComparison.Ordinal)
-            || rawPath.StartsWith(@"\??\", StringComparison.Ordinal)
-            || rawPath.StartsWith(@"\/", StringComparison.Ordinal)
-            || rawPath.StartsWith(@"/\", StringComparison.Ordinal))
+        var violation = CheckLocalPathSyntax(rawPath, out var isWindowsDriveRoot, out var offendingChar);
+        if (violation != PathSyntaxViolation.None)
         {
-            error = "Dell Command | Update CLI path must not be a UNC or device path.";
+            error = violation switch
+            {
+                PathSyntaxViolation.UncOrDevicePath => "Dell Command | Update CLI path must not be a UNC or device path.",
+                PathSyntaxViolation.ControlCharacter => "Dell Command | Update CLI path contains control characters.",
+                PathSyntaxViolation.ForbiddenCharacter => $"Dell Command | Update CLI path contains forbidden character '{offendingChar}'.",
+                _ => "Dell Command | Update CLI path contains an invalid colon.",
+            };
             return false;
-        }
-
-        var isWindowsDriveRoot = rawPath.Length >= 3
-            && char.IsAsciiLetter(rawPath[0])
-            && rawPath[1] == ':'
-            && (rawPath[2] == '\\' || rawPath[2] == '/');
-
-        for (var i = 0; i < rawPath.Length; i++)
-        {
-            var c = rawPath[i];
-            if (char.IsControl(c))
-            {
-                error = "Dell Command | Update CLI path contains control characters.";
-                return false;
-            }
-
-            if (Array.IndexOf(ForbiddenPathChars, c) >= 0)
-            {
-                error = $"Dell Command | Update CLI path contains forbidden character '{c}'.";
-                return false;
-            }
-
-            if (c == ':' && !(i == 1 && isWindowsDriveRoot))
-            {
-                error = "Dell Command | Update CLI path contains an invalid colon.";
-                return false;
-            }
         }
 
         var isFullyQualified = isWindowsDriveRoot || Path.IsPathFullyQualified(rawPath);
@@ -1248,26 +1116,8 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
         return first;
     }
 
-    private static DellCatalogCandidate SelectNewestCandidate(List<DellCatalogCandidate> candidates)
-    {
-        var best = candidates[0];
-        for (var i = 1; i < candidates.Count; i++)
-        {
-            var candidate = candidates[i];
-            var cmp = BiosVersionComparer.Compare(best.Version, candidate.Version);
-            if (cmp < 0)
-            {
-                best = candidate;
-            }
-            else if ((cmp is null or 0) && candidate.ReleaseDate.HasValue
-                     && (!best.ReleaseDate.HasValue || candidate.ReleaseDate.Value > best.ReleaseDate.Value))
-            {
-                best = candidate;
-            }
-        }
-
-        return best;
-    }
+    private static DellCatalogCandidate SelectNewestCandidate(List<DellCatalogCandidate> candidates) =>
+        SelectNewestByVersionAndDate(candidates, static c => c.Version, static c => c.ReleaseDate);
 
     private static bool ContainsUnsafeUrlChars(string value)
     {
@@ -1295,9 +1145,6 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
         valid = normalized;
         return true;
     }
-
-    private static bool TryEnsureExecutableExtension(string filePath, out string executablePath, out string error) =>
-        BiosPackageVerification.TryEnsureExecutableExtension(filePath, "Dell", out executablePath, out error);
 
     private static Task<byte[]> ReadBoundedBytesAsync(HttpContent content, long maxBytes, CancellationToken ct) =>
         BiosProviderHttp.ReadBoundedBytesAsync(content, maxBytes, "Dell BIOS catalog", ct);

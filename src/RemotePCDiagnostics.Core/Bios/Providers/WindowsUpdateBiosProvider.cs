@@ -436,15 +436,8 @@ public sealed partial class WindowsUpdateBiosProvider : IBiosUpdateProvider
         ArgumentNullException.ThrowIfNull(request);
         ct.ThrowIfCancellationRequested();
 
-        var serial = request.System?.SerialNumber;
-        var prev = request.Current?.Version is not null ? RedactText(request.Current.Version, serial) : null;
-        var target = request.Target?.LatestVersion is not null ? RedactText(request.Target.LatestVersion, serial) : null;
-        var redactingLog = _log is not null && !string.IsNullOrWhiteSpace(serial)
-            ? new RedactingLogger(_log, serial)
-            : _log;
-        var redactingProgress = progress is not null && !string.IsNullOrWhiteSpace(serial)
-            ? new RedactingProgress(progress, serial)
-            : progress;
+        var (serial, prev, target, redactingLog, redactingProgress) =
+            CreateRedactedInstallContext(request, _log, progress);
 
         // 1. Strict canonical 36-char "D" GUID validation FIRST (0 BitLocker / 0 WUA / 0 bridge calls on failure).
         if (request.Target is null || !TryParseStrictUpdateId(request.Target.PackageId, out var updateId))
@@ -729,26 +722,8 @@ public sealed partial class WindowsUpdateBiosProvider : IBiosUpdateProvider
         if (prefixMatch.Success && TryParseDottedInt64(prefixMatch.Groups[2].Value, out var pfxSegs))
             return new(cleaned, VersionClass.PrefixNumeric, "2:PFX:" + prefixMatch.Groups[1].Value, pfxSegs, cleaned);
 
-        var digitMatches = DigitRunsRegex().Matches(cleaned);
-        if (digitMatches.Count > 0)
-        {
-            var runs = new long[digitMatches.Count];
-            var allFit = true;
-            for (var i = 0; i < digitMatches.Count; i++)
-            {
-                if (!long.TryParse(digitMatches[i].Value, NumberStyles.None, CultureInfo.InvariantCulture, out runs[i]))
-                {
-                    allFit = false;
-                    break;
-                }
-            }
-
-            if (allFit)
-            {
-                var skeleton = BuildBijectiveSkeleton(cleaned);
-                return new(cleaned, VersionClass.Skeleton, $"3:SKEL:{runs.Length}:{skeleton}", runs, cleaned);
-            }
-        }
+        if (TryExtractSkeletonVersion(cleaned, classPrefix: 3, out var skelKey, out var runs))
+            return new(cleaned, VersionClass.Skeleton, skelKey, runs, cleaned);
 
         return new(cleaned, VersionClass.Literal, "4:LIT:" + cleaned, [], cleaned);
     }

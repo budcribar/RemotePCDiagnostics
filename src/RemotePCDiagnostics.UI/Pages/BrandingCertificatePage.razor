@@ -394,7 +394,6 @@
         _benchInteractiveTcs?.TrySetCanceled();
         _activeInteractiveSection = null;
         ActiveBenchQa.Cancel();
-        StateHasChanged();
     }
 
     private async Task WaitForInteractiveBenchQaAsync(string section, CancellationToken ct)

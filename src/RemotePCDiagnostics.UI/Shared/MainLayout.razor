@@ -339,9 +339,6 @@
     private bool IsAgentConnected =>
         AgentShopPillState.IsConnected(Session.Mode, AgentLink.Current.Kind);
 
-    private bool IsAgentInstalledNotConnected =>
-        AgentShopPillState.IsInstalledNotConnected(Session.Mode, AgentLink.Current.Kind);
-
     private string AgentPillLabel =>
         AgentShopPillState.FormatLabel(Session.Mode, AgentLink.Current.Kind, Remote.Count);
 
@@ -354,8 +351,6 @@
             AgentLink.Current.Kind,
             ActiveShopBranding?.ShopName,
             Remote.Count);
-
-    private string ShopConnectionTooltip => AgentPillTooltip;
 
     /// <summary>
     /// The shop dialog has something to show: a remote session or Agent link, a shop code, saved branding, or a relay. Without any (no relay
@@ -584,7 +579,6 @@
         _updateError = null;
         _updateMessage = null;
         _updateProgress = new AppUpdateProgress("starting", null, "Preparing update...");
-        StateHasChanged();
 
         var installStarted = false;
         try
@@ -612,7 +606,6 @@
         {
             if (!installStarted)
                 _updateInstalling = false;
-            StateHasChanged();
         }
     }
 

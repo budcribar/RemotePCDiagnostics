@@ -21,7 +21,9 @@ internal static class AgentAdminHost
     public const int ExitError = 1;
     public const int ExitFatal = 1;
 
+#if DEBUG
     private const string AllowTestParentEnvVar = "RPD_ADMIN_ALLOW_TEST_PARENT";
+#endif
 
     public static async Task<int> RunLauncherModeAsync(AgentArgs args)
     {

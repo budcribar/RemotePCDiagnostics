@@ -12,7 +12,6 @@
     <PackageReference Include="NuGet.Versioning" Version="8.0.0" />
     <!-- UserModePlugin builds a plugin's own container inside a user-mode process. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="11.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="11.0.0" />
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
     <PackageReference Include="System.Management" Version="11.0.0" />
     <!-- WindowsAdminSettings: the Agent starts and stops services for the app. -->

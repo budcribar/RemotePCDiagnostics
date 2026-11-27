@@ -922,7 +922,6 @@
                 if (!_selected.Contains(id) || ct.IsCancellationRequested) continue;
 
                 _selectedTestId = id;
-                StateHasChanged();
 
                 switch (id)
                 {
@@ -1183,12 +1182,6 @@
     }
 
     private void CancelMicToSpeaker() => GetMicToSpeakerModule()?.Cancel();
-
-    private void CancelAudio()
-    {
-        CancelSpeakerToMic();
-        CancelMicToSpeaker();
-    }
 
     private void ConfirmAudioHeard(bool heard)
     {

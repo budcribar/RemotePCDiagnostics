@@ -362,7 +362,6 @@ public sealed class ProcessModuleHostLauncher : IModuleHostLauncher
 
     private sealed class Connection(Process p) : IModuleHostConnection
     {
-        public Process Process => p;
         public async Task WriteLineAsync(string line, CancellationToken ct) { await p.StandardInput.WriteLineAsync(line.AsMemory(), ct).ConfigureAwait(false); await p.StandardInput.FlushAsync(ct).ConfigureAwait(false); }
         public Task<string?> ReadLineAsync(CancellationToken ct) => p.StandardOutput.ReadLineAsync(ct).AsTask();
         public bool HasExited { get { try { return p.HasExited; } catch { return true; } } }

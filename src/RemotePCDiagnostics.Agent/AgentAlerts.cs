@@ -117,7 +117,7 @@ public sealed class AgentAlerts : IDisposable
             try
             {
                 var watcher = new EventLogWatcher(new EventLogQuery(channel, PathType.LogName, AlertRules.Query(channel)));
-                watcher.EventRecordWritten += (_, e) =>
+                watcher.EventRecordWritten += (sender, e) =>
                 {
                     if (e.EventRecord is { } record)
                         using (record)

@@ -92,13 +92,12 @@ public sealed class ProgramsModule(IProgramsSource source, Func<DateOnly>? today
         }
 
         // Windows updates
-        var level = AreaLevel.Ok;
         if (updates is null) cards.Add(AreaCard.Failed("updates", "Windows updates", "Couldn't read installed updates."));
         else
         {
             var latest = updates.Select(u => u.InstalledOn).Where(d => d is not null).DefaultIfEmpty(null).Max();
             var age = latest is { } l ? today.DayNumber - l.DayNumber : (int?)null;
-            level = updates.Count == 0 || age > StaleUpdateDays ? AreaLevel.Warning : AreaLevel.Ok;
+            var level = updates.Count == 0 || age > StaleUpdateDays ? AreaLevel.Warning : AreaLevel.Ok;
             var headline = updates.Count == 0 ? "No updates found"
                 : latest is null ? AreaModuleBase.Plural(updates.Count, "update") + " installed"
                 : $"Last update {Ago(age!.Value)}";

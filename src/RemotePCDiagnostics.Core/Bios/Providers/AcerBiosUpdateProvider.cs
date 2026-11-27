@@ -79,60 +79,22 @@ public sealed partial class AcerBiosUpdateProvider : IBiosUpdateProvider
         return Task.FromResult(BuildRedactedCurrentInfo(current, VendorId, parsed.NormalizedVersion, modelToken, system.SerialNumber));
     }
 
-    public async Task<BiosLatestInfo> GetLatestVersionAsync(
+    public Task<BiosLatestInfo> GetLatestVersionAsync(
         BiosSystemIdentity system,
         BiosCurrentInfo current,
-        CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(system);
-        ArgumentNullException.ThrowIfNull(current);
-        ct.ThrowIfCancellationRequested();
-
-        if (!TryResolveModelIdentifier(system, out var modelToken, out var invalidReason))
-        {
-            LogWarn($"[BIOS/Acer] Unable to determine valid Acer model identifier: {invalidReason}", system.SerialNumber);
-            return RedactLatestInfo(
-                BiosLatestInfo.Unsupported(VendorId, $"Unable to determine a valid Acer model or board product identifier: {invalidReason}"),
-                system.SerialNumber);
-        }
-
-        var requestUrl = BuildCatalogUrl(_catalogEndpoint, modelToken);
-        if (!BiosProviderHttp.TryValidateVendorUrl(requestUrl, AllowedHostSuffixes, out _))
-        {
-            LogWarn("[BIOS/Acer] Configured Acer catalog endpoint failed HTTPS/domain/path validation.", system.SerialNumber);
-            return RedactLatestInfo(
-                BiosLatestInfo.Failed(VendorId, "Acer BIOS catalog endpoint URL failed security validation."),
-                system.SerialNumber);
-        }
-
-        try
-        {
-            using var response = await BiosProviderHttp.GetVendorUrlWithSafeRedirectsAsync(
-                _httpClient, requestUrl, AllowedHostSuffixes, DisplayName, "application/json", ct).ConfigureAwait(false);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var statusInfo = BiosProviderHttp.ClassifyHttpStatus(VendorId, DisplayName, response.StatusCode, $"model '{modelToken}'");
-                return RedactLatestInfo(statusInfo, system.SerialNumber);
-            }
-
-            using var doc = await BiosProviderHttp.ReadBoundedJsonDocumentAsync(
-                response.Content, MaxCatalogJsonBytes, DisplayName, ct).ConfigureAwait(false);
-            var evaluated = EvaluateCatalog(doc, current, modelToken, system.SerialNumber);
-            return RedactLatestInfo(evaluated, system.SerialNumber);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            LogWarn($"[BIOS/Acer] Catalog lookup failed for '{modelToken}': {ex.Message}", system.SerialNumber);
-            return RedactLatestInfo(
-                BiosProviderHttp.ClassifyHttpFailure(VendorId, DisplayName, ex, ct),
-                system.SerialNumber);
-        }
-    }
+        CancellationToken ct = default) =>
+        BiosProviderHttp.FetchAndEvaluateModelJsonCatalogAsync(
+            _httpClient,
+            VendorId,
+            DisplayName,
+            _catalogEndpoint,
+            AllowedHostSuffixes,
+            MaxCatalogJsonBytes,
+            system,
+            current,
+            _log,
+            EvaluateCatalog,
+            ct);
 
     public Task<BiosInstallResult> InstallAsync(
         BiosInstallRequest request,
@@ -493,31 +455,15 @@ public sealed partial class AcerBiosUpdateProvider : IBiosUpdateProvider
                 '\0', 0, '\0', 0, '\0');
         }
 
-        var digitMatches = DigitRunsRegex().Matches(cleaned);
-        if (digitMatches.Count > 0)
+        if (TryExtractSkeletonVersion(cleaned, classPrefix: 4, out var skelKey, out var runs))
         {
-            var runs = new long[digitMatches.Count];
-            var allFit = true;
-            for (var i = 0; i < digitMatches.Count; i++)
-            {
-                if (!long.TryParse(digitMatches[i].Value, NumberStyles.None, CultureInfo.InvariantCulture, out runs[i]))
-                {
-                    allFit = false;
-                    break;
-                }
-            }
-
-            if (allFit)
-            {
-                var skeleton = BuildBijectiveSkeleton(cleaned);
-                return new AcerParsedVersion(
-                    cleaned,
-                    cleaned,
-                    AcerVersionKind.Skeleton,
-                    $"4:SKEL:{runs.Length}:{skeleton}",
-                    runs,
-                    '\0', 0, '\0', 0, '\0');
-            }
+            return new AcerParsedVersion(
+                cleaned,
+                cleaned,
+                AcerVersionKind.Skeleton,
+                skelKey,
+                runs,
+                '\0', 0, '\0', 0, '\0');
         }
 
         return new AcerParsedVersion(
@@ -594,18 +540,7 @@ public sealed partial class AcerBiosUpdateProvider : IBiosUpdateProvider
             candidates,
             getPrefRank: static _ => 0,
             getClassKey: static c => c.ParsedVersion.ClassKey,
-            getReleaseDate: static c => c.ReleaseDate,
-            compareWithinClass: static (a, b) => CompareWithinClass(a.ParsedVersion, b.ParsedVersion),
-            compareTieBreakers: static (a, b) => CompareCandidateTieBreakers(
-                a.ReleaseDate, b.ReleaseDate,
-                a.DisplayVersion, b.DisplayVersion,
-                a.DownloadUrl, b.DownloadUrl,
-                a.PackageId, b.PackageId,
-                a.Sha256, b.Sha256,
-                a.ReleaseNotesUrl, b.ReleaseNotesUrl,
-                a.ReleaseSummary, b.ReleaseSummary,
-                a.SizeBytes, b.SizeBytes,
-                a.Severity, b.Severity));
+            compareWithinClass: static (a, b) => CompareWithinClass(a.ParsedVersion, b.ParsedVersion));
 
     private void LogWarn(string message, string? serialNumber) =>
         _log?.Warn(RedactText(message, serialNumber));
@@ -642,5 +577,5 @@ public sealed partial class AcerBiosUpdateProvider : IBiosUpdateProvider
         string? ReleaseNotesUrl,
         string? DownloadUrl,
         string? Sha256,
-        long? SizeBytes);
+        long? SizeBytes) : IBiosCatalogCandidateTieBreak;
 }
