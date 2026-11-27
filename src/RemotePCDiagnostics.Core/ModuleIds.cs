@@ -73,6 +73,8 @@ public static class ModuleIds
     public static readonly Guid Sound = new("56dea360-0bd7-4230-b072-0d54d91e90e4");
     /// <summary>Slug <c>SoundCheck</c>.</summary>
     public static readonly Guid SoundCheck = new("b81b0a57-43d2-4ad4-8572-1480fbe6cf0f");
+    /// <summary>Slug <c>WifiConnect</c>.</summary>
+    public static readonly Guid WifiConnect = new("3f0c2b8e-5d71-4a9e-b6c4-2e8d9a7f1c35");
     /// <summary>Slug <c>WindowsMaintenance</c>.</summary>
     public static readonly Guid WindowsMaintenance = new("f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41");
 
@@ -113,6 +115,7 @@ public static class ModuleIds
         [Sound] = ModuleSlugs.Sound,
         [WindowsMaintenance] = ModuleSlugs.WindowsMaintenance,
         [SoundCheck] = ModuleSlugs.SoundCheck,
+        [WifiConnect] = ModuleSlugs.WifiConnect,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -163,4 +166,6 @@ public static class ModuleSlugs
     public const string WindowsMaintenance = "WindowsMaintenance";
     /// <summary>The interactive left/right test sound and the "Can't hear sound" helper (Interactive tests page).</summary>
     public const string SoundCheck = "SoundCheck";
+    /// <summary>The interactive Wi-Fi connect, ping and restore test (Interactive tests page).</summary>
+    public const string WifiConnect = "WifiConnect";
 }

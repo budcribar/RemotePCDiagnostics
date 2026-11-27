@@ -10,8 +10,9 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// <paramref name="commands"/>; <paramref name="offline"/> leaves out what asks the live network (the DNS comparison and the probes), for
 /// recordings and their replays.
 /// </summary>
+/// <param name="radio">The Wi-Fi radio and a fresh scan (<see cref="WifiRadio"/>'s cards); null leaves them out.</param>
 public sealed class NetworkModule(INetworkSource source, SystemCommandRunner? commands = null, bool includeWifiAndIpConfig = false, DnsSpeedTest? dnsTest = null,
-    ILogger? log = null, bool offline = false) : AreaModuleBase(log ?? commands?.Log)
+    ILogger? log = null, bool offline = false, IWifiRadioSource? radio = null) : AreaModuleBase(log ?? commands?.Log)
 {
     public const string ModuleName = ModuleSlugs.Network;
     public override string Name => ModuleName;
@@ -52,24 +53,43 @@ public sealed class NetworkModule(INetworkSource source, SystemCommandRunner? co
             try { dns = await (dnsTest ?? new DnsSpeedTest(log: Logger)).CompareAsync(primary.Dns, ct).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"DNS speed test failed: {ex.Message}"); }
         }
-        progress.ReportStep(4, total, "Checking recent network events and reachability.");
+        progress.ReportStep(4, total, radio is null ? "Checking recent network events and reachability." : "Scanning Wi-Fi and checking recent network events and reachability.");
         var history = commands is null ? Task.FromResult<AreaCard?>(null) : Nullable(NetworkDiagnostics.ReadHistoryAsync(commands, ct));
         var probes = offline ? Task.FromResult<AreaCard?>(null) : Nullable(NetworkDiagnostics.ProbeAsync(gateway, ct));
-        await Task.WhenAll(history, probes).ConfigureAwait(false);
+        var radioCards = ReadRadioCardsAsync(ct);
+        await Task.WhenAll(history, probes, radioCards).ConfigureAwait(false);
         var wifi = wlanOk ? WifiConfigModule.ParseNetshWlan(wlanRes!.StdOut) : null;
         var bandContext = !offline && commands is not null && wifi is { Connected: true } && WifiConfigModule.Is24Ghz(wifi)
             ? await WifiConfigModule.ReadBandContextAsync(commands, wifi.Ssid, ct).ConfigureAwait(false)
             : null;
         var wifiRep = wlanOk || ipOk ? WifiConfigModule.Build(wifi, wlanOk, ipSnap, dns, connectedAdapters, bandContext) : null;
         // Without commands netsh wasn't asked, so there is no Wi-Fi card to show (rather than one saying it couldn't be read).
-        var combinedCards = (wifiRep?.Cards ?? []).Where(c => commands is not null || c.Id != "wifi").Concat(baseReport.Cards)
+        var radioList = await radioCards.ConfigureAwait(false);
+        var combinedCards = (wifiRep?.Cards ?? []).Where(c => commands is not null || c.Id != "wifi").Concat(radioList).Concat(baseReport.Cards)
             .Concat(new[] { await history.ConfigureAwait(false), await probes.ConfigureAwait(false) }.OfType<AreaCard>()).ToList();
         var combinedStatus = AreaReport.Worst(combinedCards.Select(c => c.ErrorText is not null ? AreaLevel.Warning : c.Level));
         var combinedSummary = wifiRep is null ? baseReport.Summary : $"{wifiRep.Summary} · {baseReport.Summary}";
+        // A radio or scan problem leads the summary: it is the Wi-Fi card itself, not the network.
+        if (radioList.Where(c => c.Level is AreaLevel.Warning or AreaLevel.Error).OrderByDescending(c => c.Level).FirstOrDefault() is { Headline.Length: > 0 } radioProblem)
+            combinedSummary = $"{radioProblem.Headline} · {combinedSummary}";
         return new(combinedCards, combinedSummary, combinedStatus);
     }
 
     private static async Task<AreaCard?> Nullable(Task<AreaCard> card) => await card.ConfigureAwait(false);
+
+    /// <summary>The Wi-Fi radio and scan cards (a few seconds for the scan); none without a radio source or a Wi-Fi adapter.</summary>
+    private async Task<IReadOnlyList<AreaCard>> ReadRadioCardsAsync(CancellationToken ct)
+    {
+        if (radio is null) return [];
+        var readingTask = radio.ReadAsync(scan: true, ct);
+        var problemsTask = source.ReadWifiDeviceProblemsAsync(ct);
+        var reading = await readingTask.ConfigureAwait(false);
+        IReadOnlyList<WifiDeviceProblem>? problems = null;
+        try { problems = await problemsTask.ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"{Name}: Wi-Fi device problems not read: {ex.Message}"); }
+        Log($"{Name}: Wi-Fi radio: {reading.Interfaces.Count} adapter(s), service={reading.ServiceRunning}, airplane={reading.AirplaneMode}, strongest={WifiRadio.StrongestRssi(reading)}, problems={problems?.Count}");
+        return WifiRadio.BuildCards(reading, problems);
+    }
 
     /// <summary>Wait before re-reading IP configuration when it came back empty while an adapter is connected.</summary>
     public static TimeSpan IpConfigRetryDelay { get; set; } = TimeSpan.FromSeconds(2);
