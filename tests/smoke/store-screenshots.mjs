@@ -101,6 +101,8 @@ try {
   await page.getByTestId('branding-title').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('bench-qa-banner').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('qa-cert-card').waitFor({ state: 'visible', timeout: 15_000 });
+  // The certificate preview starts collapsed.
+  await page.getByTestId('qa-preview-toggle').click();
   await page.getByTestId('qa-preview-frame').waitFor({ state: 'visible', timeout: 15_000 });
 
   await resetMainScroll();
