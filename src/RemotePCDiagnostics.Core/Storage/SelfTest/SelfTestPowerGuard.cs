@@ -160,14 +160,21 @@ public sealed class WindowsSelfTestPowerSystem : ISelfTestPowerSystem, IDisposab
     {
         if (hold)
         {
-            if (_request == IntPtr.Zero)
+            if (_request != IntPtr.Zero)
             {
-                var context = new REASON_CONTEXT { Version = 0, Flags = 1, SimpleReasonString = "Remote PC Diagnostics: a drive is running its self-test" };
-                var handle = PowerCreateRequest(ref context);
-                if (handle == IntPtr.Zero || handle == new IntPtr(-1)) throw new InvalidOperationException($"PowerCreateRequest failed ({Marshal.GetLastWin32Error()}).");
-                _request = handle;
+                if (!PowerSetRequest(_request, PowerRequestSystemRequired)) throw new InvalidOperationException($"PowerSetRequest failed ({Marshal.GetLastWin32Error()}).");
+                return;
             }
-            if (!PowerSetRequest(_request, PowerRequestSystemRequired)) throw new InvalidOperationException($"PowerSetRequest failed ({Marshal.GetLastWin32Error()}).");
+            var context = new REASON_CONTEXT { Version = 0, Flags = 1, SimpleReasonString = "Remote PC Diagnostics: a drive is running its self-test" };
+            var handle = PowerCreateRequest(ref context);
+            if (handle == IntPtr.Zero || handle == new IntPtr(-1)) throw new InvalidOperationException($"PowerCreateRequest failed ({Marshal.GetLastWin32Error()}).");
+            if (!PowerSetRequest(handle, PowerRequestSystemRequired))
+            {
+                var err = Marshal.GetLastWin32Error();
+                CloseHandle(handle);
+                throw new InvalidOperationException($"PowerSetRequest failed ({err}).");
+            }
+            _request = handle;
             return;
         }
         if (_request == IntPtr.Zero) return;

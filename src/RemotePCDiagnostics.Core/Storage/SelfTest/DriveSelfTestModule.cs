@@ -68,6 +68,7 @@ public sealed class DriveSelfTestModule(
         public SelfTestDriveState Before { get; } = before;
         public SelfTestDriveState Now { get; set; } = before;
         public bool FollowingOther { get; init; }
+        public bool SawRunning { get; set; }
         public string? StartError { get; set; }
         public int FailedPolls { get; set; }
         public bool Lost { get; set; }
@@ -117,7 +118,7 @@ public sealed class DriveSelfTestModule(
                 if (d.IsRunning)
                 {
                     // Started earlier (by this app before a restart of the page, or another tool): follow it rather than abort it.
-                    runs[d.Disk] = new DriveRun(d) { FollowingOther = true };
+                    runs[d.Disk] = new DriveRun(d) { FollowingOther = true, SawRunning = true };
                     Log($"[selftest] {d.Label}: a self-test is already running ({d.PercentDone ?? 0}%); following it.");
                     continue;
                 }
@@ -125,7 +126,11 @@ public sealed class DriveSelfTestModule(
                 runs[d.Disk] = run;
                 var s = await source.StartAsync(d.Disk, kind, scan.Token).ConfigureAwait(false);
                 if (!s.Ok) { run.StartError = s.Error; LogWarn($"[selftest] {d.Label}: couldn't start: {s.Error}"); continue; }
-                if (s.Answer!.Drives.FirstOrDefault(x => x.Disk == d.Disk) is { } a) run.Now = SelfTestDecoder.Decode(a);
+                if (s.Answer!.Drives.FirstOrDefault(x => x.Disk == d.Disk) is { } a)
+                {
+                    run.Now = SelfTestDecoder.Decode(a);
+                    if (run.Now.IsRunning) run.SawRunning = true;
+                }
                 Log($"[selftest] {d.Label}: {Kind(kind)} self-test started.");
             }
             await FollowAsync(runs, kind, started, progress, scan.Token).ConfigureAwait(false);
@@ -164,10 +169,19 @@ public sealed class DriveSelfTestModule(
                 }
                 run.FailedPolls = 0;
                 run.Now = SelfTestDecoder.Decode(answer);
-                if (!run.Now.IsRunning) run.Done = true;
+                if (run.Now.IsRunning) run.SawRunning = true;
+                else run.Done = true;
             }
             if (_now() - started > giveUpAfter)
-                foreach (var run in runs.Values.Where(r => r.Active)) run.Lost = true;
+            {
+                var timedOut = runs.Values.Where(r => r.Active).ToList();
+                foreach (var run in timedOut)
+                {
+                    run.Lost = true;
+                    LogWarn($"[selftest] {run.Before.Label}: timed out after {FormatMinutes(giveUpAfter.TotalMinutes)}; sending abort.");
+                }
+                await AbortRunsAsync(timedOut).ConfigureAwait(false);
+            }
         }
     }
 
@@ -194,9 +208,11 @@ public sealed class DriveSelfTestModule(
         return elapsed * (100 - pct) / pct;
     }
 
-    private async Task AbortAllAsync(Dictionary<int, DriveRun> runs)
+    private Task AbortAllAsync(Dictionary<int, DriveRun> runs) => AbortRunsAsync(runs.Values.Where(r => r.Active));
+
+    private async Task AbortRunsAsync(IEnumerable<DriveRun> runs)
     {
-        foreach (var run in runs.Values.Where(r => r.Active))
+        foreach (var run in runs)
         {
             try
             {
@@ -231,7 +247,7 @@ public sealed class DriveSelfTestModule(
     {
         var before = run.Before.Log.FirstOrDefault();
         var after = run.Now.Log.FirstOrDefault();
-        if (after is not null && (run.FollowingOther || !Equals(after, before) || run.Now.Log.Count > run.Before.Log.Count)) return after;
+        if (after is not null && (run.FollowingOther || !Equals(after, before) || run.Now.Log.Count > run.Before.Log.Count || (run.Done && run.SawRunning))) return after;
         if (run.Now.ExecOutcome is { } exec and not SelfTestOutcome.InProgress && run.Done)
             return new(null, "Last test", exec, 0, 0, null);
         return null;

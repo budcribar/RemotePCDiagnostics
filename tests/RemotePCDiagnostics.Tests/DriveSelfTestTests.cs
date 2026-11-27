@@ -283,15 +283,18 @@ public class DriveSelfTestTests
     {
         public readonly Dictionary<int, SelfTestDriveAnswer> Drives = new();
         public readonly List<string> Sent = [];
+        public readonly List<int> Reads = [];
+        public int DisksCalls;
+        public bool DelayRunningOnStart;
         public string? StartError;
 
-        public IReadOnlyList<int> Disks() => [.. Drives.Keys.Order()];
-        public SelfTestDriveAnswer Read(int disk) => Drives.TryGetValue(disk, out var d) ? d : new() { Disk = disk, Error = "missing" };
+        public IReadOnlyList<int> Disks() { DisksCalls++; return [.. Drives.Keys.Order()]; }
+        public SelfTestDriveAnswer Read(int disk) { Reads.Add(disk); return Drives.TryGetValue(disk, out var d) ? d : new() { Disk = disk, Error = "missing" }; }
         public string? Start(int disk, SelfTestProtocol protocol, SelfTestKind kind)
         {
             Sent.Add($"start {disk} {protocol} {kind}");
             if (StartError is not null) return StartError;
-            Drives[disk] = Drives[disk] with { SelfTestLog = NvmeLog((int)kind, 0) };
+            if (!DelayRunningOnStart) Drives[disk] = Drives[disk] with { SelfTestLog = NvmeLog((int)kind, 0) };
             return null;
         }
         public string? Abort(int disk, SelfTestProtocol protocol)
@@ -324,6 +327,49 @@ public class DriveSelfTestTests
         Assert.False(SelfTestAnswer.Parse(status.StdOut)!.KeepingAwake);
         Assert.False(power.Awake);
         Assert.Equal(1200u, power.Values[(SelfTestPowerGuard.DiskIdle, power.Scheme, true)]);
+    }
+
+    [Fact]
+    public void Agent_start_does_not_release_power_guard_when_drive_has_not_flipped_running_yet()
+    {
+        var devices = new FakeDevices { DelayRunningOnStart = true };
+        devices.Drives[0] = Nvme(0, NvmeLog());
+        var power = new FakePower();
+        var agent = new AgentDriveSelfTest(devices, new SelfTestPowerGuard(power, JournalPath()));
+
+        var start = agent.Run(new DriveSelfTestAction("start", 0, SelfTestKind.Short));
+        Assert.Equal(0, start.ExitCode);
+        var answer = SelfTestAnswer.Parse(start.StdOut)!;
+        Assert.False(SelfTestDecoder.Decode(answer.Drives.Single()).IsRunning);
+        Assert.True(answer.KeepingAwake);
+        Assert.True(power.Awake);
+        Assert.Equal(0u, power.Values[(SelfTestPowerGuard.DiskIdle, power.Scheme, true)]);
+
+        // Once a subsequent status poll sees the drive idle, the power guard releases.
+        var status = agent.Run(new DriveSelfTestAction("status", 0, null));
+        Assert.False(SelfTestAnswer.Parse(status.StdOut)!.KeepingAwake);
+        Assert.False(power.Awake);
+        Assert.Equal(1200u, power.Values[(SelfTestPowerGuard.DiskIdle, power.Scheme, true)]);
+    }
+
+    [Fact]
+    public void Agent_status_does_not_rescan_all_disks_while_drive_is_running()
+    {
+        var devices = new FakeDevices();
+        devices.Drives[0] = Nvme(0, NvmeLog());
+        devices.Drives[1] = Nvme(1, NvmeLog());
+        var power = new FakePower();
+        var agent = new AgentDriveSelfTest(devices, new SelfTestPowerGuard(power, JournalPath()));
+
+        Assert.Equal(0, agent.Run(new DriveSelfTestAction("start", 0, SelfTestKind.Short)).ExitCode);
+        devices.DisksCalls = 0;
+        devices.Reads.Clear();
+
+        var status = agent.Run(new DriveSelfTestAction("status", 0, null));
+        Assert.Equal(0, status.ExitCode);
+        Assert.True(SelfTestAnswer.Parse(status.StdOut)!.KeepingAwake);
+        Assert.Equal(0, devices.DisksCalls);
+        Assert.Equal([0], devices.Reads);
     }
 
     [Fact]
@@ -590,6 +636,57 @@ public class DriveSelfTestTests
         var report = await RunAsync(module);
         Assert.NotNull(report.CouldNotRunReason);
         Assert.Contains("error 1", report.CouldNotRunReason);
+    }
+
+    [Fact]
+    public async Task Full_20_entry_log_completing_within_same_power_on_hour_reports_result()
+    {
+        var fullLogEntries = Enumerable.Repeat((Code: 1, Result: 0, Hours: 500L, Lba: (ulong?)null, Segment: 0), 20).ToArray();
+        var (module, replay) = Replayed([
+            Call("list", Nvme(0, NvmeLog(0, 0, fullLogEntries))),
+            Call("start 0 short", Nvme(0, NvmeLog(1, 0, fullLogEntries))),
+            Call("status 0", Nvme(0, NvmeLog(1, 50, fullLogEntries))),
+            Call("status 0", Nvme(0, NvmeLog(0, 0, fullLogEntries))),
+        ]);
+        var report = await RunAsync(module);
+        Assert.Empty(replay.Misses);
+        Assert.Equal(DiagnosticStatus.Ok, report.Status);
+        var card = Assert.Single(report.Cards);
+        Assert.Equal(AreaLevel.Ok, card.Level);
+        Assert.Contains("Short self-test passed", card.Headline);
+        Assert.DoesNotContain("without a result", card.Headline);
+        Assert.Equal("This run", card.Rows[0].Values[0]);
+    }
+
+    [Fact]
+    public async Task Timed_out_run_is_marked_lost_and_sends_abort()
+    {
+        var clock = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var calls = new[]
+        {
+            Call("list", Nvme(0, NvmeLog())),
+            Call("start 0 short", Nvme(0, NvmeLog(1, 0))),
+            Call("status 0", Nvme(0, NvmeLog(1, 10))),
+            Call("abort 0", Nvme(0, NvmeLog(0, 0, (1, 1, 1, null, 0)))),
+        };
+        var saved = calls.Select(c => System.Text.Json.JsonSerializer.Deserialize<RecordedCall>(System.Text.Json.JsonSerializer.Serialize(c, MachineRecording.Json), MachineRecording.Json)!).ToList();
+        var replay = new RecordingReplay(saved);
+        var module = new DriveSelfTestModule(
+            replay.SelfTest,
+            delay: (_, ct) =>
+            {
+                ct.ThrowIfCancellationRequested();
+                clock = clock.AddHours(2);
+                return Task.CompletedTask;
+            },
+            now: () => clock);
+
+        var report = await RunAsync(module);
+        Assert.Empty(replay.Misses);
+        Assert.Contains(RecordingReplay.SelfTestKey("abort 0"), replay.Asked);
+        var card = Assert.Single(report.Cards);
+        Assert.Equal(AreaLevel.Warning, card.Level);
+        Assert.Contains("didn't report finishing", card.Headline);
     }
 
     [Fact]

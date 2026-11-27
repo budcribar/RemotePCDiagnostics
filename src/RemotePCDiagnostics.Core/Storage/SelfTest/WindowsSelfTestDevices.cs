@@ -205,8 +205,9 @@ public sealed class WindowsSelfTestDevices : ISelfTestDevices
         BinaryPrimitives.WriteUInt16LittleEndian(s[2..], (ushort)(dataIn is null ? 0x01 : 0x03)); // ATA_FLAGS_DRDY_REQUIRED | ATA_FLAGS_DATA_IN
         BinaryPrimitives.WriteUInt32LittleEndian(s[8..], (uint)length);
         BinaryPrimitives.WriteUInt32LittleEndian(s[12..], 30); // seconds
-        if (wide) BinaryPrimitives.WriteUInt64LittleEndian(s[bufferOffsetAt..], (ulong)structBytes);
-        else BinaryPrimitives.WriteUInt32LittleEndian(s[bufferOffsetAt..], (uint)structBytes);
+        var dataOffset = length == 0 ? 0 : structBytes;
+        if (wide) BinaryPrimitives.WriteUInt64LittleEndian(s[bufferOffsetAt..], (ulong)dataOffset);
+        else BinaryPrimitives.WriteUInt32LittleEndian(s[bufferOffsetAt..], (uint)dataOffset);
         var tf = s.Slice(currentTaskFileAt, 8);
         tf[0] = feature;
         tf[1] = sectorCount;

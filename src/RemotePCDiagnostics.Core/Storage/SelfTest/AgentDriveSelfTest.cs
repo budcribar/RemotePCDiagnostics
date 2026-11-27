@@ -47,7 +47,7 @@ public sealed class AgentDriveSelfTest(ISelfTestDevices devices, SelfTestPowerGu
                 switch (action.Verb)
                 {
                     case "list":
-                        return Answer(devices.Disks().Select(devices.Read).ToList());
+                        return Answer(devices.Disks().Select(devices.Read).ToList(), allDrives: true);
                     case "status" when action.Disk is { } disk:
                         return Answer([devices.Read(disk)]);
                     case "start" when action.Disk is { } disk && action.Kind is { } kind:
@@ -81,8 +81,8 @@ public sealed class AgentDriveSelfTest(ISelfTestDevices devices, SelfTestPowerGu
             return Failed($"Disk {disk} didn't start its {KindArg(kind)} self-test: {why}");
         }
         log.Info($"[selftest] Disk {disk} ({state.Model}): {KindArg(kind)} self-test started." + (powerNote is null ? "" : " " + powerNote));
-        // The drive takes a moment to report the test; the app polls status from here.
-        return Answer([devices.Read(disk)]);
+        // The drive takes a moment to report the test; the app polls status from here, so don't release the power guard yet.
+        return Answer([devices.Read(disk)], checkIdle: false);
     }
 
     /// <summary>Lets go of the PC's power settings when no drive is testing any more. Called on a timer while they are held.</summary>
@@ -104,13 +104,18 @@ public sealed class AgentDriveSelfTest(ISelfTestDevices devices, SelfTestPowerGu
         if (!devices.Disks().Select(d => SelfTestDecoder.Decode(devices.Read(d))).Any(s => s.IsRunning)) guard.Release();
     }
 
-    private ProcessResult Answer(List<SelfTestDriveAnswer> drives)
+    private ProcessResult Answer(List<SelfTestDriveAnswer> drives, bool checkIdle = true, bool allDrives = false)
     {
         // Any answer that shows nothing testing lets the power settings go (a test ended, was aborted, or a reset stopped it).
-        if (guard.Holding)
+        if (checkIdle && guard.Holding && !drives.Select(SelfTestDecoder.Decode).Any(s => s.IsRunning))
         {
-            var reads = drives.Count == devices.Disks().Count ? drives : devices.Disks().Select(devices.Read).ToList();
-            if (!reads.Select(SelfTestDecoder.Decode).Any(s => s.IsRunning)) guard.Release();
+            if (allDrives)
+                guard.Release();
+            else
+            {
+                var others = devices.Disks().Where(d => drives.All(x => x.Disk != d));
+                if (!others.Select(d => SelfTestDecoder.Decode(devices.Read(d))).Any(s => s.IsRunning)) guard.Release();
+            }
         }
         return new(0, new SelfTestAnswer { Drives = drives, KeepingAwake = guard.Holding }.ToJson(), "");
     }

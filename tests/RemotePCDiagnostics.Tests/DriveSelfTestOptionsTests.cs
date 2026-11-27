@@ -30,6 +30,7 @@ public sealed class DriveSelfTestOptionsTests : BunitContext
         Assert.Contains("USB", cut.Find("[data-testid=selftest-drive][data-disk='1']").TextContent);
 
         var data = Data(cut);
+        Assert.Equal(1, data.GetProperty("schema").GetInt32());
         Assert.Equal(JsonValueKind.Null, data.GetProperty("disks").ValueKind);
         var drives = data.GetProperty("drives").EnumerateArray().ToList();
         Assert.Equal([0, 1, 2], drives.Select(d => d.GetProperty("disk").GetInt32()));

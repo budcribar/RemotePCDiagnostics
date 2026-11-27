@@ -102,6 +102,7 @@
 
     private string DataJson() => JsonSerializer.Serialize(new
     {
+        schema = 1,
         mode = ModeArg(Module.Mode),
         disks = Module.Disks?.OrderBy(d => d).ToList(),
         error = Module.LastPreviewError,
