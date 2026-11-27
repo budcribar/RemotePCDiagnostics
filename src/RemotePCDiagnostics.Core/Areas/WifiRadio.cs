@@ -126,12 +126,12 @@ public static class WifiRadio
     public static string FormatRssi(int? dbm) => dbm is { } d ? $"{d.ToString(CultureInfo.InvariantCulture)} dBm" : "Not reported";
 
     /// <summary>Both cards, or none when no Wi-Fi adapter exists and none has a driver problem (a desktop on Ethernet).</summary>
-    public static IReadOnlyList<AreaCard> BuildCards(WifiRadioReading reading, IReadOnlyList<WifiDeviceProblem>? problems = null)
+    public static IReadOnlyList<AreaCard> BuildCards(WifiRadioReading reading, IReadOnlyList<WifiDeviceProblem>? problems = null, bool hasWifiHardware = false)
     {
         problems ??= [];
         if (reading.Error is { } error && reading.Interfaces.Count == 0 && reading.ServiceRunning)
             return [AreaCard.Failed(RadioCardId, "Wi-Fi radio", $"Couldn't read the Wi-Fi radio: {error}")];
-        if (reading.Interfaces.Count == 0 && problems.Count == 0 && reading.ServiceRunning)
+        if (reading.Interfaces.Count == 0 && problems.Count == 0 && (reading.ServiceRunning || !hasWifiHardware))
             return [];
         return [BuildRadioCard(reading, problems), BuildScanCard(reading)];
     }
@@ -180,6 +180,7 @@ public static class WifiRadio
         if (reading.Interfaces.All(i => i.HardwareOn == false)) return (AreaLevel.Error, "Wi-Fi radio is off by its hardware switch");
         if (reading.AirplaneMode == true) return (AreaLevel.Warning, "Airplane mode is on");
         if (reading.Interfaces.All(i => i.SoftwareOn == false)) return (AreaLevel.Warning, "Wi-Fi is turned off in Windows");
+        if (reading.Interfaces.All(i => !i.RadioOn)) return (AreaLevel.Warning, "Wi-Fi radio is off");
         if (reading.Interfaces.Any(i => i.Supports5Ghz == false) && reading.Interfaces.All(i => i.Supports5Ghz != true))
             return (AreaLevel.Warning, "Radio on · 2.4 GHz only");
         return (AreaLevel.Ok, "Radio on");

@@ -63,11 +63,16 @@ internal static class WlanApi
     /// <summary>An open client handle, closed on dispose.</summary>
     public sealed class Session : IDisposable
     {
-        public IntPtr Handle { get; }
+        private IntPtr _handle;
+        public IntPtr Handle => _handle;
         public uint Error { get; }
-        public Session() { Error = WlanOpenHandle(2, IntPtr.Zero, out _, out var h); Handle = h; }
-        public bool IsOpen => Error == Ok && Handle != IntPtr.Zero;
-        public void Dispose() { if (Handle != IntPtr.Zero) WlanCloseHandle(Handle, IntPtr.Zero); }
+        public Session() { Error = WlanOpenHandle(2, IntPtr.Zero, out _, out _handle); }
+        public bool IsOpen => Error == Ok && _handle != IntPtr.Zero;
+        public void Dispose()
+        {
+            var h = Interlocked.Exchange(ref _handle, IntPtr.Zero);
+            if (h != IntPtr.Zero) WlanCloseHandle(h, IntPtr.Zero);
+        }
     }
 
     public static string InterfaceStateName(int state) => state switch
@@ -91,7 +96,7 @@ internal static class WlanApi
     {
         var result = new List<(Guid, string, int)>();
         error = WlanEnumInterfaces(s.Handle, IntPtr.Zero, out var list);
-        if (error != Ok) return result;
+        if (error != Ok || list == IntPtr.Zero) return result;
         try
         {
             var count = Marshal.ReadInt32(list);
@@ -118,7 +123,8 @@ internal static class WlanApi
     /// <summary>WLAN_RADIO_STATE: whether any PHY has the software and hardware switch on (DOT11_RADIO_STATE 1 = on, 2 = off).</summary>
     public static (bool? Software, bool? Hardware) RadioState(IntPtr data, int size)
     {
-        var phys = Math.Min(Marshal.ReadInt32(data), Math.Max(0, (size - 4) / 12));
+        if (size < 4) return (null, null);
+        var phys = Math.Min(Marshal.ReadInt32(data), (size - 4) / 12);
         bool? sw = null, hw = null;
         for (var i = 0; i < phys; i++)
         {
@@ -226,7 +232,7 @@ public sealed class WlanRadioSource(ILogger? log = null, Func<TimeSpan, Cancella
         var g = id;
         var error = WlanApi.WlanGetAvailableNetworkList(s.Handle, ref g, 0, IntPtr.Zero, out var list);
         if (error == WlanApi.AccessDenied) return ([], true);
-        if (error != WlanApi.Ok) return ([], false);
+        if (error != WlanApi.Ok || list == IntPtr.Zero) return ([], false);
         var entries = new List<(string Ssid, string Security, int Signal, bool Connected, bool HasProfile, string Profile, int Bss)>();
         try
         {
@@ -244,7 +250,7 @@ public sealed class WlanRadioSource(ILogger? log = null, Func<TimeSpan, Cancella
         finally { WlanApi.WlanFreeMemory(list); }
 
         var bss = new List<(string Ssid, int Rssi, int Mhz)>();
-        if (WlanApi.WlanGetNetworkBssList(s.Handle, ref g, IntPtr.Zero, 3, false, IntPtr.Zero, out var bssList) == WlanApi.Ok)
+        if (WlanApi.WlanGetNetworkBssList(s.Handle, ref g, IntPtr.Zero, 3, false, IntPtr.Zero, out var bssList) == WlanApi.Ok && bssList != IntPtr.Zero)
         {
             try
             {
@@ -317,7 +323,7 @@ public sealed class WlanConnector : IWifiConnector
         var (profile, ssid) = WlanApi.Query(s, id, WlanApi.OpCurrentConnection,
             (d, _) => (WlanApi.ReadWideString(d + WlanApi.CaProfile, 256), WlanApi.ReadSsid(d + WlanApi.CaSsid)), out _);
         var rssi = WlanApi.Query<int?>(s, id, WlanApi.OpRssi, (d, _) => Marshal.ReadInt32(d), out _);
-        return new("Connected", ssid, profile, rssi);
+        return new("Connected", ssid is { Length: > 0 } ? ssid : null, profile is { Length: > 0 } ? profile : null, rssi);
     }
 
     public uint ConnectProfile(string interfaceId, string profileName) =>

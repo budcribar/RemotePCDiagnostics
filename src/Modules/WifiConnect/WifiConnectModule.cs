@@ -51,23 +51,27 @@ public sealed class WifiConnectModule(IWifiRadioSource radio, IWifiConnector wif
         var mode = profile is not null ? "Saved profile" : seen?.Security is WifiRadio.Open or WifiRadio.Owe ? "Open network" : "Typed password";
 
         await _switching.WaitAsync(ct).ConfigureAwait(false);
-        var before = wifi.Read(adapter.Id);
-        var original = before is { IsConnected: true } ? before : null;
-        marker.Save(new(adapter.Id, original?.Profile, original?.Ssid, DateTimeOffset.Now));
-        Log($"{Name}: start adapter='{adapter.Description}' mode={mode} sameNetwork={original?.Ssid == ssid} onlyRoute={_isOnlyRoute(adapter.Id)}");
         var changed = new StrongBox<bool>();
+        WifiLinkState? original = null;
         WifiConnectReport report;
         var restore = WifiRestoreOutcome.NotNeeded;
         try
         {
+            var before = wifi.Read(adapter.Id);
+            original = before is { IsConnected: true } ? before : null;
+            marker.Save(new(adapter.Id, original?.Profile, original?.Ssid, DateTimeOffset.Now));
+            Log($"{Name}: start adapter='{adapter.Description}' mode={mode} sameNetwork={original?.Ssid == ssid} onlyRoute={_isOnlyRoute(adapter.Id)}");
             report = await TestAsync(adapter, ssid, mode, profile, xml, original, changed, progress, ct).ConfigureAwait(false);
         }
         finally
         {
             // Runs on success, failure and cancel alike; never with the run's token, which may be the one that was cancelled.
-            if (changed.Value) restore = await RestoreAsync(adapter.Id, original?.Profile, original?.Ssid, CancellationToken.None).ConfigureAwait(false);
-            else marker.Clear();
-            _switching.Release();
+            try
+            {
+                if (changed.Value) restore = await RestoreAsync(adapter.Id, original?.Profile, original?.Ssid, CancellationToken.None).ConfigureAwait(false);
+                else marker.Clear();
+            }
+            finally { _switching.Release(); }
         }
         return ToResult(report with { Restore = restore, OriginalSsid = original?.Ssid });
     }

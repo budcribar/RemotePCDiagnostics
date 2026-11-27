@@ -282,7 +282,7 @@ public static class InteractiveExport
             networks = pane?.Networks.Take(WifiRadio.MaxNetworksShown).Select(n => new
             {
                 ssid = V(n.Ssid), security = n.Security, band = n.Band, rssiDbm = n.Rssi, saved = n.HasProfile, connected = n.Connected,
-                needsPassword = !n.HasProfile && n.Security is not (WifiRadio.Open or WifiRadio.Owe),
+                needsPassword = !n.HasProfile && n.CanTypePassword && n.Security is not (WifiRadio.Open or WifiRadio.Owe),
                 canTest = n.HasProfile || n.CanTypePassword,
             }).ToList(),
             pickedSsid = V(pane?.PickedSsid),

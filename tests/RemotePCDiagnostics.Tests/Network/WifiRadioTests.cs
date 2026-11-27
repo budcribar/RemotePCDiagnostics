@@ -109,10 +109,42 @@ public class WifiRadioTests
     }
 
     [Fact]
-    public void A_PC_without_Wi_Fi_gets_no_cards_but_a_stopped_WLAN_service_fails()
+    public void A_PC_without_Wi_Fi_gets_no_cards_even_when_WlanSvc_is_stopped_but_a_PC_with_Wi_Fi_hardware_fails()
     {
         Assert.Empty(WifiRadio.BuildCards(new([])));
-        Assert.Equal(AreaLevel.Error, Card(WifiRadio.BuildCards(new([], ServiceRunning: false)), WifiRadio.RadioCardId).Level);
+        Assert.Empty(WifiRadio.BuildCards(new([], ServiceRunning: false)));
+        var radio = Card(WifiRadio.BuildCards(new([], ServiceRunning: false), hasWifiHardware: true), WifiRadio.RadioCardId);
+        Assert.Equal(AreaLevel.Error, radio.Level);
+        Assert.Equal("The WLAN AutoConfig service isn't running", radio.Headline);
+    }
+
+    [Fact]
+    public void Multi_adapter_mixed_hardware_and_software_radio_off_reports_radio_off()
+    {
+        var reading = new WifiRadioReading([
+            Adapter([], sw: true, hw: false, connected: false),
+            Adapter([], sw: false, hw: true, connected: false) with { Id = "{2}", Description = "USB Wi-Fi" },
+        ]);
+
+        var radio = Card(WifiRadio.BuildCards(reading), WifiRadio.RadioCardId);
+        Assert.Equal(AreaLevel.Warning, radio.Level);
+        Assert.Equal("Wi-Fi radio is off", radio.Headline);
+    }
+
+    [Fact]
+    public async Task An_Ethernet_only_desktop_with_WlanSvc_stopped_stays_green_in_the_Network_check()
+    {
+        var ethernetOnly = new FakeNetworkSource(problems: [], adapters:
+            [new NetworkAdapter("Ethernet", "Realtek PCIe GbE Family Controller", "Realtek", "aa:bb", "2", true, true, null, null, null, null, null, null, null)]);
+        var module = new NetworkModule(ethernetOnly, includeWifiAndIpConfig: true, offline: true,
+            radio: new FakeRadio(new([], ServiceRunning: false)));
+
+        var r = await module.RefreshAsync(null);
+
+        var rep = Assert.IsType<AreaReport>(r.Payload);
+        Assert.DoesNotContain(rep.Cards, c => c.Id == WifiRadio.RadioCardId);
+        Assert.DoesNotContain(rep.Cards, c => c.Id == WifiRadio.ScanCardId);
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
     }
 
     [Theory]
@@ -238,6 +270,7 @@ public class WifiRadioTests
         Assert.Equal("passed", wifi.GetProperty("result").GetString());
         Assert.True(wifi.GetProperty("dropsRemoteSession").GetBoolean());
         Assert.False(wifi.GetProperty("networks")[1].GetProperty("canTest").GetBoolean());
+        Assert.False(wifi.GetProperty("networks")[1].GetProperty("needsPassword").GetBoolean());
         Assert.Equal(30, wifi.GetProperty("measured").GetProperty("routerPings").GetProperty("received").GetInt32());
         Assert.Equal("router", wifi.GetProperty("measured").GetProperty("gateway").GetString());
         Assert.DoesNotContain("\"password\"", json, StringComparison.OrdinalIgnoreCase);
@@ -274,11 +307,11 @@ public class WifiRadioTests
         public Task<WifiRadioReading> ReadAsync(bool scan, CancellationToken ct) { if (scan) Scans++; return Task.FromResult(reading); }
     }
 
-    private sealed class FakeNetworkSource(IReadOnlyList<WifiDeviceProblem>? problems) : INetworkSource
+    private sealed class FakeNetworkSource(IReadOnlyList<WifiDeviceProblem>? problems, IReadOnlyList<NetworkAdapter>? adapters = null) : INetworkSource
     {
         public bool ProblemsAsked { get; private set; }
         public Task<IReadOnlyList<NetworkAdapter>?> ReadAdaptersAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<NetworkAdapter>?>(
-            [new NetworkAdapter("Wi-Fi", "Intel(R) Wi-Fi 6E AX211", "Intel", "aa:bb", "7", true, true, null, null, null, null, null, null, null)]);
+            adapters ?? [new NetworkAdapter("Wi-Fi", "Intel(R) Wi-Fi 6E AX211", "Intel", "aa:bb", "7", true, true, null, null, null, null, null, null, null)]);
         public Task<IpConfigSnapshot?> ReadIpConfigAsync(CancellationToken ct) => Task.FromResult<IpConfigSnapshot?>(new([], false, ""));
         public Task<IReadOnlyList<WifiDeviceProblem>?> ReadWifiDeviceProblemsAsync(CancellationToken ct) { ProblemsAsked = true; return Task.FromResult(problems); }
     }

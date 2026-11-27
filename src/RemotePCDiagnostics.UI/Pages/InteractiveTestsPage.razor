@@ -750,7 +750,7 @@
             {
                 var wfNaPane = wfRep?.RunEnd == RunEnd.CouldNotRun;
                 var wfPicked = WifiPicked;
-                var wfNeedsPassword = wfPicked is { HasProfile: false } && wfPicked.Security is not (WifiRadio.Open or WifiRadio.Owe);
+                var wfNeedsPassword = wfPicked is { HasProfile: false, CanTypePassword: true } && wfPicked.Security is not (WifiRadio.Open or WifiRadio.Owe);
                 var wfCantTest = wfPicked is { HasProfile: false, CanTypePassword: false };
                 <div class="phys-qa-pane" data-testid="interactive-wifi-pane">
                     <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">

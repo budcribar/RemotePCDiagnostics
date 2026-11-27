@@ -56,7 +56,8 @@ public sealed class NetworkModule(INetworkSource source, SystemCommandRunner? co
         progress.ReportStep(4, total, radio is null ? "Checking recent network events and reachability." : "Scanning Wi-Fi and checking recent network events and reachability.");
         var history = commands is null ? Task.FromResult<AreaCard?>(null) : Nullable(NetworkDiagnostics.ReadHistoryAsync(commands, ct));
         var probes = offline ? Task.FromResult<AreaCard?>(null) : Nullable(NetworkDiagnostics.ProbeAsync(gateway, ct));
-        var radioCards = ReadRadioCardsAsync(ct);
+        var hasWifiHardware = adapters.Any(a => WmiNetworkSource.IsWifiName(a.Name) || WmiNetworkSource.IsWifiName(a.Description));
+        var radioCards = ReadRadioCardsAsync(hasWifiHardware, ct);
         await Task.WhenAll(history, probes, radioCards).ConfigureAwait(false);
         var wifi = wlanOk ? WifiConfigModule.ParseNetshWlan(wlanRes!.StdOut) : null;
         var bandContext = !offline && commands is not null && wifi is { Connected: true } && WifiConfigModule.Is24Ghz(wifi)
@@ -78,7 +79,7 @@ public sealed class NetworkModule(INetworkSource source, SystemCommandRunner? co
     private static async Task<AreaCard?> Nullable(Task<AreaCard> card) => await card.ConfigureAwait(false);
 
     /// <summary>The Wi-Fi radio and scan cards (a few seconds for the scan); none without a radio source or a Wi-Fi adapter.</summary>
-    private async Task<IReadOnlyList<AreaCard>> ReadRadioCardsAsync(CancellationToken ct)
+    private async Task<IReadOnlyList<AreaCard>> ReadRadioCardsAsync(bool hasWifiHardware, CancellationToken ct)
     {
         if (radio is null) return [];
         var readingTask = radio.ReadAsync(scan: true, ct);
@@ -88,7 +89,7 @@ public sealed class NetworkModule(INetworkSource source, SystemCommandRunner? co
         try { problems = await problemsTask.ConfigureAwait(false); }
         catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"{Name}: Wi-Fi device problems not read: {ex.Message}"); }
         Log($"{Name}: Wi-Fi radio: {reading.Interfaces.Count} adapter(s), service={reading.ServiceRunning}, airplane={reading.AirplaneMode}, strongest={WifiRadio.StrongestRssi(reading)}, problems={problems?.Count}");
-        return WifiRadio.BuildCards(reading, problems);
+        return WifiRadio.BuildCards(reading, problems, hasWifiHardware);
     }
 
     /// <summary>Wait before re-reading IP configuration when it came back empty while an adapter is connected.</summary>

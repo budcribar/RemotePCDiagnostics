@@ -220,13 +220,40 @@ public sealed class WifiConnectTests : IDisposable
         Assert.Equal("Tom & Jerry's <5G>", doc.Root!.Element(ns + "name")!.Value);
         Assert.Equal(Convert.ToHexString("Tom & Jerry's <5G>"u8), doc.Descendants(ns + "hex").Single().Value);
         Assert.Equal("WPA3SAE", doc.Descendants(ns + "authentication").Single().Value);
+        Assert.Equal("passPhrase", doc.Descendants(ns + "keyType").Single().Value);
         Assert.Equal("p&ss<word>!", doc.Descendants(ns + "keyMaterial").Single().Value);
         Assert.Equal("manual", doc.Root.Element(ns + "connectionMode")!.Value);
+
+        var rawPsk = new string('a', 64);
+        var rawDoc = XDocument.Parse(WifiConnect.ProfileXml("Shop", "WPA2-Personal", rawPsk)!);
+        Assert.Equal("networkKey", rawDoc.Descendants(ns + "keyType").Single().Value);
+        Assert.Equal(rawPsk, rawDoc.Descendants(ns + "keyMaterial").Single().Value);
 
         Assert.Empty(XDocument.Parse(WifiConnect.ProfileXml("Cafe", WifiRadio.Open, null)!).Descendants(ns + "sharedKey"));
         Assert.Null(WifiConnect.ProfileXml("Office", "WPA2-Enterprise", "whatever1"));
         Assert.Null(WifiConnect.ProfileXml("Old", "WEP", "12345678"));
         Assert.Null(WifiConnect.ProfileXml("Home", "WPA2-Personal", "short"));
+    }
+
+    [Fact]
+    public async Task Marker_save_throwing_does_not_deadlock_subsequent_runs()
+    {
+        var blocker = Path.Combine(_dir, "not-a-dir");
+        File.WriteAllText(blocker, "block");
+        var marker = new WifiRestoreMarker(Path.Combine(blocker, "restore.json"));
+        var wifi = new FakeWifi("Home");
+        var m = new WifiConnectModule(new FakeRadio(new([Adapter([Home, Shop])])), wifi, marker,
+            delay: (_, ct) => { ct.ThrowIfCancellationRequested(); return Task.CompletedTask; },
+            ping: (_, _, _) => Task.FromResult<long?>(3), isOnlyRoute: _ => true);
+        m.Settings.Ssid = "Shop";
+
+        await Assert.ThrowsAsync<IOException>(() => m.RefreshAsync(null));
+
+        // Remove the blocker so the next run can save the marker; if _switching leaked, this would hang.
+        File.Delete(blocker);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var second = await m.RefreshAsync(null, cts.Token);
+        Assert.Equal(WifiConnectOutcome.Passed, Report(second).Outcome);
     }
 
     [Theory]

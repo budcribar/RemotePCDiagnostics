@@ -175,7 +175,7 @@ public static class WifiConnect
         if (s.Auth == "WPA3SAE") auth.Add(new XElement(XNamespace.Get("http://www.microsoft.com/networking/WLAN/profile/v4") + "transitionMode", "true"));
         var keys = new XElement(ns + "security", auth);
         if (needsKey)
-            keys.Add(new XElement(ns + "sharedKey", new XElement(ns + "keyType", "passPhrase"), new XElement(ns + "protected", "false"),
+            keys.Add(new XElement(ns + "sharedKey", new XElement(ns + "keyType", password!.Length == 64 ? "networkKey" : "passPhrase"), new XElement(ns + "protected", "false"),
                 new XElement(ns + "keyMaterial", password)));
         var doc = new XElement(ns + "WLANProfile",
             new XElement(ns + "name", ssid),
@@ -202,7 +202,10 @@ public static class WifiConnect
         {
             var routed = NetworkInterface.GetAllNetworkInterfaces()
                 .Where(n => n.OperationalStatus == OperationalStatus.Up && n.NetworkInterfaceType is not (NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel))
-                .Where(n => n.GetIPProperties().GatewayAddresses.Any(g => g.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork))
+                .Where(n => n.GetIPProperties().GatewayAddresses.Any(g =>
+                    g.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
+                    && !g.Address.Equals(System.Net.IPAddress.Any)
+                    && !g.Address.Equals(System.Net.IPAddress.IPv6Any)))
                 .Select(n => Guid.TryParse(n.Id, out var g) ? g : Guid.Empty).ToList();
             return routed.Count == 0 || routed.All(g => g == id);
         }
