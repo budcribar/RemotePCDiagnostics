@@ -238,19 +238,15 @@ public sealed class InstallerConfigTests
         Assert.True(iss.IndexOf("procedure StopPreviousAgents", StringComparison.Ordinal) < prepare);
 
         Assert.Contains("StopOneAgentService('RemotePCDiagnosticsAgent');", iss);
-        Assert.Contains("StopOneAgentService('RemotePCDiagnostics.Agent');", iss);
-        Assert.Contains("StopOneAgentService('Remote PC Diagnostics Agent');", iss);
-        Assert.Contains("StopOneAgentService('RemotePCDiagnostics Agent');", iss);
-        Assert.Contains("/Delete /TN \"Remote PC Diagnostics Agent\" /F", iss);
+        Assert.DoesNotContain("StopOneAgentService('RemotePCDiagnostics.Agent');", iss); // old service names are gone
+        Assert.DoesNotContain("RemoveAgentStartupEntries", iss); // old Run-key and scheduled-task launchers are gone
         Assert.Contains("does not taskkill", iss);
-        Assert.Contains("delete \"RemotePCDiagnostics.Agent\"", iss);
+        Assert.DoesNotContain("delete \"RemotePCDiagnostics.Agent\"", iss);
         Assert.Contains("agent-instance.txt", iss);
 
         var wxs = File.ReadAllText(Path.Combine(root, "msi", "Package.wxs"));
         Assert.Contains("Name=\"RemotePCDiagnosticsAgent\" Stop=\"both\" Start=\"install\" Wait=\"yes\"", wxs);
-        Assert.Contains("Name=\"RemotePCDiagnostics.Agent\" Stop=\"both\" Wait=\"yes\" Remove=\"both\"", wxs);
-        Assert.Contains("Name=\"Remote PC Diagnostics Agent\" Stop=\"both\" Wait=\"yes\" Remove=\"both\"", wxs);
-        Assert.Contains("Name=\"RemotePCDiagnostics Agent\" Stop=\"both\" Wait=\"yes\" Remove=\"both\"", wxs);
+        Assert.DoesNotContain("Remove=\"both\"", wxs);
         Assert.Contains("After=\"InstallFiles\"", wxs);
         var stopAt = wxs.IndexOf("StopExistingAgentService", StringComparison.Ordinal);
         var installAt = wxs.IndexOf("After=\"InstallFiles\"", StringComparison.Ordinal);

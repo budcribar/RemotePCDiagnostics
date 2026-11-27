@@ -369,7 +369,7 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             // The app isn't elevated: this service keeps its undo journal and its workflow and benchmark state.
             changeJournal: () => new RemotePCDiagnostics.Core.Changes.FileChangeJournal(RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(), pipeLog),
             stateFolder: RemotePCDiagnostics.Core.ProtectedState.Folder(),
-            machineSetup: AgentMachineSetup.ForService(pipeLog),
+            machineSetup: new AgentMachineSetup(pipeLog),
             biosOperations: new RemotePCDiagnostics.Core.Session.AgentBiosOperations(launcher, log: pipeLog));
     }
 
@@ -963,15 +963,7 @@ public sealed class AgentHubWorker(
     {
         var running = internalRunning;
         var sessionId = internalSessionId ?? "";
-        var sessionPath = activeSessionPath;
-        if (sessionPath is null)
-        {
-            sessionPath = AgentLayout.ActiveSessionPath();
-            if (!File.Exists(sessionPath) && File.Exists(AgentLayout.LegacyActiveSessionPath()))
-            {
-                sessionPath = AgentLayout.LegacyActiveSessionPath();
-            }
-        }
+        var sessionPath = activeSessionPath ?? AgentLayout.ActiveSessionPath();
 
         if (File.Exists(sessionPath))
         {

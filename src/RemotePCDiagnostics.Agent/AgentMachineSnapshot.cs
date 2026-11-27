@@ -74,9 +74,8 @@ internal static class AgentMachineSnapshot
         }
         catch
         {
-            // The upgrade still stops the known service names below.
-            foreach (var name in AgentInstancePolicy.KnownServiceNames)
-                list.Add(new AgentServiceRegistration(name, null, ServiceState(name)));
+            // The upgrade still stops the current service.
+            list.Add(new AgentServiceRegistration(AgentLayout.ServiceName, null, ServiceState(AgentLayout.ServiceName)));
         }
         return list;
     }

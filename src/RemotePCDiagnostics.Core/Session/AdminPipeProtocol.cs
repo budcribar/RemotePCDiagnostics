@@ -2438,8 +2438,7 @@ public sealed class AdminPipeServer(
             return new(Ok: false, Allowed: false, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId,
                 Error: "Machine setup is not supported by this elevated helper.");
         var setup = machineSetup.Prepare();
-        log.Info($"[admin-pipe-server] Machine setup: state folder secured={setup.StateFolderSecured}, event source={setup.EventSourceReady}, " +
-            $"history update={setup.HistoryUpdate}, log move={setup.LogMove}.");
+        log.Info($"[admin-pipe-server] Machine setup: state folder secured={setup.StateFolderSecured}, event source={setup.EventSourceReady}.");
         return new(Ok: setup.Done, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: setup.Done ? 0 : -1, Setup: setup);
     }
 

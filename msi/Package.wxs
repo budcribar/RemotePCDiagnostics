@@ -29,15 +29,11 @@
       <Directory Id="INSTALLFOLDER" Name="RemotePCDiagnosticsAgent">
         <Component Id="AgentExecutable" Guid="8A4F2C91-5E7B-4D13-9C84-1F2E6B7A90D3">
           <File Id="AgentExe" Source="$(var.AgentExePath)" Name="RemotePCDiagnostics.Agent.exe" KeyPath="yes" />
-          <!-- Stop the current service before InstallFiles, and remove older registrations that would keep running beside it.
-               The current name is not removed here: Agent.exe install reconfigures it after the files are in place.
+          <!-- Stop the current service before InstallFiles. It is not removed here: Agent.exe install reconfigures it after the files are in place.
                Startup is Automatic, so the PC rejoins the relay as soon as the service process is up. A delayed start is not used.
                Start="install" starts it on a fresh install and on an upgrade. EnsureAgentServiceRunning does it again
                after Agent.exe install, including when that step was interrupted, and sets failure restart back on. -->
           <ServiceControl Id="StopExistingAgentService" Name="RemotePCDiagnosticsAgent" Stop="both" Start="install" Wait="yes" />
-          <ServiceControl Id="StopLegacyAgentExeName" Name="RemotePCDiagnostics.Agent" Stop="both" Wait="yes" Remove="both" />
-          <ServiceControl Id="StopLegacyAgentDisplayName" Name="Remote PC Diagnostics Agent" Stop="both" Wait="yes" Remove="both" />
-          <ServiceControl Id="StopLegacyAgentTaskName" Name="RemotePCDiagnostics Agent" Stop="both" Wait="yes" Remove="both" />
         </Component>
       </Directory>
     </StandardDirectory>

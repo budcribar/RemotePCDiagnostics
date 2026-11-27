@@ -12,13 +12,6 @@ public static class AgentRemoval
 {
     public const int AbsentPollsBeforeRemoval = 2;
 
-    public static readonly string[] ScheduledTaskNames =
-    [
-        AgentLayout.ScheduledTaskName,
-        AgentLayout.ServiceName,
-        "Remote PC Diagnostics Agent",
-    ];
-
     public static IReadOnlyList<string> OwnedFiles(string programDataDir)
     {
         var root = programDataDir;
@@ -66,90 +59,6 @@ public static class AgentRemoval
     {
         var quoted = WindowsCommandLine.Quote(Path.GetFullPath(directory));
         return "/c ping -n 6 127.0.0.1 >nul & rmdir /s /q " + quoted + " & ping -n 6 127.0.0.1 >nul & rmdir /s /q " + quoted;
-    }
-
-    public static bool CommandLaunchesAgent(string? command)
-    {
-        if (string.IsNullOrWhiteSpace(command)) return false;
-        return command.Contains(AgentLayout.AgentExeName, StringComparison.OrdinalIgnoreCase);
-    }
-
-    public static bool ShouldRemoveRunValue(string? valueName, string? command)
-    {
-        if (string.Equals(valueName, AgentLayout.RunValueName, StringComparison.OrdinalIgnoreCase)) return true;
-        if (string.Equals(valueName, AgentLayout.ScheduledTaskName, StringComparison.OrdinalIgnoreCase)) return true;
-        if (string.Equals(valueName, "Remote PC Diagnostics Agent", StringComparison.OrdinalIgnoreCase)) return true;
-        return CommandLaunchesAgent(command);
-    }
-
-    public static string TaskLeafName(string? taskName)
-    {
-        if (string.IsNullOrWhiteSpace(taskName)) return "";
-        var trimmed = taskName.Trim();
-        var slash = Math.Max(trimmed.LastIndexOf('\\'), trimmed.LastIndexOf('/'));
-        return slash >= 0 && slash < trimmed.Length - 1 ? trimmed[(slash + 1)..] : trimmed;
-    }
-
-    public static bool ShouldDeleteScheduledTask(string? taskName, string? action)
-    {
-        var leaf = TaskLeafName(taskName);
-        foreach (var known in ScheduledTaskNames)
-        {
-            if (leaf.Equals(known, StringComparison.OrdinalIgnoreCase)) return true;
-        }
-        return CommandLaunchesAgent(action);
-    }
-
-    public static bool IsAgentStartupShortcut(string? fileName)
-    {
-        var name = Path.GetFileName(fileName ?? "");
-        if (name.Length == 0) return false;
-        if (name.Equals(AgentLayout.AgentExeName.Replace(".exe", ".lnk", StringComparison.OrdinalIgnoreCase), StringComparison.OrdinalIgnoreCase))
-            return true;
-        if (name.Equals("Remote PC Diagnostics Agent.lnk", StringComparison.OrdinalIgnoreCase)) return true;
-        return name.Contains(AgentLayout.AgentExeName, StringComparison.OrdinalIgnoreCase)
-            || name.Contains("RemotePCDiagnostics.Agent", StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Task paths to delete. A block that names a known agent task, or that mentions the agent executable, is removed.
-    /// The executable check does not depend on the English label "Task To Run", so a localized <c>schtasks</c> listing still matches.
-    /// </summary>
-    public static IReadOnlyList<string> TaskNamesToDelete(string? schtasksListOutput)
-    {
-        var names = new List<string>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(schtasksListOutput)) return names;
-
-        var text = schtasksListOutput.Replace("\r\n", "\n", StringComparison.Ordinal);
-        foreach (var block in text.Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
-        {
-            string? path = null;
-            var launchesAgent = false;
-            var knownName = false;
-            foreach (var raw in block.Split('\n'))
-            {
-                var line = raw.Trim();
-                if (line.Length == 0) continue;
-                var colon = line.IndexOf(':');
-                var value = colon >= 0 ? line[(colon + 1)..].Trim() : line;
-                if (path is null && value.StartsWith('\\') && value.Length > 1)
-                    path = value;
-                if (CommandLaunchesAgent(line))
-                    launchesAgent = true;
-                var leaf = TaskLeafName(value);
-                foreach (var known in ScheduledTaskNames)
-                {
-                    if (leaf.Equals(known, StringComparison.OrdinalIgnoreCase))
-                        knownName = true;
-                }
-            }
-
-            if (path is null || (!launchesAgent && !knownName)) continue;
-            if (seen.Add(path))
-                names.Add(path);
-        }
-        return names;
     }
 
     /// <summary>Setup <c>RemotePCDiagnostics.Host.exe</c> locations. The ProgramData app cache is intentionally absent.</summary>

@@ -127,7 +127,6 @@ public static class HostServices
         services.AddSingleton(plugins);
         plugins.Register(services, new BuiltInModulesPlugin(), BuiltInModulesPlugin.Id, ModuleSource.BuiltIn);
         var effectiveModulesFolder = modulesFolder ?? ModuleLoaderOptions.DefaultModulesFolder();
-        ModuleProcessModeSetting.PurgeLegacySetting(effectiveModulesFolder);
         services.AddSingleton(LoadModulePlugins(services, plugins, logEvent, loggerFactory, new ModuleLoaderOptions
         {
             HostVersion = HostVersion(),

@@ -281,11 +281,4 @@ public class ActiveSessionTests
         var path = AgentLayout.SessionsDirectory();
         Assert.EndsWith(AgentLayout.SessionsFolderName, path);
     }
-
-    [Fact]
-    public void AgentLayout_LegacyActiveSessionPath_EndsWithActiveSessionJson()
-    {
-        var path = AgentLayout.LegacyActiveSessionPath();
-        Assert.EndsWith(AgentLayout.ActiveSessionFileName, path);
-    }
 }

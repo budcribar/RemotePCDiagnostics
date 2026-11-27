@@ -32,7 +32,6 @@ public class UpdateServiceRestartTests
         Assert.Contains("<AllowStartOnDemand>true</AllowStartOnDemand>", xml, StringComparison.Ordinal);
         Assert.Contains("/d /c &quot;C:\\ProgramData\\RemotePCDiagnostics\\Updates\\rpcd-setup-run.cmd&quot;", xml, StringComparison.Ordinal);
         Assert.Contains(AgentLayout.SetupTaskName, "Remote PC Diagnostics Setup", StringComparison.Ordinal);
-        Assert.DoesNotContain(AgentRemoval.ScheduledTaskNames, name => name == AgentLayout.SetupTaskName);
     }
 
     [Fact]

@@ -6,9 +6,7 @@ namespace RemotePCDiagnostics.Host;
 
 /// <summary>
 /// Windows Event Log sink: source "RemotePCDiagnostics", in the app's own log "RemotePCDiagnostics" (Applications and Services
-/// Logs). A PC with earlier events has the source under "Application" until the one-time move (EventLogMoveMigration); the
-/// sink writes through the source, so it follows wherever the source is registered. Writes happen on one background thread
-/// (bounded queue, callers never block). Registering the source needs administrator, so the Agent does it (the app never runs as
+/// Logs). Writes happen on one background thread (bounded queue, callers never block). Registering the source needs administrator, so the Agent does it (the app never runs as
 /// administrator): until then the sink holds what's queued and waits for <see cref="SourceRegistered"/>. If a write fails, the sink turns
 /// itself off once and notes why via <paramref name="note"/> (file log only).
 /// </summary>

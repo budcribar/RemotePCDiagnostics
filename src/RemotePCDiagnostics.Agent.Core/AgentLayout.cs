@@ -29,8 +29,6 @@ public static class AgentLayout
     /// <summary>Default Store identity from <c>msix/Build-Msix.ps1</c>. Partner Center may prefix it.</summary>
     public const string DefaultMsixPackageName = "BudCribar.RemotePCDiagnostics";
 
-    public const string RunValueName = "RemotePCDiagnosticsAgent";
-    public const string ScheduledTaskName = "RemotePCDiagnostics Agent";
 
     /// <summary>
     /// One-shot task that runs Setup outside the service job. Not removed during upgrade: that cleanup runs while
@@ -62,7 +60,6 @@ public static class AgentLayout
     public static string HostWatchPath() => Path.Combine(ProgramDataDirectory(), HostWatchFileName);
     public static string SessionsDirectory() => Path.Combine(ProgramDataDirectory(), SessionsFolderName);
     public static string ActiveSessionPath() => Path.Combine(SessionsDirectory(), ActiveSessionFileName);
-    public static string LegacyActiveSessionPath() => Path.Combine(ProgramDataDirectory(), ActiveSessionFileName);
     public static string AppCacheDirectory() => Path.Combine(ProgramDataDirectory(), AppCacheFolderName);
     public static string AgentLogPath() => Path.Combine(ProgramDataDirectory(), "logs", AgentLogFileName);
     public static string InstanceClaimPath() => Path.Combine(ProgramDataDirectory(), InstanceClaimFileName);

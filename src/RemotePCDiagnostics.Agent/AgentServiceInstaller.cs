@@ -68,7 +68,7 @@ internal static class AgentServiceInstaller
             }
             AgentPaths.WriteSecuredConfig(merged);
 
-            // Stop every agent service, Run key, and scheduled task, and wait until the instance mutex is free,
+            // Stop every agent service and wait until the instance mutex is free,
             // before the new service is created or started. A second name or a process SCM no longer tracks
             // otherwise keeps the old version running beside this one.
             AgentUpgradeQuiesce.PrepareForInstall(Console.WriteLine);
@@ -153,7 +153,7 @@ internal static class AgentServiceInstaller
     }
 
     /// <summary>
-    /// Removes the service, startup entries, enrollment key, and agent files.
+    /// Removes the service, enrollment key, and agent files.
     /// <paramref name="stopService"/> is false when this process is the service (waiting on ourselves would deadlock).
     /// The protected state folder (undo journal, workflow, benchmarks) is not deleted.
     /// </summary>
@@ -162,7 +162,7 @@ internal static class AgentServiceInstaller
         var lines = new List<string>();
         if (OperatingSystem.IsWindows())
         {
-            AgentUpgradeQuiesce.RemoveLegacyServices(lines.Add);
+            AgentUpgradeQuiesce.RemoveOtherAgentServices(lines.Add);
             if (stopService && ServiceExists())
             {
                 StopServiceIfRunning(TimeSpan.FromSeconds(15));
@@ -179,9 +179,6 @@ internal static class AgentServiceInstaller
             {
                 try { RunSc($"delete {AgentPaths.ServiceName}"); } catch { /* The process is the service; SCM drops it when we exit. */ }
             }
-
-            try { lines.AddRange(AgentStartupCleanup.RemoveAll()); }
-            catch (Exception ex) { lines.Add("Note: startup cleanup did not finish: " + ex.Message); }
         }
 
         var installDir = AgentPaths.DefaultInstallDir();
@@ -195,7 +192,7 @@ internal static class AgentServiceInstaller
             lines.Add($"Removed '{path}'.");
         if (scheduleInstallDir)
         {
-            AgentStartupCleanup.ScheduleInstallDirectoryDelete(installDir);
+            AgentInstallDirectoryCleanup.ScheduleInstallDirectoryDelete(installDir);
             lines.Add($"Scheduled removal of '{installDir}' after this process exits.");
         }
         return lines;
@@ -245,7 +242,7 @@ internal static class AgentServiceInstaller
     private static int _selfRemovalStarted;
 
     /// <summary>
-    /// Removes the enrollment key, cached app, startup entries, and the Windows Service after a one-shot
+    /// Removes the enrollment key, cached app, and the Windows Service after a one-shot
     /// <c>--lifetime=session</c> run. Never touches the change journal, so a later session can still undo.
     /// </summary>
     public static void CleanupPerSessionAgentBestEffort()

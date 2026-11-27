@@ -197,31 +197,6 @@ public sealed class SpeedometerTests
     }
 
     [Fact]
-    public void BenchmarkService_MigratesSchemaV2ToV3_EnablingSpeedometer()
-    {
-        var path = Path.Combine(Path.GetTempPath(), "rpd-bench-v2-" + Guid.NewGuid().ToString("N") + ".json");
-        try
-        {
-            var store = new FileBenchmarkStore(path);
-            store.Save(new BenchmarkState(new BenchmarkSettings
-            {
-                SchemaVersion = 2,
-                Enabled = [BenchmarkKind.BootTime, BenchmarkKind.CpuMulti],
-            }));
-
-            var svc = new BenchmarkService(new BenchmarkRunner(new FakeSpeedometerProbes(null)), store);
-            Assert.Contains(BenchmarkKind.Speedometer, svc.Settings.Enabled);
-            Assert.Contains(BenchmarkKind.BootTime, svc.Settings.Enabled);
-            Assert.DoesNotContain(BenchmarkKind.CpuSingle, svc.Settings.Enabled);
-            Assert.Equal(BenchmarkSettings.CurrentSchemaVersion, store.Load()!.Settings.SchemaVersion);
-        }
-        finally
-        {
-            try { File.Delete(path); } catch { }
-        }
-    }
-
-    [Fact]
     public async Task VendoredZip_MatchesExpectedSha256_AndExtractsCleanly()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

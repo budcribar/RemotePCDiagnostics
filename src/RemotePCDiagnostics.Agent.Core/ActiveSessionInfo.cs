@@ -43,31 +43,12 @@ public sealed record ActiveSessionInfo(
         }
         catch
         {
-            if (path is null)
-            {
-                try
-                {
-                    var fallback = AgentLayout.LegacyActiveSessionPath();
-                    File.WriteAllText(fallback, info.ToJson());
-                    return true;
-                }
-                catch { }
-            }
             return false;
         }
     }
 
-    public static bool TryDelete(string? path = null, int? expectedProcessId = null)
-    {
-        if (path is not null)
-        {
-            return TryDeleteSingle(path, expectedProcessId);
-        }
-
-        var deletedPrimary = TryDeleteSingle(AgentLayout.ActiveSessionPath(), expectedProcessId);
-        var deletedLegacy = TryDeleteSingle(AgentLayout.LegacyActiveSessionPath(), expectedProcessId);
-        return deletedPrimary || deletedLegacy;
-    }
+    public static bool TryDelete(string? path = null, int? expectedProcessId = null) =>
+        TryDeleteSingle(path ?? AgentLayout.ActiveSessionPath(), expectedProcessId);
 
     private static bool TryDeleteSingle(string target, int? expectedProcessId)
     {

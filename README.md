@@ -459,7 +459,7 @@ History is read from the **Windows Event Log** (the RemotePCDiagnostics log, sou
 5,000 events, XPath time filter for the chosen range) with `EventLogReader`; nothing is stored elsewhere. Retention follows
 the log's size (20 MB). The app never clears the log. If the log
 can't be read or the source isn't registered yet, the page says so ("run the app once as administrator so it can register
-the event source"). Events written by older builds are parsed as far as possible; unparseable ones are skipped.
+the event source"). Only `Format: 3` results with a `Module id` are read; older or unparseable events are skipped.
 
 ### Windows Event Log
 
@@ -467,16 +467,8 @@ Results also go to the Windows Event Log, in the app's own log: **Event Viewer >
 RemotePCDiagnostics** (source **RemotePCDiagnostics**; 20 MB, oldest entries overwritten when full). PowerShell:
 `Get-WinEvent -LogName RemotePCDiagnostics -MaxEvents 50 | Format-List TimeCreated,Id,LevelDisplayName,Message`
 
-Earlier versions wrote to **Windows Logs > Application**. On a PC with such events the app moves once: it copies its events
-into the new log (each keeps its original time in its text) and registers its source there. Windows may keep sending the
-source's events to Application until the PC restarts; the app checks at each start, keeps reading History from Application
-until then, and adds whatever was written in between. Nothing is cleared: the old copies stay in Application until Windows
-overwrites them (Event Viewer shows them with a "description cannot be found" note). Progress is in the file log
-("Event log move") and `%ProgramData%\RemotePCDiagnostics\migration\logmove.json`.
-
 | ID | Content |
 |----|---------|
-| 1002 | Written during the one-time move to the app's own log, to see where Windows puts events |
 | 2000 - 2006 | Session audit (see "Safety") |
 | 1000 / 1001 | App start (version, machine model, admin yes/no, Local/Remote mode) / app exit |
 | 1100 | One event per finished test (every module and stress test), stable `Key: value` lines: `Test result` (module), `Module id` (the module's permanent GUID), `Test`, `Instance id` and `Instance` (for a per-device test: the drive, GPU or webcam), `Outcome` (OK/Warning/Critical/Cancelled/Couldn't run/Skipped/Blocked), `Summary`, `Duration`, `Stress suite`, `Finished` (ISO 8601), `Machine`, `App version`, `Format: 3`, then `Measurements:` (`  Name=value`, numbers only) and human-readable `Details:`; security audit lists only failed/warning item IDs and titles (max 25). The History page reads these back. |

@@ -4,11 +4,10 @@ using RemotePCDiagnostics.Agent.Core;
 namespace RemotePCDiagnostics.Agent;
 
 /// <summary>
-/// Stops every agent service and startup launcher before a new one is started.
+/// Stops every agent service before a new one is started.
 /// An <c>sc delete</c> while the old process is still running drops it from the Service Control Manager
-/// and the following <c>sc start</c> launches a second version beside it. Legacy names, a Run key, and a
-/// scheduled task are the other way two copies stay installed: <c>install</c> used to register only
-/// <see cref="AgentLayout.ServiceName"/> and remove those launchers only on uninstall.
+/// and the following <c>sc start</c> launches a second version beside it. Another service registration of the agent
+/// executable is the other way two copies stay installed.
 /// </summary>
 internal static class AgentUpgradeQuiesce
 {
@@ -36,8 +35,8 @@ internal static class AgentUpgradeQuiesce
         }
     }
 
-    /// <summary>Stops and deletes agent services other than the current name. Used by uninstall as well as upgrade.</summary>
-    public static void RemoveLegacyServices(Action<string>? log)
+    /// <summary>Stops and deletes agent services other than the current name. Used by uninstall.</summary>
+    public static void RemoveOtherAgentServices(Action<string>? log)
     {
         if (!OperatingSystem.IsWindows())
             return;
@@ -46,7 +45,7 @@ internal static class AgentUpgradeQuiesce
         {
             if (!AgentInstancePolicy.ShouldDeleteService(service.Name, service.ImagePath)) continue;
             var name = Quote(service.Name);
-            // Legacy names are deleted, so they must not restart while the delete is in progress.
+            // These registrations are deleted, so they must not restart while the delete is in progress.
             // The current service is not in this list and is never set off Automatic.
             AgentServiceInstaller.RunSc($"config {name} start= disabled");
             AgentServiceInstaller.RunSc(AgentServiceControl.ClearFailureRestart(service.Name));
@@ -75,10 +74,6 @@ internal static class AgentUpgradeQuiesce
                 break;
             case StopServiceAction stop:
                 StopService(stop.ServiceName, log);
-                break;
-            case RemoveStartupLaunchersAction:
-                foreach (var line in AgentStartupCleanup.RemoveAll())
-                    AgentSingleInstance.Log(AgentInstancePolicy.LogPrefix + " " + line, log);
                 break;
             case TerminateLeftoverProcessesAction:
                 EndLeftoverProcesses(log);

@@ -22,22 +22,11 @@ public sealed class PreferencesTests : IDisposable
         Assert.Equal("Extended", again.StressMode);
         Assert.False(again.ChecksCollapsed);
         Assert.Equal([ModuleIds.Osquery], again.SelectedModuleIds);
-        Assert.Null(again.SelectedModules);
         Assert.Equal(["Startup apps"], again.WorkflowOpenAreas);
         Assert.False(again.WorkflowFixChoices["mem:startup-spotify:disablestartup:spotify"]);
 
         File.WriteAllText(PathOf, "{ not json");
         Assert.Null(new FilePreferencesStore(PathOf).Load().Theme);
-    }
-
-    [Fact]
-    public void Selections_saved_by_name_are_read_as_module_ids()
-    {
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(PathOf, """{ "SelectedModules": ["Osquery", "drivehealth", "NoLongerExists"] }""");
-        var p = new FilePreferencesStore(PathOf).Load();
-        Assert.Equal([ModuleIds.Osquery, ModuleIds.DriveHealth], p.SelectedModuleIds);
-        Assert.Null(p.SelectedModules);
     }
 
     [Fact]

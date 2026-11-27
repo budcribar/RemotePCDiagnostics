@@ -13,10 +13,8 @@ public sealed record HistoryEntry(
     public DateTimeOffset LocalTime => TimeUtc.ToLocalTime();
     /// <summary>The module's permanent id ("Module id:", format 3). History groups and matches on it.</summary>
     public Guid ModuleId { get; init; }
-    /// <summary>The event's "Format:" version (0 when it has none).</summary>
+    /// <summary>The event's "Format:" version.</summary>
     public int Format { get; init; }
-    /// <summary>A test result written before format 3. The app no longer shows these; the one-time migration rewrites them.</summary>
-    public bool IsLegacy { get; init; }
     /// <summary>The hardware instance the test ran against ("Instance id:"), or null for a system-wide test.</summary>
     public string? InstanceId { get; init; }
     /// <summary>The instance's label at run time ("Instance:"), so History can name a drive that has since been removed.</summary>
@@ -49,13 +47,9 @@ public static class HistoryPresentation
 }
 
 /// <summary>Result of reading history. Available=false when the source can't be read (Problem has the technical reason, log only).</summary>
-public sealed record HistoryReadResult(IReadOnlyList<HistoryEntry> Entries, bool Available, string? Problem = null)
-{
-    /// <summary>Results in an older format that were left out; the one-time history update hasn't run yet (it needs administrator).</summary>
-    public int LegacyEntries { get; init; }
-}
+public sealed record HistoryReadResult(IReadOnlyList<HistoryEntry> Entries, bool Available, string? Problem = null);
 
-/// <summary>Read-only result history (Host: Windows Event Log, Application, source RemotePCDiagnostics, event 1100).</summary>
+/// <summary>Read-only result history (Host: Windows Event Log, the RemotePCDiagnostics log, event 1100).</summary>
 public interface IHistoryStore
 {
     /// <summary>Entries newest first, limited to <paramref name="within"/> (null = all). Never throws.</summary>
@@ -72,8 +66,8 @@ public sealed class NullHistoryStore : IHistoryStore
 public sealed record RawHistoryEvent(DateTimeOffset TimeCreated, string? Message);
 
 /// <summary>
-/// History from raw Event Log events: builds the query, parses each 1100 message (current and older formats; unparseable
-/// ones are skipped) and turns any reader failure (no source, access denied, not Windows) into Available=false.
+/// History from raw Event Log events: builds the query, parses each 1100 message (unparseable ones, including results written
+/// before format 3, are skipped) and turns any reader failure (no source, access denied, not Windows) into Available=false.
 /// </summary>
 public sealed class EventLogHistoryStore(Func<string, int, IEnumerable<RawHistoryEvent>> query, ILogger? log = null) : IHistoryStore
 {
@@ -91,31 +85,27 @@ public sealed class EventLogHistoryStore(Func<string, int, IEnumerable<RawHistor
     {
         var list = new List<HistoryEntry>();
         var skipped = 0;
-        var legacy = 0;
         try
         {
             foreach (var raw in query(BuildXPath(within), MaxEvents))
             {
                 if (list.Count >= MaxEvents) break;
                 if (HistoryEventParser.Parse(raw.Message, raw.TimeCreated) is not { } e) skipped++;
-                else if (e.IsLegacy) legacy++; // the app reads only format 3; see StartupMigration
                 else list.Add(e);
             }
         }
         catch (Exception ex)
         {
             try { log.Error($"History: Event Log read failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
-            return new(list.OrderByDescending(e => e.TimeUtc).ToList(), list.Count > 0, $"{ex.GetType().Name}: {ex.Message}") { LegacyEntries = legacy };
+            return new(list.OrderByDescending(e => e.TimeUtc).ToList(), list.Count > 0, $"{ex.GetType().Name}: {ex.Message}");
         }
         if (skipped > 0) try { log.Info($"History: skipped {skipped} unparseable event(s)"); } catch { }
-        if (legacy > 0) try { log.Info($"History: {legacy} event(s) in the old format wait for the one-time history update"); } catch { }
-        return new(list.OrderByDescending(e => e.TimeUtc).ToList(), true) { LegacyEntries = legacy };
+        return new(list.OrderByDescending(e => e.TimeUtc).ToList(), true);
     }
 }
 
 /// <summary>Parses the 1100 "Test result" message. Format 3 (current): "Key: value" lines including "Module id:", then "Measurements:"
-/// ("  Name=value"). Older messages parse too, marked <see cref="HistoryEntry.IsLegacy"/>: History leaves them out and only the one-time
-/// migration reads them (format 2 has no Module id; messages without a Format line keep numeric "  Name: value" Details lines).</summary>
+/// ("  Name=value"). Results in an older format (no Format line, a lower Format, or no Module id) aren't read.</summary>
 public static class HistoryEventParser
 {
     public const int MaxDetailLines = 40;
@@ -128,7 +118,6 @@ public static class HistoryEventParser
             var lines = message.Replace("\r\n", "\n").Split('\n');
             var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var measurements = new List<HistoryMeasurement>();
-            var oldDetails = new List<HistoryMeasurement>();
             var details = new List<string>();
             var keyMetrics = new List<KeyMetric>();
             string? section = null;
@@ -140,7 +129,7 @@ public static class HistoryEventParser
                     var t = raw.Trim();
                     if (section == "Key metrics") { if (KeyMetricText.Parse(t) is { } km) keyMetrics.Add(km); }
                     else if (section == "Measurements") { var i = t.IndexOf('='); if (i > 0) measurements.Add(new(t[..i].Trim(), t[(i + 1)..].Trim())); }
-                    else if (section == "Details") { if (details.Count < MaxDetailLines) details.Add(t.Length > 300 ? t[..300] + "…" : t); var i = t.IndexOf(": ", StringComparison.Ordinal); if (i > 0 && IsSimpleValue(t[(i + 2)..])) oldDetails.Add(new(t[..i].Trim(), t[(i + 2)..].Trim())); }
+                    else if (section == "Details") { if (details.Count < MaxDetailLines) details.Add(t.Length > 300 ? t[..300] + "…" : t); }
                     continue;
                 }
                 var c = raw.IndexOf(':');
@@ -179,25 +168,18 @@ public static class HistoryEventParser
             double? dur = fields.TryGetValue("Duration", out var d) && double.TryParse(d.Replace(" s", ""), NumberStyles.Float, CultureInfo.InvariantCulture, out var dv) ? dv : null;
             var format = fields.TryGetValue("Format", out var fv) && int.TryParse(fv, NumberStyles.Integer, CultureInfo.InvariantCulture, out var fn) ? fn : 0;
             var moduleId = fields.TryGetValue("Module id", out var mid) && Guid.TryParse(mid, out var g) ? g : Guid.Empty;
+            if (format < ResultEventLogger.FormatVersion || moduleId == Guid.Empty) return null;
             return new HistoryEntry(time.ToUniversalTime(), module, fields.GetValueOrDefault("Test") is { Length: > 0 } t2 ? t2 : module, outcome,
                 fields.GetValueOrDefault("Summary") ?? "", dur, fields.GetValueOrDefault("Stress suite"),
-                fields.ContainsKey("Format") ? measurements : oldDetails,
+                measurements,
                 fields.GetValueOrDefault("Machine") ?? "", fields.GetValueOrDefault("App version") ?? "", details)
                 {
-                    ModuleId = moduleId, Format = format, IsLegacy = format < ResultEventLogger.FormatVersion || moduleId == Guid.Empty,
+                    ModuleId = moduleId, Format = format,
                     InstanceId = fields.GetValueOrDefault("Instance id"), Instance = fields.GetValueOrDefault("Instance"),
                     KeyMetrics = keyMetrics,
                 };
         }
         catch { return null; }
-    }
-
-    /// <summary>Old Details lines: keep numbers, durations, yes/no and single-word enum values only.</summary>
-    private static bool IsSimpleValue(string v)
-    {
-        v = v.Trim();
-        if (v.EndsWith(" s", StringComparison.Ordinal)) v = v[..^2];
-        return double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out _) || v is "yes" or "no" || (v.Length is > 0 and < 40 && v.All(char.IsLetterOrDigit));
     }
 }
 
