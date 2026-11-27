@@ -115,13 +115,7 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
     public string DisplayName => "HP";
     public int Priority => 100;
 
-    public BiosProviderCapabilities Capabilities { get; } = new(
-        CanCheckLatest: true,
-        CanInstall: true,
-        SupportsSilentInstall: true,
-        RequiresReboot: true,
-        RequiresElevation: true,
-        RequiresInternet: true);
+    public BiosProviderCapabilities Capabilities => FullInstallCapabilities;
 
     public bool CanHandle(BiosSystemIdentity system) =>
         system is not null && BiosVendorIdentity.IsHp(system);
@@ -264,112 +258,23 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
             return BiosInstallResult.Failed(msg, prev, target);
         }
 
-        string? autoStagingDir = null;
-        var effectiveRequest = request;
-        if (string.IsNullOrWhiteSpace(request.StagingDirectory))
-        {
-            autoStagingDir = Path.Combine(Path.GetTempPath(), $"rpd-bios-hp-{Guid.NewGuid():N}");
-            effectiveRequest = request with { StagingDirectory = autoStagingDir };
-        }
-
-        try
-        {
-            var defaultFileName = BuildDefaultPackageFileName(request.Target.PackageId);
-            var verified = await BiosPackageVerification.DownloadAndVerifyAsync(
-                _http,
-                effectiveRequest,
-                VendorId,
-                AllowedHostSuffixes,
-                defaultFileName,
-                _signatureVerifier,
-                progress,
-                _log,
-                ct).ConfigureAwait(false);
-
-            if (!verified.Succeeded || string.IsNullOrWhiteSpace(verified.FilePath))
-            {
-                var err = verified.ErrorMessage ?? "HP BIOS package download or verification failed.";
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, err));
-                return BiosInstallResult.Failed(err, prev, target);
-            }
-
-            if (!TryEnsureExecutableExtension(verified.FilePath, out var packagePath, out var extError))
-            {
-                TryDeleteFile(verified.FilePath);
-                var safeExtError = BiosInstallerRunner.RedactSerialNumber(extError, request.System?.SerialNumber);
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, safeExtError));
-                return BiosInstallResult.Failed(safeExtError, prev, target);
-            }
-
-            var bitLocker = await BiosBitLockerSuspender.SuspendForOneRebootWithResultAsync(
-                effectiveRequest,
-                _commands,
-                progress,
-                _log,
-                ct,
-                bridge: _elevatedBridge,
-                isProcessElevated: _isProcessElevated).ConfigureAwait(false);
-
-            if (bitLocker.BlocksInstall)
-            {
-                var msg = bitLocker.Message
-                    ?? $"Administrator rights (or the elevated Agent service) are required to suspend BitLocker. {ElevationService.AdminRepairHint}";
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, msg));
-                return BiosInstallResult.Failed(msg, prev, target, exitCode: SystemCommandRunner.AgentFailedExitCode);
-            }
-
-            var installMode = SelectInstallMode(packagePath, request.Target.Metadata);
-            // HP HPBIOSUPDREC / SoftPaq uses inverted -r polarity: -r SUPPRESSES reboot when AllowReboot == false.
-            var arguments = BiosAgentInstallModes.BuildArguments(installMode, request.AllowReboot);
-
-            var expectedSha256 = !string.IsNullOrWhiteSpace(verified.ActualSha256)
-                ? verified.ActualSha256
-                : await BiosPackageVerifier.ComputeSha256HexAsync(packagePath, ct).ConfigureAwait(false);
-
-            var agentRequest = new BiosAgentInstallRequest(
-                VendorId: VendorId,
-                InstallMode: installMode,
-                PackagePath: packagePath,
-                ExpectedSha256: expectedSha256,
-                AllowReboot: request.AllowReboot,
-                InfRelativePath: null,
-                TimeoutMs: (int)DefaultInstallerTimeout.TotalMilliseconds);
-
-            progress?.Report(new BiosInstallProgress(
-                BiosInstallStage.Staging,
-                0,
-                "Staging HP BIOS update…"));
-
-            var result = await BiosInstallerRunner.RunInstallerAsync(
-                commands: _commands,
-                executablePath: packagePath,
-                arguments: arguments,
-                request: effectiveRequest,
-                bitLockerSuspended: bitLocker.Suspended,
-                rebootSuccessExitCodes: RebootSuccessExitCodes,
-                completedSuccessExitCodes: null,
-                timeout: DefaultInstallerTimeout,
-                log: _log,
-                ct: ct,
-                workingDirectory: Path.GetDirectoryName(packagePath),
-                agentRequest: agentRequest,
-                bridge: _elevatedBridge,
-                isProcessElevated: _isProcessElevated).ConfigureAwait(false);
-
-            if (result.Succeeded && result.RequiresReboot)
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.RebootRequired, 100, result.Message));
-            else if (result.Succeeded)
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Completed, 100, result.Message));
-            else
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, result.Message));
-
-            return result;
-        }
-        finally
-        {
-            if (autoStagingDir is not null)
-                TryDeleteDirectoryRecursive(autoStagingDir);
-        }
+        return await DownloadVerifyAndRunExecutableInstallerAsync(
+            httpClient: _http,
+            request: request,
+            vendorId: VendorId,
+            displayName: DisplayName,
+            allowedHostSuffixes: AllowedHostSuffixes,
+            defaultFileName: BuildDefaultPackageFileName(request.Target.PackageId),
+            signatureVerifier: _signatureVerifier,
+            commands: _commands,
+            elevatedBridge: _elevatedBridge,
+            isProcessElevated: _isProcessElevated,
+            log: _log,
+            progress: progress,
+            resolveInstallMode: static (packagePath, targetInfo) => SelectInstallMode(packagePath, targetInfo.Metadata),
+            rebootSuccessExitCodes: RebootSuccessExitCodes,
+            installerTimeout: DefaultInstallerTimeout,
+            ct: ct).ConfigureAwait(false);
     }
 
     internal static bool TryExtractSystemId(BiosSystemIdentity system, out string systemId)
@@ -529,21 +434,10 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
             return unsupported;
         }
 
-        var best = candidates[0];
-        for (var i = 1; i < candidates.Count; i++)
-        {
-            var candidate = candidates[i];
-            var cmp = BiosVersionComparer.Compare(best.Version, candidate.Version);
-            if (cmp < 0)
-            {
-                best = candidate;
-            }
-            else if ((cmp is null or 0) && candidate.ReleaseDate.HasValue
-                     && (!best.ReleaseDate.HasValue || candidate.ReleaseDate.Value > best.ReleaseDate.Value))
-            {
-                best = candidate;
-            }
-        }
+        var best = SelectNewestByVersionAndDate(
+            candidates,
+            static c => c.Version,
+            static c => c.ReleaseDate);
 
         var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -557,25 +451,12 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
         if (IsHpBiosUpdRecHint(best.SilentInstallHint) || IsHpBiosUpdRecHint(best.DownloadUrl))
             metadata["installerType"] = BiosAgentInstallModes.HpBiosUpdRec;
 
-        var isNewer = BiosVersionComparer.IsNewer(
-            currentNormalizedVersion,
-            best.Version,
-            current.ReleaseDate,
-            best.ReleaseDate);
-
-        if (!isNewer)
-        {
-            return BiosLatestInfo.UpToDate(
-                providerId: VendorId,
-                latestVersion: best.Version,
-                releaseDate: best.ReleaseDate,
-                metadata: metadata);
-        }
-
-        return BiosLatestInfo.UpdateAvailable(
-            providerId: VendorId,
+        return BuildLatestInfoFromCandidate(
+            vendorId: VendorId,
+            currentVersion: currentNormalizedVersion,
+            currentReleaseDate: current.ReleaseDate,
             latestVersion: best.Version,
-            releaseDate: best.ReleaseDate,
+            latestReleaseDate: best.ReleaseDate,
             severity: best.Severity,
             packageId: best.PackageId,
             releaseSummary: best.ReleaseSummary,
@@ -583,7 +464,6 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
             downloadUrl: best.DownloadUrl,
             sha256: best.Sha256,
             sizeBytes: best.SizeBytes,
-            requiresReboot: true,
             metadata: metadata);
     }
 
@@ -862,9 +742,6 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
             ? sanitized
             : sanitized + ".exe";
     }
-
-    private static bool TryEnsureExecutableExtension(string filePath, out string executablePath, out string error) =>
-        BiosPackageVerification.TryEnsureExecutableExtension(filePath, "HP", out executablePath, out error);
 
     private static Task<byte[]> ReadBoundedBytesAsync(HttpContent content, long maxBytes, CancellationToken ct) =>
         BiosProviderHttp.ReadBoundedBytesAsync(content, maxBytes, "HP BIOS catalog", ct);

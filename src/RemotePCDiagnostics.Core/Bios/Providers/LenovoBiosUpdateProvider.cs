@@ -406,114 +406,24 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             return BiosInstallResult.Failed(msg, previousVersion, targetVersion);
         }
 
-        string? autoStagingDir = null;
-        var effectiveRequest = request;
-        if (string.IsNullOrWhiteSpace(request.StagingDirectory))
-        {
-            autoStagingDir = Path.Combine(Path.GetTempPath(), $"rpd-bios-lenovo-{Guid.NewGuid():N}");
-            effectiveRequest = request with { StagingDirectory = autoStagingDir };
-        }
-
-        try
-        {
-            var verified = await BiosPackageVerification.DownloadAndVerifyAsync(
-                _httpClient,
-                effectiveRequest,
-                VendorId,
-                AllowedHostSuffixes,
-                "lenovo-bios-update.exe",
-                _signatureVerifier,
-                progress,
-                _log,
-                ct).ConfigureAwait(false);
-
-            if (!verified.Succeeded || string.IsNullOrWhiteSpace(verified.FilePath))
-            {
-                var err = verified.ErrorMessage ?? "Lenovo BIOS package download or verification failed.";
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, err));
-                return BiosInstallResult.Failed(err, previousVersion, targetVersion);
-            }
-
-            if (!TryEnsureExecutableExtension(verified.FilePath, out var packagePath, out var extError))
-            {
-                TryDeleteFile(verified.FilePath);
-                var safeExtError = BiosInstallerRunner.RedactSerialNumber(extError, request.System?.SerialNumber);
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, safeExtError));
-                return BiosInstallResult.Failed(safeExtError, previousVersion, targetVersion);
-            }
-
-            var bitLocker = await BiosBitLockerSuspender.SuspendForOneRebootWithResultAsync(
-                effectiveRequest,
-                _commands,
-                progress,
-                _log,
-                ct,
-                bridge: _elevatedBridge,
-                isProcessElevated: _isProcessElevated).ConfigureAwait(false);
-
-            if (bitLocker.BlocksInstall)
-            {
-                var msg = bitLocker.Message
-                    ?? $"Administrator rights (or the elevated Agent service) are required to suspend BitLocker. {ElevationService.AdminRepairHint}";
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, msg));
-                return BiosInstallResult.Failed(msg, previousVersion, targetVersion, exitCode: SystemCommandRunner.AgentFailedExitCode);
-            }
-
-            var installMode = ResolveInstallMode(request.Target);
-            var arguments = BiosAgentInstallModes.BuildArguments(installMode, request.AllowReboot);
-
-            var expectedSha256 = !string.IsNullOrWhiteSpace(verified.ActualSha256)
-                ? verified.ActualSha256
-                : await BiosPackageVerifier.ComputeSha256HexAsync(packagePath, ct).ConfigureAwait(false);
-
-            var agentRequest = new BiosAgentInstallRequest(
-                VendorId: VendorId,
-                InstallMode: installMode,
-                PackagePath: packagePath,
-                ExpectedSha256: expectedSha256,
-                AllowReboot: request.AllowReboot,
-                InfRelativePath: null,
-                TimeoutMs: (int)DefaultInstallerTimeout.TotalMilliseconds);
-
-            progress?.Report(new BiosInstallProgress(
-                BiosInstallStage.Staging,
-                0,
-                "Staging Lenovo BIOS update…"));
-            progress?.Report(new BiosInstallProgress(
-                BiosInstallStage.Installing,
-                50,
-                $"Running Lenovo BIOS installer ({installMode})..."));
-
-            var result = await BiosInstallerRunner.RunInstallerAsync(
-                commands: _commands,
-                executablePath: packagePath,
-                arguments: arguments,
-                request: effectiveRequest,
-                bitLockerSuspended: bitLocker.Suspended,
-                rebootSuccessExitCodes: RebootSuccessExitCodes,
-                completedSuccessExitCodes: null,
-                timeout: DefaultInstallerTimeout,
-                log: _log,
-                ct: ct,
-                workingDirectory: Path.GetDirectoryName(packagePath),
-                agentRequest: agentRequest,
-                bridge: _elevatedBridge,
-                isProcessElevated: _isProcessElevated).ConfigureAwait(false);
-
-            if (result.Succeeded && result.RequiresReboot)
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.RebootRequired, 100, result.Message));
-            else if (result.Succeeded)
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Completed, 100, result.Message));
-            else
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, result.Message));
-
-            return result;
-        }
-        finally
-        {
-            if (autoStagingDir is not null)
-                TryDeleteDirectoryRecursive(autoStagingDir);
-        }
+        return await DownloadVerifyAndRunExecutableInstallerAsync(
+            httpClient: _httpClient,
+            request: request,
+            vendorId: VendorId,
+            displayName: DisplayName,
+            allowedHostSuffixes: AllowedHostSuffixes,
+            defaultFileName: "lenovo-bios-update.exe",
+            signatureVerifier: _signatureVerifier,
+            commands: _commands,
+            elevatedBridge: _elevatedBridge,
+            isProcessElevated: _isProcessElevated,
+            log: _log,
+            progress: progress,
+            resolveInstallMode: static (_, targetInfo) => ResolveInstallMode(targetInfo),
+            rebootSuccessExitCodes: RebootSuccessExitCodes,
+            installerTimeout: DefaultInstallerTimeout,
+            ct: ct,
+            reportInstallingProgress: true).ConfigureAwait(false);
     }
 
     internal static ParsedLenovoVersion ParseLenovoVersion(string? raw)
@@ -1423,9 +1333,6 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
 
         return null;
     }
-
-    private static bool TryEnsureExecutableExtension(string filePath, out string executablePath, out string error) =>
-        BiosPackageVerification.TryEnsureExecutableExtension(filePath, "Lenovo", out executablePath, out error);
 
     private static async Task<string> ReadBoundedStringAsync(HttpContent content, long maxBytes, CancellationToken ct) =>
         Encoding.UTF8.GetString(await BiosProviderHttp.ReadBoundedBytesAsync(content, maxBytes, "Lenovo BIOS XML response", ct).ConfigureAwait(false));

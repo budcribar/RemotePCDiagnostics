@@ -462,15 +462,8 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
         ArgumentNullException.ThrowIfNull(request);
         ct.ThrowIfCancellationRequested();
 
-        var serial = request.System?.SerialNumber;
-        var prev = request.Current?.Version is not null ? RedactText(request.Current.Version, serial) : null;
-        var target = request.Target?.LatestVersion is not null ? RedactText(request.Target.LatestVersion, serial) : null;
-        var redactingLog = _log is not null && !string.IsNullOrWhiteSpace(serial)
-            ? new RedactingLogger(_log, serial)
-            : _log;
-        var redactingProgress = progress is not null && !string.IsNullOrWhiteSpace(serial)
-            ? new RedactingProgress(progress, serial)
-            : progress;
+        var (serial, prev, target, redactingLog, redactingProgress) =
+            CreateRedactedInstallContext(request, _log, progress);
 
         if (request.Target is null || string.IsNullOrWhiteSpace(request.Target.DownloadUrl))
         {
@@ -511,20 +504,20 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
             return BiosInstallResult.Failed(msg, prev, target);
         }
 
-        string? autoStagingDir = null;
         string? cabExtractDir = null;
-        var effectiveRequest = request;
-        if (string.IsNullOrWhiteSpace(request.StagingDirectory))
+        if (!TryResolveAndValidateStagingDirectory(
+                request,
+                "rpd-bios-framework",
+                serial,
+                redactingLog,
+                redactingProgress,
+                prev,
+                target,
+                out var effectiveRequest,
+                out var autoStagingDir,
+                out var stagingFailure))
         {
-            autoStagingDir = Path.Combine(Path.GetTempPath(), $"rpd-bios-framework-{Guid.NewGuid():N}");
-            effectiveRequest = request with { StagingDirectory = autoStagingDir };
-        }
-        else if (!ValidateStagingDirectorySafe(request.StagingDirectory, out var stagingErr))
-        {
-            var safeStagingErr = RedactText(stagingErr, serial);
-            LogWarn(safeStagingErr, serial);
-            redactingProgress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, safeStagingErr));
-            return BiosInstallResult.Failed(safeStagingErr, prev, target);
+            return stagingFailure!;
         }
 
         var safeFileName = BuildSafePackageFileName(request.Target.DownloadUrl, defaultFileName, expectedExt);
@@ -1329,59 +1322,18 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
         }
     }
 
-    private static void CollectJsonReleaseObjects(JsonElement element, List<JsonElement> output, int depth)
-    {
-        if (depth > 8)
-            return;
+    private static readonly string[] FrameworkJsonArrayKeys =
+    [
+        "releases", "bios", "firmware", "items", "data",
+        "packages", "products", "models", "updates", "results",
+    ];
 
-        if (element.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in element.EnumerateArray())
-            {
-                if (item.ValueKind == JsonValueKind.Object)
-                    output.Add(item);
-            }
+    private static readonly string[] FrameworkSingleReleaseVersionKeys =
+        ["biosVersion", "firmwareVersion", "uefiVersion", "version"];
 
-            return;
-        }
-
-        if (element.ValueKind != JsonValueKind.Object)
-            return;
-
-        string[] arrayKeys =
-        [
-            "releases", "bios", "firmware", "items", "data",
-            "packages", "products", "models", "updates", "results",
-        ];
-
-        var foundCollection = false;
-        foreach (var key in arrayKeys)
-        {
-            if (TryGetPropertyIgnoreCase(element, out var child, key))
-            {
-                if (child.ValueKind == JsonValueKind.Array)
-                {
-                    foundCollection = true;
-                    foreach (var item in child.EnumerateArray())
-                    {
-                        if (item.ValueKind == JsonValueKind.Object)
-                            output.Add(item);
-                    }
-                }
-                else if (child.ValueKind == JsonValueKind.Object)
-                {
-                    foundCollection = true;
-                    CollectJsonReleaseObjects(child, output, depth + 1);
-                }
-            }
-        }
-
-        if (foundCollection)
-            return;
-
-        if (TryGetPropertyIgnoreCase(element, out _, "biosVersion", "firmwareVersion", "uefiVersion", "version"))
-            output.Add(element);
-    }
+    private static void CollectJsonReleaseObjects(JsonElement element, List<JsonElement> output, int depth) =>
+        CollectJsonReleaseObjectsCore(
+            element, output, FrameworkJsonArrayKeys, FrameworkSingleReleaseVersionKeys, depth, CollectJsonReleaseObjects);
 
     private static (List<string> Texts, bool HasExplicitModelField) CollectJsonModelTexts(JsonElement item, string? title)
     {
@@ -1996,26 +1948,8 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
         if (prefixMatch.Success && TryParseDottedInt64(prefixMatch.Groups[2].Value, out var pfxSegs))
             return (VersionClass.PrefixNumeric, "2:PFX:" + prefixMatch.Groups[1].Value, pfxSegs);
 
-        var digitMatches = DigitRunsRegex().Matches(normalized);
-        if (digitMatches.Count > 0)
-        {
-            var runs = new long[digitMatches.Count];
-            var allFit = true;
-            for (var i = 0; i < digitMatches.Count; i++)
-            {
-                if (!long.TryParse(digitMatches[i].Value, NumberStyles.None, CultureInfo.InvariantCulture, out runs[i]))
-                {
-                    allFit = false;
-                    break;
-                }
-            }
-
-            if (allFit)
-            {
-                var skeleton = BuildBijectiveSkeleton(normalized);
-                return (VersionClass.Skeleton, $"3:SKEL:{runs.Length}:{skeleton}", runs);
-            }
-        }
+        if (TryExtractSkeletonVersion(normalized, classPrefix: 3, out var skelKey, out var runs))
+            return (VersionClass.Skeleton, skelKey, runs);
 
         return (VersionClass.Literal, "4:LIT:" + normalized, []);
     }
@@ -2551,22 +2485,6 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
         parent.Elements()
             .FirstOrDefault(e => string.Equals(e.Name.LocalName, localName, StringComparison.OrdinalIgnoreCase))
             ?.Value?.Trim();
-
-    private static string? GetXmlField(XElement el, params string[] names)
-    {
-        foreach (var name in names)
-        {
-            var child = el.Elements().FirstOrDefault(e => string.Equals(e.Name.LocalName, name, StringComparison.OrdinalIgnoreCase));
-            if (child is not null && !string.IsNullOrWhiteSpace(child.Value))
-                return child.Value.Trim();
-
-            var attr = el.Attributes().FirstOrDefault(a => string.Equals(a.Name.LocalName, name, StringComparison.OrdinalIgnoreCase));
-            if (attr is not null && !string.IsNullOrWhiteSpace(attr.Value))
-                return attr.Value.Trim();
-        }
-
-        return null;
-    }
 
     private static bool IsBetaRelease(
         string? version,

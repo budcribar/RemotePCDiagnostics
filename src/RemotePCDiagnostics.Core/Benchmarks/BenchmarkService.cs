@@ -689,7 +689,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public string? ExperimentStep { get; private set; }
     public BenchmarkExperimentResult? LastExperiment { get; private set; }
 
-    public bool HasUnmountedDevDrive { get; private set; }
+    public bool HasUnmountedDevDrive { get; }
 
     /// <summary>Builds the current PC's improvement context for the Benchmark page goal checklist.</summary>
     public BenchmarkImprovementContext GetImprovementContext(
@@ -951,40 +951,8 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
                 Raise();
             }
 
-            string? createdDevDriveRoot = null;
-            var devDriveFailed = false;
-            foreach (var imp in ordered)
-            {
-                cts.Token.ThrowIfCancellationRequested();
-                if (imp.RequiresDevDrive && createdDevDriveRoot is null && imp.Action.Target.Contains(BenchmarkImprovements.NewDevDriveToken, StringComparison.Ordinal))
-                {
-                    var reason = devDriveFailed ? "Skipped because creating the persistent Dev Drive failed." : "Skipped because no Dev Drive is mounted.";
-                    outcomes.Add(new(imp.Id, imp.Title, Succeeded: false, Skipped: true, reason));
-                    continue;
-                }
-                Progress = $"Applying: {imp.Title}…";
-                Raise();
-                var resolved = BenchmarkImprovements.ResolveAction(imp.Action, createdDevDriveRoot);
-                var res = await apply(resolved, cts.Token).ConfigureAwait(false);
-                outcomes.Add(new(imp.Id, imp.Title, res.Success, Skipped: false, res.Message));
-                if (imp.Action.Kind == RemediationKind.CreatePersistentDevDrive)
-                {
-                    if (res.Success && !string.IsNullOrWhiteSpace(res.CreatedDriveRoot)) createdDevDriveRoot = res.CreatedDriveRoot;
-                    else if (!res.Success) devDriveFailed = true;
-                }
-            }
-
-            string? effectiveAfterBuildWorkRoot = null;
-            if (useExistingDevDrive)
-            {
-                effectiveAfterBuildWorkRoot = DevDrivePackageCaches.NormalizeDriveRoot(afterBuildWorkRoot!);
-                outcomes.Add(new("devdrive:use-existing", $"Use Dev Drive ({effectiveAfterBuildWorkRoot}) for After build",
-                    Succeeded: true, Skipped: false, $"Running After build on existing Dev Drive {effectiveAfterBuildWorkRoot}."));
-            }
-            else if (!string.IsNullOrWhiteSpace(createdDevDriveRoot))
-            {
-                effectiveAfterBuildWorkRoot = DevDrivePackageCaches.NormalizeDriveRoot(createdDevDriveRoot);
-            }
+            var effectiveAfterBuildWorkRoot = await ApplyImprovementsAndResolveBuildRootAsync(
+                ordered, apply, afterBuildWorkRoot, outcomes, cts.Token).ConfigureAwait(false);
 
             if (solutionChanged)
             {
@@ -992,33 +960,9 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
                     Succeeded: true, Skipped: false, $"Running After build on {effectiveSolutionPath}."));
             }
 
-            int? effectiveAfterSdkMajor = null;
-            if (targetDotNetSdkMajor is 10 or 11)
-            {
-                cts.Token.ThrowIfCancellationRequested();
-                var installedMajors = installedDotNetSdkMajorsOverride ?? InstalledDotNetSdkMajors;
-                var sdkName = targetDotNetSdkMajor == 11 ? ".NET 11 SDK" : ".NET 10 LTS SDK";
-                var sdkId = targetDotNetSdkMajor == 11 ? BenchmarkImprovements.InstallDotNet11SdkId : BenchmarkImprovements.InstallDotNet10SdkId;
-                if (installedMajors.Contains(targetDotNetSdkMajor.Value))
-                {
-                    effectiveAfterSdkMajor = targetDotNetSdkMajor.Value;
-                    outcomes.Add(new(sdkId, $"Run After on {sdkName}", Succeeded: true, Skipped: false, $"Already installed — pinning After pass to {sdkName}."));
-                }
-                else
-                {
-                    var pkgId = targetDotNetSdkMajor == 11 ? RemediationService.DotNet11SdkPackageId : RemediationService.DotNet10SdkPackageId;
-                    Progress = $"Installing {sdkName} silently via Agent…";
-                    Raise();
-                    var installAction = new AreaAction(RemediationKind.InstallDotNetSdk, $"Install {sdkName}", pkgId, sdkName);
-                    var res = await apply(installAction, cts.Token).ConfigureAwait(false);
-                    outcomes.Add(new(sdkId, $"Install & run After on {sdkName}", res.Success, Skipped: false, res.Message));
-                    if (res.Success)
-                    {
-                        effectiveAfterSdkMajor = targetDotNetSdkMajor.Value;
-                        try { await RefreshDeveloperEnvironmentAsync(cts.Token).ConfigureAwait(false); } catch { }
-                    }
-                }
-            }
+            var effectiveAfterSdkMajor = await PrepareTargetDotNetSdkAsync(
+                targetDotNetSdkMajor, installedDotNetSdkMajorsOverride, apply,
+                "silently via Agent…", outcomes, cts.Token).ConfigureAwait(false);
 
             if (outcomes.Count > 0 && outcomes.All(o => !o.Succeeded))
             {
@@ -1046,9 +990,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
                 BuildWorkRoot = effectiveAfterBuildWorkRoot,
                 CustomSolutionPath = effectiveSolutionPath,
             };
-            afterRun = await runner.RunAsync(BenchmarkPhase.After, afterSettings, null, prog, cts.Token).ConfigureAwait(false);
-            Save(_state with { After = afterRun, RunAfterOnStartup = false });
-            WriteEvent(afterRun);
+            afterRun = await RunAfterPhaseAsync(afterSettings, prog, cts.Token).ConfigureAwait(false);
 
             var completed = afterRun.Completed;
             Message = completed ? null : "Stopped during comparison benchmark.";
@@ -1061,16 +1003,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         }
         finally
         {
-            lock (_gate)
-            {
-                ExperimentRunning = false;
-                ExperimentStep = null;
-                Running = null;
-                Progress = null;
-                if (ReferenceEquals(_cts, cts)) _cts = null;
-            }
-            cts.Dispose();
-            Raise();
+            EndExperiment(cts);
         }
     }
 
@@ -1144,75 +1077,12 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             }
             Raise();
 
-            string? createdDevDriveRoot = null;
-            var devDriveFailed = false;
+            var effectiveAfterBuildWorkRoot = await ApplyImprovementsAndResolveBuildRootAsync(
+                ordered, apply, afterBuildWorkRoot, outcomes, cts.Token).ConfigureAwait(false);
 
-            foreach (var imp in ordered)
-            {
-                cts.Token.ThrowIfCancellationRequested();
-                if (imp.RequiresDevDrive && createdDevDriveRoot is null && imp.Action.Target.Contains(BenchmarkImprovements.NewDevDriveToken, StringComparison.Ordinal))
-                {
-                    var reason = devDriveFailed
-                        ? "Skipped because creating the persistent Dev Drive failed."
-                        : "Skipped because no Dev Drive is mounted.";
-                    outcomes.Add(new(imp.Id, imp.Title, Succeeded: false, Skipped: true, reason));
-                    continue;
-                }
-
-                Progress = $"Applying: {imp.Title}…";
-                Raise();
-                var resolved = BenchmarkImprovements.ResolveAction(imp.Action, createdDevDriveRoot);
-                var res = await apply(resolved, cts.Token).ConfigureAwait(false);
-                outcomes.Add(new(imp.Id, imp.Title, res.Success, Skipped: false, res.Message));
-                if (imp.Action.Kind == RemediationKind.CreatePersistentDevDrive)
-                {
-                    if (res.Success && !string.IsNullOrWhiteSpace(res.CreatedDriveRoot))
-                        createdDevDriveRoot = res.CreatedDriveRoot;
-                    else if (!res.Success)
-                        devDriveFailed = true;
-                }
-            }
-
-            string? effectiveAfterBuildWorkRoot = null;
-            if (useExistingDevDrive)
-            {
-                effectiveAfterBuildWorkRoot = DevDrivePackageCaches.NormalizeDriveRoot(afterBuildWorkRoot!);
-                outcomes.Add(new("devdrive:use-existing", $"Use Dev Drive ({effectiveAfterBuildWorkRoot}) for After build",
-                    Succeeded: true, Skipped: false, $"Running After build on existing Dev Drive {effectiveAfterBuildWorkRoot}."));
-            }
-            else if (!string.IsNullOrWhiteSpace(createdDevDriveRoot))
-            {
-                effectiveAfterBuildWorkRoot = DevDrivePackageCaches.NormalizeDriveRoot(createdDevDriveRoot);
-            }
-
-            int? effectiveAfterSdkMajor = null;
-            if (targetDotNetSdkMajor is 10 or 11)
-            {
-                cts.Token.ThrowIfCancellationRequested();
-                var installedMajors = installedDotNetSdkMajorsOverride ?? InstalledDotNetSdkMajors;
-                var sdkName = targetDotNetSdkMajor == 11 ? ".NET 11 SDK" : ".NET 10 LTS SDK";
-                var sdkId = targetDotNetSdkMajor == 11 ? BenchmarkImprovements.InstallDotNet11SdkId : BenchmarkImprovements.InstallDotNet10SdkId;
-                if (installedMajors.Contains(targetDotNetSdkMajor.Value))
-                {
-                    effectiveAfterSdkMajor = targetDotNetSdkMajor.Value;
-                    outcomes.Add(new(sdkId, $"Run After on {sdkName}", Succeeded: true, Skipped: false, $"Already installed — pinning After pass to {sdkName}."));
-                }
-                else
-                {
-                    var pkgId = targetDotNetSdkMajor == 11 ? RemediationService.DotNet11SdkPackageId : RemediationService.DotNet10SdkPackageId;
-                    Progress = $"Installing {sdkName} side-by-side…";
-                    Raise();
-                    var installAction = new AreaAction(RemediationKind.InstallDotNetSdk, $"Install {sdkName}", pkgId, sdkName);
-                    var res = await apply(installAction, cts.Token).ConfigureAwait(false);
-                    outcomes.Add(new(sdkId, $"Install & run After on {sdkName}", res.Success, Skipped: false, res.Message));
-                    if (res.Success)
-                    {
-                        effectiveAfterSdkMajor = targetDotNetSdkMajor.Value;
-                        try { await RefreshDeveloperEnvironmentAsync(cts.Token).ConfigureAwait(false); }
-                        catch { }
-                    }
-                }
-            }
+            var effectiveAfterSdkMajor = await PrepareTargetDotNetSdkAsync(
+                targetDotNetSdkMajor, installedDotNetSdkMajorsOverride, apply,
+                "side-by-side…", outcomes, cts.Token).ConfigureAwait(false);
 
             if (outcomes.Count > 0 && outcomes.All(o => !o.Succeeded))
             {
@@ -1239,9 +1109,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
                 TargetDotNetSdkMajor = effectiveAfterSdkMajor,
                 BuildWorkRoot = effectiveAfterBuildWorkRoot,
             };
-            afterRun = await runner.RunAsync(BenchmarkPhase.After, afterSettings, null, prog, cts.Token).ConfigureAwait(false);
-            Save(_state with { After = afterRun, RunAfterOnStartup = false });
-            WriteEvent(afterRun);
+            afterRun = await RunAfterPhaseAsync(afterSettings, prog, cts.Token).ConfigureAwait(false);
 
             var completed = afterRun.Completed;
             var appliedCount = outcomes.Count(o => o.Succeeded);
@@ -1257,17 +1125,113 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         }
         finally
         {
-            lock (_gate)
-            {
-                ExperimentRunning = false;
-                ExperimentStep = null;
-                Running = null;
-                Progress = null;
-                if (ReferenceEquals(_cts, cts)) _cts = null;
-            }
-            cts.Dispose();
-            Raise();
+            EndExperiment(cts);
         }
+    }
+
+    private async Task<string?> ApplyImprovementsAndResolveBuildRootAsync(
+        IReadOnlyList<BenchmarkImprovement> ordered,
+        Func<AreaAction, CancellationToken, Task<RemediationResult>> apply,
+        string? afterBuildWorkRoot,
+        List<BenchmarkImprovementOutcome> outcomes,
+        CancellationToken ct)
+    {
+        string? createdDevDriveRoot = null;
+        var devDriveFailed = false;
+        foreach (var imp in ordered)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (imp.RequiresDevDrive && createdDevDriveRoot is null && imp.Action.Target.Contains(BenchmarkImprovements.NewDevDriveToken, StringComparison.Ordinal))
+            {
+                var reason = devDriveFailed
+                    ? "Skipped because creating the persistent Dev Drive failed."
+                    : "Skipped because no Dev Drive is mounted.";
+                outcomes.Add(new(imp.Id, imp.Title, Succeeded: false, Skipped: true, reason));
+                continue;
+            }
+
+            Progress = $"Applying: {imp.Title}…";
+            Raise();
+            var resolved = BenchmarkImprovements.ResolveAction(imp.Action, createdDevDriveRoot);
+            var res = await apply(resolved, ct).ConfigureAwait(false);
+            outcomes.Add(new(imp.Id, imp.Title, res.Success, Skipped: false, res.Message));
+            if (imp.Action.Kind == RemediationKind.CreatePersistentDevDrive)
+            {
+                if (res.Success && !string.IsNullOrWhiteSpace(res.CreatedDriveRoot))
+                    createdDevDriveRoot = res.CreatedDriveRoot;
+                else if (!res.Success)
+                    devDriveFailed = true;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(afterBuildWorkRoot))
+        {
+            var effectiveRoot = DevDrivePackageCaches.NormalizeDriveRoot(afterBuildWorkRoot);
+            outcomes.Add(new("devdrive:use-existing", $"Use Dev Drive ({effectiveRoot}) for After build",
+                Succeeded: true, Skipped: false, $"Running After build on existing Dev Drive {effectiveRoot}."));
+            return effectiveRoot;
+        }
+
+        return !string.IsNullOrWhiteSpace(createdDevDriveRoot)
+            ? DevDrivePackageCaches.NormalizeDriveRoot(createdDevDriveRoot)
+            : null;
+    }
+
+    private async Task<int?> PrepareTargetDotNetSdkAsync(
+        int? targetDotNetSdkMajor,
+        IReadOnlyList<int>? installedDotNetSdkMajorsOverride,
+        Func<AreaAction, CancellationToken, Task<RemediationResult>> apply,
+        string installProgressSuffix,
+        List<BenchmarkImprovementOutcome> outcomes,
+        CancellationToken ct)
+    {
+        if (targetDotNetSdkMajor is not (10 or 11))
+            return null;
+
+        ct.ThrowIfCancellationRequested();
+        var installedMajors = installedDotNetSdkMajorsOverride ?? InstalledDotNetSdkMajors;
+        var sdkName = targetDotNetSdkMajor == 11 ? ".NET 11 SDK" : ".NET 10 LTS SDK";
+        var sdkId = targetDotNetSdkMajor == 11 ? BenchmarkImprovements.InstallDotNet11SdkId : BenchmarkImprovements.InstallDotNet10SdkId;
+        if (installedMajors.Contains(targetDotNetSdkMajor.Value))
+        {
+            outcomes.Add(new(sdkId, $"Run After on {sdkName}", Succeeded: true, Skipped: false, $"Already installed — pinning After pass to {sdkName}."));
+            return targetDotNetSdkMajor.Value;
+        }
+
+        var pkgId = targetDotNetSdkMajor == 11 ? RemediationService.DotNet11SdkPackageId : RemediationService.DotNet10SdkPackageId;
+        Progress = $"Installing {sdkName} {installProgressSuffix}";
+        Raise();
+        var installAction = new AreaAction(RemediationKind.InstallDotNetSdk, $"Install {sdkName}", pkgId, sdkName);
+        var res = await apply(installAction, ct).ConfigureAwait(false);
+        outcomes.Add(new(sdkId, $"Install & run After on {sdkName}", res.Success, Skipped: false, res.Message));
+        if (!res.Success)
+            return null;
+
+        try { await RefreshDeveloperEnvironmentAsync(ct).ConfigureAwait(false); }
+        catch { }
+        return targetDotNetSdkMajor.Value;
+    }
+
+    private async Task<BenchmarkRun> RunAfterPhaseAsync(BenchmarkSettings afterSettings, IProgress<string> prog, CancellationToken ct)
+    {
+        var afterRun = await runner.RunAsync(BenchmarkPhase.After, afterSettings, null, prog, ct).ConfigureAwait(false);
+        Save(_state with { After = afterRun, RunAfterOnStartup = false });
+        WriteEvent(afterRun);
+        return afterRun;
+    }
+
+    private void EndExperiment(CancellationTokenSource cts)
+    {
+        lock (_gate)
+        {
+            ExperimentRunning = false;
+            ExperimentStep = null;
+            Running = null;
+            Progress = null;
+            if (ReferenceEquals(_cts, cts)) _cts = null;
+        }
+        cts.Dispose();
+        Raise();
     }
 
     private BenchmarkExperimentResult FinishExperiment(

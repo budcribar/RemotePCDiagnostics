@@ -1176,41 +1176,17 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
             return false;
         }
 
-        if (rawPath.StartsWith(@"\\", StringComparison.Ordinal) ||
-            rawPath.StartsWith("//", StringComparison.Ordinal) ||
-            rawPath.StartsWith(@"\??\", StringComparison.Ordinal) ||
-            rawPath.StartsWith(@"\/", StringComparison.Ordinal) ||
-            rawPath.StartsWith(@"/\", StringComparison.Ordinal))
+        var violation = BiosProviderCommon.CheckLocalPathSyntax(rawPath, out _, out _);
+        if (violation != PathSyntaxViolation.None)
         {
-            error = "Network, UNC, and device paths are not permitted for BIOS packages.";
+            error = violation switch
+            {
+                PathSyntaxViolation.UncOrDevicePath => "Network, UNC, and device paths are not permitted for BIOS packages.",
+                PathSyntaxViolation.ControlCharacter => "BIOS package path contains disallowed control characters.",
+                PathSyntaxViolation.ForbiddenCharacter => "BIOS package path contains disallowed special characters.",
+                _ => "BIOS package path contains a disallowed colon (alternate data streams and URIs are forbidden).",
+            };
             return false;
-        }
-
-        var isWindowsDriveRoot = rawPath.Length >= 3
-            && char.IsAsciiLetter(rawPath[0])
-            && rawPath[1] == ':'
-            && (rawPath[2] == '\\' || rawPath[2] == '/');
-
-        for (var i = 0; i < rawPath.Length; i++)
-        {
-            var c = rawPath[i];
-            if (char.IsControl(c))
-            {
-                error = "BIOS package path contains disallowed control characters.";
-                return false;
-            }
-
-            if (Array.IndexOf(ForbiddenPathChars, c) >= 0)
-            {
-                error = "BIOS package path contains disallowed special characters.";
-                return false;
-            }
-
-            if (c == ':' && !(i == 1 && isWindowsDriveRoot))
-            {
-                error = "BIOS package path contains a disallowed colon (alternate data streams and URIs are forbidden).";
-                return false;
-            }
         }
 
         if (!Path.IsPathFullyQualified(rawPath))
@@ -1388,32 +1364,8 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
         }
     }
 
-    private static bool IsSymlinkOrReparsePath(string path)
-    {
-        try
-        {
-            var normalized = Path.TrimEndingDirectorySeparator(path);
-            var fi = new FileInfo(normalized);
-            if (fi.LinkTarget is not null)
-                return true;
-
-            var di = new DirectoryInfo(normalized);
-            if (di.LinkTarget is not null)
-                return true;
-
-            if (fi.Exists)
-                return (fi.Attributes & FileAttributes.ReparsePoint) != 0;
-
-            if (di.Exists)
-                return (di.Attributes & FileAttributes.ReparsePoint) != 0;
-
-            return false;
-        }
-        catch
-        {
-            return true;
-        }
-    }
+    private static bool IsSymlinkOrReparsePath(string path) =>
+        BiosProviderHttp.IsSymlinkOrReparsePath(path);
 
     private static bool VerifyExtractedTreeSafe(string fullRoot, string rootWithSep, StringComparison comparison, long maxBytes)
     {

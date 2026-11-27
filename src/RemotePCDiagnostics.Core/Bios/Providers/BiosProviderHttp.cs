@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Xml;
+using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Bios;
@@ -357,50 +358,14 @@ public static class BiosProviderHttp
                 return BiosDownloadResult.Fail(
                     $"Package size ({contentLength.Value} bytes) exceeds maximum allowed limit ({maxBytes} bytes).");
 
-            long downloaded = 0;
-            var lastPercent = 0;
+            var copy = await CopyResponseToPartFileAsync(
+                response.Content, partPath, fileName, contentLength, maxBytes, progress, ct).ConfigureAwait(false);
+            createdPart = copy.CreatedPart;
+            if (!copy.Succeeded)
+                return BiosDownloadResult.Fail(copy.ErrorMessage!);
 
-            await using (var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
-            await using (var dest = new FileStream(partPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, CopyBufferSize, useAsync: true))
-            {
-                createdPart = true;
-                var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
-                try
-                {
-                    while (true)
-                    {
-                        var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
-                        if (read == 0)
-                            break;
-
-                        downloaded += read;
-                        if (downloaded > maxBytes)
-                            return BiosDownloadResult.Fail(
-                                $"Downloaded package exceeded maximum allowed size ({maxBytes} bytes).");
-
-                        await dest.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-
-                        if (contentLength is > 0)
-                        {
-                            var percent = (int)Math.Clamp(downloaded * 100L / contentLength.Value, 0L, 100L);
-                            if (percent > lastPercent)
-                            {
-                                lastPercent = percent;
-                                progress?.Report(new BiosInstallProgress(BiosInstallStage.Downloading, percent, $"Downloading {fileName} ({percent}%)..."));
-                            }
-                        }
-                    }
-
-                    await dest.FlushAsync(ct).ConfigureAwait(false);
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(buffer);
-                }
-            }
-
-            if (downloaded == 0)
-                return BiosDownloadResult.Fail("Downloaded package is empty (0 bytes).");
+            var downloaded = copy.DownloadedBytes;
+            var lastPercent = copy.LastPercent;
 
             if (HasSymlinkOrReparseAncestorOrSelf(resolvedStagingDir) || IsSymlinkOrReparsePath(finalPath) || Directory.Exists(finalPath))
                 return BiosDownloadResult.Fail("Target package path is an unsafe symbolic link or reparse point.");
@@ -863,57 +828,17 @@ public static class BiosProviderHttp
                 return BiosVerifiedPackageResult.Fail(symMsg);
             }
 
-            long downloaded = 0;
-            var lastPercent = 0;
-
-            await using (var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
-            await using (var dest = new FileStream(partPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, CopyBufferSize, useAsync: true))
+            var copy = await CopyResponseToPartFileAsync(
+                response.Content, partPath, fileName, contentLength, maxBytes, progress, ct).ConfigureAwait(false);
+            createdPart = copy.CreatedPart;
+            if (!copy.Succeeded)
             {
-                createdPart = true;
-                var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
-                try
-                {
-                    while (true)
-                    {
-                        var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
-                        if (read == 0)
-                            break;
-
-                        downloaded += read;
-                        if (downloaded > maxBytes)
-                        {
-                            var err = $"Downloaded package exceeded maximum allowed size ({maxBytes} bytes).";
-                            log?.Warn($"[{vendorId}] BIOS package download failed: {err}");
-                            return BiosVerifiedPackageResult.Fail(err);
-                        }
-
-                        await dest.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-
-                        if (contentLength is > 0)
-                        {
-                            var percent = (int)Math.Clamp(downloaded * 100L / contentLength.Value, 0L, 100L);
-                            if (percent > lastPercent)
-                            {
-                                lastPercent = percent;
-                                progress?.Report(new BiosInstallProgress(BiosInstallStage.Downloading, percent, $"Downloading {fileName} ({percent}%)..."));
-                            }
-                        }
-                    }
-
-                    await dest.FlushAsync(ct).ConfigureAwait(false);
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(buffer);
-                }
+                log?.Warn($"[{vendorId}] BIOS package download failed: {copy.ErrorMessage}");
+                return BiosVerifiedPackageResult.Fail(copy.ErrorMessage!);
             }
 
-            if (downloaded == 0)
-            {
-                const string emptyErr = "Downloaded package is empty (0 bytes).";
-                log?.Warn($"[{vendorId}] BIOS package download failed: {emptyErr}");
-                return BiosVerifiedPackageResult.Fail(emptyErr);
-            }
+            var downloaded = copy.DownloadedBytes;
+            var lastPercent = copy.LastPercent;
 
             if (IsSymlinkOrReparsePath(stagingDir)
                 || HasSymlinkOrReparseAncestorOrSelf(stagingDir)
@@ -1413,6 +1338,324 @@ public static class BiosProviderHttp
         catch
         {
             // Best-effort cleanup of temporary staging directory.
+        }
+    }
+
+    private readonly record struct StreamDownloadResult(
+        bool Succeeded,
+        long DownloadedBytes,
+        int LastPercent,
+        bool CreatedPart,
+        string? ErrorMessage);
+
+    private static async Task<StreamDownloadResult> CopyResponseToPartFileAsync(
+        HttpContent content,
+        string partPath,
+        string fileName,
+        long? contentLength,
+        long maxBytes,
+        IProgress<BiosInstallProgress>? progress,
+        CancellationToken ct)
+    {
+        long downloaded = 0;
+        var lastPercent = 0;
+        var createdPart = false;
+
+        try
+        {
+            await using var source = await content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            await using var dest = new FileStream(partPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, CopyBufferSize, useAsync: true);
+            createdPart = true;
+            var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
+            try
+            {
+                while (true)
+                {
+                    var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
+                    if (read == 0)
+                        break;
+
+                    downloaded += read;
+                    if (downloaded > maxBytes)
+                    {
+                        return new StreamDownloadResult(
+                            false,
+                            downloaded,
+                            lastPercent,
+                            createdPart,
+                            $"Downloaded package exceeded maximum allowed size ({maxBytes} bytes).");
+                    }
+
+                    await dest.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+
+                    if (contentLength is > 0)
+                    {
+                        var percent = (int)Math.Clamp(downloaded * 100L / contentLength.Value, 0L, 100L);
+                        if (percent > lastPercent)
+                        {
+                            lastPercent = percent;
+                            progress?.Report(new BiosInstallProgress(BiosInstallStage.Downloading, percent, $"Downloading {fileName} ({percent}%)..."));
+                        }
+                    }
+                }
+
+                await dest.FlushAsync(ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+        catch
+        {
+            if (createdPart)
+                TryDeleteFile(partPath);
+            throw;
+        }
+
+        if (downloaded == 0)
+        {
+            return new StreamDownloadResult(
+                false,
+                0,
+                lastPercent,
+                createdPart,
+                "Downloaded package is empty (0 bytes).");
+        }
+
+        return new StreamDownloadResult(true, downloaded, lastPercent, createdPart, null);
+    }
+
+    internal static async Task<BiosLatestInfo> FetchAndEvaluateModelJsonCatalogAsync(
+        HttpClient httpClient,
+        string vendorId,
+        string displayName,
+        string catalogEndpoint,
+        IReadOnlyList<string> allowedHostSuffixes,
+        long maxCatalogJsonBytes,
+        BiosSystemIdentity system,
+        BiosCurrentInfo current,
+        ILogger? log,
+        Func<JsonDocument, BiosCurrentInfo, string, string?, BiosLatestInfo> evaluateCatalog,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(system);
+        ArgumentNullException.ThrowIfNull(current);
+        ct.ThrowIfCancellationRequested();
+
+        if (!BiosProviderCommon.TryResolveModelIdentifier(system, out var modelToken, out var invalidReason))
+        {
+            log?.Warn(BiosProviderCommon.RedactText($"[BIOS/{displayName}] Unable to determine valid {displayName} model identifier: {invalidReason}", system.SerialNumber));
+            return BiosProviderCommon.RedactLatestInfo(
+                BiosLatestInfo.Unsupported(vendorId, $"Unable to determine a valid {displayName} model or board product identifier: {invalidReason}"),
+                system.SerialNumber);
+        }
+
+        var requestUrl = BiosProviderCommon.BuildCatalogUrl(catalogEndpoint, modelToken);
+        if (!TryValidateVendorUrl(requestUrl, allowedHostSuffixes, out _))
+        {
+            log?.Warn(BiosProviderCommon.RedactText($"[BIOS/{displayName}] Configured {displayName} catalog endpoint failed HTTPS/domain/path validation.", system.SerialNumber));
+            return BiosProviderCommon.RedactLatestInfo(
+                BiosLatestInfo.Failed(vendorId, $"{displayName} BIOS catalog endpoint URL failed security validation."),
+                system.SerialNumber);
+        }
+
+        try
+        {
+            using var response = await GetVendorUrlWithSafeRedirectsAsync(
+                httpClient, requestUrl, allowedHostSuffixes, displayName, "application/json", ct).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var statusInfo = ClassifyHttpStatus(vendorId, displayName, response.StatusCode, $"model '{modelToken}'");
+                return BiosProviderCommon.RedactLatestInfo(statusInfo, system.SerialNumber);
+            }
+
+            using var doc = await ReadBoundedJsonDocumentAsync(
+                response.Content, maxCatalogJsonBytes, displayName, ct).ConfigureAwait(false);
+            var evaluated = evaluateCatalog(doc, current, modelToken, system.SerialNumber);
+            return BiosProviderCommon.RedactLatestInfo(evaluated, system.SerialNumber);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            log?.Warn(BiosProviderCommon.RedactText($"[BIOS/{displayName}] Catalog lookup failed for '{modelToken}': {ex.Message}", system.SerialNumber));
+            return BiosProviderCommon.RedactLatestInfo(
+                ClassifyHttpFailure(vendorId, displayName, ex, ct),
+                system.SerialNumber);
+        }
+    }
+
+    internal static bool TryResolveAndValidateStagingDirectory(
+        BiosInstallRequest request,
+        string tempDirPrefix,
+        string? serial,
+        ILogger? log,
+        IProgress<BiosInstallProgress>? progress,
+        string? previousVersion,
+        string? targetVersion,
+        out BiosInstallRequest effectiveRequest,
+        out string? autoStagingDir,
+        out BiosInstallResult? failureResult)
+    {
+        autoStagingDir = null;
+        effectiveRequest = request;
+        failureResult = null;
+
+        if (string.IsNullOrWhiteSpace(request.StagingDirectory))
+        {
+            autoStagingDir = Path.Combine(Path.GetTempPath(), $"{tempDirPrefix}-{Guid.NewGuid():N}");
+            effectiveRequest = request with { StagingDirectory = autoStagingDir };
+            return true;
+        }
+
+        if (!ValidateStagingDirectorySafe(request.StagingDirectory, out var stagingErr))
+        {
+            var safeStagingErr = BiosProviderCommon.RedactText(stagingErr, serial);
+            log?.Warn(safeStagingErr);
+            progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, safeStagingErr));
+            failureResult = BiosInstallResult.Failed(safeStagingErr, previousVersion, targetVersion);
+            return false;
+        }
+
+        return true;
+    }
+
+    internal static async Task<BiosInstallResult> DownloadVerifyAndRunExecutableInstallerAsync(
+        HttpClient httpClient,
+        BiosInstallRequest request,
+        string vendorId,
+        string displayName,
+        IReadOnlyList<string> allowedHostSuffixes,
+        string defaultFileName,
+        IBiosSignatureVerifier signatureVerifier,
+        SystemCommandRunner? commands,
+        IElevatedCommandBridge? elevatedBridge,
+        Func<bool>? isProcessElevated,
+        ILogger? log,
+        IProgress<BiosInstallProgress>? progress,
+        Func<string, BiosLatestInfo, string> resolveInstallMode,
+        IReadOnlySet<int> rebootSuccessExitCodes,
+        TimeSpan installerTimeout,
+        CancellationToken ct,
+        bool reportInstallingProgress = false)
+    {
+        var prev = request.Current?.Version;
+        var target = request.Target?.LatestVersion;
+
+        string? autoStagingDir = null;
+        var effectiveRequest = request;
+        if (string.IsNullOrWhiteSpace(request.StagingDirectory))
+        {
+            autoStagingDir = Path.Combine(Path.GetTempPath(), $"rpd-bios-{vendorId}-{Guid.NewGuid():N}");
+            effectiveRequest = request with { StagingDirectory = autoStagingDir };
+        }
+
+        try
+        {
+            var verified = await BiosPackageVerification.DownloadAndVerifyAsync(
+                httpClient,
+                effectiveRequest,
+                vendorId,
+                allowedHostSuffixes,
+                defaultFileName,
+                signatureVerifier,
+                progress,
+                log,
+                ct).ConfigureAwait(false);
+
+            if (!verified.Succeeded || string.IsNullOrWhiteSpace(verified.FilePath))
+            {
+                var err = verified.ErrorMessage ?? $"{displayName} BIOS package download or verification failed.";
+                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, err));
+                return BiosInstallResult.Failed(err, prev, target);
+            }
+
+            if (!BiosPackageVerification.TryEnsureExecutableExtension(verified.FilePath, displayName, out var packagePath, out var extError))
+            {
+                TryDeleteFile(verified.FilePath);
+                var safeExtError = BiosInstallerRunner.RedactSerialNumber(extError, request.System?.SerialNumber);
+                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, safeExtError));
+                return BiosInstallResult.Failed(safeExtError, prev, target);
+            }
+
+            var bitLocker = await BiosBitLockerSuspender.SuspendForOneRebootWithResultAsync(
+                effectiveRequest,
+                commands,
+                progress,
+                log,
+                ct,
+                bridge: elevatedBridge,
+                isProcessElevated: isProcessElevated).ConfigureAwait(false);
+
+            if (bitLocker.BlocksInstall)
+            {
+                var msg = bitLocker.Message
+                    ?? $"Administrator rights (or the elevated Agent service) are required to suspend BitLocker. {ElevationService.AdminRepairHint}";
+                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, msg));
+                return BiosInstallResult.Failed(msg, prev, target, exitCode: SystemCommandRunner.AgentFailedExitCode);
+            }
+
+            var installMode = resolveInstallMode(packagePath, request.Target!);
+            var arguments = BiosAgentInstallModes.BuildArguments(installMode, request.AllowReboot);
+
+            var expectedSha256 = !string.IsNullOrWhiteSpace(verified.ActualSha256)
+                ? verified.ActualSha256
+                : await BiosPackageVerifier.ComputeSha256HexAsync(packagePath, ct).ConfigureAwait(false);
+
+            var agentRequest = new BiosAgentInstallRequest(
+                VendorId: vendorId,
+                InstallMode: installMode,
+                PackagePath: packagePath,
+                ExpectedSha256: expectedSha256,
+                AllowReboot: request.AllowReboot,
+                InfRelativePath: null,
+                TimeoutMs: (int)installerTimeout.TotalMilliseconds);
+
+            progress?.Report(new BiosInstallProgress(
+                BiosInstallStage.Staging,
+                0,
+                $"Staging {displayName} BIOS update…"));
+            if (reportInstallingProgress)
+            {
+                progress?.Report(new BiosInstallProgress(
+                    BiosInstallStage.Installing,
+                    50,
+                    $"Running {displayName} BIOS installer ({installMode})..."));
+            }
+
+            var result = await BiosInstallerRunner.RunInstallerAsync(
+                commands: commands,
+                executablePath: packagePath,
+                arguments: arguments,
+                request: effectiveRequest,
+                bitLockerSuspended: bitLocker.Suspended,
+                rebootSuccessExitCodes: rebootSuccessExitCodes,
+                completedSuccessExitCodes: null,
+                timeout: installerTimeout,
+                log: log,
+                ct: ct,
+                workingDirectory: Path.GetDirectoryName(packagePath),
+                agentRequest: agentRequest,
+                bridge: elevatedBridge,
+                isProcessElevated: isProcessElevated).ConfigureAwait(false);
+
+            if (result.Succeeded && result.RequiresReboot)
+                progress?.Report(new BiosInstallProgress(BiosInstallStage.RebootRequired, 100, result.Message));
+            else if (result.Succeeded)
+                progress?.Report(new BiosInstallProgress(BiosInstallStage.Completed, 100, result.Message));
+            else
+                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, result.Message));
+
+            return result;
+        }
+        finally
+        {
+            if (autoStagingDir is not null)
+                TryDeleteDirectoryRecursive(autoStagingDir);
         }
     }
 }

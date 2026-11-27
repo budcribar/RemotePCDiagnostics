@@ -367,7 +367,7 @@ public static class StorageCleanupCatalog
             var size = Measure(c, ctx, ct);
             if (size is { Files: > 0 } s && s.Bytes >= c.MinBytes) items.Add(new(c.Id, c.Title, c.Description, s.Bytes, c.AutoChecked, SuggestionCategory));
         }
-        progress.ReportStep(++step, total, "Measuring Grok agent worktrees…");
+        progress.ReportStep(step + 1, total, "Measuring Grok agent worktrees…");
         if (GrokWorktrees(ctx, ct) is { } w) items.Add(w);
         return items;
     }

@@ -21,6 +21,35 @@ internal enum UrlExtractionState
     Untrusted,
 }
 
+internal enum PathSyntaxViolation
+{
+    None,
+    UncOrDevicePath,
+    ControlCharacter,
+    ForbiddenCharacter,
+    DisallowedColon,
+}
+
+internal readonly record struct RedactedInstallContext(
+    string? Serial,
+    string? PreviousVersion,
+    string? TargetVersion,
+    ILogger? Log,
+    IProgress<BiosInstallProgress>? Progress);
+
+internal interface IBiosCatalogCandidateTieBreak
+{
+    DateOnly? ReleaseDate { get; }
+    string DisplayVersion { get; }
+    string? DownloadUrl { get; }
+    string? PackageId { get; }
+    string? Sha256 { get; }
+    string? ReleaseNotesUrl { get; }
+    string? ReleaseSummary { get; }
+    long? SizeBytes { get; }
+    BiosUpdateSeverity Severity { get; }
+}
+
 /// <summary>
 /// Shared internal helpers for BIOS update providers: version/numeric comparison, SMBIOS model
 /// token resolution, JSON/XML field extraction, release/beta/category classification, and
@@ -1269,6 +1298,331 @@ internal static partial class BiosProviderCommon
             var safeDetail = RedactText(value.Detail ?? "", serialNumber);
             inner.Report(ReferenceEquals(safeDetail, value.Detail) ? value : value with { Detail = safeDetail });
         }
+    }
+
+    internal static readonly BiosProviderCapabilities FullInstallCapabilities = new(
+        CanCheckLatest: true,
+        CanInstall: true,
+        SupportsSilentInstall: true,
+        RequiresReboot: true,
+        RequiresElevation: true,
+        RequiresInternet: true);
+
+    internal static readonly char[] ForbiddenShellPathChars =
+    [
+        '&', '|', ';', '>', '<', '`', '$', '%', '"', '\'', '^', '!', '*', '?',
+    ];
+
+    internal static PathSyntaxViolation CheckLocalPathSyntax(
+        string rawPath,
+        out bool isWindowsDriveRoot,
+        out char offendingChar)
+    {
+        isWindowsDriveRoot = false;
+        offendingChar = '\0';
+
+        if (rawPath.StartsWith(@"\\", StringComparison.Ordinal)
+            || rawPath.StartsWith("//", StringComparison.Ordinal)
+            || rawPath.StartsWith(@"\??\", StringComparison.Ordinal)
+            || rawPath.StartsWith(@"\/", StringComparison.Ordinal)
+            || rawPath.StartsWith(@"/\", StringComparison.Ordinal))
+        {
+            return PathSyntaxViolation.UncOrDevicePath;
+        }
+
+        isWindowsDriveRoot = rawPath.Length >= 3
+            && char.IsAsciiLetter(rawPath[0])
+            && rawPath[1] == ':'
+            && (rawPath[2] == '\\' || rawPath[2] == '/');
+
+        for (var i = 0; i < rawPath.Length; i++)
+        {
+            var c = rawPath[i];
+            if (char.IsControl(c))
+            {
+                offendingChar = c;
+                return PathSyntaxViolation.ControlCharacter;
+            }
+
+            if (Array.IndexOf(ForbiddenShellPathChars, c) >= 0)
+            {
+                offendingChar = c;
+                return PathSyntaxViolation.ForbiddenCharacter;
+            }
+
+            if (c == ':' && !(i == 1 && isWindowsDriveRoot))
+            {
+                offendingChar = c;
+                return PathSyntaxViolation.DisallowedColon;
+            }
+        }
+
+        return PathSyntaxViolation.None;
+    }
+
+    internal static bool TryExtractSkeletonVersion(
+        string value,
+        int classPrefix,
+        out string classKey,
+        out long[] segments)
+    {
+        var digitMatches = DigitRunsRegex().Matches(value);
+        if (digitMatches.Count > 0)
+        {
+            var runs = new long[digitMatches.Count];
+            var allFit = true;
+            for (var i = 0; i < digitMatches.Count; i++)
+            {
+                if (!long.TryParse(digitMatches[i].Value, NumberStyles.None, CultureInfo.InvariantCulture, out runs[i]))
+                {
+                    allFit = false;
+                    break;
+                }
+            }
+
+            if (allFit)
+            {
+                var skeleton = BuildBijectiveSkeleton(value);
+                classKey = $"{classPrefix}:SKEL:{runs.Length}:{skeleton}";
+                segments = runs;
+                return true;
+            }
+        }
+
+        classKey = "";
+        segments = [];
+        return false;
+    }
+
+    internal static int CompareCandidateTieBreakers(IBiosCatalogCandidateTieBreak a, IBiosCatalogCandidateTieBreak b) =>
+        CompareCandidateTieBreakers(
+            a.ReleaseDate, b.ReleaseDate,
+            a.DisplayVersion, b.DisplayVersion,
+            a.DownloadUrl, b.DownloadUrl,
+            a.PackageId, b.PackageId,
+            a.Sha256, b.Sha256,
+            a.ReleaseNotesUrl, b.ReleaseNotesUrl,
+            a.ReleaseSummary, b.ReleaseSummary,
+            a.SizeBytes, b.SizeBytes,
+            a.Severity, b.Severity);
+
+    internal static List<TCandidate> OrderCandidates<TCandidate>(
+        IReadOnlyList<TCandidate> candidates,
+        Func<TCandidate, int> getPrefRank,
+        Func<TCandidate, string> getClassKey,
+        Func<TCandidate, TCandidate, int> compareWithinClass,
+        bool comparePrefRankFirst = false,
+        bool prefRankDescending = false)
+        where TCandidate : IBiosCatalogCandidateTieBreak =>
+        OrderCandidates(
+            candidates,
+            getPrefRank: getPrefRank,
+            getClassKey: getClassKey,
+            getReleaseDate: static c => c.ReleaseDate,
+            compareWithinClass: compareWithinClass,
+            compareTieBreakers: static (a, b) => CompareCandidateTieBreakers(a, b),
+            comparePrefRankFirst: comparePrefRankFirst,
+            prefRankDescending: prefRankDescending);
+
+    internal static BiosLatestInfo? CheckUntrustedCandidatesFailClosed<TCandidate>(
+        string vendorId,
+        string displayName,
+        TCandidate best,
+        IReadOnlyList<TCandidate> compatibleUntrusted,
+        bool bestIsNewerThanCurrent,
+        Func<TCandidate, TCandidate, bool> isSecondNewerThanFirst,
+        Func<TCandidate, TCandidate, int?> compareVersions)
+    {
+        if (compatibleUntrusted.Count == 0)
+            return null;
+
+        foreach (var bad in compatibleUntrusted)
+        {
+            if (isSecondNewerThanFirst(best, bad))
+            {
+                return BiosLatestInfo.Failed(
+                    vendorId,
+                    $"{displayName} BIOS catalog contained a newer BIOS entry whose download URL failed HTTPS/domain security validation.");
+            }
+        }
+
+        if (!bestIsNewerThanCurrent)
+        {
+            foreach (var bad in compatibleUntrusted)
+            {
+                var cmp = compareVersions(bad, best);
+                if (cmp is null or >= 0)
+                {
+                    return BiosLatestInfo.Failed(
+                        vendorId,
+                        $"{displayName} BIOS catalog contained BIOS entries whose download URL failed HTTPS/domain security validation.");
+                }
+            }
+        }
+
+        return null;
+    }
+
+    internal static TCandidate SelectNewestByVersionAndDate<TCandidate>(
+        IReadOnlyList<TCandidate> candidates,
+        Func<TCandidate, string> getVersion,
+        Func<TCandidate, DateOnly?> getReleaseDate)
+    {
+        var best = candidates[0];
+        for (var i = 1; i < candidates.Count; i++)
+        {
+            var candidate = candidates[i];
+            var cmp = BiosVersionComparer.Compare(getVersion(best), getVersion(candidate));
+            if (cmp < 0)
+            {
+                best = candidate;
+            }
+            else if ((cmp is null or 0) && getReleaseDate(candidate).HasValue
+                     && (!getReleaseDate(best).HasValue || getReleaseDate(candidate)!.Value > getReleaseDate(best)!.Value))
+            {
+                best = candidate;
+            }
+        }
+
+        return best;
+    }
+
+    internal static BiosLatestInfo BuildLatestInfoFromCandidate(
+        string vendorId,
+        string? currentVersion,
+        DateOnly? currentReleaseDate,
+        string latestVersion,
+        DateOnly? latestReleaseDate,
+        BiosUpdateSeverity severity,
+        string? packageId,
+        string? releaseSummary,
+        string? releaseNotesUrl,
+        string? downloadUrl,
+        string? sha256,
+        long? sizeBytes,
+        IReadOnlyDictionary<string, string>? metadata)
+    {
+        var isNewer = BiosVersionComparer.IsNewer(
+            currentVersion,
+            latestVersion,
+            currentReleaseDate,
+            latestReleaseDate);
+
+        if (!isNewer)
+        {
+            return BiosLatestInfo.UpToDate(
+                providerId: vendorId,
+                latestVersion: latestVersion,
+                releaseDate: latestReleaseDate,
+                metadata: metadata);
+        }
+
+        return BiosLatestInfo.UpdateAvailable(
+            providerId: vendorId,
+            latestVersion: latestVersion,
+            releaseDate: latestReleaseDate,
+            severity: severity,
+            packageId: packageId,
+            releaseSummary: releaseSummary,
+            releaseNotesUrl: releaseNotesUrl,
+            downloadUrl: downloadUrl,
+            sha256: sha256,
+            sizeBytes: sizeBytes,
+            requiresReboot: true,
+            metadata: metadata);
+    }
+
+    internal static RedactedInstallContext CreateRedactedInstallContext(
+        BiosInstallRequest request,
+        ILogger? log,
+        IProgress<BiosInstallProgress>? progress)
+    {
+        var serial = request.System?.SerialNumber;
+        var prev = request.Current?.Version is not null ? RedactText(request.Current.Version, serial) : null;
+        var target = request.Target?.LatestVersion is not null ? RedactText(request.Target.LatestVersion, serial) : null;
+        var redactingLog = log is not null && !string.IsNullOrWhiteSpace(serial)
+            ? new RedactingLogger(log, serial)
+            : log;
+        var redactingProgress = progress is not null && !string.IsNullOrWhiteSpace(serial)
+            ? new RedactingProgress(progress, serial)
+            : progress;
+
+        return new RedactedInstallContext(serial, prev, target, redactingLog, redactingProgress);
+    }
+
+    internal static bool CollectJsonReleaseObjectsCore(
+        JsonElement element,
+        List<JsonElement> output,
+        string[] collectionKeys,
+        string[] singleReleaseVersionKeys,
+        int depth,
+        Action<JsonElement, List<JsonElement>, int> recurse)
+    {
+        if (depth > 8)
+            return true;
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.Object)
+                    output.Add(item);
+            }
+
+            return true;
+        }
+
+        if (element.ValueKind != JsonValueKind.Object)
+            return true;
+
+        var foundCollection = false;
+        foreach (var key in collectionKeys)
+        {
+            if (TryGetPropertyIgnoreCase(element, out var child, key))
+            {
+                if (child.ValueKind == JsonValueKind.Array)
+                {
+                    foundCollection = true;
+                    foreach (var item in child.EnumerateArray())
+                    {
+                        if (item.ValueKind == JsonValueKind.Object)
+                            output.Add(item);
+                    }
+                }
+                else if (child.ValueKind == JsonValueKind.Object)
+                {
+                    foundCollection = true;
+                    recurse(child, output, depth + 1);
+                }
+            }
+        }
+
+        if (foundCollection)
+            return true;
+
+        if (TryGetPropertyIgnoreCase(element, out _, singleReleaseVersionKeys))
+        {
+            output.Add(element);
+            return true;
+        }
+
+        return false;
+    }
+
+    internal static string? GetXmlField(XElement el, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var child = el.Elements().FirstOrDefault(e => string.Equals(e.Name.LocalName, name, StringComparison.OrdinalIgnoreCase));
+            if (child is not null && !string.IsNullOrWhiteSpace(child.Value))
+                return child.Value.Trim();
+
+            var attr = el.Attributes().FirstOrDefault(a => string.Equals(a.Name.LocalName, name, StringComparison.OrdinalIgnoreCase));
+            if (attr is not null && !string.IsNullOrWhiteSpace(attr.Value))
+                return attr.Value.Trim();
+        }
+
+        return null;
     }
 
     internal sealed class BucketKeyEqualityComparer : IEqualityComparer<(int PrefRank, string ClassKey)>

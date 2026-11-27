@@ -98,7 +98,7 @@
             string.IsNullOrWhiteSpace(_version) ? null : _version.Trim(),
             _approved,
             string.IsNullOrWhiteSpace(_approvedBy) ? null : _approvedBy.Trim(),
-            busy ?? ""));
+            busy ?? ""), relaunch);
         status ??= new RpcdUpdateStatus
         {
             Stage = RpcdUpdateStages.Failed,

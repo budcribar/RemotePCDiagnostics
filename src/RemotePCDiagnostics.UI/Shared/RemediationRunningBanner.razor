@@ -18,7 +18,7 @@
 
     protected override void OnInitialized()
     {
-        _timer = new System.Threading.Timer(_ =>
+        _timer = new System.Threading.Timer(state =>
         {
             try { _ = InvokeAsync(StateHasChanged); }
             catch { /* component disposed */ }

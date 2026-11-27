@@ -90,60 +90,22 @@ public sealed partial class AsusBiosUpdateProvider : IBiosUpdateProvider
             current, VendorId, parsed.NormalizedVersion, modelToken, system.SerialNumber, familyOverride: parsed.Family));
     }
 
-    public async Task<BiosLatestInfo> GetLatestVersionAsync(
+    public Task<BiosLatestInfo> GetLatestVersionAsync(
         BiosSystemIdentity system,
         BiosCurrentInfo current,
-        CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(system);
-        ArgumentNullException.ThrowIfNull(current);
-        ct.ThrowIfCancellationRequested();
-
-        if (!TryResolveModelIdentifier(system, out var modelToken, out var invalidReason))
-        {
-            LogWarn($"[BIOS/ASUS] Unable to determine valid ASUS model identifier: {invalidReason}", system.SerialNumber);
-            return RedactLatestInfo(
-                BiosLatestInfo.Unsupported(VendorId, $"Unable to determine a valid ASUS model or board product identifier: {invalidReason}"),
-                system.SerialNumber);
-        }
-
-        var requestUrl = BuildCatalogUrl(_catalogEndpoint, modelToken);
-        if (!BiosProviderHttp.TryValidateVendorUrl(requestUrl, AllowedHostSuffixes, out _))
-        {
-            LogWarn("[BIOS/ASUS] Configured ASUS catalog endpoint failed HTTPS/domain/path validation.", system.SerialNumber);
-            return RedactLatestInfo(
-                BiosLatestInfo.Failed(VendorId, "ASUS BIOS catalog endpoint URL failed security validation."),
-                system.SerialNumber);
-        }
-
-        try
-        {
-            using var response = await BiosProviderHttp.GetVendorUrlWithSafeRedirectsAsync(
-                _httpClient, requestUrl, AllowedHostSuffixes, DisplayName, "application/json", ct).ConfigureAwait(false);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var statusInfo = BiosProviderHttp.ClassifyHttpStatus(VendorId, DisplayName, response.StatusCode, $"model '{modelToken}'");
-                return RedactLatestInfo(statusInfo, system.SerialNumber);
-            }
-
-            using var doc = await BiosProviderHttp.ReadBoundedJsonDocumentAsync(
-                response.Content, MaxCatalogJsonBytes, DisplayName, ct).ConfigureAwait(false);
-            var evaluated = EvaluateCatalog(doc, current, modelToken, system.SerialNumber);
-            return RedactLatestInfo(evaluated, system.SerialNumber);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            LogWarn($"[BIOS/ASUS] Catalog lookup failed for '{modelToken}': {ex.Message}", system.SerialNumber);
-            return RedactLatestInfo(
-                BiosProviderHttp.ClassifyHttpFailure(VendorId, DisplayName, ex, ct),
-                system.SerialNumber);
-        }
-    }
+        CancellationToken ct = default) =>
+        BiosProviderHttp.FetchAndEvaluateModelJsonCatalogAsync(
+            _httpClient,
+            VendorId,
+            DisplayName,
+            _catalogEndpoint,
+            AllowedHostSuffixes,
+            MaxCatalogJsonBytes,
+            system,
+            current,
+            _log,
+            EvaluateCatalog,
+            ct);
 
     public Task<BiosInstallResult> InstallAsync(
         BiosInstallRequest request,
@@ -189,37 +151,21 @@ public sealed partial class AsusBiosUpdateProvider : IBiosUpdateProvider
         var ordered = OrderCandidates(compatibleTrusted);
         var best = ordered[0];
 
-        // If a rejected untrusted BIOS entry is strictly newer than our best trusted candidate, fail closed.
-        if (compatibleUntrusted.Count > 0)
+        var isNewer = IsCandidateNewer(parsedCurrent, current.ReleaseDate, best.ParsedVersion, best.ReleaseDate);
+        if (CheckUntrustedCandidatesFailClosed(
+                VendorId,
+                DisplayName,
+                best,
+                compatibleUntrusted,
+                isNewer,
+                static (b, bad) => IsCandidateNewer(b.ParsedVersion, b.ReleaseDate, bad.ParsedVersion, bad.ReleaseDate),
+                static (bad, b) => CompareAsusVersions(bad.ParsedVersion, b.ParsedVersion)) is { } untrustedFailure)
         {
-            foreach (var bad in compatibleUntrusted)
-            {
-                if (IsCandidateNewer(best.ParsedVersion, best.ReleaseDate, bad.ParsedVersion, bad.ReleaseDate))
-                {
-                    return BiosLatestInfo.Failed(
-                        VendorId,
-                        "ASUS BIOS catalog contained a newer BIOS entry whose download URL failed HTTPS/domain security validation.");
-                }
-            }
+            return untrustedFailure;
         }
 
-        var isNewer = IsCandidateNewer(parsedCurrent, current.ReleaseDate, best.ParsedVersion, best.ReleaseDate);
         if (!isNewer)
         {
-            if (compatibleUntrusted.Count > 0)
-            {
-                foreach (var bad in compatibleUntrusted)
-                {
-                    var cmp = CompareAsusVersions(bad.ParsedVersion, best.ParsedVersion);
-                    if (cmp is null or >= 0)
-                    {
-                        return BiosLatestInfo.Failed(
-                            VendorId,
-                            "ASUS BIOS catalog contained BIOS entries whose download URL failed HTTPS/domain security validation.");
-                    }
-                }
-            }
-
             var meta = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["model"] = modelToken,
@@ -576,18 +522,7 @@ public sealed partial class AsusBiosUpdateProvider : IBiosUpdateProvider
             candidates,
             getPrefRank: static _ => 0,
             getClassKey: static c => c.ParsedVersion.ClassKey,
-            getReleaseDate: static c => c.ReleaseDate,
-            compareWithinClass: static (a, b) => CompareWithinClass(a.ParsedVersion, b.ParsedVersion),
-            compareTieBreakers: static (a, b) => CompareCandidateTieBreakers(
-                a.ReleaseDate, b.ReleaseDate,
-                a.DisplayVersion, b.DisplayVersion,
-                a.DownloadUrl, b.DownloadUrl,
-                a.PackageId, b.PackageId,
-                a.Sha256, b.Sha256,
-                a.ReleaseNotesUrl, b.ReleaseNotesUrl,
-                a.ReleaseSummary, b.ReleaseSummary,
-                a.SizeBytes, b.SizeBytes,
-                a.Severity, b.Severity));
+            compareWithinClass: static (a, b) => CompareWithinClass(a.ParsedVersion, b.ParsedVersion));
 
     private static (VersionClass Class, string ClassKey, long[] Segments) ClassifyGenericVersion(string normalized)
     {
@@ -601,26 +536,8 @@ public sealed partial class AsusBiosUpdateProvider : IBiosUpdateProvider
         if (IsDottedNumeric(normalized) && TryParseDottedInt64(normalized, out var numSegs))
             return (VersionClass.Numeric, "1:NUM", numSegs);
 
-        var digitMatches = DigitRunsRegex().Matches(normalized);
-        if (digitMatches.Count > 0)
-        {
-            var runs = new long[digitMatches.Count];
-            var allFit = true;
-            for (var i = 0; i < digitMatches.Count; i++)
-            {
-                if (!long.TryParse(digitMatches[i].Value, NumberStyles.None, CultureInfo.InvariantCulture, out runs[i]))
-                {
-                    allFit = false;
-                    break;
-                }
-            }
-
-            if (allFit)
-            {
-                var skeleton = BuildBijectiveSkeleton(normalized);
-                return (VersionClass.Skeleton, $"3:SKEL:{runs.Length}:{skeleton}", runs);
-            }
-        }
+        if (TryExtractSkeletonVersion(normalized, classPrefix: 3, out var skelKey, out var runs))
+            return (VersionClass.Skeleton, skelKey, runs);
 
         return (VersionClass.Literal, "4:LIT:" + normalized, []);
     }
@@ -656,5 +573,5 @@ public sealed partial class AsusBiosUpdateProvider : IBiosUpdateProvider
         string? ReleaseNotesUrl,
         string? DownloadUrl,
         string? Sha256,
-        long? SizeBytes);
+        long? SizeBytes) : IBiosCatalogCandidateTieBreak;
 }

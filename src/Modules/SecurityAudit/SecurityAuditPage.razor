@@ -199,7 +199,7 @@ else
     private void StartTicker(IDiagnosticModule m)
     {
         _tick?.Dispose();
-        _tick = new System.Threading.Timer(_ =>
+        _tick = new System.Threading.Timer(state =>
         {
             if (!Diagnostics.IsRunning(m.Name)) { _tick?.Dispose(); return; }
             try { _ = InvokeAsync(StateHasChanged); } catch { /* page closed */ }

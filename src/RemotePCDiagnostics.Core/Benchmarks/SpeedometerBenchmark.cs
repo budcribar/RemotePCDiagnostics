@@ -288,8 +288,7 @@ public sealed class SpeedometerLocalServer : IAsyncDisposable
                 if (string.IsNullOrWhiteSpace(requestLine)) return;
 
                 // Drain headers
-                string? header;
-                while (!string.IsNullOrEmpty(header = await reader.ReadLineAsync(ct).ConfigureAwait(false))) { }
+                while (!string.IsNullOrEmpty(await reader.ReadLineAsync(ct).ConfigureAwait(false))) { }
 
                 var parts = requestLine.Split(' ');
                 if (parts.Length < 2 || (!string.Equals(parts[0], "GET", StringComparison.OrdinalIgnoreCase) && !string.Equals(parts[0], "HEAD", StringComparison.OrdinalIgnoreCase)))

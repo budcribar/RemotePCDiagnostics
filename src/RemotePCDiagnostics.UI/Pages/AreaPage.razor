@@ -871,7 +871,6 @@ else
     private async Task ShowSuggestions()
     {
         _expandedCards.Remove("memory");
-        StateHasChanged();
         await Task.Yield();
         if (_memPanel is not null) await _memPanel.FocusAsync();
     }

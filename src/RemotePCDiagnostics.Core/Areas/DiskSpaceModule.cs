@@ -600,7 +600,6 @@ public sealed class DiskSpaceModule(
     {
         drives ??= GetDrivesForScan(root);
         var cards = new List<AreaCard>();
-        long totalLargeFilesDiskBytes = files.Sum(f => f.ActualDiskBytes);
 
         // Card 1: Drive Capacity
         if (drives.Count > 0)
@@ -631,7 +630,7 @@ public sealed class DiskSpaceModule(
 
         // Card 3: Top Large Files (local files occupying space on disk)
         var localFiles = files.Where(f => !f.IsCloudOnly).ToList();
-        totalLargeFilesDiskBytes = localFiles.Sum(f => f.ActualDiskBytes);
+        var totalLargeFilesDiskBytes = localFiles.Sum(f => f.ActualDiskBytes);
         string[] fileCols = ["File", "Size", "Type", "Modified", "Folder"];
         var fileRows = localFiles.Select(f => new AreaRow(
             AreaLevel.Neutral,

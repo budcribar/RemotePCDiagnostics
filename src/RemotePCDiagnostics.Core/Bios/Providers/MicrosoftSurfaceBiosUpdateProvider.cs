@@ -158,13 +158,7 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
     public string DisplayName => "Microsoft Surface";
     public int Priority => 100;
 
-    public BiosProviderCapabilities Capabilities { get; } = new(
-        CanCheckLatest: true,
-        CanInstall: true,
-        SupportsSilentInstall: true,
-        RequiresReboot: true,
-        RequiresElevation: true,
-        RequiresInternet: true);
+    public BiosProviderCapabilities Capabilities => FullInstallCapabilities;
 
     public bool CanHandle(BiosSystemIdentity system) =>
         system is not null && BiosVendorIdentity.IsMicrosoftSurface(system);
@@ -442,15 +436,8 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
         ArgumentNullException.ThrowIfNull(request);
         ct.ThrowIfCancellationRequested();
 
-        var serial = request.System?.SerialNumber;
-        var prev = request.Current?.Version is not null ? RedactText(request.Current.Version, serial) : null;
-        var target = request.Target?.LatestVersion is not null ? RedactText(request.Target.LatestVersion, serial) : null;
-        var redactingLog = _log is not null && !string.IsNullOrWhiteSpace(serial)
-            ? new RedactingLogger(_log, serial)
-            : _log;
-        var redactingProgress = progress is not null && !string.IsNullOrWhiteSpace(serial)
-            ? new RedactingProgress(progress, serial)
-            : progress;
+        var (serial, prev, target, redactingLog, redactingProgress) =
+            CreateRedactedInstallContext(request, _log, progress);
 
         if (request.Target is null || string.IsNullOrWhiteSpace(request.Target.DownloadUrl))
         {
@@ -476,19 +463,19 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
             return BiosInstallResult.Failed(msg, prev, target);
         }
 
-        string? autoStagingDir = null;
-        var effectiveRequest = request;
-        if (string.IsNullOrWhiteSpace(request.StagingDirectory))
+        if (!TryResolveAndValidateStagingDirectory(
+                request,
+                "rpd-bios-surface",
+                serial,
+                redactingLog,
+                redactingProgress,
+                prev,
+                target,
+                out var effectiveRequest,
+                out var autoStagingDir,
+                out var stagingFailure))
         {
-            autoStagingDir = Path.Combine(Path.GetTempPath(), $"rpd-bios-surface-{Guid.NewGuid():N}");
-            effectiveRequest = request with { StagingDirectory = autoStagingDir };
-        }
-        else if (!ValidateStagingDirectorySafe(request.StagingDirectory, out var stagingErr))
-        {
-            var safeStagingErr = RedactText(stagingErr, serial);
-            LogWarn(safeStagingErr, serial);
-            redactingProgress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, safeStagingErr));
-            return BiosInstallResult.Failed(safeStagingErr, prev, target);
+            return stagingFailure!;
         }
 
         var defaultFileName = BuildDefaultPackageFileName(request.Target.PackageId);
@@ -733,60 +720,20 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
         }
     }
 
+    private static readonly string[] SurfaceMultiReleaseKeys =
+    [
+        "releases", "packages", "updates", "items",
+        "firmware", "downloads", "results", "data", "value",
+    ];
+
+    private static readonly string[] SurfaceSingleReleaseVersionKeys =
+        ["uefiVersion", "firmwareVersion", "biosVersion", "version", "msiVersion", "packageVersion"];
+
     private static void CollectJsonReleaseObjects(JsonElement element, List<JsonElement> output, int depth)
     {
-        if (depth > 8)
-            return;
-
-        if (element.ValueKind == JsonValueKind.Array)
+        if (CollectJsonReleaseObjectsCore(
+                element, output, SurfaceMultiReleaseKeys, SurfaceSingleReleaseVersionKeys, depth, CollectJsonReleaseObjects))
         {
-            foreach (var item in element.EnumerateArray())
-            {
-                if (item.ValueKind == JsonValueKind.Object)
-                    output.Add(item);
-            }
-
-            return;
-        }
-
-        if (element.ValueKind != JsonValueKind.Object)
-            return;
-
-        string[] multiReleaseKeys =
-        [
-            "releases", "packages", "updates", "items",
-            "firmware", "downloads", "results", "data", "value",
-        ];
-
-        var foundCollection = false;
-        foreach (var key in multiReleaseKeys)
-        {
-            if (TryGetPropertyIgnoreCase(element, out var child, key))
-            {
-                if (child.ValueKind == JsonValueKind.Array)
-                {
-                    foundCollection = true;
-                    foreach (var item in child.EnumerateArray())
-                    {
-                        if (item.ValueKind == JsonValueKind.Object)
-                            output.Add(item);
-                    }
-                }
-                else if (child.ValueKind == JsonValueKind.Object)
-                {
-                    foundCollection = true;
-                    CollectJsonReleaseObjects(child, output, depth + 1);
-                }
-            }
-        }
-
-        if (foundCollection)
-            return;
-
-        // Single release object at root (which may contain a nested "files" array for download URLs).
-        if (TryGetPropertyIgnoreCase(element, out _, "uefiVersion", "firmwareVersion", "biosVersion", "version", "msiVersion", "packageVersion"))
-        {
-            output.Add(element);
             return;
         }
 
@@ -1049,22 +996,6 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
                 untrusted.Add(candidate);
             }
         }
-    }
-
-    private static string? GetXmlField(XElement el, params string[] names)
-    {
-        foreach (var name in names)
-        {
-            var child = el.Elements().FirstOrDefault(e => string.Equals(e.Name.LocalName, name, StringComparison.OrdinalIgnoreCase));
-            if (child is not null && !string.IsNullOrWhiteSpace(child.Value))
-                return child.Value.Trim();
-
-            var attr = el.Attributes().FirstOrDefault(a => string.Equals(a.Name.LocalName, name, StringComparison.OrdinalIgnoreCase));
-            if (attr is not null && !string.IsNullOrWhiteSpace(attr.Value))
-                return attr.Value.Trim();
-        }
-
-        return null;
     }
 
     private static bool TryValidateMsiDownloadUrl(string rawUrl, out string validatedUrl)
@@ -1395,18 +1326,7 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
             candidates,
             getPrefRank: static c => c.OsPrefRank,
             getClassKey: static c => c.ParsedVersion.ClassKey,
-            getReleaseDate: static c => c.ReleaseDate,
             compareWithinClass: static (a, b) => CompareWithinClass(a.ParsedVersion, b.ParsedVersion),
-            compareTieBreakers: static (a, b) => CompareCandidateTieBreakers(
-                a.ReleaseDate, b.ReleaseDate,
-                a.DisplayVersion, b.DisplayVersion,
-                a.DownloadUrl, b.DownloadUrl,
-                a.PackageId, b.PackageId,
-                a.Sha256, b.Sha256,
-                a.ReleaseNotesUrl, b.ReleaseNotesUrl,
-                a.ReleaseSummary, b.ReleaseSummary,
-                a.SizeBytes, b.SizeBytes,
-                a.Severity, b.Severity),
             comparePrefRankFirst: true,
             prefRankDescending: false);
 
@@ -1422,26 +1342,8 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
         if (prefixMatch.Success && TryParseDottedInt64(prefixMatch.Groups[2].Value, out var pfxSegs))
             return (VersionClass.PrefixNumeric, "2:PFX:" + prefixMatch.Groups[1].Value, pfxSegs);
 
-        var digitMatches = DigitRunsRegex().Matches(normalized);
-        if (digitMatches.Count > 0)
-        {
-            var runs = new long[digitMatches.Count];
-            var allFit = true;
-            for (var i = 0; i < digitMatches.Count; i++)
-            {
-                if (!long.TryParse(digitMatches[i].Value, NumberStyles.None, CultureInfo.InvariantCulture, out runs[i]))
-                {
-                    allFit = false;
-                    break;
-                }
-            }
-
-            if (allFit)
-            {
-                var skeleton = BuildBijectiveSkeleton(normalized);
-                return (VersionClass.Skeleton, $"3:SKEL:{runs.Length}:{skeleton}", runs);
-            }
-        }
+        if (TryExtractSkeletonVersion(normalized, classPrefix: 3, out var skelKey, out var runs))
+            return (VersionClass.Skeleton, skelKey, runs);
 
         return (VersionClass.Literal, "4:LIT:" + normalized, []);
     }
@@ -1627,5 +1529,5 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
         string? ReleaseNotesUrl,
         string? DownloadUrl,
         string? Sha256,
-        long? SizeBytes);
+        long? SizeBytes) : IBiosCatalogCandidateTieBreak;
 }

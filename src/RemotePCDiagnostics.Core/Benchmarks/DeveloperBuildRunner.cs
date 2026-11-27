@@ -394,7 +394,7 @@ public sealed class DeveloperBuildRunner(
             double? warmExcludedMedian = null;
             if (!isCustomSolution && options.IncludeAntivirusComparison && machineTweaks is not null && env.IsAgentConnected)
             {
-                progress.ReportStep(++step, totalSteps, $"Running warm C# clean builds with temporary Defender exclusion ({options.WarmRepeats} repeats)…");
+                progress.ReportStep(step + 1, totalSteps, $"Running warm C# clean builds with temporary Defender exclusion ({options.WarmRepeats} repeats)…");
                 var (added, _) = await machineTweaks.AddTempBuildDefenderExclusionAsync(workDir, CancellationToken.None).ConfigureAwait(false);
                 if (added)
                 {
@@ -615,7 +615,7 @@ public sealed class DeveloperBuildRunner(
             double? devDriveExcludedWarm = null;
             if (includeAv)
             {
-                progress.ReportStep(++step, totalSteps, $"Timing warm C# builds on Dev Drive with Defender exclusion ({options.WarmRepeats} repeats)…");
+                progress.ReportStep(step + 1, totalSteps, $"Timing warm C# builds on Dev Drive with Defender exclusion ({options.WarmRepeats} repeats)…");
                 var (ddAdded, _) = await machineTweaks.AddTempBuildDefenderExclusionAsync(devDriveBuildDir, CancellationToken.None).ConfigureAwait(false);
                 if (ddAdded)
                 {

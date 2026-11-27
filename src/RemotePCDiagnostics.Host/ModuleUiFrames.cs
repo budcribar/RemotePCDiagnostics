@@ -44,7 +44,6 @@ public sealed class ModuleUiFrames(Microsoft.Extensions.Logging.ILogger? log = n
     /// <summary>One module's UI process and the app's end of its stdin.</summary>
     private sealed class Running(Process process, RemoteComponentConnection connection)
     {
-        public Process Process => process;
         public RemoteComponentConnection Connection => connection;
 
         public void Stop()

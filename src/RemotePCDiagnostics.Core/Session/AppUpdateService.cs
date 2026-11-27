@@ -79,7 +79,6 @@ public static class AppVersionComparer
 
     public const string ReleaseDownloadPrefix = "https://github.com/budcribar/RemotePCDiagnostics/releases/download/";
     private const string ReleasePathPrefix = "/budcribar/RemotePCDiagnostics/releases/";
-    private const int MaxRedirects = 5;
 
     private static readonly HashSet<string> AllowedRedirectHosts = new(StringComparer.OrdinalIgnoreCase)
     {
