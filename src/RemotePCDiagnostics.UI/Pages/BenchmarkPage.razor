@@ -587,11 +587,15 @@ else if (stage == "results" && before is not null && after is not null)
                 {
                     <a class="linklike" data-testid="bench-upload-link" href="@compareUrl" target="_blank" rel="noopener noreferrer">Open comparison →</a>
                 }
-                <button type="button" class="btn btn-secondary" data-testid="bench-upload"
-                        disabled="@(Uploader.Uploading || !(Uploader.CanUpload || _isRemoteDisplay))"
-                        @onclick="UploadResultsAsync">
-                    <Icon Name="upload" Size="12" /> @(Uploader.Uploading ? "Uploading…" : "Upload to Admin")
-                </button>
+                @* No relay or shop key here (and not a technician's browser): nowhere to upload to, so no button. *@
+                @if (Uploader.CanUpload || _isRemoteDisplay)
+                {
+                    <button type="button" class="btn btn-secondary" data-testid="bench-upload"
+                            disabled="@Uploader.Uploading"
+                            @onclick="UploadResultsAsync">
+                        <Icon Name="upload" Size="12" /> @(Uploader.Uploading ? "Uploading…" : "Upload to Admin")
+                    </button>
+                }
                 <button type="button" class="btn btn-primary" data-testid="bench-save-after-baseline" @onclick="SaveAfterAsBaseline">
                     Save as Baseline →
                 </button>

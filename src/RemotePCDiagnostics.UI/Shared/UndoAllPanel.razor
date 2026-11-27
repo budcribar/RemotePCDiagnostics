@@ -4,6 +4,7 @@
 @inject UndoService Undo
 @inject IChangeJournal Journal
 @inject ISessionContext Session
+@inject AppServices App
 @* "Undo changes": organized tree by category (removed apps, Defender exclusions, startup/services, etc.) with group select-all and selective or full undo. *@
 @{
     var all = Journal.All.OrderByDescending(c => c.TimeUtc).ToList();
@@ -28,7 +29,7 @@
     </summary>
     <div class="bench-customize-body">
         <AgentData TestId="undo-data" Json="@AgentExports.Undo(Journal.IsLoaded, pending, permanent, anyBusy, _resultSeq, _result, _one)" />
-        @if (!Journal.IsLoaded)
+        @if (!Journal.IsLoaded && !App.NoAgent)
         {
             @* The Agent keeps the undo list (only administrators can open it); without it only this run's changes show, and they're saved once it connects. *@
             <p class="notice" data-testid="undo-needs-agent">The list of earlier changes is kept by the Agent. Turn on Admin Repair Mode to see and undo every change; changes made now are saved to it then.</p>

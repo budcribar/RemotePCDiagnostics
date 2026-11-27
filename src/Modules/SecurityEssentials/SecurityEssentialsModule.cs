@@ -10,7 +10,9 @@ namespace RemotePCDiagnostics.Core.Security;
 /// (<see cref="RemediationKind.ApplySecuritySetting"/>), which puts them in the fix list with Undo. Read from <paramref name="source"/>: WMI
 /// through the Agent plus the registry and tpmtool in the app, or the PowerShell probe in the Store edition without an Agent.
 /// </summary>
-public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, ILogger? log = null) : AreaModuleBase(log)
+/// <param name="canFix">False while the settings can't be changed here: the fixes run in the Agent, and the summary then doesn't promise
+/// any (the Store app with no Agent). Null counts as true.</param>
+public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, ILogger? log = null, Func<bool>? canFix = null) : AreaModuleBase(log)
 {
     public const string ModuleName = ModuleSlugs.SecurityEssentials;
     public override string Name => ModuleName;
@@ -25,7 +27,7 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
             $"tpm={(facts.Tpm is { } t ? $"present={t.Present} v={t.Version} ready={t.ReadyForStorage} pcr7={t.Pcr7Binding}" : "?")} defender={facts.DefenderMode ?? "?"} pua={facts.Pua} np={facts.NetworkProtection} " +
             $"asr={facts.AsrRules?.Count.ToString(CultureInfo.InvariantCulture) ?? "?"} av='{string.Join(";", facts.Antivirus)}' fw={string.Join(",", facts.Firewall.Select(kv => $"{kv.Key}:{kv.Value}"))} " +
             $"llmnr={facts.LlmnrPolicy} autorun={facts.AutoRunPolicy}/{facts.AutoRunUserPolicy}/{facts.AutoRunLetterPolicy} drives={string.Join(",", facts.Drives.Select(kv => $"{kv.Key}:{kv.Value}"))} guest={facts.InsecureGuest}");
-        return Build(facts);
+        return Build(facts, canFix?.Invoke() != false);
     }
 
     /// <summary>System.Volume.BitLockerProtection: 1 on, 3 encrypting, 5 suspended, 6 locked; 2, 8 (waiting for activation) and 0 are not protected.</summary>
@@ -60,7 +62,7 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
         : throw new ArgumentException(key);
 
     /// <summary>The ten checks, most important first. Only the cards that matter are Warning/Error; the rest pass quietly.</summary>
-    public static AreaReport Build(SecurityFacts f)
+    public static AreaReport Build(SecurityFacts f, bool canFix = true)
     {
         var cards = new List<AreaCard>
         {
@@ -70,7 +72,7 @@ public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, I
         var issues = cards.Count(c => c.Level is AreaLevel.Warning or AreaLevel.Error);
         var fixable = cards.Count(c => c.Level is AreaLevel.Warning or AreaLevel.Error && c.Actions is { Count: > 0 } acts && acts.Any(a => a.Kind != RemediationKind.OpenSettings));
         var summary = issues == 0 ? "All key security settings look good"
-            : $"{Plural(issues, "setting")} worth changing" + (fixable > 0 ? $" ({fixable} can be fixed here)" : "")
+            : $"{Plural(issues, "setting")} worth changing" + (fixable > 0 && canFix ? $" ({fixable} can be fixed here)" : "")
               + " · " + string.Join(" · ", cards.Where(c => c.Level is AreaLevel.Warning or AreaLevel.Error).Take(3).Select(c => c.Headline));
         return new(cards, summary, AreaReport.Worst(cards.Select(c => c.Level)));
     }

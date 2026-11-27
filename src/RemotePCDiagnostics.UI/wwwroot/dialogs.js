@@ -293,8 +293,30 @@
         }
     }
 
+    // Short restart wording so the bar fits on a phone: "Restart", then "Confirm" / "Cancel" (app.css hides the "Restart the app?" question).
+    function relabelRestart(bar) {
+        const label = (sel, text) => {
+            const el = bar.querySelector(sel);
+            if (el && el.textContent !== text) el.textContent = text;
+        };
+        label(':scope > .rbwv-control-restart', 'Restart');
+        label(':scope > .rbwv-control-confirm', 'Confirm');
+    }
+
+    // Restart comes first, then the Remote | Local toggle, then the voice call parts.
+    function placeToggle(bar, toggle) {
+        const restartParts = bar.querySelectorAll(':scope > .rbwv-control-restart, :scope > .rbwv-control-confirm, :scope > .rbwv-control-cancel');
+        const after = restartParts.length ? restartParts[restartParts.length - 1] : null;
+        if (after) {
+            if (after.nextElementSibling !== toggle) after.after(toggle);
+        } else if (bar.firstElementChild !== toggle) {
+            bar.prepend(toggle);
+        }
+    }
+
     function syncControlToggle(bar, isOwner, iHaveControl, restarting) {
         if (!bar) return;
+        relabelRestart(bar);
         let toggle = bar.querySelector(':scope > .rpd-control-toggle');
         if (restarting || iHaveControl === null) {
             bar.classList.remove('rpd-has-toggle');
@@ -340,8 +362,8 @@
             };
 
             toggle.append(makeBtn('remote', 'Remote'), makeBtn('local', 'Local'));
-            bar.prepend(toggle);
         }
+        placeToggle(bar, toggle);
 
         toggle.hidden = false;
         bar.classList.add('rpd-has-toggle');

@@ -21,10 +21,29 @@ public static class AgentShopPillState
     public static bool IsInstalledNotConnected(SessionMode sessionMode, AgentModeKind agentModeKind) =>
         !IsConnected(sessionMode, agentModeKind) && agentModeKind == AgentModeKind.InstalledNotConnected;
 
+    /// <summary>
+    /// No Agent on this PC: none is installed (<see cref="AgentModeKind.LocalOnly"/>) and none does admin work for the app. The Microsoft
+    /// Store app on its own. Features that need the Agent are then hidden quietly instead of failing or warning. Null facts count as "don't know"
+    /// (false), so nothing is hidden.
+    /// </summary>
+    public static bool NoAgent(IElevationContext? elevation, AgentModeKind? agentModeKind) =>
+        elevation is { HasAdminCapabilities: false } && agentModeKind == AgentModeKind.LocalOnly;
+
+    /// <summary><see cref="NoAgent(IElevationContext?, AgentModeKind?)"/> read live from the app's services, for checks built at start-up.</summary>
+    public static Func<bool> NoAgent(IServiceProvider services) => () =>
+        NoAgent(services.GetService(typeof(IElevationContext)) as IElevationContext,
+            (services.GetService(typeof(AgentModeMonitor)) as AgentModeMonitor)?.Current.Kind);
+
+    /// <summary>
+    /// The top bar's Restricted Mode badge: only when an Agent is installed here but isn't doing admin work for the app (it stopped, or
+    /// Admin Repair Mode is off). Without any Agent the app simply has fewer features and the badge isn't shown.
+    /// </summary>
+    public static bool ShowRestrictedBadge(IElevationContext? elevation, AgentModeKind agentModeKind) =>
+        elevation is { HasAdminCapabilities: false } && agentModeKind != AgentModeKind.LocalOnly;
+
     public static string FormatLabel(SessionMode sessionMode, AgentModeKind agentModeKind, int remoteUserCount) =>
         IsAgentJoined(sessionMode, agentModeKind, remoteUserCount) ? "Agent connected" :
         IsConnected(sessionMode, agentModeKind) ? "Waiting for agent" :
-        IsInstalledNotConnected(sessionMode, agentModeKind) ? "Agent installed, not connected" :
         "Local only";
 
     public static string FormatCssClass(SessionMode sessionMode, AgentModeKind agentModeKind, int remoteUserCount) =>
@@ -52,7 +71,7 @@ public static class AgentShopPillState
 
         if (IsInstalledNotConnected(sessionMode, agentModeKind))
         {
-            return "Agent installed, not connected · Not connected to a repair shop.";
+            return "Local only · Agent installed, not connected to a repair shop.";
         }
 
         return "Local only · Not connected to a repair shop.";

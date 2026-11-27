@@ -72,13 +72,14 @@ public class AgentShopPillStateTests
         Assert.True(isInstalled);
 
         var label = AgentShopPillState.FormatLabel(SessionMode.Local, AgentModeKind.InstalledNotConnected, 0);
-        Assert.Equal("Agent installed, not connected", label);
+        // Not linked to a shop reads Local only (no relay is not a fault); the tooltip says the Agent is there.
+        Assert.Equal("Local only", label);
 
         var css = AgentShopPillState.FormatCssClass(SessionMode.Local, AgentModeKind.InstalledNotConnected, 0);
         Assert.Contains("agent-installed", css);
 
         var tooltip = AgentShopPillState.FormatTooltip(SessionMode.Local, AgentModeKind.InstalledNotConnected, null, 0);
-        Assert.Equal("Agent installed, not connected · Not connected to a repair shop.", tooltip);
+        Assert.Equal("Local only · Agent installed, not connected to a repair shop.", tooltip);
     }
 
     [Fact]

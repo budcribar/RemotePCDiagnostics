@@ -18,6 +18,17 @@ public sealed class AgentWmiSource(IElevatedCommandBridge agent) : IWmiSource
 }
 
 /// <summary>
+/// The Store edition's WMI, which may run with no Agent installed: the Agent's (<see cref="AgentWmiSource"/>) while it is connected, else
+/// <paramref name="local"/>, this PC's WMI read as the signed-in user. Classes that refuse a standard user fail as access denied there,
+/// and the checks fall back as they do for any failed answer. The Setup edition always has the Agent and never reads WMI itself.
+/// </summary>
+public sealed class AgentOrLocalWmiSource(IElevatedCommandBridge agent, IWmiSource local) : IWmiSource
+{
+    public Task<WmiQueryResult> QueryAsync(string wmiNamespace, string wql, CancellationToken ct = default) =>
+        agent.IsConnected ? agent.QueryWmiAsync(wmiNamespace, wql, ct) : local.QueryAsync(wmiNamespace, wql, ct);
+}
+
+/// <summary>
 /// WMI for a module in user mode (the module host): each query goes to the app (<c>wmi.query</c>), which passes it to the Agent, so the module
 /// host never reads WMI itself either. A refused or failed query is a failed answer, as from <see cref="AgentWmiSource"/>.
 /// </summary>

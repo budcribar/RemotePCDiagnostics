@@ -14,6 +14,9 @@ param(
     [string] $Version = '',
     [ValidateSet('win-x64', 'win-arm64')]
     [string] $Rid = 'win-x64',
+    # Store builds the Microsoft Store edition (-p:RpcdEdition=Store): it also ships the no-Agent readers and osquery. Stage only (the MSIX).
+    [ValidateSet('Setup', 'Store')]
+    [string] $Edition = 'Setup',
     [string] $StageDir = '',
     [string] $OutputDir = '',
     [string] $OutputBaseName = '',
@@ -58,12 +61,16 @@ $VersionParts = @($CoreVersion -split '\.' | ForEach-Object {
 while ($VersionParts.Count -lt 4) { $VersionParts += 0 }
 $NumericVersion = ($VersionParts[0..3] -join '.')
 
+if ($Edition -eq 'Store' -and -not $StageOnly) {
+    throw "The Store edition is only staged for the MSIX (msix/Build-Msix.ps1); add -StageOnly."
+}
 if ([string]::IsNullOrWhiteSpace($StageDir)) {
     $StageDir = if ($Rid -eq 'win-x64') {
         Join-Path $RepoRoot 'artifacts/installer-stage'
     } else {
         Join-Path $RepoRoot "artifacts/installer-stage-$Rid"
     }
+    if ($Edition -eq 'Store') { $StageDir += '-store' }
 }
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = Join-Path $RepoRoot 'artifacts/installer'
@@ -102,6 +109,9 @@ if (-not $SkipPublish) {
         '-nodeReuse:false'
         "-p:Version=$Version"
     )
+    if ($Edition -eq 'Store') {
+        $PublishArgs += '-p:RpcdEdition=Store'
+    }
     # Faster publish for development builds (CI TestShop-only runs); the app starts a little slower without ReadyToRun.
     if ($NoReadyToRun) {
         $PublishArgs += '-p:PublishReadyToRun=false'
@@ -170,6 +180,12 @@ $RequiredFiles = @(
     'benchmarks/speedometer-3.1.zip'
     'wwwroot/index.html'
 )
+
+# The Store edition reads without the Agent through the legacy readers, which need the bundled osquery.
+if ($Edition -eq 'Store') {
+    $RequiredFiles += 'tools/osquery/osqueryi.exe'
+    $RequiredFiles += 'RemotePCDiagnostics.Legacy.dll'
+}
 
 $Missing = @($RequiredFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $StageDir $_)) })
 if ($Missing.Count -gt 0) {

@@ -70,7 +70,17 @@ try {
   if (!simulateStandardUser) {
     await page.getByTestId('admin-mode-restricted').waitFor({ state: 'hidden', timeout: 10_000 });
     console.log('Agent helper connected: Restricted Mode pill hidden');
-  } else {
+  }
+  // With no Agent installed on the runner the app just has fewer features: no Restricted Mode pill, and the only mention of the Agent is
+  // the Dashboard notice. With one installed (not connected yet) the pill shows until Admin Repair Mode connects the helper.
+  const noAgentNotice = page.getByTestId('dashboard-agent-notice');
+  const noAgent = simulateStandardUser && await noAgentNotice.waitFor({ state: 'visible', timeout: 10_000 }).then(() => true, () => false);
+  if (simulateStandardUser && noAgent) {
+    if (await page.getByTestId('admin-mode-restricted').isVisible().catch(() => false))
+      throw new Error('Restricted Mode pill should not show when no Agent is installed');
+    await page.screenshot({ path: `${outDir}/dashboard-no-agent.png`, fullPage: true });
+    console.log('Simulated standard user, no Agent installed: Dashboard notice shown, no Restricted Mode pill');
+  } else if (simulateStandardUser) {
     await page.getByTestId('admin-mode-restricted').waitFor({ state: 'visible', timeout: 10_000 });
     console.log('Simulated standard user: Restricted Mode pill visible until the helper connects');
   }
@@ -173,11 +183,16 @@ try {
   await page.screenshot({ path: `${outDir}/memory-suggestions.png`, fullPage: true });
 
   // History page (reads the Windows Event Log): shows the results table, or the friendly empty/unavailable state when the source has no events.
+  // Without an Agent there is no History page, so its nav item is left out.
+  if (noAgent) {
+    if (await page.getByTestId('nav-history').count()) throw new Error('History should be hidden when no Agent is installed');
+  } else {
   await page.getByTestId('nav-history').click();
   await page.getByTestId('history-title').waitFor({ state: 'visible', timeout: 15_000 });
   await page.locator('[data-testid="history-empty"], [data-testid="history-table"]').first().waitFor({ state: 'visible', timeout: 15_000 });
   console.log('History page:', await page.getByTestId('history-empty').count() ? 'empty state' : `${await page.getByTestId('history-row').count()} row(s)`);
   await page.screenshot({ path: `${outDir}/history.png`, fullPage: true });
+  }
 
   // QA Certificate page: renders Hardware QA Check (with select all/none) and live 1-page QR certificate preview.
   await page.getByTestId('nav-certificates').click();
@@ -191,7 +206,13 @@ try {
   await page.screenshot({ path: `${outDir}/certificates.png`, fullPage: true });
 
   // Service workflow + live Named-Pipe Admin Repair Mode helper connection when running in simulated Standard User mode.
-  if (simulateStandardUser) {
+  if (simulateStandardUser && noAgent) {
+    // Turning on Admin Repair Mode from the Dashboard notice starts the Agent helper; the notice goes once it connects.
+    await page.getByTestId('nav-dashboard').click().catch(() => {});
+    await page.getByTestId('dashboard-agent-enable').click();
+    await page.getByTestId('dashboard-agent-notice').waitFor({ state: 'detached', timeout: 15_000 });
+    console.log('Admin Repair Mode helper connected over Named Pipe from the Dashboard notice');
+  } else if (simulateStandardUser) {
     await page.getByTestId('nav-workflow').click();
     await page.getByTestId('wf-title').waitFor({ state: 'visible', timeout: 15_000 });
     await page.getByTestId('wf-admin-callout').waitFor({ state: 'visible', timeout: 15_000 });

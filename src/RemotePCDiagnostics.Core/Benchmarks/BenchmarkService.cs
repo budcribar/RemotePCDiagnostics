@@ -103,7 +103,21 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public event Action? Changed;
     /// <summary>A pass finished (completed or stopped with results kept) and was saved. Raised after the save, off the UI thread.</summary>
     public event Action<BenchmarkRun>? PassFinished;
-    public BenchmarkSettings Settings => _state.Settings;
+    /// <summary>
+    /// True while the Agent can do admin work. False (the Store app with no Agent) leaves out Start-up time and the restart around a pass:
+    /// the boot log is for administrators only, and only the Agent keeps a pass going across a restart. Null (tests) keeps them.
+    /// </summary>
+    public Func<bool>? HasAgent { get; init; }
+
+    private bool NoAgent => HasAgent?.Invoke() == false;
+
+    /// <summary>The saved settings, without Start-up time and the restart while there is no Agent (<see cref="HasAgent"/>).</summary>
+    public BenchmarkSettings Settings => WithoutAgentOnly(_state.Settings);
+
+    private BenchmarkSettings WithoutAgentOnly(BenchmarkSettings s) =>
+        NoAgent && (s.IsEnabled(BenchmarkKind.BootTime) || s.RestartBeforeAfter)
+            ? s with { Enabled = s.Enabled.Where(k => k != BenchmarkKind.BootTime).ToList(), RestartBeforeAfter = false }
+            : s;
     public BenchmarkRun? Before => _state.Before;
     public BenchmarkRun? After => _state.After;
     public bool AfterPendingRestart => _state.RunAfterOnStartup;
@@ -151,6 +165,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     /// </summary>
     public bool IsKindAvailable(BenchmarkKind kind)
     {
+        if (kind == BenchmarkKind.BootTime) return !NoAgent;
         if (!Benchmarks.IsDeveloperKind(kind)) return true;
         var lang = Benchmarks.LanguageFor(kind);
         if (lang is null) return false;
@@ -906,7 +921,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             ExperimentRunning = true;
             ExperimentStep = "Applying selected modifications…";
             Running = null;
-            settings = _state.Settings with { TargetDotNetSdkMajor = null, BuildWorkRoot = null };
+            settings = Settings with { TargetDotNetSdkMajor = null, BuildWorkRoot = null };
             _cts = cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         }
         Blocked = null;
@@ -1088,7 +1103,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             ExperimentRunning = true;
             ExperimentStep = "Step 1/3: Running Before benchmark…";
             Running = BenchmarkPhase.Before;
-            settings = _state.Settings with { TargetDotNetSdkMajor = null, BuildWorkRoot = null };
+            settings = Settings with { TargetDotNetSdkMajor = null, BuildWorkRoot = null };
             _cts = cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         }
         Blocked = null;

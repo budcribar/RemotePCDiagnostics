@@ -15,7 +15,8 @@
 else
 {
     var r = Store.Get(m.Name);
-    var rep = r.Report() as AreaReport; // a per-device module (drive health) combines its devices into one report
+    // A per-device module (drive health) combines its devices into one report. Fixes that need the Agent are left out while it isn't connected.
+    var rep = FixAccess.WithoutAgentHints(FixAccess.Offerable(r.Report() as AreaReport, App.AgentFixes), App.NoAgent);
     if (rep is not null) _lastReport = (m.Name, rep);
     var cachedRep = string.Equals(_lastReport.Module, m.Name, StringComparison.OrdinalIgnoreCase) ? _lastReport.Report : null;
     // Large files & folders before its first scan: how full the drive is, read live. It is not a result, so it stays out of

@@ -171,6 +171,7 @@ else if (diagEntries.Count == 0 && _range == HistoryRange.All)
 {
     <p class="status-line" data-testid="history-empty">@(_result.Available
         ? "No results yet. Results appear here after a check or test finishes."
+        : App.NoAgent ? "No results yet. Results appear here after a check or test finishes."
         : "Windows Event Log isn't available or has no results yet. Turn on Admin Repair Mode once so the Agent can register the app's event source.")</p>
 }
 else
