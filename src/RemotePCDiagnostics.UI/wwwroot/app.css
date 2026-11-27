@@ -1024,6 +1024,9 @@ table.detail tr.row-detail td { white-space: normal; padding: 10px 14px; font-fa
     color: var(--chip-err, #f87171);
 }
 
+/* The restart confirm step is just Confirm / Cancel (dialogs.js relabels it): the "Restart the app?" question crowds a phone's header. */
+.rbwv-control-bar .rbwv-control-question { display: none; }
+
 /* Hide Restart app on the local desktop host (visible only to remote technician) */
 .rpd-desktop-host .rbwv-control-restart,
 .rpd-desktop-host .rbwv-control-question,
