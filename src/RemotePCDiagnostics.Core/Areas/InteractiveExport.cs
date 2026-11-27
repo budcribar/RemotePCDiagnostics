@@ -33,8 +33,8 @@ public static class InteractiveExport
     private static string? T(string? v) => AreaReportExport.Text(v, AreaReportExport.MaxTextLength);
 
     public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
-        ModuleState? soundCheck = null, SoundCheckHelp? help = null) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help), Json);
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null, ModuleState? audioDevices = null, string? audioDevicesBusyId = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, audioDevices, audioDevicesBusyId), Json);
 
     /// <summary>The Sound check pane's helper lists: what it shows and why (Can't hear sound, or only one side heard).</summary>
     /// <param name="Mode">"cant-hear", "one-side" or null when no list shows.</param>
@@ -42,7 +42,7 @@ public static class InteractiveExport
     public sealed record SoundCheckHelp(string? Mode, bool Reading, IReadOnlyList<SoundCheckStep> Steps, bool ServicesOk);
 
     public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
-        ModuleState? soundCheck = null, SoundCheckHelp? help = null) => new
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null, ModuleState? audioDevices = null, string? audioDevicesBusyId = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -60,6 +60,7 @@ public static class InteractiveExport
             SpeakerToMicTest(page, speakerToMic),
             MicToSpeakerTest(page, micToSpeaker),
             SoundCheckTest(page, soundCheck ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.SoundCheck), false), help),
+            AudioDevicesExport(page, audioDevices ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.AudioDevices), false), audioDevicesBusyId),
         },
     };
 
@@ -256,6 +257,75 @@ public static class InteractiveExport
         };
     }
 
+    private static string Outcome(AudioDeviceOutcome o) => o switch
+    {
+        AudioDeviceOutcome.Passed => "passed",
+        AudioDeviceOutcome.Warning => "warning",
+        AudioDeviceOutcome.Failed => "failed",
+        AudioDeviceOutcome.Skipped => "skipped",
+        _ => "notrun",
+    };
+
+    private static string? Heard(SoundCheckAnswer? a) => a switch
+    {
+        SoundCheckAnswer.Both => "both", SoundCheckAnswer.OnlyLeft => "only-left", SoundCheckAnswer.OnlyRight => "only-right",
+        SoundCheckAnswer.Nothing => "nothing", _ => null,
+    };
+
+    /// <summary>
+    /// The per-device test: one entry per speaker and microphone, with its state, what RPCD measured (the recorded level for a microphone)
+    /// or what the person heard (for a speaker), its result and the Sound fixes on its row.
+    /// </summary>
+    private static object AudioDevicesExport(PageState page, ModuleState m, string? busyId)
+    {
+        var r = m.Result;
+        var rep = r.Payload as AudioDevicesReport;
+        var waiting = rep?.Devices.Any(d => d.WaitingForAnswer) == true;
+        return new
+        {
+            id = "audiodevices",
+            name = AudioDevicesTest.DisplayName,
+            @checked = page.CheckedTestIds.Contains("audiodevices"),
+            open = page.SelectedTestId == "audiodevices",
+            state = r.Status == DiagnosticStatus.Running ? "running" : m.PersonEntered ? "done"
+                : waiting ? "waiting-for-person-verdict"
+                : rep is { Untested: 0, Tested: > 0 } ? "done"
+                : rep is { Tested: > 0 } ? "in-progress" : "waiting-for-person",
+            runId = r.RunId,
+            busyDevice = busyId,
+            tested = rep?.Tested,
+            untested = rep?.Untested,
+            notice = T(rep?.Notice),
+            devices = rep?.Devices.Select(d => new
+            {
+                id = d.Id,
+                name = V(d.Name),
+                flow = d.Flow == AudioFlow.Output ? "output" : "input",
+                kind = V(d.Kind),
+                state = d.State.ToString().ToLowerInvariant(),
+                isDefault = d.IsDefault,
+                muted = d.Muted,
+                volume = d.Volume is { } v ? Math.Round(v * 100) : (double?)null,
+                result = Outcome(d.Outcome),
+                summary = V(d.Result),
+                waitingForAnswer = d.WaitingForAnswer,
+                measured = d.Flow == AudioFlow.Output
+                    ? d.Channels is null ? null : (object)new { channels = d.Channels }
+                    : d.LevelDbfs is null ? null : new { levelDbfs = d.LevelDbfs, peakDbfs = d.PeakDbfs },
+                heard = Heard(d.Heard),
+                hint = T(d.Hint),
+                fixes = d.Actions?.Select(a => new { kind = a.Kind.ToString(), button = V(a.ButtonText), target = a.Target }).ToList(),
+            }).ToList(),
+            personOutcome = m.PersonEntered ? Person(r.Status) : null,
+            message = T(r.Message),
+            instructions = "Every speaker and microphone is listed with its state. For a speaker, press Play: a chime plays on the left, then "
+                + "the right, and the person answers Heard both, Only left, Only right or Nothing. For a microphone, press Record and talk for "
+                + "3 seconds: RPCD judges the level (no signal = failed, very low = speak closer) and Play back lets the person hear it. "
+                + "Disabled, muted or very quiet devices show their fix button. For HDMI or DisplayPort sound, connect a monitor or TV with speakers.",
+            reportIf = ReportIf.AudioDevices,
+        };
+    }
+
     /// <summary>
     /// When an agent coaching a test should report a learning (Admin's report_learning tool): the test's instructions or screen did not
     /// match what the person has. One line each, written for the agent, not the person.
@@ -272,6 +342,8 @@ public static class InteractiveExport
             + "the test cannot start.";
         public const string SoundCheck = "The person hears the chime on the wrong side, hears nothing although the Can't hear sound list is "
             + "empty, or the list shows a problem the person doesn't have.";
+        public const string AudioDevices = "A speaker or microphone the person has is not listed, the chime plays on a different device than "
+            + "the one pressed, a microphone the person hears in Play back is judged no signal, or a fix button doesn't change the device.";
         public const string MicToSpeaker = "The person's microphone or speaker is not listed, there is no playback, or feedback makes the test "
             + "unusable.";
     }

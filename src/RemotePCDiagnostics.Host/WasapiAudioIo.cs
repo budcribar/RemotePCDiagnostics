@@ -202,6 +202,45 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
         catch (Exception ex) when (ex is not OperationCanceledException) { throw Map(ex); }
     }, ct);
 
+    public Task<RecordResult> RecordAsync(RecordRequest request, CancellationToken ct) => Task.Run(async () =>
+    {
+        try
+        {
+            // As apps hear it: shared mode with Windows' effects, mute and level as they are (a muted mic records silence: the finding).
+            using var en = new MMDeviceEnumerator();
+            using var inDev = Device(en, request.InputId, DataFlow.Capture);
+            using var mic = Capture.Open(inDev, loopback: false, raw: false, log,
+                request.OnLevel is { } onLevel ? block => { try { onLevel(AudioMath.ToDbfs(AudioMath.Rms(block))); } catch { } } : null);
+            mic.Start();
+            try { await Task.Delay(request.Duration, ct).ConfigureAwait(false); }
+            finally { mic.Stop(); }
+            var samples = mic.Samples();
+            Log($"recorded {samples.Length} samples at {mic.SampleRate} Hz from '{inDev.FriendlyName}'");
+            return new RecordResult(samples, mic.SampleRate);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { throw Map(ex); }
+    }, ct);
+
+    public Task PlaySamplesAsync(PlaySamplesRequest request, CancellationToken ct) => Task.Run(async () =>
+    {
+        try
+        {
+            using var en = new MMDeviceEnumerator();
+            using var outDev = Device(en, request.OutputId, DataFlow.Render);
+            var all = request.Samples.ToArray();
+            AudioMath.ApplyFadeIn(all, Math.Max(1, request.SampleRate / 20));
+            var pos = 0;
+            await PlayAsync(outDev, request.SampleRate, span =>
+            {
+                var n = Math.Min(span.Length, all.Length - pos);
+                all.AsSpan(pos, n).CopyTo(span);
+                pos += n;
+                return n;
+            }, TimeSpan.FromSeconds((double)all.Length / Math.Max(1, request.SampleRate)) + TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { throw Map(ex); }
+    }, ct);
+
     // Per-call state for PlayAndCaptureAsync (calls never overlap: DiagnosticsService runs a module once at a time).
     private float[] _mic = [];
     private int _micRate;
