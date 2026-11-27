@@ -121,6 +121,8 @@ public static class HostServices
         // Audio tests (speaker→mic, mic→speaker): on-demand only, own pages, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioIo>(_ => new WasapiAudioIo(L<WasapiAudioIo>()));
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(_ => new WasapiAudioStateSource(L<WasapiAudioStateSource>()));
+        // The USB tree (configuration manager and the hub driver), read in the app: no administrator rights needed.
+        services.AddSingleton<RemotePCDiagnostics.Core.Usb.IUsbTreeSource>(_ => new RemotePCDiagnostics.Core.Usb.WindowsUsbTreeSource(L<RemotePCDiagnostics.Core.Usb.WindowsUsbTreeSource>()));
         // NPU test: on-demand only, own page, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(L<WindowsNpuIo>()));
         // GPU stress test: Direct3D 11 compute devices.
@@ -407,6 +409,7 @@ public sealed class HostQueryBackendSlot
             Wmi = sp.GetService<RemotePCDiagnostics.Core.DataSources.IWmiSource>(),
             Packages = sp.GetService<RemotePCDiagnostics.Core.DataSources.IPackageSource>(),
             Audio = sp.GetService<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(),
+            Usb = sp.GetService<RemotePCDiagnostics.Core.Usb.IUsbTreeSource>(),
         };
     }
 }

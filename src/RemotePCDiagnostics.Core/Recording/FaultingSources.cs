@@ -16,6 +16,7 @@ public sealed class FaultingSources(FaultPlan plan)
     public IPackageSource Packages(IPackageSource inner) => new FaultingPackages(inner, plan);
     public Security.IAntivirusProductSource Antivirus(Security.IAntivirusProductSource inner) => new FaultingAntivirus(inner, plan);
     public Core.Audio.IAudioStateSource Audio(Core.Audio.IAudioStateSource inner) => new FaultingAudio(inner, plan);
+    public Core.Usb.IUsbTreeSource Usb(Core.Usb.IUsbTreeSource inner) => new FaultingUsb(inner, plan);
     public IProcessLauncher Launcher(IProcessLauncher inner) => new FaultingLauncher(inner, plan);
     public Alerts.IAlertReadings Alerts(Alerts.IAlertReadings inner) => new FaultingAlerts(inner, plan);
 
@@ -97,6 +98,24 @@ public sealed class FaultingSources(FaultPlan plan)
             {
                 Faults.Empty => answer with { Endpoints = [], Sessions = [] },
                 Faults.Garbage => Core.Audio.AudioState.FromJson(Faults.GarbageText),
+                _ => answer,
+            };
+        }
+    }
+
+    private sealed class FaultingUsb(Core.Usb.IUsbTreeSource inner, FaultPlan plan) : Core.Usb.IUsbTreeSource
+    {
+        public async Task<Core.Usb.UsbSnapshot> ReadAsync(CancellationToken ct = default)
+        {
+            if (plan.For(RecordedCall.UsbKind, RecordingReplay.UsbKey) is not { } rule)
+                return await inner.ReadAsync(ct).ConfigureAwait(false);
+            await FaultPlan.WaitAsync(rule, ct).ConfigureAwait(false);
+            var answer = await inner.ReadAsync(ct).ConfigureAwait(false);
+            if (plan.ErrorFor(rule) is { } error) return Core.Usb.UsbSnapshot.Unavailable(error);
+            return rule.Fault switch
+            {
+                Faults.Empty => answer with { Nodes = [] },
+                Faults.Garbage => Core.Usb.UsbSnapshot.FromJson(Faults.GarbageText),
                 _ => answer,
             };
         }

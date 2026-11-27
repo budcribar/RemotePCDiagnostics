@@ -57,6 +57,8 @@ public static class WmiQueryPolicy
         @"root\Microsoft\Windows\Defender", @"root\SecurityCenter2", @"root\cimv2\Security\MicrosoftVolumeEncryption",
         // Windows maintenance: System Restore points (SystemRestore).
         @"root\default",
+        // PC makers' BIOS settings, read only (USB ports turned off in the BIOS, HP's battery charge limit): HP, Dell. Lenovo's is in root\wmi.
+        @"root\HP\InstrumentedBIOS", @"root\dcim\sysman\biosattributes",
     };
 
     /// <summary>Why the Agent won't run this query, or null when it will.</summary>

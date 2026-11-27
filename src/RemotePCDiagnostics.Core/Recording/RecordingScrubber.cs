@@ -39,8 +39,9 @@ public sealed class RecordingScrubber
     };
 
     /// <summary>Device instance paths of Bluetooth and USB devices hold the device's MAC address or serial (<c>BTHENUM\...\8&amp;..._A0B1C2D3E4F5</c>,
-    /// <c>USB\VID_...\SERIAL</c>): replaced by a placeholder, the same one wherever the same path appears, so joins still work.</summary>
-    public static readonly IReadOnlySet<string> DeviceIdNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "DeviceID", "InstanceId" };
+    /// <c>USB\VID_...\SERIAL</c>): replaced by a placeholder, the same one wherever the same path appears, so joins still work.
+    /// <c>parentInstanceId</c> is the USB tree's link to a node's parent (<see cref="Usb.UsbNode"/>).</summary>
+    public static readonly IReadOnlySet<string> DeviceIdNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "DeviceID", "InstanceId", "ParentInstanceId" };
 
     private static bool IsPersonalDeviceId(string s) =>
         s.StartsWith("BTH", StringComparison.OrdinalIgnoreCase) || s.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase);

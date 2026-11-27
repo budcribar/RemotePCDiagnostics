@@ -155,6 +155,7 @@ the About page switches each one.
 | Sleep, wake & standby drain (`SleepWake`) | `eventlog.query` | System log power events |
 | Programs & updates (`Programs`) | `wmi.query`, `packages.list` | WMI through the Agent, and the signed-in user's Store packages |
 | Sound (`Sound`) | `audio.state`, `wmi.query` | Core Audio read in the app (endpoints, defaults, mute, volume, formats, app sessions), WMI through the Agent (services, problem devices, sound drivers). Endpoint fixes (unmute, volume, default device, enable, format, enhancements, app unmute) run in the app through Core Audio and `IPolicyConfig`; the device-wide privacy switch goes through the Agent (`capture_privacy_set`), and starting or restarting Windows Audio through `audio_services` |
+| USB ports & devices (`UsbPorts`) | `usb.tree`, `eventlog.query`, `wmi.query` | The USB tree read in the app (configuration manager and the hub driver's read-only port IOCTLs: controllers, hubs, ports, devices, negotiated speed, port status), the System log's USB hub and controller errors, and the PC maker's BIOS port settings through the Agent (HP `HP_BIOSEnumeration`, Lenovo `Lenovo_BiosSetting`, Dell `EnumerationAttribute`; read only) |
 | Hardware inventory, Services, Device Manager & drivers, Network, Resource hogs, Battery & power, Security essentials | `wmi.query` | WMI queries the app passes to the Agent (`WmiQueryPolicy`) |
 
 How it works:

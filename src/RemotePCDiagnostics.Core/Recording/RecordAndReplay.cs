@@ -68,6 +68,17 @@ public sealed class RecordingAudioStateSource(Audio.IAudioStateSource inner, Cal
     }
 }
 
+/// <summary>Passes each USB tree read to the real source and records the answer.</summary>
+public sealed class RecordingUsbTreeSource(Usb.IUsbTreeSource inner, CallRecorder recorder) : Usb.IUsbTreeSource
+{
+    public async Task<Usb.UsbSnapshot> ReadAsync(CancellationToken ct = default)
+    {
+        var r = await inner.ReadAsync(ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromUsb(r));
+        return r;
+    }
+}
+
 public sealed class RecordingRegistrySource(IRegistrySource inner, CallRecorder recorder) : IRegistrySource
 {
     public async Task<WmiQueryResult> ReadAsync(RegistryRead read, CancellationToken ct = default)
@@ -134,6 +145,7 @@ public sealed class RecordingReplay
     public IPackageSource Packages => new ReplayPackages(this);
     public Security.IAntivirusProductSource AntivirusProducts => new ReplayAntivirusProducts(this);
     public Audio.IAudioStateSource Audio => new ReplayAudio(this);
+    public Usb.IUsbTreeSource Usb => new ReplayUsb(this);
     public IProcessLauncher Launcher => new ReplayLauncher(this);
     public Alerts.IAlertReadings Alerts => new ReplayAlerts(this);
 
@@ -160,6 +172,7 @@ public sealed class RecordingReplay
         RecordedCall.PackagesKind => PackagesKey,
         RecordedCall.AntivirusKind => AntivirusKey,
         RecordedCall.AudioKind => AudioKey,
+        RecordedCall.UsbKind => UsbKey,
         RecordedCall.FileKind => FileKey(c.File ?? ""),
         RecordedCall.AlertsKind => AlertsKey(c.Query ?? ""),
         _ => ProcessKey(c.File ?? "", c.Args ?? []),
@@ -168,6 +181,7 @@ public sealed class RecordingReplay
     public const string PackagesKey = "packages";
     public const string AntivirusKey = "antivirus";
     public const string AudioKey = "audio";
+    public const string UsbKey = "usb";
     public static string FileKey(string name) => "file\n" + name;
     public static string AlertsKey(string reading) => "alerts\n" + reading;
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
@@ -209,6 +223,14 @@ public sealed class RecordingReplay
             Task.FromResult(replay.Answer(AudioKey, "audio") is { } c
                 ? c.Error is { } e && c.StdOut is null ? RemotePCDiagnostics.Core.Audio.AudioState.Unavailable(e) : RemotePCDiagnostics.Core.Audio.AudioState.FromJson(c.StdOut)
                 : RemotePCDiagnostics.Core.Audio.AudioState.Unavailable("Not in the recording."));
+    }
+
+    private sealed class ReplayUsb(RecordingReplay replay) : RemotePCDiagnostics.Core.Usb.IUsbTreeSource
+    {
+        public Task<RemotePCDiagnostics.Core.Usb.UsbSnapshot> ReadAsync(CancellationToken ct = default) =>
+            Task.FromResult(replay.Answer(UsbKey, "usb") is { } c
+                ? c.Error is { } e && c.StdOut is null ? RemotePCDiagnostics.Core.Usb.UsbSnapshot.Unavailable(e) : RemotePCDiagnostics.Core.Usb.UsbSnapshot.FromJson(c.StdOut)
+                : RemotePCDiagnostics.Core.Usb.UsbSnapshot.Unavailable("Not in the recording."));
     }
 
     /// <summary>The recorded events are replayed whatever the window asked for; the Agent drops the ones it has seen by record id.</summary>

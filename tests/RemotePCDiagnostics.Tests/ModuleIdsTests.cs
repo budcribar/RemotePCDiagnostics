@@ -46,6 +46,8 @@ public class ModuleIdsTests
         ["Sound"] = "56dea360-0bd7-4230-b072-0d54d91e90e4",
         ["WindowsMaintenance"] = "f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41",
         ["SoundCheck"] = "b81b0a57-43d2-4ad4-8572-1480fbe6cf0f",
+        ["UsbPorts"] = "b6237a7b-102a-4a68-8553-0fed276ef946",
+        ["UsbPortCheck"] = "1b68970d-8ec7-45ee-bc39-bc88bca9de77",
     };
 
     [Fact]
