@@ -121,6 +121,8 @@ public static class HostServices
         // Audio tests (speaker→mic, mic→speaker): on-demand only, own pages, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioIo>(_ => new WasapiAudioIo(L<WasapiAudioIo>()));
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(_ => new WasapiAudioStateSource(L<WasapiAudioStateSource>()));
+        // Disk surface scan: the Agent reads the raw disk (admin); the app only asks it to start, report and stop.
+        services.AddSingleton<RemotePCDiagnostics.Core.Storage.IDiskScanSource>(sp => new RemotePCDiagnostics.Core.Storage.AgentDiskScanSource(sp.GetRequiredService<SystemCommandRunner>()));
         // NPU test: on-demand only, own page, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(L<WindowsNpuIo>()));
         // GPU stress test: Direct3D 11 compute devices.
