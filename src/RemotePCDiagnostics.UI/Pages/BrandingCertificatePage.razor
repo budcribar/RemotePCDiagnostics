@@ -130,7 +130,7 @@
 
 @if (benchRunning && _activeInteractiveSection is { Length: > 0 })
 {
-    <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="@_activeInteractiveSection" OnOutcomeChanged="OnBenchInteractiveOutcomeChanged" />
+    <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="@_activeInteractiveSection" RemoteSessionActive="@(Session.Mode == SessionMode.Remote || _isRemoteDisplay)" OnOutcomeChanged="OnBenchInteractiveOutcomeChanged" />
 }
 
 @{

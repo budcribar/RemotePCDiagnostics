@@ -863,6 +863,8 @@
     {
         base.Dispose();
         ActivePointerTest.Changed -= OnPointerTestChanged;
+        _fallbackPointerTest?.Dispose();
+        _fallbackPointerTest = null;
         _batchCts?.Cancel();
         _interactiveWaitTcs?.TrySetCanceled();
         _batchCts?.Dispose();
@@ -953,7 +955,7 @@
     private async Task WaitForPointerTestAsync(CancellationToken ct)
     {
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var started = false;
+        var started = ActivePointerTest.Current.Verdict == PointerTestVerdict.Running;
         void OnChanged()
         {
             var v = ActivePointerTest.Current.Verdict;

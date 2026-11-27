@@ -16,6 +16,9 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
     private readonly object _gate = new();
     private readonly Dictionary<nint, DeviceInfo> _devices = [];
     private readonly Dictionary<nint, bool> _buttonDown = [];
+    private static readonly TimeSpan PtpMouseWindow = TimeSpan.FromMilliseconds(250);
+    private DateTimeOffset _lastPtpAt;
+    private DeviceInfo? _lastPtpDevice;
     private int _leases;
     private Thread? _thread;
     private nint _hwnd;
@@ -76,12 +79,12 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
     private void StartLocked()
     {
         _failure = null;
-        using var ready = new ManualResetEventSlim();
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() => Run(ready)) { IsBackground = true, Name = "RPCD raw input" };
         _thread = thread;
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        ready.Wait(TimeSpan.FromSeconds(5));
+        ready.Task.Wait(TimeSpan.FromSeconds(5));
     }
 
     // Outside the lock: the input thread takes it while it resolves devices.
@@ -97,12 +100,14 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
             _thread = null;
             _hwnd = 0;
             _buttonDown.Clear();
+            _lastPtpAt = default;
+            _lastPtpDevice = null;
         }
         if (hwnd != 0) PostMessageW(hwnd, WmClose, 0, 0);
         thread.Join(TimeSpan.FromSeconds(2));
     }
 
-    private void Run(ManualResetEventSlim ready)
+    private void Run(TaskCompletionSource ready)
     {
         try
         {
@@ -126,7 +131,7 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
             if (!Register(hwnd, RidevInputSink)) { Fail("Windows refused to report raw input."); DestroyWindow(hwnd); return; }
             // Not under the lock: Listen holds it while it waits for this thread to be ready.
             Interlocked.Exchange(ref _hwnd, hwnd);
-            ready.Set();
+            ready.TrySetResult();
             Msg msg;
             while (GetMessageW(&msg, 0, 0, 0) > 0)
             {
@@ -141,7 +146,7 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
         }
         finally
         {
-            ready.Set();
+            ready.TrySetResult();
         }
     }
 
@@ -183,9 +188,10 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
         uint size = 0;
         var headerSize = (uint)sizeof(RawInputHeader);
         GetRawInputData(handle, RidInput, null, ref size, headerSize);
-        if (size == 0 || size > 64 * 1024) return;
+        if (size < headerSize || size > 64 * 1024) return;
         var buffer = stackalloc byte[(int)size];
         if (GetRawInputData(handle, RidInput, buffer, ref size, headerSize) != size) return;
+        var payloadSize = size - headerSize;
         var header = (RawInputHeader*)buffer;
         var data = buffer + headerSize;
         var now = DateTimeOffset.UtcNow;
@@ -196,32 +202,57 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
         {
             case RimTypeKeyboard:
             {
+                if (payloadSize < 4) break;
                 var flags = *(ushort*)(data + 2);
                 if ((flags & RiKeyBreak) == 0) Raise(new PhysicalInputEvent(now, PhysicalInputKind.Key, Injected: injected));
                 break;
             }
             case RimTypeMouse:
             {
+                if (payloadSize < 20) break;
+                // Windows' Precision Touchpad synthesizer delivers RIM_TYPEMOUSE with hDevice == 0 right after a verified PTP HID report.
+                if (header->Device == 0)
+                {
+                    DeviceInfo? ptp;
+                    lock (_gate) ptp = _lastPtpDevice is not null && now - _lastPtpAt <= PtpMouseWindow ? _lastPtpDevice : null;
+                    if (ptp is not null)
+                    {
+                        device = ptp;
+                        injected = false;
+                    }
+                }
                 var buttons = *(ushort*)(data + 4);
                 var buttonData = *(short*)(data + 6);
                 var dx = *(int*)(data + 12);
                 var dy = *(int*)(data + 16);
                 var id = injected ? null : device!.EntryId;
                 var kind = injected ? (PointerDeviceKind?)null : device!.Kind;
+                var isPrecisionTouchpad = !injected && device is { Kind: PointerDeviceKind.Touchpad, Precision: true };
                 if (dx != 0 || dy != 0) Raise(new PhysicalInputEvent(now, PhysicalInputKind.Move, id, kind, injected));
-                if ((buttons & 0x0001) != 0) Raise(new PhysicalInputEvent(now, PhysicalInputKind.ButtonDown, id, kind, injected, PointerButton.Left));
-                if ((buttons & 0x0004) != 0) Raise(new PhysicalInputEvent(now, PhysicalInputKind.ButtonDown, id, kind, injected, PointerButton.Right));
-                if ((buttons & 0x0010) != 0) Raise(new PhysicalInputEvent(now, PhysicalInputKind.ButtonDown, id, kind, injected, PointerButton.Middle));
+                // For a Precision Touchpad, real physical presses come from OnDigitizerReport (HID button page 0x09);
+                // RIM_TYPEMOUSE button flags are synthesized for taps too and would falsely mark a tap as a press.
+                if (!isPrecisionTouchpad)
+                {
+                    if ((buttons & 0x0001) != 0) Raise(new PhysicalInputEvent(now, PhysicalInputKind.ButtonDown, id, kind, injected, PointerButton.Left));
+                    if ((buttons & 0x0004) != 0) Raise(new PhysicalInputEvent(now, PhysicalInputKind.ButtonDown, id, kind, injected, PointerButton.Right));
+                    if ((buttons & 0x0010) != 0) Raise(new PhysicalInputEvent(now, PhysicalInputKind.ButtonDown, id, kind, injected, PointerButton.Middle));
+                }
                 if ((buttons & 0x0400) != 0) Raise(new PhysicalInputEvent(now, PhysicalInputKind.Wheel, id, kind, injected, Value: Ticks(buttonData)));
                 if ((buttons & 0x0800) != 0) Raise(new PhysicalInputEvent(now, PhysicalInputKind.HWheel, id, kind, injected, Value: Ticks(buttonData)));
                 break;
             }
             case RimTypeHid when device is { Preparsed: not null } d:
             {
+                if (payloadSize < 8) break;
                 var reportSize = *(uint*)data;
                 var reports = *(uint*)(data + 4);
+                if (reportSize == 0 || reports == 0 || (ulong)reports * reportSize > payloadSize - 8) break;
+                if (!injected && d.Kind == PointerDeviceKind.Touchpad && d.Precision)
+                {
+                    lock (_gate) { _lastPtpAt = now; _lastPtpDevice = d; }
+                }
                 var report = data + 8;
-                for (var i = 0; i < reports && reportSize > 0; i++, report += reportSize)
+                for (var i = 0; i < reports; i++, report += reportSize)
                     OnDigitizerReport(header->Device, d, injected, report, reportSize, now);
                 break;
             }
@@ -235,16 +266,22 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
             var contacts = 0;
             if (HidP_GetUsageValue(HidPInput, 0x0D, 0, 0x54, out var count, preparsed, report, length) == HidpStatusSuccess)
                 contacts = (int)count;
-            // Tip switches that are on: one per finger (or the pen tip) touching.
+            // Tip switches that are on: one per finger (or the pen tip) touching; InRange (0x32) covers pen hover.
             var usages = stackalloc ushort[16];
             uint usageCount = 16;
+            var inRange = false;
             if (HidP_GetUsages(HidPInput, 0x0D, 0, usages, ref usageCount, preparsed, report, length) == HidpStatusSuccess)
             {
                 var tips = 0;
-                for (var i = 0; i < usageCount; i++) if (usages[i] == 0x42) tips++;
+                for (var i = 0; i < usageCount; i++)
+                {
+                    if (usages[i] == 0x42) tips++;
+                    else if (usages[i] == 0x32) inRange = true;
+                }
                 contacts = Math.Max(contacts, tips);
             }
             if (contacts > 0) Raise(new PhysicalInputEvent(now, PhysicalInputKind.Contacts, injected ? null : d.EntryId, d.Kind, injected, Value: contacts));
+            else if (d.Kind == PointerDeviceKind.Pen && inRange) Raise(new PhysicalInputEvent(now, PhysicalInputKind.Move, injected ? null : d.EntryId, d.Kind, injected));
 
             if (d.Kind != PointerDeviceKind.Touchpad) return;
             usageCount = 16;

@@ -235,6 +235,12 @@ public sealed class PointerTestService : IDisposable
         Apply(PointerStep.Drag, s => box == PointerButton.Left ? s with { LeftDragged = true } : s with { RightDragged = true });
     }
 
+    /// <summary>The drag was released outside a drop target.</summary>
+    public void CancelDrag()
+    {
+        lock (_lock) _dragButton = null;
+    }
+
     /// <summary>A scroll in the test area, in the browser's deltas (negative <paramref name="deltaY"/> is up).</summary>
     public async Task ScrollAsync(double deltaX, double deltaY)
     {
@@ -331,7 +337,8 @@ public sealed class PointerTestService : IDisposable
             PointerStep.Scroll => s.ScrollUp >= ScrollsNeeded && s.ScrollDown >= ScrollsNeeded,
             PointerStep.Drag => s.LeftDragged && s.RightDragged,
             PointerStep.TouchpadGestures => s.TapToClick && s.TwoFingerClick && s.MaxTouchpadContacts >= 3,
-            PointerStep.TouchGrid => _cells.Count >= GridColumns * GridRows,
+            PointerStep.TouchGrid => _cells.Count >= GridColumns * GridRows
+                && (s.Device?.Kind != PointerDeviceKind.Touchscreen || s.MaxTouchPoints >= 2),
             _ => false,
         };
         if (done) EndStepLocked(PointerStepState.Passed, null);

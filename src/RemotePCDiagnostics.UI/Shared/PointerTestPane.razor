@@ -98,7 +98,9 @@
     var index = snap.Steps.ToList().FindIndex(s => s.Step == current) + 1;
     <div class="ptr-overlay" data-testid="pointer-overlay" role="dialog" aria-modal="true" aria-label="Pointer and touch test"
          @oncontextmenu:preventDefault="true"
-         @onpointermove="OnOverlayMove">
+         @onpointermove="@(current == PointerStep.Drag ? EventCallback.Factory.Create<PointerEventArgs>(this, OnOverlayMove) : default)"
+         @onpointerup="@(current == PointerStep.Drag ? EventCallback.Factory.Create<PointerEventArgs>(this, OnOverlayUp) : default)"
+         @onpointercancel="@(current == PointerStep.Drag ? EventCallback.Factory.Create<PointerEventArgs>(this, OnOverlayUp) : default)">
         @if (current == PointerStep.Move)
         {
             @for (var c = 0; c < 4; c++)
@@ -151,7 +153,7 @@
                         var done = b == PointerButton.Left ? snap.LeftDragged : snap.RightDragged;
                         var name = b == PointerButton.Left ? "Left" : "Right";
                         <div class="ptr-drop @(done ? "ptr-hit" : "")" data-testid="pointer-drop-@name.ToLowerInvariant()"
-                             @onpointerup="e => OnDrop(b, e)">@name target</div>
+                             @onpointerup="e => OnDrop(b, e)" @onpointerup:stopPropagation="true">@name target</div>
                         @if (!done)
                         {
                             var dragging = _dragBox == b;
@@ -206,7 +208,7 @@
     private PointerButton? _dragBox;
     private double _dragX, _dragY;
     private readonly HashSet<long> _touches = [];
-    private double _viewW, _viewH;
+    private double _gridLeft, _gridTop, _gridW, _gridH;
 
     protected override void OnParametersSet()
     {
@@ -243,18 +245,19 @@
 
     private void OnNoMiddle(ChangeEventArgs e) => Service.SetNoMiddleButton(e.Value is true || string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase));
 
-    private async Task Start()
+    private Task Start()
     {
-        if (IsRemoteDisplay) return;
+        if (IsRemoteDisplay) return Task.CompletedTask;
         var device = _devices.FirstOrDefault(d => d.Id == _deviceId) ?? _devices.FirstOrDefault();
-        if (device is null) return;
+        if (device is null) return Task.CompletedTask;
         _dragBox = null;
         _touches.Clear();
+        (_gridLeft, _gridTop, _gridW, _gridH) = (0, 0, 0, 0);
         Service.Start(device);
         StartTicker();
-        if (PointerTestService.StepsFor(device).Contains(PointerStep.TouchGrid)) await ReadViewportAsync();
         _fullscreen = true;
         App.Fullscreen?.RequestFullscreen(true);
+        return Task.CompletedTask;
     }
 
     private void Stop()
@@ -266,6 +269,7 @@
     private void StartTicker()
     {
         _tickCts?.Cancel();
+        _tickCts?.Dispose();
         _ticker?.Dispose();
         _tickCts = new CancellationTokenSource();
         _ticker = new PeriodicTimer(TimeSpan.FromSeconds(1));
@@ -302,12 +306,14 @@
         }
     }
 
-    private async Task ReadViewportAsync()
+    private async Task ReadGridRectAsync()
     {
         try
         {
-            var size = await JS.InvokeAsync<double[]>("eval", "[window.innerWidth, window.innerHeight]");
-            if (size is { Length: 2 }) (_viewW, _viewH) = (size[0], size[1]);
+            var rect = await JS.InvokeAsync<double[]>("eval",
+                "(function(){var el=document.querySelector('[data-testid=\"pointer-grid\"]');if(el){var r=el.getBoundingClientRect();if(r.width>0&&r.height>0)return [r.left,r.top,r.width,r.height];}return [0,0,window.innerWidth,window.innerHeight];})()");
+            if (rect is { Length: 4 } && rect[2] > 0 && rect[3] > 0)
+                (_gridLeft, _gridTop, _gridW, _gridH) = (rect[0], rect[1], rect[2], rect[3]);
         }
         catch { }
     }
@@ -337,11 +343,22 @@
         if (_dragBox is not null) (_dragX, _dragY) = (e.ClientX, e.ClientY);
     }
 
+    private void OnOverlayUp(PointerEventArgs e)
+    {
+        if (_dragBox is null) return;
+        _dragBox = null;
+        Service.CancelDrag();
+    }
+
     private Task OnDrop(PointerButton target, PointerEventArgs e)
     {
         var box = _dragBox;
         _dragBox = null;
-        if (box != target || ButtonOf(e.Button) is not { } b) return Task.CompletedTask;
+        if (box != target || ButtonOf(e.Button) is not { } b)
+        {
+            Service.CancelDrag();
+            return Task.CompletedTask;
+        }
         return Service.DropAsync(target, b);
     }
 
@@ -351,6 +368,7 @@
     {
         if (!IsTouch(e)) return;
         _touches.Add(e.PointerId);
+        await ReadGridRectAsync();
         await GridTouch(e);
     }
 
@@ -360,14 +378,18 @@
 
     private async Task GridTouch(PointerEventArgs e)
     {
-        if (_viewW <= 0) await ReadViewportAsync();
-        await Service.TouchAsync(e.ClientX, e.ClientY, _viewW, _viewH, Math.Max(1, _touches.Count));
+        if (_gridW <= 0 || _gridH <= 0) await ReadGridRectAsync();
+        if (_gridW <= 0 || _gridH <= 0) return;
+        await Service.TouchAsync(e.ClientX - _gridLeft, e.ClientY - _gridTop, _gridW, _gridH, Math.Max(1, _touches.Count));
     }
 
     public void Dispose()
     {
         EndOverlay();
+        _tickCts?.Dispose();
+        _tickCts = null;
         _ticker?.Dispose();
+        _ticker = null;
         if (Service.Current.Verdict == PointerTestVerdict.Running) Service.Cancel();
         if (_subscribed is not null) _subscribed.Changed -= OnChanged;
     }

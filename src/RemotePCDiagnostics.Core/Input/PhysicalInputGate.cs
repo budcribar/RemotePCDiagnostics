@@ -20,10 +20,19 @@ public sealed class PhysicalInputGate : IDisposable
     private readonly TimeSpan _grace;
     private readonly object _gate = new();
     private readonly LinkedList<PhysicalInputEvent> _recent = new();
+    private readonly List<Waiter> _waiters = [];
     private IDisposable? _lease;
     private int _ignored;
     private int _injected;
     private DateTimeOffset? _lastTouchpadPress;
+
+    private sealed class Waiter(PhysicalInputKind kind, PointerButton? button, int minContacts)
+    {
+        public PhysicalInputKind Kind { get; } = kind;
+        public PointerButton? Button { get; } = button;
+        public int MinContacts { get; } = minContacts;
+        public TaskCompletionSource<bool> Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
 
     /// <param name="grace">How long to wait for the hardware report when the page event got here first.</param>
     public PhysicalInputGate(IPhysicalInputMonitor? monitor, TimeProvider? clock = null, TimeSpan? grace = null)
@@ -66,7 +75,21 @@ public sealed class PhysicalInputGate : IDisposable
         _monitor!.Input -= OnInput;
         _lease.Dispose();
         _lease = null;
-        lock (_gate) { _recent.Clear(); _lastTouchpadPress = null; }
+        List<TaskCompletionSource<bool>>? pending = null;
+        lock (_gate)
+        {
+            _recent.Clear();
+            _lastTouchpadPress = null;
+            if (_waiters.Count > 0)
+            {
+                pending = _waiters.Select(w => w.Ready).ToList();
+                _waiters.Clear();
+            }
+        }
+        if (pending is not null)
+        {
+            foreach (var tcs in pending) tcs.TrySetResult(false);
+        }
     }
 
     public void ResetCounts()
@@ -80,6 +103,7 @@ public sealed class PhysicalInputGate : IDisposable
     public void OnInput(PhysicalInputEvent e)
     {
         var forward = false;
+        List<TaskCompletionSource<bool>>? wake = null;
         lock (_gate)
         {
             if (e.Injected)
@@ -89,9 +113,33 @@ public sealed class PhysicalInputGate : IDisposable
             }
             if (e.Kind != PhysicalInputKind.Key && DeviceId is not null && e.DeviceId != DeviceId) return;
             if (e.Kind == PhysicalInputKind.ButtonDown && e.DeviceKind == PointerDeviceKind.Touchpad) _lastTouchpadPress = e.At;
-            _recent.AddLast(e);
-            while (_recent.First is { } first && e.At - first.Value.At > Keep) _recent.RemoveFirst();
+            var consumed = false;
+            if (_waiters.Count > 0 && _clock.GetUtcNow() - e.At <= Window)
+            {
+                for (var i = 0; i < _waiters.Count; i++)
+                {
+                    var w = _waiters[i];
+                    if (!Matches(e, w.Kind, w.Button, w.MinContacts)) continue;
+                    _waiters.RemoveAt(i);
+                    i--;
+                    (wake ??= []).Add(w.Ready);
+                    if (e.Kind is PhysicalInputKind.Key or PhysicalInputKind.ButtonDown)
+                    {
+                        consumed = true;
+                        break;
+                    }
+                }
+            }
+            if (!consumed)
+            {
+                _recent.AddLast(e);
+                while (_recent.First is { } first && e.At - first.Value.At > Keep) _recent.RemoveFirst();
+            }
             forward = e.Kind != PhysicalInputKind.Key;
+        }
+        if (wake is not null)
+        {
+            foreach (var tcs in wake) tcs.TrySetResult(true);
         }
         if (forward)
         {
@@ -104,9 +152,28 @@ public sealed class PhysicalInputGate : IDisposable
     public async Task<bool> AcceptAsync(PhysicalInputKind kind, PointerButton? button = null, int minContacts = 1)
     {
         if (!Verified) return AcceptUnverified();
-        if (TryMatch(kind, button, minContacts, countMiss: false)) return true;
-        if (_grace > TimeSpan.Zero) await Task.Delay(_grace, _clock).ConfigureAwait(false);
-        return TryMatch(kind, button, minContacts, countMiss: true);
+        Waiter waiter;
+        lock (_gate)
+        {
+            if (TryMatchLocked(kind, button, minContacts, countMiss: _grace <= TimeSpan.Zero)) return true;
+            if (_grace <= TimeSpan.Zero) return false;
+            waiter = new Waiter(kind, button, minContacts);
+            _waiters.Add(waiter);
+        }
+
+        try
+        {
+            return await waiter.Ready.Task.WaitAsync(_grace, _clock).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            lock (_gate)
+            {
+                _waiters.Remove(waiter);
+                if (waiter.Ready.Task.IsCompletedSuccessfully) return waiter.Ready.Task.Result;
+                return TryMatchLocked(kind, button, minContacts, countMiss: true);
+            }
+        }
     }
 
     /// <summary>The same as <see cref="AcceptAsync"/> without the wait.</summary>
@@ -129,21 +196,23 @@ public sealed class PhysicalInputGate : IDisposable
 
     private bool TryMatch(PhysicalInputKind kind, PointerButton? button, int minContacts, bool countMiss)
     {
-        lock (_gate)
+        lock (_gate) return TryMatchLocked(kind, button, minContacts, countMiss);
+    }
+
+    private bool TryMatchLocked(PhysicalInputKind kind, PointerButton? button, int minContacts, bool countMiss)
+    {
+        var now = _clock.GetUtcNow();
+        for (var node = _recent.Last; node is not null; node = node.Previous)
         {
-            var now = _clock.GetUtcNow();
-            for (var node = _recent.Last; node is not null; node = node.Previous)
-            {
-                var e = node.Value;
-                if (now - e.At > Window) break;
-                if (!Matches(e, kind, button, minContacts)) continue;
-                // One key press or click backs up one page event; contact and movement reports stream, so they are not used up.
-                if (e.Kind is PhysicalInputKind.Key or PhysicalInputKind.ButtonDown) _recent.Remove(node);
-                return true;
-            }
-            if (countMiss) _ignored++;
-            return false;
+            var e = node.Value;
+            if (now - e.At > Window) break;
+            if (!Matches(e, kind, button, minContacts)) continue;
+            // One key press or click backs up one page event; contact and movement reports stream, so they are not used up.
+            if (e.Kind is PhysicalInputKind.Key or PhysicalInputKind.ButtonDown) _recent.Remove(node);
+            return true;
         }
+        if (countMiss) _ignored++;
+        return false;
     }
 
     internal static bool Matches(PhysicalInputEvent e, PhysicalInputKind kind, PointerButton? button, int minContacts)

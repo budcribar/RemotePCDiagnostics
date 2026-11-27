@@ -398,6 +398,78 @@ public class PointerTestTests
         Assert.Equal("notrun", ptr.GetProperty("verdict").GetString());
     }
 
+    [Fact]
+    public async Task AcceptAsync_wakes_immediately_when_hardware_input_arrives()
+    {
+        var hw = new FakePhysicalInput(Mouse);
+        using var gate = new PhysicalInputGate(hw, grace: TimeSpan.FromSeconds(5));
+        gate.Start();
+
+        var acceptTask = gate.AcceptAsync(PhysicalInputKind.Key);
+        Assert.False(acceptTask.IsCompleted);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        hw.Send(new PhysicalInputEvent(DateTimeOffset.UtcNow, PhysicalInputKind.Key));
+        var accepted = await acceptTask.WaitAsync(TimeSpan.FromMilliseconds(500));
+        sw.Stop();
+
+        Assert.True(accepted);
+        Assert.True(sw.Elapsed < TimeSpan.FromMilliseconds(500), $"AcceptAsync stalled for {sw.Elapsed.TotalMilliseconds:0}ms instead of waking immediately.");
+        Assert.Equal(0, gate.Ignored);
+    }
+
+    [Fact]
+    public async Task TouchGrid_waits_for_multitouch_on_touchscreen_but_not_on_pen()
+    {
+        var (t, hw, c) = New(Screen);
+        t.Start(Screen);
+        const double w = 1200, h = 800;
+        for (var row = 0; row < PointerTestService.GridRows; row++)
+            for (var col = 0; col < PointerTestService.GridColumns; col++)
+            {
+                hw.Send(Hw(c, PhysicalInputKind.Contacts, Screen, value: 1));
+                await t.TouchAsync(col * 200 + 100, row * 200 + 100, w, h, 1);
+            }
+        Assert.Equal(24, t.Current.CellsTouched.Count);
+        Assert.Equal(PointerTestVerdict.Running, t.Current.Verdict);
+
+        hw.Send(Hw(c, PhysicalInputKind.Contacts, Screen, value: 2));
+        await t.TouchAsync(100, 100, w, h, 2);
+        Assert.Equal(PointerTestVerdict.Passed, t.Current.Verdict);
+        Assert.Equal(2, t.Current.MaxTouchPoints);
+
+        var pen = Screen with { Kind = PointerDeviceKind.Pen };
+        var (pt, phw, pc) = New(pen);
+        pt.Start(pen);
+        pt.Skip(); // Move
+        for (var row = 0; row < PointerTestService.GridRows; row++)
+            for (var col = 0; col < PointerTestService.GridColumns; col++)
+            {
+                phw.Send(Hw(pc, PhysicalInputKind.Contacts, pen, value: 1));
+                await pt.TouchAsync(col * 200 + 100, row * 200 + 100, w, h, 1);
+            }
+        Assert.Equal(PointerTestVerdict.Passed, pt.Current.Verdict);
+    }
+
+    [Fact]
+    public async Task Releasing_drag_outside_target_clears_drag_state()
+    {
+        var (t, hw, c) = New();
+        t.Start(Mouse);
+        t.Skip(); // Move
+        t.Skip(); // Buttons
+        t.Skip(); // Scroll
+        Assert.Equal(PointerStep.Drag, t.Current.Current);
+
+        hw.Send(Hw(c, PhysicalInputKind.ButtonDown, Mouse, PointerButton.Left));
+        await t.ButtonDownAsync(PointerButton.Left);
+        t.CancelDrag();
+
+        hw.Send(Hw(c, PhysicalInputKind.Move, Mouse));
+        await t.DropAsync(PointerButton.Left, PointerButton.Left);
+        Assert.False(t.Current.LeftDragged);
+    }
+
     private static InteractiveExport.ModuleState NotRun(string slug) => new(new DiagnosticResult(slug, DiagnosticStatus.NotRun, "", T0), false);
 }
 
@@ -451,7 +523,27 @@ public class PointerTestPageTests : BunitContext
         page.Find("[data-testid='pointer-overlay-stop']").Click();
         page.WaitForAssertion(() => Assert.Empty(page.FindAll("[data-testid='pointer-overlay']")));
         Assert.Equal("Stopped", page.Find("[data-testid='interactive-status-pointer']").TextContent.Trim());
-        File.WriteAllText(Path.Combine(Path.GetTempPath(), "pointer-pane.html"), page.Markup);
+    }
+
+    [Fact]
+    public void Releasing_drag_on_overlay_outside_target_resets_dragging_box()
+    {
+        var hw = new FakePhysicalInput(Mouse);
+        var pointer = new PointerTestService(hw, grace: TimeSpan.Zero);
+        var page = Render(hw, pointer, new PhysicalBenchQaService(), "pointer");
+
+        page.Find("[data-testid='pointer-start']").Click();
+        page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-testid='pointer-overlay']")));
+        for (var i = 0; i < 3; i++) page.Find("[data-testid='pointer-skip']").Click();
+        page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-testid='pointer-drag-area']")));
+
+        hw.Send(new PhysicalInputEvent(DateTimeOffset.UtcNow, PhysicalInputKind.ButtonDown, Mouse.Id, PointerDeviceKind.Mouse, Button: PointerButton.Left));
+        page.Find("[data-testid='pointer-box-left']").TriggerEvent("onpointerdown", new PointerEventArgs { Button = 0, ClientX = 50, ClientY = 50 });
+        page.WaitForAssertion(() => Assert.Contains("ptr-dragging", page.Find("[data-testid='pointer-box-left']").ClassName));
+
+        page.Find("[data-testid='pointer-overlay']").TriggerEvent("onpointerup", new PointerEventArgs { Button = 0 });
+        page.WaitForAssertion(() => Assert.DoesNotContain("ptr-dragging", page.Find("[data-testid='pointer-box-left']").ClassName ?? ""));
+        Assert.False(pointer.Current.LeftDragged);
     }
 
     [Fact]
