@@ -225,6 +225,9 @@ public static class HostServices
             journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(),
             prefs: sp.GetRequiredService<RemotePCDiagnostics.Core.Preferences.PreferencesService>()));
         services.AddSingleton<RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaService>();
+        // Windows' own view of keyboard, mouse and touch input: interactive tests count only input from this PC's hardware.
+        services.AddSingleton<RemotePCDiagnostics.Core.Input.IPhysicalInputMonitor, RemotePCDiagnostics.Core.Platform.WindowsRawInputMonitor>();
+        services.AddSingleton(sp => new RemotePCDiagnostics.Core.Input.PointerTestService(sp.GetService<RemotePCDiagnostics.Core.Input.IPhysicalInputMonitor>()));
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Workflow.BenchQaRunner(
             sp.GetRequiredService<DiagnosticsService>(),
             sp.GetRequiredService<ResultStore>(),
@@ -280,7 +283,9 @@ public static class HostServices
             sp.GetService<SystemCommandRunner>(),
             sp.GetService<CheckSettingsService>(),
             sp.GetService<IBiosUpdateService>(),
-            sp.GetService<RemotePCDiagnostics.Agent.Core.AgentModeMonitor>()));
+            sp.GetService<RemotePCDiagnostics.Agent.Core.AgentModeMonitor>(),
+            sp.GetService<RemotePCDiagnostics.Core.Input.IPhysicalInputMonitor>(),
+            sp.GetService<RemotePCDiagnostics.Core.Input.PointerTestService>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
         // RPCD_REPLAY (Debug builds): the checks read a recording instead of this PC. RPCD_LOG: they also record what they read.

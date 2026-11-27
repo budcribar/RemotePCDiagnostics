@@ -8,6 +8,8 @@ public enum PhysicalCheckOutcome
     Failed,
 }
 
+/// <param name="IgnoredKeys">Key presses the page saw that no keyboard on this PC made (a remote viewer's keys, injected input): not counted.</param>
+/// <param name="KeysVerified">Keys were checked against Windows' own keyboard input (see Input.PhysicalInputGate).</param>
 public sealed record PhysicalBenchQaSnapshot(
     PhysicalCheckOutcome KeyboardOutcome = PhysicalCheckOutcome.NotRun,
     int UniqueKeysPressed = 0,
@@ -17,7 +19,9 @@ public sealed record PhysicalBenchQaSnapshot(
     int SolidColorsInspected = 0,
     int MaxTouchPoints = 0,
     string? DisplayNotes = null,
-    DateTimeOffset? UpdatedUtc = null)
+    DateTimeOffset? UpdatedUtc = null,
+    int IgnoredKeys = 0,
+    bool KeysVerified = false)
 {
     public bool HasAny =>
         KeyboardOutcome != PhysicalCheckOutcome.NotRun

@@ -1,0 +1,428 @@
+@using Microsoft.JSInterop
+@using RemotePCDiagnostics.Core.Input
+@implements IDisposable
+@inject AppServices App
+@inject IJSRuntime JS
+@{
+    var snap = Service.Current;
+    var running = snap.Verdict == PointerTestVerdict.Running;
+    var devices = _devices;
+    var selected = devices.FirstOrDefault(d => d.Id == _deviceId) ?? devices.FirstOrDefault();
+}
+
+<div class="phys-qa-pane" data-testid="interactive-pointer-pane">
+    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+        <strong>Mouse, touchpad &amp; touchscreen</strong>
+        <span class="chip chip-@VerdictChip(snap.Verdict)" data-testid="pointer-status-chip">@VerdictLabel(snap.Verdict)</span>
+        @if (running)
+        {
+            <button type="button" class="btn-small" data-testid="pointer-stop" @onclick="Stop">Stop</button>
+        }
+        else
+        {
+            <button type="button" class="btn-small btn-primary" data-testid="pointer-start"
+                    disabled="@(IsRemoteDisplay || selected is null)"
+                    title="@(IsRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                    @onclick="Start">
+                @(snap.Verdict == PointerTestVerdict.NotRun ? "Start test" : "Run again")
+            </button>
+        }
+    </div>
+
+    <p class="meta" style="margin-top: 0">
+        Checks pointer movement over the whole screen, each button, scrolling and dragging, the touchpad's taps and fingers, and every part of a
+        touchscreen. Only input from this PC's own hardware counts, so the test can't be passed from a remote session.
+    </p>
+
+    <div class="toolbar" style="margin-bottom: 4px; flex-wrap: wrap">
+        <label class="meta">Device
+            <select data-testid="pointer-device-select" disabled="@running" @onchange="OnDeviceChange">
+                @foreach (var d in devices)
+                {
+                    <option value="@d.Id" selected="@(d.Id == selected?.Id)">@DeviceLabel(d)</option>
+                }
+            </select>
+        </label>
+        <button type="button" class="btn-small" data-testid="pointer-refresh" disabled="@running" @onclick="LoadDevices">Refresh devices</button>
+    </div>
+
+    @if (selected is not null)
+    {
+        <p class="meta" data-testid="pointer-plan">Steps: @string.Join(", ", PointerTestService.StepsFor(selected).Select(PointerTestService.Title)).</p>
+    }
+
+    @if (!snap.InputVerified)
+    {
+        <p class="notice" data-testid="pointer-unverified">
+            @(snap.UnverifiedReason ?? "Input can't be checked against this PC's hardware here.")
+            Input only counts while no remote session is connected.
+        </p>
+    }
+
+    @if (snap.Steps.Count > 0)
+    {
+        <table class="detail" data-testid="pointer-steps">
+            @foreach (var step in snap.Steps)
+            {
+                <tr data-testid="pointer-step-@step.Step.ToString().ToLowerInvariant()">
+                    <th>@PointerTestService.Title(step.Step)</th>
+                    <td>
+                        <span class="chip chip-@StepChip(step.State)">@StepLabel(step.State)</span>
+                        <span class="meta"> @StepDetail(snap, step.Step)@(step.Reason is { } why ? $" · {why}" : "")</span>
+                    </td>
+                </tr>
+            }
+        </table>
+        <p class="meta" data-testid="pointer-input-counts">
+            @(snap.Device is { } dev ? $"{DeviceLabel(dev)} · " : "")
+            <span data-testid="pointer-ignored">@snap.IgnoredInputs</span> input(s) not counted (not from this device)
+            @if (snap.InjectedInputs > 0)
+            {
+                <span> · @snap.InjectedInputs injected by software</span>
+            }
+        </p>
+    }
+
+    <label class="phys-qa-note">
+        <span class="meta">Optional note (e.g. left button double-clicks by itself, touchpad corner dead)</span>
+        <input data-testid="pointer-notes" value="@snap.Notes" @onchange="OnNotes" maxlength="240" placeholder="Optional note…" />
+    </label>
+
+    <div class="phys-qa-actions">
+        <button type="button" class="btn-small" data-testid="pointer-reset" disabled="@running" @onclick="Service.Reset">Reset</button>
+    </div>
+</div>
+
+@if (running && snap.Current is { } current)
+{
+    var index = snap.Steps.ToList().FindIndex(s => s.Step == current) + 1;
+    <div class="ptr-overlay" data-testid="pointer-overlay" role="dialog" aria-modal="true" aria-label="Pointer and touch test"
+         @oncontextmenu:preventDefault="true"
+         @onpointermove="OnOverlayMove">
+        @if (current == PointerStep.Move)
+        {
+            @for (var c = 0; c < 4; c++)
+            {
+                var corner = c;
+                var hit = (snap.Corners & (1 << corner)) != 0;
+                <div class="ptr-corner ptr-corner-@corner @(hit ? "ptr-hit" : "")" data-testid="pointer-corner-@corner"
+                     @onpointerenter="() => Service.CornerAsync(corner)"></div>
+            }
+        }
+        else if (current == PointerStep.TouchGrid)
+        {
+            <div class="ptr-grid" data-testid="pointer-grid" style="grid-template-columns: repeat(@snap.GridColumns, 1fr); grid-template-rows: repeat(@snap.GridRows, 1fr)"
+                 @onpointerdown="OnGridDown" @onpointermove="OnGridMove" @onpointerup="OnGridUp" @onpointercancel="OnGridUp">
+                @for (var i = 0; i < snap.CellCount; i++)
+                {
+                    <div class="ptr-cell @(snap.CellsTouched.Contains(i) ? "ptr-hit" : "")" data-testid="pointer-cell-@i"></div>
+                }
+            </div>
+        }
+
+        <div class="ptr-hud">
+            <div class="ptr-hud-title"><strong>Step @index of @snap.Steps.Count: @PointerTestService.Title(current)</strong></div>
+            <div class="ptr-hud-sub" data-testid="pointer-instructions">@PointerTestService.Instructions(current)</div>
+
+            @if (current == PointerStep.Buttons)
+            {
+                <div class="ptr-pad" data-testid="pointer-button-pad" @onpointerdown="OnPadDown" @onmousedown:preventDefault="true">
+                    <span class="@(snap.LeftDoubleClick ? "ptr-ok" : "")">Left @(snap.LeftDoubleClick ? "✓" : "")</span>
+                    <span class="@(snap.RightDoubleClick ? "ptr-ok" : "")">Right @(snap.RightDoubleClick ? "✓" : "")</span>
+                    <span class="@(snap.MiddleDoubleClick ? "ptr-ok" : "")">Middle @(snap.MiddleDoubleClick ? "✓" : snap.NoMiddleButton ? "(none)" : "")</span>
+                </div>
+                <label class="meta" style="display: flex; align-items: center; gap: 6px"><input type="checkbox" data-testid="pointer-no-middle" checked="@snap.NoMiddleButton" @onchange="OnNoMiddle" /> My device has no middle button</label>
+            }
+            else if (current == PointerStep.Scroll)
+            {
+                <div class="ptr-pad" data-testid="pointer-scroll-pad" @onwheel="OnWheel" @onwheel:preventDefault="true">
+                    <span class="@(snap.ScrollUp >= PointerTestService.ScrollsNeeded ? "ptr-ok" : "")">Up @snap.ScrollUp</span>
+                    <span class="@(snap.ScrollDown >= PointerTestService.ScrollsNeeded ? "ptr-ok" : "")">Down @snap.ScrollDown</span>
+                    <span>Sideways @(snap.ScrollLeft + snap.ScrollRight)</span>
+                    <span>Wheel notches @snap.WheelTicks</span>
+                </div>
+            }
+            else if (current == PointerStep.Drag)
+            {
+                <div class="ptr-drag" data-testid="pointer-drag-area">
+                    @foreach (var box in new[] { PointerButton.Left, PointerButton.Right })
+                    {
+                        var b = box;
+                        var done = b == PointerButton.Left ? snap.LeftDragged : snap.RightDragged;
+                        var name = b == PointerButton.Left ? "Left" : "Right";
+                        <div class="ptr-drop @(done ? "ptr-hit" : "")" data-testid="pointer-drop-@name.ToLowerInvariant()"
+                             @onpointerup="e => OnDrop(b, e)">@name target</div>
+                        @if (!done)
+                        {
+                            var dragging = _dragBox == b;
+                            <div class="ptr-box @(dragging ? "ptr-dragging" : "")" data-testid="pointer-box-@name.ToLowerInvariant()"
+                                 style="@(dragging ? $"position: fixed; left: {_dragX - 40:0}px; top: {_dragY - 20:0}px" : "")"
+                                 @onpointerdown="e => OnDragStart(b, e)" @onmousedown:preventDefault="true">@name</div>
+                        }
+                    }
+                </div>
+            }
+            else if (current == PointerStep.TouchpadGestures)
+            {
+                <div class="ptr-pad" data-testid="pointer-gesture-pad" @onpointerdown="OnPadDown" @onmousedown:preventDefault="true">
+                    <span class="@(snap.TapToClick ? "ptr-ok" : "")">Tap @(snap.TapToClick ? "✓" : "")</span>
+                    <span class="@(snap.TwoFingerClick ? "ptr-ok" : "")">Two-finger click @(snap.TwoFingerClick ? "✓" : "")</span>
+                    <span class="@(snap.MaxTouchpadContacts >= 3 ? "ptr-ok" : "")">Most fingers @snap.MaxTouchpadContacts</span>
+                </div>
+            }
+            else if (current == PointerStep.Move)
+            {
+                <div class="meta">@snap.CornerCount of 4 corners</div>
+            }
+            else if (current == PointerStep.TouchGrid)
+            {
+                <div class="meta">@snap.CellsTouched.Count of @snap.CellCount squares · most touches at once @snap.MaxTouchPoints</div>
+            }
+
+            <div class="ptr-hud-actions">
+                <span class="meta" data-testid="pointer-seconds-left">No input: @snap.SecondsLeft s left</span>
+                <button type="button" class="btn-small" data-testid="pointer-skip" @onclick="Service.Skip">Skip step</button>
+                <button type="button" class="btn-small" data-testid="pointer-fail-step" @onclick="Service.FailStep">Doesn't work</button>
+                <button type="button" class="btn-small" data-testid="pointer-overlay-stop" @onclick="Stop">Stop test</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public PointerTestService Service { get; set; } = default!;
+    [Parameter] public bool IsRemoteDisplay { get; set; }
+    [Parameter] public bool RemoteSessionActive { get; set; }
+    /// <summary>Start as soon as the pane opens (Run selected).</summary>
+    [Parameter] public bool AutoStart { get; set; }
+
+    private PointerTestService? _subscribed;
+    private IReadOnlyList<PointerDevice> _devices = [];
+    private string? _deviceId;
+    private PeriodicTimer? _ticker;
+    private CancellationTokenSource? _tickCts;
+    private bool _autoStarted;
+    private bool _fullscreen;
+    private PointerButton? _dragBox;
+    private double _dragX, _dragY;
+    private readonly HashSet<long> _touches = [];
+    private double _viewW, _viewH;
+
+    protected override void OnParametersSet()
+    {
+        if (!ReferenceEquals(_subscribed, Service))
+        {
+            if (_subscribed is not null) _subscribed.Changed -= OnChanged;
+            _subscribed = Service;
+            Service.Changed += OnChanged;
+            LoadDevices();
+        }
+        Service.RemoteSessionActive = RemoteSessionActive;
+        if (!AutoStart) _autoStarted = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (AutoStart && !_autoStarted && !IsRemoteDisplay && Service.Current.Verdict != PointerTestVerdict.Running)
+        {
+            _autoStarted = true;
+            await Start();
+            StateHasChanged();
+        }
+    }
+
+    private void LoadDevices()
+    {
+        _devices = Service.Devices();
+        if (_deviceId is null || _devices.All(d => d.Id != _deviceId)) _deviceId = _devices.FirstOrDefault()?.Id;
+    }
+
+    private void OnDeviceChange(ChangeEventArgs e) => _deviceId = e.Value?.ToString();
+
+    private void OnNotes(ChangeEventArgs e) => Service.SetNotes(e.Value?.ToString());
+
+    private void OnNoMiddle(ChangeEventArgs e) => Service.SetNoMiddleButton(e.Value is true || string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase));
+
+    private async Task Start()
+    {
+        if (IsRemoteDisplay) return;
+        var device = _devices.FirstOrDefault(d => d.Id == _deviceId) ?? _devices.FirstOrDefault();
+        if (device is null) return;
+        _dragBox = null;
+        _touches.Clear();
+        Service.Start(device);
+        StartTicker();
+        if (PointerTestService.StepsFor(device).Contains(PointerStep.TouchGrid)) await ReadViewportAsync();
+        _fullscreen = true;
+        App.Fullscreen?.RequestFullscreen(true);
+    }
+
+    private void Stop()
+    {
+        Service.Cancel();
+        EndOverlay();
+    }
+
+    private void StartTicker()
+    {
+        _tickCts?.Cancel();
+        _ticker?.Dispose();
+        _tickCts = new CancellationTokenSource();
+        _ticker = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        var timer = _ticker;
+        var token = _tickCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
+                {
+                    Service.Tick();
+                    if (Service.Current.Verdict != PointerTestVerdict.Running) break;
+                }
+            }
+            catch (OperationCanceledException) { }
+        }, token);
+    }
+
+    private void OnChanged() => _ = InvokeAsync(() =>
+    {
+        if (Service.Current.Verdict != PointerTestVerdict.Running && _fullscreen) EndOverlay();
+        StateHasChanged();
+    });
+
+    private void EndOverlay()
+    {
+        _tickCts?.Cancel();
+        _dragBox = null;
+        if (_fullscreen)
+        {
+            _fullscreen = false;
+            App.Fullscreen?.RequestFullscreen(false);
+        }
+    }
+
+    private async Task ReadViewportAsync()
+    {
+        try
+        {
+            var size = await JS.InvokeAsync<double[]>("eval", "[window.innerWidth, window.innerHeight]");
+            if (size is { Length: 2 }) (_viewW, _viewH) = (size[0], size[1]);
+        }
+        catch { }
+    }
+
+    private static PointerButton? ButtonOf(long button) => button switch
+    {
+        0 => PointerButton.Left,
+        1 => PointerButton.Middle,
+        2 => PointerButton.Right,
+        _ => null,
+    };
+
+    private Task OnPadDown(PointerEventArgs e) => ButtonOf(e.Button) is { } b ? Service.ButtonDownAsync(b) : Task.CompletedTask;
+
+    private Task OnWheel(WheelEventArgs e) => Service.ScrollAsync(e.DeltaX, e.DeltaY);
+
+    private Task OnDragStart(PointerButton box, PointerEventArgs e)
+    {
+        if (ButtonOf(e.Button) is not { } b) return Task.CompletedTask;
+        _dragBox = box;
+        (_dragX, _dragY) = (e.ClientX, e.ClientY);
+        return Service.ButtonDownAsync(b);
+    }
+
+    private void OnOverlayMove(PointerEventArgs e)
+    {
+        if (_dragBox is not null) (_dragX, _dragY) = (e.ClientX, e.ClientY);
+    }
+
+    private Task OnDrop(PointerButton target, PointerEventArgs e)
+    {
+        var box = _dragBox;
+        _dragBox = null;
+        if (box != target || ButtonOf(e.Button) is not { } b) return Task.CompletedTask;
+        return Service.DropAsync(target, b);
+    }
+
+    private static bool IsTouch(PointerEventArgs e) => e.PointerType is "touch" or "pen";
+
+    private async Task OnGridDown(PointerEventArgs e)
+    {
+        if (!IsTouch(e)) return;
+        _touches.Add(e.PointerId);
+        await GridTouch(e);
+    }
+
+    private Task OnGridMove(PointerEventArgs e) => IsTouch(e) && (e.Buttons != 0 || _touches.Contains(e.PointerId)) ? GridTouch(e) : Task.CompletedTask;
+
+    private void OnGridUp(PointerEventArgs e) => _touches.Remove(e.PointerId);
+
+    private async Task GridTouch(PointerEventArgs e)
+    {
+        if (_viewW <= 0) await ReadViewportAsync();
+        await Service.TouchAsync(e.ClientX, e.ClientY, _viewW, _viewH, Math.Max(1, _touches.Count));
+    }
+
+    public void Dispose()
+    {
+        EndOverlay();
+        _ticker?.Dispose();
+        if (Service.Current.Verdict == PointerTestVerdict.Running) Service.Cancel();
+        if (_subscribed is not null) _subscribed.Changed -= OnChanged;
+    }
+
+    internal static string DeviceLabel(PointerDevice d) => d.Kind switch
+    {
+        PointerDeviceKind.Touchpad => d.PrecisionTouchpad ? $"{d.Name} (precision touchpad)" : $"{d.Name} (touchpad)",
+        PointerDeviceKind.Touchscreen => $"{d.Name} (touchscreen)",
+        PointerDeviceKind.Pen => $"{d.Name} (pen)",
+        _ => string.IsNullOrEmpty(d.Id) ? d.Name : $"{d.Name} (mouse)",
+    };
+
+    private static string StepDetail(PointerTestSnapshot s, PointerStep step) => step switch
+    {
+        PointerStep.Move => $"{s.CornerCount} of 4 corners",
+        PointerStep.Buttons => $"double-click left {Mark(s.LeftDoubleClick)}, right {Mark(s.RightDoubleClick)}, middle {(s.NoMiddleButton && !s.MiddleDoubleClick ? "none" : Mark(s.MiddleDoubleClick))}",
+        PointerStep.Scroll => $"up {s.ScrollUp}, down {s.ScrollDown}, sideways {s.ScrollLeft + s.ScrollRight}, {s.WheelTicks} wheel notches",
+        PointerStep.Drag => $"left drag {Mark(s.LeftDragged)}, right drag {Mark(s.RightDragged)}",
+        PointerStep.TouchpadGestures => $"tap {Mark(s.TapToClick)}, two-finger click {Mark(s.TwoFingerClick)}, most fingers {s.MaxTouchpadContacts}",
+        PointerStep.TouchGrid => $"{s.CellsTouched.Count} of {s.CellCount} squares, most touches at once {s.MaxTouchPoints}",
+        _ => "",
+    };
+
+    private static string Mark(bool ok) => ok ? "✓" : "–";
+
+    private static string VerdictChip(PointerTestVerdict v) => v switch
+    {
+        PointerTestVerdict.Passed => "ok",
+        PointerTestVerdict.Failed => "err",
+        PointerTestVerdict.Running => "run",
+        _ => "na",
+    };
+
+    private static string VerdictLabel(PointerTestVerdict v) => v switch
+    {
+        PointerTestVerdict.Passed => "Passed",
+        PointerTestVerdict.Failed => "Failed",
+        PointerTestVerdict.Running => "Running",
+        PointerTestVerdict.Skipped => "Skipped",
+        PointerTestVerdict.Cancelled => "Stopped",
+        _ => "Not tested",
+    };
+
+    private static string StepChip(PointerStepState s) => s switch
+    {
+        PointerStepState.Passed => "ok",
+        PointerStepState.Failed => "err",
+        PointerStepState.Active => "run",
+        _ => "na",
+    };
+
+    private static string StepLabel(PointerStepState s) => s switch
+    {
+        PointerStepState.NotSupported => "Not supported",
+        PointerStepState.Active => "Now",
+        _ => s.ToString(),
+    };
+}
