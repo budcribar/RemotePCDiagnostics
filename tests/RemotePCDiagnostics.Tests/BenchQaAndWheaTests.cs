@@ -503,4 +503,34 @@ public class BenchQaAndWheaTests
         Assert.Equal(3, runner.CompletedSteps);
         Assert.Equal(["keyboard", "display"], interactiveCalls);
     }
+
+    [Fact]
+    public async Task BenchQaRunner_CountsProgressInSelectedItems_AndListsTheOnesThatCantRun()
+    {
+        var store = new ResultStore();
+        IDiagnosticModule Quick(string slug) => new FakeModule(slug, _ => Task.FromResult(FakeModule.Ok(slug)));
+        IDiagnosticModule OnDemand(string slug) => new OnDemandFakeModule(slug, _ => Task.FromResult(FakeModule.Ok(slug)));
+
+        // No webcam or speaker-to-mic module on this PC, so those two selected items can't run.
+        var diag = new DiagnosticsService(store, [
+            Quick(ModuleSlugs.Osquery),
+            Quick(ModuleSlugs.BatteryPower),
+            OnDemand(ModuleSlugs.CpuStress),
+            OnDemand(ModuleSlugs.DismScanHealth),
+            OnDemand(ModuleSlugs.SfcVerifyOnly),
+        ]);
+        var runner = new BenchQaRunner(diag, store);
+        var progress = new List<(int Done, int Total)>();
+        runner.Changed += () => progress.Add((runner.CompletedItems, runner.RunItemIds.Count));
+
+        await runner.RunIntakeAsync(["hardware", "battery", "cpu-stress", "integrity", "audio", "webcam", "keyboard"]);
+
+        Assert.Equal(["hardware", "battery", "cpu-stress", "keyboard", "integrity"], runner.RunItemIds);
+        Assert.Equal(["audio", "webcam"], runner.SkippedItemIds);
+        Assert.Equal(runner.RunItemIds.Count, runner.CompletedItems);
+        Assert.Equal(1.0, runner.ItemProgressFraction);
+        // Progress only goes up, never past the items this run checks; integrity (DISM + SFC, two steps) counts once.
+        Assert.All(progress, p => Assert.Equal(5, p.Total));
+        Assert.Equal(progress.Select(p => p.Done).Order(), progress.Select(p => p.Done));
+    }
 }
