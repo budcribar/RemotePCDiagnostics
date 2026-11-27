@@ -33,8 +33,11 @@ public static class InteractiveExport
     private static string? T(string? v) => AreaReportExport.Text(v, AreaReportExport.MaxTextLength);
 
     public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
-        ModuleState? soundCheck = null, SoundCheckHelp? help = null) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help), Json);
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null, DisplayOutputCheckState? displayOutputs = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, displayOutputs), Json);
+
+    /// <summary>The video output check's result and what it has seen so far in the watch that is running (the result is Running meanwhile).</summary>
+    public sealed record DisplayOutputCheckState(ModuleState Module, Display.DisplayOutputCheckReport Live);
 
     /// <summary>The Sound check pane's helper lists: what it shows and why (Can't hear sound, or only one side heard).</summary>
     /// <param name="Mode">"cant-hear", "one-side" or null when no list shows.</param>
@@ -42,7 +45,7 @@ public static class InteractiveExport
     public sealed record SoundCheckHelp(string? Mode, bool Reading, IReadOnlyList<SoundCheckStep> Steps, bool ServicesOk);
 
     public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
-        ModuleState? soundCheck = null, SoundCheckHelp? help = null) => new
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null, DisplayOutputCheckState? displayOutputs = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -60,6 +63,8 @@ public static class InteractiveExport
             SpeakerToMicTest(page, speakerToMic),
             MicToSpeakerTest(page, micToSpeaker),
             SoundCheckTest(page, soundCheck ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.SoundCheck), false), help),
+            DisplayOutputCheckTest(page, displayOutputs ?? new(new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.DisplayOutputCheck), false),
+                Display.DisplayOutputCheckReport.Empty)),
         },
     };
 
@@ -260,6 +265,53 @@ public static class InteractiveExport
     /// When an agent coaching a test should report a learning (Admin's report_learning tool): the test's instructions or screen did not
     /// match what the person has. One line each, written for the agent, not the person.
     /// </summary>
+    private static object DisplayOutputCheckTest(PageState page, DisplayOutputCheckState s)
+    {
+        var r = s.Module.Result;
+        var running = r.Status == DiagnosticStatus.Running;
+        var rep = running ? s.Live : r.Payload as Display.DisplayOutputCheckReport;
+        var answered = rep is not null && !rep.Watching && rep.Unanswered == 0 && (rep.Arrivals.Count > 0 || rep.NoSignal.Count > 0);
+        return new
+        {
+            id = "displayoutputs",
+            name = "Video output check",
+            @checked = page.CheckedTestIds.Contains("displayoutputs"),
+            open = page.SelectedTestId == "displayoutputs",
+            state = running ? "in-progress" : answered || s.Module.PersonEntered ? "done"
+                : rep is not null ? "waiting-for-person-verdict" : "waiting-for-person",
+            runId = r.RunId,
+            measured = rep is null ? null : new
+            {
+                portsTested = rep.Arrivals.Count,
+                ports = rep.Arrivals.Select(a => new
+                {
+                    key = a.Key,
+                    monitor = V(a.Monitor),
+                    connector = V(a.Connector),
+                    graphics = V(a.Adapter),
+                    active = a.Active,
+                    mode = V(a.Mode),
+                    refreshHz = a.RefreshHz,
+                    edidProblem = V(a.EdidProblem),
+                    belowNative = a.BelowNative,
+                    unplugged = a.Unplugged,
+                    pictureAppeared = a.PictureAppeared,
+                }).ToList(),
+                noSignal = rep.NoSignal.Select(n => V(n.Port)).ToList(),
+                unanswered = rep.Unanswered,
+                notice = T(rep.Notice),
+            },
+            personOutcome = answered || s.Module.PersonEntered ? Person(r.Status) : null,
+            message = T(running ? Display.DisplayOutputCheck.Outcome(s.Live).Message : r.Message),
+            instructions = "Start watching, then the person plugs a monitor into each video port in turn (HDMI, DisplayPort, USB-C, VGA, the "
+                + "dock's). Each monitor shows with its connector, mode and whether its EDID is valid, and the person answers Did the picture "
+                + "appear? (Yes or No) for each. When nothing shows up at all on a port, they press Nothing appeared and name the port. Finish "
+                + "stops watching. Windows normally extends the desktop onto a new monitor by itself; one shown as not active is connected but "
+                + "gets no picture from Windows.",
+            reportIf = ReportIf.DisplayOutputCheck,
+        };
+    }
+
     public static class ReportIf
     {
         public const string Keyboard = "The person's keyboard does not match any layout offered (for example AZERTY, Japanese, a compact "
@@ -270,6 +322,8 @@ public static class InteractiveExport
             + "with what the person sees.";
         public const string SpeakerToMic = "The person's speaker or microphone is not listed, they hear the tone but it is not detected, or "
             + "the test cannot start.";
+        public const string DisplayOutputCheck = "A monitor the person plugs in doesn't show, shows on the wrong connector, or the "
+            + "picture appears although the check says the monitor isn't active.";
         public const string SoundCheck = "The person hears the chime on the wrong side, hears nothing although the Can't hear sound list is "
             + "empty, or the list shows a problem the person doesn't have.";
         public const string MicToSpeaker = "The person's microphone or speaker is not listed, there is no playback, or feedback makes the test "

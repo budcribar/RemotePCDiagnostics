@@ -1,0 +1,11 @@
+{
+  "id": "a3e7c912-4f6b-4d58-b0a1-7e2d9c5f8b64",
+  "slug": "DisplayOutputCheck",
+  "displayName": "Video output check",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.DisplayOutputCheck.DisplayOutputCheckPlugin",
+  "needsAdmin": false,
+  // Its controls live on the Interactive tests page, which follows the run live.
+  "hasUi": false,
+  "inProcessOnly": "the Interactive tests page follows its run live"
+}

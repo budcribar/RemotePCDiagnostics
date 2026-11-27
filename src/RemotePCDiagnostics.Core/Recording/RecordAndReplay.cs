@@ -68,6 +68,17 @@ public sealed class RecordingAudioStateSource(Audio.IAudioStateSource inner, Cal
     }
 }
 
+/// <summary>Passes each display configuration read to the real source and records the answer.</summary>
+public sealed class RecordingDisplaySource(Display.IDisplaySource inner, CallRecorder recorder) : Display.IDisplaySource
+{
+    public async Task<Display.DisplaySnapshot> ReadAsync(CancellationToken ct = default)
+    {
+        var r = await inner.ReadAsync(ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromDisplay(r));
+        return r;
+    }
+}
+
 public sealed class RecordingRegistrySource(IRegistrySource inner, CallRecorder recorder) : IRegistrySource
 {
     public async Task<WmiQueryResult> ReadAsync(RegistryRead read, CancellationToken ct = default)
@@ -134,6 +145,7 @@ public sealed class RecordingReplay
     public IPackageSource Packages => new ReplayPackages(this);
     public Security.IAntivirusProductSource AntivirusProducts => new ReplayAntivirusProducts(this);
     public Audio.IAudioStateSource Audio => new ReplayAudio(this);
+    public Display.IDisplaySource Display => new ReplayDisplay(this);
     public IProcessLauncher Launcher => new ReplayLauncher(this);
     public Alerts.IAlertReadings Alerts => new ReplayAlerts(this);
 
@@ -160,6 +172,7 @@ public sealed class RecordingReplay
         RecordedCall.PackagesKind => PackagesKey,
         RecordedCall.AntivirusKind => AntivirusKey,
         RecordedCall.AudioKind => AudioKey,
+        RecordedCall.DisplayKind => DisplayKey,
         RecordedCall.FileKind => FileKey(c.File ?? ""),
         RecordedCall.AlertsKind => AlertsKey(c.Query ?? ""),
         _ => ProcessKey(c.File ?? "", c.Args ?? []),
@@ -168,6 +181,7 @@ public sealed class RecordingReplay
     public const string PackagesKey = "packages";
     public const string AntivirusKey = "antivirus";
     public const string AudioKey = "audio";
+    public const string DisplayKey = "display";
     public static string FileKey(string name) => "file\n" + name;
     public static string AlertsKey(string reading) => "alerts\n" + reading;
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
@@ -201,6 +215,14 @@ public sealed class RecordingReplay
             Task.FromResult(replay.Answer(AntivirusKey, "antivirus") is { } c
                 ? Security.AntivirusInventoryResult.FromRecordedResult(c.ToWmiResult())
                 : Security.AntivirusInventoryResult.Unavailable("Not in the recording."));
+    }
+
+    private sealed class ReplayDisplay(RecordingReplay replay) : RemotePCDiagnostics.Core.Display.IDisplaySource
+    {
+        public Task<RemotePCDiagnostics.Core.Display.DisplaySnapshot> ReadAsync(CancellationToken ct = default) =>
+            Task.FromResult(replay.Answer(DisplayKey, "display") is { } c
+                ? c.Error is { } e && c.StdOut is null ? RemotePCDiagnostics.Core.Display.DisplaySnapshot.Unavailable(e) : RemotePCDiagnostics.Core.Display.DisplaySnapshot.FromJson(c.StdOut)
+                : RemotePCDiagnostics.Core.Display.DisplaySnapshot.Unavailable("Not in the recording."));
     }
 
     private sealed class ReplayAudio(RecordingReplay replay) : RemotePCDiagnostics.Core.Audio.IAudioStateSource
