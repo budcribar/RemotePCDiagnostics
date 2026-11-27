@@ -137,7 +137,8 @@ public class AgentInstancePolicyTests
             AgentInstancePolicy.ExePathFromImage(@"""C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe"" run"));
         Assert.True(AgentInstancePolicy.ImagePathLaunchesAgent(@"""C:\Agent\RemotePCDiagnostics.Agent.exe"" run"));
         Assert.False(AgentInstancePolicy.ServiceLaunchesAgent("Spooler", @"C:\Windows\System32\spoolsv.exe"));
-        Assert.True(AgentInstancePolicy.ShouldDeleteService("Remote PC Diagnostics Agent", null));
+        Assert.False(AgentInstancePolicy.ShouldDeleteService("Remote PC Diagnostics Agent", null)); // an old name alone isn't ours
+        Assert.True(AgentInstancePolicy.ShouldDeleteService("OldCopy", @"""C:\Tools\RemotePCDiagnostics.Agent.exe"" run"));
         Assert.False(AgentInstancePolicy.ShouldDeleteService(AgentLayout.ServiceName, CurrentExe));
 
         var claim = new AgentInstanceClaim(7, "1.2.0-ci.1027.1", CurrentExe, "2026-11-21T02:36:00.0000000Z");

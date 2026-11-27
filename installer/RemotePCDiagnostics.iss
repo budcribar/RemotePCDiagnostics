@@ -172,8 +172,8 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "
 
 [Run]
 #if AgentExePath != ""
-; Stage Agent.exe in {tmp} and invoke 'install'. PrepareToInstall has already stopped the old agent service,
-; its legacy service names, and the Run keys and scheduled tasks that would start a second copy.
+; Stage Agent.exe in {tmp} and invoke 'install'. PrepareToInstall has already stopped the old agent service
+; and removed the Run keys and scheduled tasks that would start a second copy.
 ; install waits until the agent mutex is free, sets Automatic and failure restart, and only then starts the service.
 ; These entries are not skipifsilent: a remote update is silent. DeinitializeSetup starts the service again
 ; if this entry does not, including when the agent that launched Setup has already been stopped.
@@ -284,10 +284,10 @@ begin
   DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing), SetupMessage(msgPreparingDesc), @OnDownloadProgress);
 end;
 
-{ Stop every service name this product has used, and remove startup entries that launch a second copy.
-  Does not delete the current service and does not taskkill: Setup may be a child of the agent that started
+{ Stop the agent service, and remove startup entries that launch a second copy.
+  Does not delete the service and does not taskkill: Setup may be a child of the agent that started
   this update, and sc delete while that process is still alive leaves the old version running with no service
-  record. Agent.exe install deletes legacy names only after the process and the agent mutex are gone.
+  record. Agent.exe install deletes other registrations of the agent only after the process and the agent mutex are gone.
   Failure restart is cleared first so the stop does not launch a second copy that exits 0 and stays stopped.
   The start type stays Automatic. DeinitializeSetup turns failure restart back on and starts the service. }
 function ServiceQueryText(const Name: String): String;
@@ -406,9 +406,6 @@ procedure StopPreviousAgents();
 begin
   Log('Stopping any running Remote PC Diagnostics Agent before installing {#AgentMutexName}.');
   StopOneAgentService('RemotePCDiagnosticsAgent');
-  StopOneAgentService('RemotePCDiagnostics.Agent');
-  StopOneAgentService('Remote PC Diagnostics Agent');
-  StopOneAgentService('RemotePCDiagnostics Agent');
   RemoveAgentStartupEntries();
 end;
 
@@ -526,12 +523,6 @@ begin
   { Idempotent if uninstall already did this. Covers a missing exe or an uninstall that did not start. }
   Exec(ExpandConstant('{sys}\sc.exe'), 'stop RemotePCDiagnosticsAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sys}\sc.exe'), 'delete RemotePCDiagnosticsAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\sc.exe'), 'stop "RemotePCDiagnostics.Agent"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\sc.exe'), 'delete "RemotePCDiagnostics.Agent"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\sc.exe'), 'stop "Remote PC Diagnostics Agent"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\sc.exe'), 'delete "Remote PC Diagnostics Agent"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\sc.exe'), 'stop "RemotePCDiagnostics Agent"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\sc.exe'), 'delete "RemotePCDiagnostics Agent"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   RemoveAgentStartupEntries();
 
   for I := 1 to 10 do
@@ -554,8 +545,6 @@ begin
     DeleteFile(ProgramDataDir + '\agent-host.json');
   if FileExists(ProgramDataDir + '\agent-instance.txt') then
     DeleteFile(ProgramDataDir + '\agent-instance.txt');
-  if FileExists(ProgramDataDir + '\active-session.json') then
-    DeleteFile(ProgramDataDir + '\active-session.json');
   if DirExists(ProgramDataDir + '\sessions') then
     DelTree(ProgramDataDir + '\sessions', True, True, True);
 end;

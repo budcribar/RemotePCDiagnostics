@@ -162,7 +162,7 @@ internal static class AgentServiceInstaller
         var lines = new List<string>();
         if (OperatingSystem.IsWindows())
         {
-            AgentUpgradeQuiesce.RemoveLegacyServices(lines.Add);
+            AgentUpgradeQuiesce.RemoveOtherAgentServices(lines.Add);
             if (stopService && ServiceExists())
             {
                 StopServiceIfRunning(TimeSpan.FromSeconds(15));

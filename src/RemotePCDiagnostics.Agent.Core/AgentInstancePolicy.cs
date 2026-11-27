@@ -32,33 +32,11 @@ public static class AgentInstancePolicy
     public const string LogPrefix = "[agent-instance]";
 
     /// <summary>
-    /// Service names that have launched this agent. <see cref="AgentLayout.ServiceName"/> is stopped and then started
-    /// again. Any other name is removed so an upgrade cannot leave the old registration running beside the new one.
-    /// An image path that points at <see cref="AgentLayout.AgentExeName"/> is treated the same even under a name that
-    /// is not in this list.
+    /// <see cref="AgentLayout.ServiceName"/> is stopped and then started again. Any other service whose image path points at
+    /// <see cref="AgentLayout.AgentExeName"/> is removed so an upgrade cannot leave a second registration running beside it.
     /// </summary>
-    public static readonly string[] KnownServiceNames =
-    [
-        AgentLayout.ServiceName,
-        "RemotePCDiagnostics.Agent",
-        "Remote PC Diagnostics Agent",
-        AgentLayout.ScheduledTaskName,
-    ];
-
     public static bool IsCurrentService(string? name) =>
         string.Equals(name?.Trim(), AgentLayout.ServiceName, StringComparison.OrdinalIgnoreCase);
-
-    public static bool IsKnownServiceName(string? name)
-    {
-        if (string.IsNullOrWhiteSpace(name)) return false;
-        var trimmed = name.Trim();
-        foreach (var known in KnownServiceNames)
-        {
-            if (string.Equals(trimmed, known, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
-    }
 
     public static bool ImagePathLaunchesAgent(string? imagePath)
     {
@@ -97,9 +75,9 @@ public static class AgentInstancePolicy
 
     /// <summary>A service to stop before the new agent starts.</summary>
     public static bool ServiceLaunchesAgent(string? serviceName, string? imagePath) =>
-        IsKnownServiceName(serviceName) || ImagePathLaunchesAgent(imagePath);
+        IsCurrentService(serviceName) || ImagePathLaunchesAgent(imagePath);
 
-    /// <summary>Legacy registrations are removed. The current service is stopped and started again in place.</summary>
+    /// <summary>Other registrations of the agent are removed. The current service is stopped and started again in place.</summary>
     public static bool ShouldDeleteService(string? serviceName, string? imagePath) =>
         ServiceLaunchesAgent(serviceName, imagePath) && !IsCurrentService(serviceName);
 
@@ -139,7 +117,7 @@ public static class AgentInstancePolicy
     /// What an upgrade does before it starts the service. Failure restart is turned off first, then each service is
     /// stopped. The start type stays Automatic: switching it off is what left the service stopped when the installer
     /// died with the old agent. Startup entries are removed next. Leftover processes that are not an ancestor of this
-    /// process are ended without their process tree. The mutex must be free, and only then are legacy services deleted.
+    /// process are ended without their process tree. The mutex must be free, and only then are other agent services deleted.
     /// Recovery (Automatic plus failure restart) is put back last. The caller starts the service after that.
     /// </summary>
     public static IReadOnlyList<AgentUpgradeAction> BeforeStart(IEnumerable<AgentServiceRegistration> services)

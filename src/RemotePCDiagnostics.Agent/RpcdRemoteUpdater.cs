@@ -655,13 +655,8 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         RpcdProductVersion.ReadFile(AgentLayout.DefaultAgentExe());
 
     /// <summary>The restart command line for the session the app published, so Setup brings that same session back.</summary>
-    public static IReadOnlyList<string>? RelaunchForActiveSession(string? configuredServer)
-    {
-        var path = AgentLayout.ActiveSessionPath();
-        if (!File.Exists(path) && File.Exists(AgentLayout.LegacyActiveSessionPath()))
-            path = AgentLayout.LegacyActiveSessionPath();
-        return RelaunchForActiveSession(configuredServer, path, IsHostProcessAlive);
-    }
+    public static IReadOnlyList<string>? RelaunchForActiveSession(string? configuredServer) =>
+        RelaunchForActiveSession(configuredServer, AgentLayout.ActiveSessionPath(), IsHostProcessAlive);
 
     /// <summary>
     /// The restart command line from the session file at <paramref name="path"/>, only while the Host that wrote it still runs.

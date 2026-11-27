@@ -963,15 +963,7 @@ public sealed class AgentHubWorker(
     {
         var running = internalRunning;
         var sessionId = internalSessionId ?? "";
-        var sessionPath = activeSessionPath;
-        if (sessionPath is null)
-        {
-            sessionPath = AgentLayout.ActiveSessionPath();
-            if (!File.Exists(sessionPath) && File.Exists(AgentLayout.LegacyActiveSessionPath()))
-            {
-                sessionPath = AgentLayout.LegacyActiveSessionPath();
-            }
-        }
+        var sessionPath = activeSessionPath ?? AgentLayout.ActiveSessionPath();
 
         if (File.Exists(sessionPath))
         {

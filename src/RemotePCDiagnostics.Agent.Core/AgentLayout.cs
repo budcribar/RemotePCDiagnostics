@@ -62,7 +62,6 @@ public static class AgentLayout
     public static string HostWatchPath() => Path.Combine(ProgramDataDirectory(), HostWatchFileName);
     public static string SessionsDirectory() => Path.Combine(ProgramDataDirectory(), SessionsFolderName);
     public static string ActiveSessionPath() => Path.Combine(SessionsDirectory(), ActiveSessionFileName);
-    public static string LegacyActiveSessionPath() => Path.Combine(ProgramDataDirectory(), ActiveSessionFileName);
     public static string AppCacheDirectory() => Path.Combine(ProgramDataDirectory(), AppCacheFolderName);
     public static string AgentLogPath() => Path.Combine(ProgramDataDirectory(), "logs", AgentLogFileName);
     public static string InstanceClaimPath() => Path.Combine(ProgramDataDirectory(), InstanceClaimFileName);
