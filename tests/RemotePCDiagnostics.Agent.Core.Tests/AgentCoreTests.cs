@@ -1174,6 +1174,8 @@ public class AgentHubWorkerTests
         {
             public WriteOptions? WriteOptions { get; set; }
             public Task WriteAsync(T message) => writer.WriteAsync(message).AsTask();
+            // The interface's default throws NotSupportedException for a token that can be cancelled, which the agent always passes.
+            public Task WriteAsync(T message, CancellationToken cancellationToken) => writer.WriteAsync(message, cancellationToken).AsTask();
             public Task CompleteAsync()
             {
                 writer.TryComplete();
