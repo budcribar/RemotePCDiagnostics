@@ -374,6 +374,9 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             // The app's own install folder holds the HardeningKitty it ships.
             securityAuditor: RemotePCDiagnostics.Core.Security.SecurityAuditModule.ElevatedRunner(workDir, pipeLog),
             moduleHost: new RemotePCDiagnostics.Core.Plugins.AgentModuleHost(workDir, pipeLog),
+            // The sign-in tasks ("continue after restart", "continue service workflow") run Agent.exe --launch from the app's folder:
+            // the launcher starts RemotePCDiagnostics.Host.exe from its own folder, and this service's folder has no Host.exe.
+            appFolder: workDir,
             adminSettings: OperatingSystem.IsWindows() ? new RemotePCDiagnostics.Core.Session.WindowsAdminSettings(pipeLog) : null,
             machineTweaks: OperatingSystem.IsWindows() ? new RemotePCDiagnostics.Core.Session.WindowsMachineTweaks(pipeLog) : null,
             // The app isn't elevated: this service keeps its undo journal and its workflow and benchmark state.

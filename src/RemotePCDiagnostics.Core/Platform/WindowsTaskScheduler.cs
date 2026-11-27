@@ -70,15 +70,16 @@ public static class WindowsTaskScheduler
             dynamic service = serviceObj;
             rootObj = service.GetFolder("\\");
             dynamic root = rootObj;
+            // Through dynamic COM, a missing task can surface as FileNotFoundException (0x80070002) instead of COMException.
             try { root.DeleteTask(taskName, 0); }
-            catch (COMException ex) when (ex.HResult is ErrorFileNotFound or ErrorPathNotFound) { }
+            catch (Exception ex) when (IsNotFound(ex)) { }
 
             try
             {
                 checkObj = root.GetTask(taskName);
                 return false;
             }
-            catch (COMException ex) when (ex.HResult is ErrorFileNotFound or ErrorPathNotFound)
+            catch (Exception ex) when (IsNotFound(ex))
             {
                 return true;
             }
@@ -90,6 +91,10 @@ public static class WindowsTaskScheduler
             SafeReleaseCom(serviceObj);
         }
     }
+
+    /// <summary>A missing task or folder, however COM reports it.</summary>
+    internal static bool IsNotFound(Exception ex) =>
+        ex is FileNotFoundException or DirectoryNotFoundException || ex.HResult is ErrorFileNotFound or ErrorPathNotFound;
 
     /// <summary>Returns the task's state ("Ready", "Disabled", "Running", "Queued", "Unknown") or "Missing" when not found.</summary>
     [SupportedOSPlatform("windows")]
