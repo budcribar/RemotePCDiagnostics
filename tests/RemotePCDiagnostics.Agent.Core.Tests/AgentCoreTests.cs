@@ -942,6 +942,39 @@ public class AgentHubWorkerTests
     }
 
     [Fact]
+    public async Task The_app_started_again_after_an_update_is_reported_ready_then_ended_when_it_closes()
+    {
+        var config = AgentConfig.ForInstall(
+            existing: null,
+            new AgentArgs(AgentCommand.Install, Server: "https://relay.example:34544", Consent: ConsentCeiling.Unattended),
+            Guid.Parse("7e57c0de-0000-4000-8000-000000000060"));
+        var sessionId = Guid.Parse("7e57c0de-0000-4000-8000-000000000061").ToString("D");
+        var proc = new FakeLaunchedProcess();
+        var platform = new FakeAgentPlatform { Relaunched = (proc, sessionId) };
+        var hub = new FakeAgentHubClient();
+        var worker = new AgentHubWorker(config, platform, new AgentSessionOptions { HeartbeatInterval = TimeSpan.FromMinutes(5) });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var run = worker.RunSingleConnectionAsync(hub, cts.Token);
+        _ = await hub.ReadAgentMessageAsync(cts.Token); // Hello
+
+        var ready = await ReadProgressAsync(hub, cts.Token);
+        Assert.Equal(LaunchStage.StageReady, ready.Stage);
+        Assert.Equal(sessionId, ready.SessionId);
+        Assert.StartsWith("relaunch-", ready.RequestId);
+
+        // An end request for it closes the app, and the end is reported under the same request.
+        await hub.SendHubCommandAsync(new HubCommand { Cancel = new CancelCommand { RequestId = ready.RequestId } }, cts.Token);
+        var ended = await ReadProgressAsync(hub, cts.Token);
+        Assert.Equal(LaunchStage.StageEnded, ended.Stage);
+        Assert.Equal(ready.RequestId, ended.RequestId);
+        Assert.True(proc.HasExited);
+
+        hub.CompleteServerStream();
+        await run;
+    }
+
+    [Fact]
     public async Task Update_without_approval_is_refused_and_a_status_poll_returns_it()
     {
         var config = AgentConfig.ForInstall(
@@ -1095,6 +1128,14 @@ public class AgentHubWorkerTests
 
         public bool AppRunning { get; init; }
         public bool IsAppRunning() => AppRunning;
+
+        public (IAgentLaunchedProcess Process, string SessionId)? Relaunched { get; set; }
+        public (IAgentLaunchedProcess Process, string SessionId)? TakeRelaunchedApp()
+        {
+            var taken = Relaunched;
+            Relaunched = null;
+            return taken;
+        }
     }
 
     private sealed class FakeAgentHubClient : AgentHub.AgentHubClient
