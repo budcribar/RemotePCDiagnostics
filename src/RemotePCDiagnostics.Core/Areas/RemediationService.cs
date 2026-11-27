@@ -157,6 +157,12 @@ public sealed class RemediationService(
         RemediationKind.DisableFastStartup => new(action, "Turn off Windows Fast Startup?",
             "Fast Startup (Hiberboot) saves kernel state to disk on Shut Down instead of performing a full reset, which can cause multi-week uptimes and driver quirks.",
             "Sets HiberbootEnabled = 0 in the Windows registry so every Shut Down performs a clean boot.", AdminNote(), true),
+        RemediationKind.SetHpBatteryChargeLimit => Battery.HpBatteryCharge.TryParseTarget(action.Target, out var hpName, out var hpValue)
+            ? new(action, "Limit battery charging to about 80%?",
+                "This PC stays plugged in at 100% charge, which wears its battery out faster. HP's BIOS can stop charging at about 80%.",
+                $"Sets the HP BIOS setting \"{hpName}\" to \"{hpValue}\". It takes effect after the next restart; undo sets the old value back.",
+                "Not possible when a BIOS setup password is set: change it in BIOS setup (F10 at startup) instead.", true)
+            : new(action, action.ButtonText, "", "This isn't an HP battery setting this app changes.", "This isn't an HP battery setting this app changes.", Allowed: false),
         RemediationKind.ScheduleCleanRestart => PlanScheduleCleanRestart(action),
         RemediationKind.CancelScheduledRestart => new(action, "Cancel scheduled restart?",
             "Aborts a pending timed Windows shutdown or restart and clears the post-reboot auto-resume entry.",
@@ -612,6 +618,12 @@ public sealed class RemediationService(
         RemediationKind.DisableFastStartup => Apply(s => s.SetFastStartup(0),
             "Turned off Fast Startup (future shutdowns will perform a full reset).",
             "Couldn't turn off Fast Startup (administrator rights required)."),
+
+        RemediationKind.SetHpBatteryChargeLimit => Battery.HpBatteryCharge.TryParseTarget(action.Target, out var hpSetName, out var hpSetValue)
+            ? await RunAgentScriptAsync(AgentScripts.Of(AgentScripts.HpBatterySet, hpSetName, hpSetValue),
+                $"Battery charging limited (\"{hpSetName}\" set to \"{hpSetValue}\"). Restart the PC for it to take effect.",
+                "Couldn't change HP's battery setting.", ct).ConfigureAwait(false)
+            : new(false, "This isn't an HP battery setting this app changes."),
 
         RemediationKind.ScheduleCleanRestart => await RunScheduleCleanRestartAsync(action, ct).ConfigureAwait(false),
 
@@ -1549,6 +1561,7 @@ public sealed class RemediationService(
                 RemediationKind.DisableWakeTimer => DeviceWake.IsSafeTaskPath(action.Target)
                     ? NewChangeRecord(Changes.ChangeKind.WakeTimer, action.Target, "true", $"{DeviceWake.ShortTaskName(action.Target)} can't wake the PC") : null,
                 RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns => CaptureAdapterDnsBefore(action),
+                RemediationKind.SetHpBatteryChargeLimit => await CaptureHpBatteryBeforeAsync(action.Target, ct).ConfigureAwait(false),
                 _ => null,
             };
         }
@@ -1576,6 +1589,15 @@ public sealed class RemediationService(
         var prev = cur is { ExitCode: 0 } ? cur.StdOut.Trim() : null;
         return prev is not null && Security.SecurityFixes.ParsePrevious(sf.Key, prev) is not null
             ? NewChangeRecord(Changes.ChangeKind.SecuritySetting, sf.Key, prev, sf.Done.TrimEnd('.')) : null;
+    }
+
+    private async Task<Changes.ChangeRecord?> CaptureHpBatteryBeforeAsync(string target, CancellationToken ct)
+    {
+        if (!Battery.HpBatteryCharge.TryParseTarget(target, out var name, out var value)) return null;
+        var cur = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.HpBatteryRead, name), null, ct).ConfigureAwait(false);
+        var prev = cur is { ExitCode: 0 } ? cur.StdOut.Trim() : null;
+        return Battery.HpBatteryCharge.IsValue(prev) && prev != value
+            ? NewChangeRecord(Changes.ChangeKind.HpBiosSetting, name, prev, "Battery charging limited to about 80%", restart: true) : null;
     }
 
     private async Task<Changes.ChangeRecord?> CaptureDeviceWakeBeforeAsync(string target, CancellationToken ct)

@@ -59,6 +59,7 @@ public static class FixKeys
         [RemediationKind.RestartAudioServices] = "restartaudioservices",
         [RemediationKind.SetAudioServicesAutomatic] = "setaudioservicesautomatic",
         [RemediationKind.EvenAudioBalance] = "evenaudiobalance",
+        [RemediationKind.SetHpBatteryChargeLimit] = "sethpbatterychargelimit",
     };
 
     public static readonly IReadOnlyDictionary<MemoryActionType, string> Memory = new Dictionary<MemoryActionType, string>

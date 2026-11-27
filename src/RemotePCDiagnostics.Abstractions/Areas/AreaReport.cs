@@ -103,6 +103,9 @@ public enum RemediationKind
     /// <summary>Sets the left and right channels of an output to the louder of the two (the balance in Sound settings). Target = the
     /// endpoint id. Undo puts the old channel levels back.</summary>
     EvenAudioBalance,
+    /// <summary>Limits charging on an HP PC to about 80% (HP's "Battery Health Manager" or "Battery Care Function" BIOS setting), through the
+    /// Agent. Target = "{setting}|{value}" (HpBatteryCharge.Target). Refused when a BIOS setup password is set. Undo sets the old value back.</summary>
+    SetHpBatteryChargeLimit,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>

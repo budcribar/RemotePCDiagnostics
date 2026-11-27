@@ -32,7 +32,8 @@ public static class Undoability
             or RemediationKind.MovePackageCacheToDevDrive or RemediationKind.CreatePersistentDevDrive
             or RemediationKind.UnmuteAudioEndpoint or RemediationKind.RaiseAudioVolume or RemediationKind.SetDefaultAudioEndpoint
             or RemediationKind.EnableAudioEndpoint or RemediationKind.ResetAudioFormat or RemediationKind.ToggleAudioEnhancements
-            or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy or RemediationKind.EvenAudioBalance => UndoSupport.Full,
+            or RemediationKind.UnmuteAudioSession or RemediationKind.AllowCapturePrivacy or RemediationKind.EvenAudioBalance
+            or RemediationKind.SetHpBatteryChargeLimit => UndoSupport.Full,
         RemediationKind.CloseAudioHolder => UndoSupport.None, // a closed app isn't reopened
         RemediationKind.SetAudioServicesAutomatic => UndoSupport.Full, // the start type is journaled; the started services stay running
         // Brings Windows Audio back to its normal running state: nothing to put back (stopping sound again would be no undo).
@@ -85,7 +86,7 @@ public static class Undoability
         {
             ChangeKind.PowerPlan => PlanName(c.Previous),
             ChangeKind.AdapterDns => string.IsNullOrWhiteSpace(c.Previous) ? "automatic" : string.Join(", ", c.Previous.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)),
-            ChangeKind.ServiceStartType => c.Previous,
+            ChangeKind.ServiceStartType or ChangeKind.HpBiosSetting => c.Previous,
             ChangeKind.ServiceRunning => c.Previous?.ToLowerInvariant(),
             ChangeKind.FastStartup or ChangeKind.SystemProxy or ChangeKind.Transparency => c.Previous == "0" ? "off" : "on",
             ChangeKind.PageFile => string.Equals(c.Previous, Session.PageFileSettings.AutoMarker, StringComparison.OrdinalIgnoreCase) ? "managed by Windows" : "a custom size",

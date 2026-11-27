@@ -50,6 +50,10 @@ public static class AgentScripts
     public const string AudioServices = "audio_services";
     /// <summary>Silently installs an allowlisted .NET SDK (10 or 11) side-by-side into Program Files\dotnet via the elevated Agent.</summary>
     public const string InstallDotNetSdk = "install_dotnet_sdk";
+    /// <summary>Args: an HP battery charging BIOS setting's name (<see cref="Battery.HpBatteryCharge.IsSetting"/>). Prints its value.</summary>
+    public const string HpBatteryRead = "hp_battery_read";
+    /// <summary>Args: the setting's name and the value to set (the Agent checks the setting lists it).</summary>
+    public const string HpBatterySet = "hp_battery_set";
 
     public const string RebootTask = "reboot";
     public const string WorkflowTask = "workflow";
@@ -155,6 +159,14 @@ public static class AgentScripts
                 if (a.Count != 1 || !int.TryParse(Arg(0), out var sdkMajor) || !AgentDotNetSdkInstaller.IsAllowedMajor(sdkMajor))
                     return Refuse("Only .NET 10 and .NET 11 SDKs can be installed.");
                 return Native(new InstallDotNetSdkAction(sdkMajor));
+
+            case HpBatteryRead:
+                return a.Count == 1 && Battery.HpBatteryCharge.IsSetting(Arg(0))
+                    ? Native(new Battery.HpBatteryReadAction(Arg(0)!)) : Refuse("That isn't an HP battery setting this app changes.");
+
+            case HpBatterySet:
+                return a.Count == 2 && Battery.HpBatteryCharge.IsSetting(Arg(0)) && Battery.HpBatteryCharge.IsValue(Arg(1))
+                    ? Native(new Battery.HpBatterySetAction(Arg(0)!, Arg(1)!)) : Refuse("That isn't an HP battery setting this app changes.");
 
             default:
                 return Refuse($"Unknown script '{request.Name}'.");

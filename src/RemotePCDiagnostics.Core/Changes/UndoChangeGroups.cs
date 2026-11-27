@@ -64,7 +64,8 @@ public static class UndoChangeGroups
         ChangeKind.StartupApp or ChangeKind.ScheduledTask or ChangeKind.ServiceStartType or ChangeKind.ServiceRunning => StartupAndServices,
         ChangeKind.PersistentDevDrive or ChangeKind.UserEnvironmentVariable => DevDriveAndCaches,
         ChangeKind.BrowserSettings or ChangeKind.BrowserLocalStateValue or ChangeKind.ExtensionBlock => Browsers,
-        ChangeKind.PowerPlan or ChangeKind.PowerSetting or ChangeKind.FastStartup or ChangeKind.HiberFileType or ChangeKind.DeviceWake or ChangeKind.WakeTimer => PowerAndSleep,
+        ChangeKind.PowerPlan or ChangeKind.PowerSetting or ChangeKind.FastStartup or ChangeKind.HiberFileType or ChangeKind.DeviceWake or ChangeKind.WakeTimer
+            or ChangeKind.HpBiosSetting => PowerAndSleep,
         ChangeKind.AdapterDns or ChangeKind.SystemProxy => Network,
         ChangeKind.SecuritySetting or ChangeKind.CapturePrivacy => SecurityAndPrivacy,
         ChangeKind.AudioEndpoint or ChangeKind.AudioSession or ChangeKind.DefaultPrinter => AudioAndDevices,

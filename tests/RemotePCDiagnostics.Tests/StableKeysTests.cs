@@ -46,6 +46,7 @@ public class StableKeysTests
             "AdapterDns", "PageFile", "TempFiles", "DefenderExclusion", "HiberFileType", "RegistryValue", "DefaultPrinter", "NotUndoable",
             "ExtensionBlock", "BrowserLocalStateValue", "ScheduledTask", "StoreReinstall", "SecuritySetting", "DeviceWake", "WakeTimer",
             "PowerSetting", "UserEnvironmentVariable", "PersistentDevDrive", "AudioEndpoint", "AudioSession", "CapturePrivacy",
+            "HpBiosSetting",
         ];
         var json = new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } };
         Assert.Equal(pinned.Length, pinned.Distinct().Count());
