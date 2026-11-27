@@ -704,6 +704,8 @@ tr.history-day.clickable:hover td { background: var(--surface-hover); }
 .wf-field input { width: min(320px, 70vw); }
 .wf-report { width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
 .qa-preview { border-top: 1px solid var(--border); margin-top: 8px; }
+/* Mid-run the certificate mixes this run's results with the last one's: dim it until the run finishes. */
+.qa-cert-updating { opacity: .7; }
 .qa-preview-summary { padding: 10px 4px; }
 .qa-preview .wf-report { margin-top: 4px; }
 /* "Not run" steps: dashed and muted, but still readable on the dark theme (the light theme's border/text tokens vanish there). */

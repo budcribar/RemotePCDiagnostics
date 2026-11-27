@@ -71,6 +71,20 @@ public sealed class BenchQaRunner(
     public double ProgressFraction =>
         TotalSteps <= 0 ? 0.0 : Math.Clamp((double)CompletedSteps / TotalSteps, 0.0, 1.0);
 
+    // Progress counted in QA items (what the page lists and the person selected), not internal steps: one step can cover
+    // several items (the base checks run as one Run all) and one item can take several steps (DISM + SFC).
+    private readonly HashSet<string> _doneItems = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The selected items this run checks (in page order).</summary>
+    public IReadOnlyList<string> RunItemIds { get; private set; } = [];
+    /// <summary>The selected items that can't run on this PC right now (their checks aren't available, e.g. the Agent isn't connected).</summary>
+    public IReadOnlyList<string> SkippedItemIds { get; private set; } = [];
+    /// <summary>How many of <see cref="RunItemIds"/> have finished.</summary>
+    public int CompletedItems { get { lock (_doneItems) return _doneItems.Count; } }
+
+    public double ItemProgressFraction =>
+        RunItemIds.Count == 0 ? 0.0 : Math.Clamp((double)CompletedItems / RunItemIds.Count, 0.0, 1.0);
+
     public event Action? Changed;
 
     public Task StartBenchQaAsync(
@@ -190,6 +204,15 @@ public sealed class BenchQaRunner(
         if (includeSecurityAudit && diag.CanRun(ModuleSlugs.SecurityAudit))
             securitySlugs.Add(ModuleSlugs.SecurityAudit);
 
+        var runItems = HardwareQaCertificate.AllSelectableItemIds
+            .Where(id => selected.Contains(id) && ItemCanRun(id, suiteStressSlugs, plainStressSlugs))
+            .ToList();
+        RunItemIds = runItems;
+        SkippedItemIds = HardwareQaCertificate.AllSelectableItemIds.Where(id => selected.Contains(id) && !runItems.Contains(id)).ToList();
+        lock (_doneItems) _doneItems.Clear();
+        if (SkippedItemIds.Count > 0)
+            log.Info($"[bench-qa] Can't run here: {string.Join(", ", SkippedItemIds)}");
+
         var baseStepCount = runAllBaseChecks ? 1 : selectiveBaseSlugs.Count;
         var keyboardStep = includeKeyboard ? 1 : 0;
         var displayStep = includeDisplay ? 1 : 0;
@@ -209,8 +232,23 @@ public sealed class BenchQaRunner(
             // Step 1: Standard read-only checks (all at once when every base item is selected, or only the selected ones)
             if (runAllBaseChecks)
             {
-                await diag.RunAllAsync(token).ConfigureAwait(false);
+                // Run all is one step: count each base item as its result lands so the bar moves during it.
+                void OnResult(object? sender, DiagnosticResult r)
+                {
+                    if (r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun) return;
+                    if (BaseItemFor(r.ModuleName) is { } itemId) MarkItemDone(itemId);
+                }
+                store.Changed += OnResult;
+                try
+                {
+                    await diag.RunAllAsync(token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    store.Changed -= OnResult;
+                }
                 token.ThrowIfCancellationRequested();
+                foreach (var b in BaseCheckItems) MarkItemDone(b.ItemId, raise: false);
                 CompletedSteps = 1;
                 Raise();
             }
@@ -222,6 +260,7 @@ public sealed class BenchQaRunner(
                     Status = $"Checking {diag.Catalog.DisplayName(slug)}…";
                     Raise();
                     await RunModuleSafeAsync(slug, token).ConfigureAwait(false);
+                    if (BaseItemFor(slug) is { } itemId) MarkItemDone(itemId, raise: false);
                     CompletedSteps++;
                     Raise();
                 }
@@ -242,6 +281,7 @@ public sealed class BenchQaRunner(
                 CompletedSteps++;
                 Raise();
             }
+            if (integrityToConsider.Count > 0) MarkItemDone("integrity");
 
             // Step 3: Short thermal-guarded hardware stress on selected local hardware only
             if (includeStress)
@@ -257,6 +297,8 @@ public sealed class BenchQaRunner(
                     {
                         var finishedCount = p.Steps.Count(s => s.State is StressSuiteStepState.Passed or StressSuiteStepState.Problem or StressSuiteStepState.Skipped);
                         CompletedSteps = baseSteps + Math.Min(finishedCount, suiteStressSlugs.Count);
+                        foreach (var step in p.Steps.Where(s => s.State is StressSuiteStepState.Passed or StressSuiteStepState.Problem or StressSuiteStepState.Skipped))
+                            if (ItemForSlug(step.ModuleName) is { } stepItem) MarkItemDone(stepItem, raise: false);
                         if (!p.Finished && p.CurrentDisplayName is { Length: > 0 } current)
                             Status = $"Short hardware stress ({p.Index}/{p.Total}): {current}…";
                         Raise();
@@ -273,6 +315,8 @@ public sealed class BenchQaRunner(
                     if (suiteResult.Outcome == StressSuiteOutcome.Cancelled)
                         throw new OperationCanceledException(token);
 
+                    foreach (var slug in suiteStressSlugs)
+                        if (ItemForSlug(slug) is { } suiteItem) MarkItemDone(suiteItem, raise: false);
                     CompletedSteps = baseSteps + suiteStressSlugs.Count;
                     Raise();
                 }
@@ -283,6 +327,7 @@ public sealed class BenchQaRunner(
                     Status = $"Running short hardware stress: {diag.Catalog.DisplayName(slug)}…";
                     Raise();
                     await RunModuleSafeAsync(slug, token).ConfigureAwait(false);
+                    if (ItemForSlug(slug) is { } plainItem) MarkItemDone(plainItem, raise: false);
                     CompletedSteps++;
                     Raise();
                 }
@@ -295,6 +340,7 @@ public sealed class BenchQaRunner(
                 Status = $"Verifying {diag.Catalog.DisplayName(slug)}…";
                 Raise();
                 await RunModuleSafeAsync(slug, token).ConfigureAwait(false);
+                if (ItemForSlug(slug) is { } peripheralItem) MarkItemDone(peripheralItem, raise: false);
                 CompletedSteps++;
                 Raise();
             }
@@ -306,6 +352,7 @@ public sealed class BenchQaRunner(
                 Status = $"Running {diag.Catalog.DisplayName(slug)}…";
                 Raise();
                 await RunModuleSafeAsync(slug, token).ConfigureAwait(false);
+                MarkItemDone("security", raise: false);
                 CompletedSteps++;
                 Raise();
             }
@@ -320,6 +367,7 @@ public sealed class BenchQaRunner(
                 {
                     await waitInteractive("keyboard", token).ConfigureAwait(false);
                 }
+                MarkItemDone("keyboard", raise: false);
                 CompletedSteps++;
                 Raise();
             }
@@ -334,6 +382,7 @@ public sealed class BenchQaRunner(
                 {
                     await waitInteractive("display", token).ConfigureAwait(false);
                 }
+                MarkItemDone("display", raise: false);
                 CompletedSteps++;
                 Raise();
             }
@@ -407,6 +456,10 @@ public sealed class BenchQaRunner(
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         lock (_gate) _cts = cts;
         var token = cts.Token;
+        // A re-run reports progress in steps only; forget the last QA check's item counts.
+        RunItemIds = [];
+        SkippedItemIds = [];
+        lock (_doneItems) _doneItems.Clear();
         var slugs = itemIds.SelectMany(SlugsForItem).Where(diag.CanRun).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var stress = slugs.Where(s => StressItemToSlug.Values.Contains(s, StringComparer.OrdinalIgnoreCase) && diag.StressOrder.Contains(s, StringComparer.OrdinalIgnoreCase)).ToList();
         var others = slugs.Except(stress, StringComparer.OrdinalIgnoreCase).ToList();
@@ -492,6 +545,39 @@ public sealed class BenchQaRunner(
         {
             log.Warn($"[bench-qa] {slug} failed: {ex.Message}");
         }
+    }
+
+    /// <summary>Whether a selected item has a check this PC can run now (keyboard and display are checked by the person, so always).</summary>
+    private bool ItemCanRun(string itemId, List<string> suiteStressSlugs, List<string> plainStressSlugs)
+    {
+        if (itemId is "keyboard" or "display") return true;
+        if (itemId == "stability") return diag.CanRun(ModuleSlugs.Crashes) || diag.CanRun(ModuleSlugs.BsodHistory);
+        if (StressItemToSlug.TryGetValue(itemId, out var stressSlug))
+            return suiteStressSlugs.Contains(stressSlug, StringComparer.OrdinalIgnoreCase) || plainStressSlugs.Contains(stressSlug, StringComparer.OrdinalIgnoreCase);
+        return SlugsForItem(itemId).Any(diag.CanRun);
+    }
+
+    private static string? BaseItemFor(string slug) =>
+        string.Equals(slug, ModuleSlugs.BsodHistory, StringComparison.OrdinalIgnoreCase)
+            ? "stability"
+            : BaseCheckItems.FirstOrDefault(b => string.Equals(b.Slug, slug, StringComparison.OrdinalIgnoreCase)).ItemId;
+
+    private static string? ItemForSlug(string slug)
+    {
+        foreach (var (item, stressSlug) in StressItemToSlug)
+            if (string.Equals(stressSlug, slug, StringComparison.OrdinalIgnoreCase)) return item;
+        if (string.Equals(slug, ModuleSlugs.SpeakerToMic, StringComparison.OrdinalIgnoreCase)) return "audio";
+        if (string.Equals(slug, ModuleSlugs.Webcam, StringComparison.OrdinalIgnoreCase)) return "webcam";
+        return null;
+    }
+
+    /// <summary>Counts an item as finished, once, and only if this run checks it.</summary>
+    private void MarkItemDone(string itemId, bool raise = true)
+    {
+        if (!RunItemIds.Contains(itemId, StringComparer.OrdinalIgnoreCase)) return;
+        bool added;
+        lock (_doneItems) added = _doneItems.Add(itemId);
+        if (added && raise) Raise();
     }
 
     private static bool IsCompletedResult(DiagnosticResult r) =>

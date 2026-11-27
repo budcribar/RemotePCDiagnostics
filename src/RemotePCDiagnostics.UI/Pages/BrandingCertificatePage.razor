@@ -102,18 +102,25 @@
                 disabled="@(benchRunning || benchBusyElsewhere || _selectedItems.Count == 0)"
                 @onclick="StartBenchQa">
             <Icon Name="@(benchRunning ? "refresh" : "play")" Size="14" />
-            @(benchRunning ? $"Running QA ({ActiveBenchQa.CompletedSteps}/{Math.Max(1, ActiveBenchQa.TotalSteps)})…" : "Start QA check")
+            @(benchRunning ? RunningLabel : "Start QA check")
         </button>
         @if (benchRunning)
         {
             <button type="button" class="btn btn-outline" data-testid="bench-qa-stop" @onclick="StopBenchQa">Stop</button>
         }
     </div>
-    @if (benchRunning && ActiveBenchQa.TotalSteps > 0)
+    @if (benchRunning && (ActiveBenchQa.RunItemIds.Count > 0 || ActiveBenchQa.TotalSteps > 0))
     {
-        <div class="progress wf-overall-progress" style="max-width:none;margin:10px 0 6px" data-testid="bench-qa-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@ActiveBenchQa.TotalSteps" aria-valuenow="@ActiveBenchQa.CompletedSteps">
-            <div style="width:@($"{ActiveBenchQa.ProgressFraction * 100:0.#}%")"></div>
+        var (progressDone, progressTotal) = ProgressCounts;
+        <div class="progress wf-overall-progress" style="max-width:none;margin:10px 0 6px" data-testid="bench-qa-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@progressTotal" aria-valuenow="@progressDone">
+            <div style="width:@($"{(progressTotal == 0 ? 0 : 100.0 * progressDone / progressTotal):0.#}%")"></div>
         </div>
+    }
+    @if (ActiveBenchQa.SkippedItemIds.Count > 0)
+    {
+        <p class="meta" style="margin:4px 0 0" data-testid="bench-qa-skipped">
+            @ActiveBenchQa.SkippedItemIds.Count of @ActiveBenchQa.SelectedItemIds.Count selected can't run on this PC and @(benchRunning ? "will be" : "were") skipped: @string.Join(", ", ActiveBenchQa.SkippedItemIds.Select(ItemLabel)).
+        </p>
     }
     @if (benchRunning && !string.IsNullOrWhiteSpace(ActiveBenchQa.Status))
     {
@@ -135,7 +142,7 @@
 {
     <RemediationActions @ref="_qaFixUi" Actions="qaFixes" ShowRecent="false" Origin="@ModuleSlugs.SecurityAudit" OnCompleted="() => RerunItems([SecurityItemId])" />
 }
-@if (problems.Count > 0)
+@if (problems.Count > 0 && !benchRunning)
 {
     <section class="card wf-section qa-attention" data-testid="qa-attention" data-count="@problems.Count">
         <div class="qa-attention-top">
@@ -196,13 +203,22 @@
     </section>
 }
 
-<section class="card wf-section" data-testid="qa-cert-card">
+<section class="card wf-section @(benchRunning ? "qa-cert-updating" : "")" data-testid="qa-cert-card" data-running="@(benchRunning ? "true" : "false")">
     <div class="toolbar" style="margin-bottom: 8px">
         <div>
             <strong data-testid="qa-live-id">@snap.CertificateId</strong>
             <span> · </span>
-            <span class="chip chip-@verdictChip" data-testid="qa-live-verdict">@verdictLabel</span>
-            <span class="meta"> · @snap.TestedCount of @snap.Items.Count subsystems checked</span>
+            @if (benchRunning)
+            {
+                @* Mid-run the store still holds the last check's results for items not reached yet, so no verdict until it finishes. *@
+                <span class="chip chip-na" data-testid="qa-live-verdict">QA running</span>
+                <span class="meta" data-testid="qa-live-note"> · not final: items show the last results until this run reaches them</span>
+            }
+            else
+            {
+                <span class="chip chip-@verdictChip" data-testid="qa-live-verdict">@verdictLabel</span>
+                <span class="meta"> · @snap.TestedCount of @snap.Items.Count subsystems checked</span>
+            }
         </div>
         <div class="banner-actions">
             @if (_isRemoteDisplay)
@@ -210,7 +226,7 @@
                 <button type="button"
                         class="btn btn-primary"
                         data-testid="publish-hosted-cert"
-                        disabled="@_publishingCert"
+                        disabled="@(_publishingCert || benchRunning)"
                         @onclick="PublishToAdminAsync">
                     <Icon Name="cert" Size="14" />
                     @(_publishingCert ? "Publishing…" : "Publish to Admin")
@@ -221,6 +237,7 @@
                 <button type="button"
                         class="btn @(_isRemoteDisplay ? "btn-outline" : "btn-primary")"
                         data-testid="qa-save-html"
+                        disabled="@benchRunning"
                         @onclick="SaveCertificate">
                     <Icon Name="cert" Size="14" /> @(_isRemoteDisplay ? "Download HTML" : "Save HTML")
                 </button>
@@ -312,6 +329,24 @@
         else _selectedItems.Remove(itemId);
     }
 
+    // Progress in QA items, the unit the page lists (16 selected → 14 run + 2 skipped); a Re-run has no item plan, so it counts steps.
+    private (int Done, int Total) ProgressCounts =>
+        ActiveBenchQa.RunItemIds.Count > 0
+            ? (ActiveBenchQa.CompletedItems, ActiveBenchQa.RunItemIds.Count)
+            : (ActiveBenchQa.CompletedSteps, Math.Max(1, ActiveBenchQa.TotalSteps));
+
+    private string RunningLabel
+    {
+        get
+        {
+            var (done, total) = ProgressCounts;
+            return ActiveBenchQa.RunItemIds.Count > 0 ? $"Running QA ({done} of {total} checked)…" : $"Re-running ({done}/{total})…";
+        }
+    }
+
+    private static string ItemLabel(string itemId) =>
+        HardwareQaCertificate.Groups.SelectMany(g => g.Items).FirstOrDefault(i => string.Equals(i.Id, itemId, StringComparison.OrdinalIgnoreCase))?.Label ?? itemId;
+
     // The certificate preview starts collapsed; the header above it already shows the live ID and verdict.
     private bool _previewOpen;
 
@@ -353,7 +388,7 @@
         {
             if (benchRunning)
             {
-                var stepChanged = ActiveBenchQa.CompletedSteps != _lastBenchCompletedSteps;
+                var stepChanged = ActiveBenchQa.CompletedSteps + ActiveBenchQa.CompletedItems != _lastBenchCompletedSteps;
                 var debounceElapsed = nowTicks - _lastPreviewUpdateTicks >= 1000;
                 if (!stepChanged && !debounceElapsed)
                     return _cachedSnap;
@@ -361,7 +396,7 @@
         }
 
         _lastPreviewUpdateTicks = nowTicks;
-        _lastBenchCompletedSteps = ActiveBenchQa.CompletedSteps;
+        _lastBenchCompletedSteps = ActiveBenchQa.CompletedSteps + ActiveBenchQa.CompletedItems;
         _cachedSnap = HardwareQaCertificate.Capture(Store, Session.MachineName, _certGeneratedAt, _sessionBranding, physicalQa: ActivePhysicalQa.Current);
         _cachedCertHtml = HardwareQaCertificate.BuildHtml(_cachedSnap);
         return _cachedSnap;
@@ -440,7 +475,7 @@
         {
             EnsureCertificateSnapshot(force: true);
         }
-        else if (isRunning && ActiveBenchQa.CompletedSteps != _lastBenchCompletedSteps)
+        else if (isRunning && ActiveBenchQa.CompletedSteps + ActiveBenchQa.CompletedItems != _lastBenchCompletedSteps)
         {
             EnsureCertificateSnapshot(force: true);
         }
