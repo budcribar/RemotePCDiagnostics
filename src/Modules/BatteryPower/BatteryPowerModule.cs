@@ -59,7 +59,34 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
         var plan = await source.ReadActivePlanAsync(ct).ConfigureAwait(false);
         var policy = await source.ReadPowerPolicyAsync(ct).ConfigureAwait(false);
         if (batteries is null && plan is null) return AreaReport.Failed(FailedMessage);
-        return Build(batteries, plan, confirmedDischargingOnAc, confirmedHeldBackOnAc, perf, policy);
+        IReadOnlyList<Battery.HpBatterySetting> hp = [];
+        if (batteries is { Count: > 0 })
+        {
+            try { hp = await source.ReadHpChargeSettingsAsync(ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex) { LogWarn($"{Name}: HP battery settings unreadable: {ex.Message}"); }
+        }
+        return Build(batteries, plan, confirmedDischargingOnAc, confirmedHeldBackOnAc, perf, policy, hp);
+    }
+
+    /// <summary>
+    /// HP's charge limit: a neutral card (it never changes the check's result) saying whether charging stops at about 80%, with the fix when
+    /// it doesn't. Null on PCs without HP's setting.
+    /// </summary>
+    public static AreaCard? ChargeLimitCard(IReadOnlyList<Battery.HpBatterySetting>? settings)
+    {
+        // Battery Health Manager is HP's newer setting; on a PC with both it's the one that counts.
+        var s = settings?.FirstOrDefault(x => x.Name == Battery.HpBatteryCharge.HealthManager && x.LimitValue is not null)
+            ?? settings?.FirstOrDefault(x => x.LimitValue is not null);
+        if (s is null) return null;
+        var limited = s.IsLimited;
+        return new("charge-limit", "Battery charge limit", limited ? AreaLevel.Ok : AreaLevel.Neutral,
+            limited ? "Charging stops at about 80%" : "Charges to 100%",
+            limited ? "Set in HP's BIOS" : "A PC that stays plugged in wears its battery out faster at 100%",
+            ["Detail", "Value"],
+            [new(AreaLevel.Neutral, [s.Name, s.CurrentValue]), new(AreaLevel.Neutral, ["Values it can take", string.Join(", ", s.PossibleValues)])],
+            Note: limited ? null : "HP's BIOS can stop charging at about 80%, which keeps a battery that's usually plugged in healthy for longer. It takes effect after a restart.",
+            Actions: limited ? null : [new(RemediationKind.SetHpBatteryChargeLimit, "Limit charging to 80%", Battery.HpBatteryCharge.Target(s.Name, s.LimitValue!), "Battery charge limit")]);
     }
 
     private static bool IsOnAcPower(IReadOnlyList<BatteryStatus>? batteries) =>
@@ -71,7 +98,8 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
         bool dischargingOnAc = false,
         bool heldBackOnAc = false,
         ProcessorPerformanceSample? processorPerf = null,
-        PowerPolicySnapshot? policy = null)
+        PowerPolicySnapshot? policy = null,
+        IReadOnlyList<Battery.HpBatterySetting>? hpCharge = null)
     {
         if (batteries is null && powerPlan is null) return AreaReport.Failed("Couldn't read battery and power settings on this PC.");
         var cards = new List<AreaCard>();
@@ -181,6 +209,7 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
             planRows,
             Note: planNotes.Count > 0 ? string.Join(" ", planNotes) : null,
             Actions: planActions.Count > 0 ? planActions : null));
+        if (ChargeLimitCard(hpCharge) is { } chargeCard) cards.Add(chargeCard);
         if (!string.IsNullOrWhiteSpace(powerPlan)) parts.Add($"{planName} plan");
         if (heldBackOnAc) parts.Add("processor held back on AC");
 

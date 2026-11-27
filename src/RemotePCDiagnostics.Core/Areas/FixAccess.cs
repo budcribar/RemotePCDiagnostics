@@ -19,7 +19,8 @@ public static class FixAccess
         or RemediationKind.ApplySecuritySetting
         or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer
         or RemediationKind.InstallBiosUpdate or RemediationKind.CreatePersistentDevDrive or RemediationKind.InstallDotNetSdk
-        or RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic;
+        or RemediationKind.StartAudioServices or RemediationKind.RestartAudioServices or RemediationKind.SetAudioServicesAutomatic
+        or RemediationKind.SetHpBatteryChargeLimit;
 
     public static bool CanOffer(AreaAction action, bool agent) => agent || !NeedsAgent(action.Kind);
 

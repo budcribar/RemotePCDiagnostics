@@ -43,6 +43,7 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
                 if (t == RegistryAllowlist.StorageSenseEnabled) return "Storage Sense";
                 break;
             case ChangeKind.PowerSetting: return "maximum processor state";
+            case ChangeKind.HpBiosSetting: return "battery charge limit";
             case ChangeKind.UserEnvironmentVariable: return $"{c.Target} cache path";
             case ChangeKind.PersistentDevDrive: return "persistent Dev Drive";
         }
@@ -317,6 +318,13 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
             case ChangeKind.SystemProxy:
                 return Set(c, s => s.SetUserProxyEnable(Dword(c.Previous)), "System proxy setting restored.");
+
+            case ChangeKind.HpBiosSetting:
+                if (!Battery.HpBatteryCharge.IsSetting(c.Target) || !Battery.HpBatteryCharge.IsValue(c.Previous))
+                    return Fail("The original battery setting wasn't recorded, so it was left as is.");
+                // The Agent checks again that the setting lists the value; HP applies a BIOS setting at the next restart.
+                return await AgentScript(Session.AgentScripts.Of(Session.AgentScripts.HpBatterySet, c.Target, c.Previous!), c,
+                    $"{c.Target} set back to \"{c.Previous}\" (takes effect after a restart).", ct).ConfigureAwait(false);
 
             case ChangeKind.AdapterDns:
                 if (!SystemSettingsRules.IsAdapterName(c.Target)) return Fail("Invalid network adapter name.");

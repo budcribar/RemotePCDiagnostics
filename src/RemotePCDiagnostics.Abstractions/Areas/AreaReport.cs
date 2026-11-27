@@ -103,6 +103,9 @@ public enum RemediationKind
     /// <summary>Sets the left and right channels of an output to the louder of the two (the balance in Sound settings). Target = the
     /// endpoint id. Undo puts the old channel levels back.</summary>
     EvenAudioBalance,
+    /// <summary>Limits charging on an HP PC to about 80% (HP's "Battery Health Manager" or "Battery Care Function" BIOS setting), through the
+    /// Agent. Target = "{setting}|{value}" (HpBatteryCharge.Target). Refused when a BIOS setup password is set. Undo sets the old value back.</summary>
+    SetHpBatteryChargeLimit,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>
@@ -146,9 +149,12 @@ public sealed record AreaRow(
     string? Key = null,
     IReadOnlyList<AreaAction>? Actions = null,
     string? Detail = null, string? DumpPath = null, string? GetHelpUri = null, string? EventCopyText = null, IReadOnlyList<string>? ReviewKeys = null, IReadOnlyList<HangOccurrence>? HangOccurrences = null,
-    string? FilePath = null, IReadOnlyList<HangOccurrence>? EvidenceOccurrences = null);
+    string? FilePath = null, IReadOnlyList<HangOccurrence>? EvidenceOccurrences = null,
+    string? LinkUri = null, string? LinkText = null);
 /// <remarks><see cref="AreaRow.Key"/> is an optional stable id (e.g. the service name) used for row actions.
-/// <see cref="AreaRow.Detail"/> is optional longer text (full message, occurrences) shown when the row is expanded.</remarks>
+/// <see cref="AreaRow.Detail"/> is optional longer text (full message, occurrences) shown when the row is expanded.
+/// <see cref="AreaRow.LinkUri"/> is an https page (a driver download on the PC maker's site) offered as a link labelled
+/// <see cref="AreaRow.LinkText"/> when the row is expanded.</remarks>
 
 /// <summary>A summary card plus its drill-down drawer content. Text here is shown to the user; technical detail goes to the log.</summary>
 public sealed record AreaCard(

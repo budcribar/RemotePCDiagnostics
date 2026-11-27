@@ -74,7 +74,7 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
         _faults?.FileAsync(name, () => Replay.FileText(name), ct) ?? Task.FromResult(Replay.FileText(name));
 
     /// <summary>The check as the app runs it (WMI, through the Agent).</summary>
-    public BatteryPowerModule BatteryPower() => new(new WmiBatteryPowerSource(Wmi, readPowerPolicy: () => null));
+    public BatteryPowerModule BatteryPower() => new(new WmiBatteryPowerSource(Wmi, readPowerPolicy: () => null, isHp: () => false));
     /// <summary>The Store edition without an Agent (osquery and powercfg).</summary>
     public BatteryPowerModule BatteryPowerOld() => new(new OsqueryBatteryPowerSource(Osquery, Commands));
 

@@ -25,6 +25,9 @@ public sealed partial class WindowsAgentNativeOps
             case SecurityReadAction or SecurityApplyAction or SecurityRestoreAction:
                 result = AgentSecuritySettings.Run(new WindowsSecuritySettingsStore(), action);
                 break;
+            case Battery.HpBatteryReadAction or Battery.HpBatterySetAction:
+                result = Battery.AgentHpBatteryCharge.Run(new Battery.WindowsHpBiosSettings(), action);
+                break;
         }
     }
 }

@@ -18,6 +18,8 @@ public interface IBatteryPowerSource
     Task<ProcessorPerformanceSample?> ReadProcessorPerformanceAsync(CancellationToken ct) => Task.FromResult<ProcessorPerformanceSample?>(null);
     /// <summary>Windows Power mode overlay and configured AC max processor state, or null when unavailable.</summary>
     Task<PowerPolicySnapshot?> ReadPowerPolicyAsync(CancellationToken ct) => Task.FromResult<PowerPolicySnapshot?>(null);
+    /// <summary>HP's battery charging BIOS settings (empty on other PCs, or without the Agent: HP's WMI provider needs administrator rights).</summary>
+    Task<IReadOnlyList<Battery.HpBatterySetting>> ReadHpChargeSettingsAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<Battery.HpBatterySetting>>([]);
 }
 
 /// <summary>Where DriveHealth reads the drives from (see <see cref="IBatteryPowerSource"/> for which one the app uses).</summary>
@@ -30,7 +32,8 @@ public interface IDriveSource
 /// <param name="Notice">Shown above the report, for instance when only the drive list (no health) could be read.</param>
 public sealed record DriveList(IReadOnlyList<DriveHealth> Drives, string? Notice = null);
 
-public sealed class WmiBatteryPowerSource(IWmiSource wmi, Func<PowerPolicySnapshot?>? readPowerPolicy = null, ILogger? log = null) : IBatteryPowerSource
+/// <param name="isHp">Whether this PC is an HP, so HP's battery settings are asked for (default: the SMBIOS manufacturer in the registry).</param>
+public sealed class WmiBatteryPowerSource(IWmiSource wmi, Func<PowerPolicySnapshot?>? readPowerPolicy = null, ILogger? log = null, Func<bool>? isHp = null) : IBatteryPowerSource
 {
     public const string PowerPlanNamespace = @"root\cimv2\power";
     public const string ActivePlanSql = "SELECT ElementName FROM Win32_PowerPlan WHERE IsActive = TRUE";
@@ -48,6 +51,9 @@ public sealed class WmiBatteryPowerSource(IWmiSource wmi, Func<PowerPolicySnapsh
 
     public Task<PowerPolicySnapshot?> ReadPowerPolicyAsync(CancellationToken ct) =>
         Task.FromResult((readPowerPolicy ?? (() => WindowsPowerPolicyReader.ReadSnapshot(log)))());
+
+    public Task<IReadOnlyList<Battery.HpBatterySetting>> ReadHpChargeSettingsAsync(CancellationToken ct) =>
+        (isHp ?? Battery.HpBatteryCharge.IsHpPc)() ? Battery.HpBatteryCharge.ReadAsync(wmi, ct) : Task.FromResult<IReadOnlyList<Battery.HpBatterySetting>>([]);
 }
 
 public sealed class WmiDriveSource(IWmiSource wmi) : IDriveSource
@@ -71,6 +77,7 @@ public sealed class AgentOrFallbackBatteryPowerSource(Session.IElevatedCommandBr
     public Task<string?> ReadActivePlanAsync(CancellationToken ct) => Current.ReadActivePlanAsync(ct);
     public Task<ProcessorPerformanceSample?> ReadProcessorPerformanceAsync(CancellationToken ct) => Current.ReadProcessorPerformanceAsync(ct);
     public Task<PowerPolicySnapshot?> ReadPowerPolicyAsync(CancellationToken ct) => Current.ReadPowerPolicyAsync(ct);
+    public Task<IReadOnlyList<Battery.HpBatterySetting>> ReadHpChargeSettingsAsync(CancellationToken ct) => Current.ReadHpChargeSettingsAsync(ct);
 }
 
 /// <inheritdoc cref="AgentOrFallbackBatteryPowerSource"/>

@@ -130,6 +130,8 @@ public static class HostServices
         // Vendor-independent BIOS update orchestrator, probes, and all 9 built-in vendor providers (additional providers register via AddBiosUpdateProvider<T>).
         services.AddBiosUpdates();
         services.AddBuiltInBiosUpdateProviders();
+        // "Newer from HP / Lenovo / Dell" rows on the Drivers check's driver-updates card (read only).
+        RemotePCDiagnostics.Core.Drivers.VendorDriverServiceCollectionExtensions.AddVendorDriverUpdates(services);
         // Every built-in module goes through the same registration path a plugin uses.
         var plugins = new PluginRegistrar(session, HostVersion(), L<PluginRegistrar>());
         services.AddSingleton(plugins);

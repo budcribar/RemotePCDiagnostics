@@ -64,7 +64,7 @@ public static class FixCatalog
     private static int OrderOf(RemediationKind k) => k switch
     {
         RemediationKind.SetBalancedPowerPlan or RemediationKind.ResetMaxProcessorState or RemediationKind.DisableFastStartup or RemediationKind.DisableSystemProxy
-            or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer => 10,
+            or RemediationKind.DisableDeviceWake or RemediationKind.DisableWakeTimer or RemediationKind.SetHpBatteryChargeLimit => 10,
         // Sound, in the order that makes a silent device play: Windows Audio, turn the device on, unmute, volume, format, enhancements.
         RemediationKind.SetAudioServicesAutomatic => 23,
         RemediationKind.EnableAudioEndpoint => 24,
@@ -201,6 +201,7 @@ public static class FixCatalog
                 RemediationKind.DisableWakeTimer => Has(Changes.ChangeKind.WakeTimer, a.Target),
                 RemediationKind.EnableStorageSense => Has(Changes.ChangeKind.RegistryValue, Changes.RegistryAllowlist.StorageSenseEnabled.Target),
                 RemediationKind.ResetMaxProcessorState => HasKind(Changes.ChangeKind.PowerSetting),
+                RemediationKind.SetHpBatteryChargeLimit => HasKind(Changes.ChangeKind.HpBiosSetting),
                 RemediationKind.MovePackageCacheToDevDrive => Has(Changes.ChangeKind.UserEnvironmentVariable, DevDrivePackageCaches.TargetEnvVar(a.Target)),
                 RemediationKind.CreatePersistentDevDrive => HasKind(Changes.ChangeKind.PersistentDevDrive),
                 RemediationKind.UnmuteAudioEndpoint => Has(Changes.ChangeKind.AudioEndpoint, $"{a.Target}|{Audio.AudioTargets.Mute}"),
