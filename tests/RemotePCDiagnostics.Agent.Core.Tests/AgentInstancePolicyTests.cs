@@ -110,9 +110,8 @@ public class AgentInstancePolicyTests
         var currentDisable = plan.ToList().FindIndex(action => action is DisableFailureRestartAction disable && disable.ServiceName == AgentLayout.ServiceName);
         Assert.True(currentDisable >= 0 && currentDisable < currentStop);
 
-        var launchers = plan.ToList().FindIndex(action => action is RemoveStartupLaunchersAction);
         var terminate = plan.ToList().FindIndex(action => action is TerminateLeftoverProcessesAction);
-        Assert.True(launchers > currentStop && terminate > launchers && waitAt > terminate);
+        Assert.True(terminate > currentStop && waitAt > terminate);
 
         var ensure = Assert.IsType<EnsureServiceRecoveryAction>(plan[^1]);
         Assert.Equal(AgentLayout.ServiceName, ensure.ServiceName);
@@ -195,6 +194,5 @@ public class AgentInstancePolicyTests
         Assert.Contains($"start= {AgentServiceControl.AutomaticStartType}", string.Join('\n', restored), StringComparison.Ordinal);
         Assert.DoesNotContain("delayed-auto", string.Join('\n', restored), StringComparison.Ordinal);
         Assert.DoesNotContain("start= disabled", string.Join('\n', restored), StringComparison.Ordinal);
-        Assert.DoesNotContain(AgentLayout.SetupTaskName, AgentRemoval.ScheduledTaskNames);
     }
 }

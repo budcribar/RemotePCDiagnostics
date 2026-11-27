@@ -4,7 +4,6 @@ namespace RemotePCDiagnostics.Agent.Core;
 /// Runs Setup outside the service control manager's job. That job kills every child when the service process
 /// exits, and it does not allow <c>CREATE_BREAKAWAY_FROM_JOB</c>. A one-shot SYSTEM task is not in the job, so
 /// Setup (and the <c>Agent.exe install</c> it starts) keeps running after the agent that launched the update is stopped.
-/// The task name is not in <see cref="AgentRemoval.ScheduledTaskNames"/>: upgrade deletes those names while Setup is still this task.
 /// </summary>
 public static class ScheduledSetup
 {

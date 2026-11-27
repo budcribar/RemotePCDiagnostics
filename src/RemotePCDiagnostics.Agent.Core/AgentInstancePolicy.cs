@@ -131,7 +131,6 @@ public static class AgentInstancePolicy
             plan.Add(new DisableFailureRestartAction(service.Name));
             plan.Add(new StopServiceAction(service.Name));
         }
-        plan.Add(new RemoveStartupLaunchersAction());
         plan.Add(new TerminateLeftoverProcessesAction());
         plan.Add(new WaitForInstanceMutexAction());
         var deleted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -313,7 +312,6 @@ public sealed record DisableFailureRestartAction(string ServiceName) : AgentUpgr
 
 public sealed record StopServiceAction(string ServiceName) : AgentUpgradeAction;
 
-public sealed record RemoveStartupLaunchersAction : AgentUpgradeAction;
 
 public sealed record TerminateLeftoverProcessesAction : AgentUpgradeAction;
 

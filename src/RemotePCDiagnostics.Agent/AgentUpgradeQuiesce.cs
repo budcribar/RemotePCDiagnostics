@@ -4,10 +4,10 @@ using RemotePCDiagnostics.Agent.Core;
 namespace RemotePCDiagnostics.Agent;
 
 /// <summary>
-/// Stops every agent service and startup launcher before a new one is started.
+/// Stops every agent service before a new one is started.
 /// An <c>sc delete</c> while the old process is still running drops it from the Service Control Manager
 /// and the following <c>sc start</c> launches a second version beside it. Another service registration of the agent
-/// executable, a Run key, and a scheduled task are the other ways two copies stay installed.
+/// executable is the other way two copies stay installed.
 /// </summary>
 internal static class AgentUpgradeQuiesce
 {
@@ -74,10 +74,6 @@ internal static class AgentUpgradeQuiesce
                 break;
             case StopServiceAction stop:
                 StopService(stop.ServiceName, log);
-                break;
-            case RemoveStartupLaunchersAction:
-                foreach (var line in AgentStartupCleanup.RemoveAll())
-                    AgentSingleInstance.Log(AgentInstancePolicy.LogPrefix + " " + line, log);
                 break;
             case TerminateLeftoverProcessesAction:
                 EndLeftoverProcesses(log);

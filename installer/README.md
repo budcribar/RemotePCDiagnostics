@@ -11,7 +11,7 @@ Builds a single-file Windows `x64` setup wizard (`RemotePCDiagnostics-Setup-<Ver
 - **Clean uninstall**:
   - Removes any leftover `"Remote PC Diagnostics - continue service workflow"` scheduled task, `"Remote PC Diagnostics - continue after restart"` scheduled task and `RemotePCDiagnosticsResume` `RunOnce` entry.
   - Runs `RemotePCDiagnostics.Agent.exe uninstall` when that agent is installed (the same command `install-agent-<group>.cmd` and an Admin invite `Install-Computer.cmd` use, via `install ... --lifetime=persistent`). That stops and deletes the `RemotePCDiagnosticsAgent` service, startup Run values, agent scheduled tasks, the enrollment key (`agent.json`), and the agent files. The undo journal under `%ProgramData%\RemotePCDiagnostics\state` is not part of that cleanup.
-  - If the agent executable is already gone, Setup still stops and deletes the service, the known agent startup entries, and `agent.json`.
+  - If the agent executable is already gone, Setup still stops and deletes the service and `agent.json`.
   - On interactive uninstall, asks whether to also delete saved diagnostic logs, benchmark history, preferences, and undo state under `%ProgramData%\RemotePCDiagnostics` and `%LOCALAPPDATA%\RemotePCDiagnostics` (defaults to **No** so history/undo records aren't accidentally wiped).
   - The Microsoft Store MSIX package cannot run a custom uninstall action. The agent removes itself after it has seen the Store package or this Setup install and later finds that install gone.
 

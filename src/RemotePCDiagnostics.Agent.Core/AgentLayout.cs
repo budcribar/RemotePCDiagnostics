@@ -29,8 +29,6 @@ public static class AgentLayout
     /// <summary>Default Store identity from <c>msix/Build-Msix.ps1</c>. Partner Center may prefix it.</summary>
     public const string DefaultMsixPackageName = "BudCribar.RemotePCDiagnostics";
 
-    public const string RunValueName = "RemotePCDiagnosticsAgent";
-    public const string ScheduledTaskName = "RemotePCDiagnostics Agent";
 
     /// <summary>
     /// One-shot task that runs Setup outside the service job. Not removed during upgrade: that cleanup runs while

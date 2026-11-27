@@ -172,8 +172,7 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "
 
 [Run]
 #if AgentExePath != ""
-; Stage Agent.exe in {tmp} and invoke 'install'. PrepareToInstall has already stopped the old agent service
-; and removed the Run keys and scheduled tasks that would start a second copy.
+; Stage Agent.exe in {tmp} and invoke 'install'. PrepareToInstall has already stopped the old agent service.
 ; install waits until the agent mutex is free, sets Automatic and failure restart, and only then starts the service.
 ; These entries are not skipifsilent: a remote update is silent. DeinitializeSetup starts the service again
 ; if this entry does not, including when the agent that launched Setup has already been stopped.
@@ -284,7 +283,7 @@ begin
   DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing), SetupMessage(msgPreparingDesc), @OnDownloadProgress);
 end;
 
-{ Stop the agent service, and remove startup entries that launch a second copy.
+{ Stop the agent service.
   Does not delete the service and does not taskkill: Setup may be a child of the agent that started
   this update, and sc delete while that process is still alive leaves the old version running with no service
   record. Agent.exe install deletes other registrations of the agent only after the process and the agent mutex are gone.
@@ -385,28 +384,10 @@ begin
   EnsureAgentServiceAutomaticAndRunning();
 end;
 
-procedure RemoveAgentStartupEntries();
-var
-  ResultCode: Integer;
-begin
-  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "RemotePCDiagnostics Agent" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "RemotePCDiagnosticsAgent" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "Remote PC Diagnostics Agent" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnosticsAgent');
-  RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnostics Agent');
-  RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Remote PC Diagnostics Agent');
-  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnosticsAgent');
-  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnostics Agent');
-  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Remote PC Diagnostics Agent');
-  RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\RunOnce', 'RemotePCDiagnosticsAgent');
-  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\RunOnce', 'RemotePCDiagnosticsAgent');
-end;
-
 procedure StopPreviousAgents();
 begin
   Log('Stopping any running Remote PC Diagnostics Agent before installing {#AgentMutexName}.');
   StopOneAgentService('RemotePCDiagnosticsAgent');
-  RemoveAgentStartupEntries();
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -523,7 +504,6 @@ begin
   { Idempotent if uninstall already did this. Covers a missing exe or an uninstall that did not start. }
   Exec(ExpandConstant('{sys}\sc.exe'), 'stop RemotePCDiagnosticsAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sys}\sc.exe'), 'delete RemotePCDiagnosticsAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  RemoveAgentStartupEntries();
 
   for I := 1 to 10 do
   begin

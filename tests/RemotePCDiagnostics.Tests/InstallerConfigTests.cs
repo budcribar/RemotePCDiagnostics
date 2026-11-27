@@ -239,7 +239,7 @@ public sealed class InstallerConfigTests
 
         Assert.Contains("StopOneAgentService('RemotePCDiagnosticsAgent');", iss);
         Assert.DoesNotContain("StopOneAgentService('RemotePCDiagnostics.Agent');", iss); // old service names are gone
-        Assert.Contains("/Delete /TN \"Remote PC Diagnostics Agent\" /F", iss);
+        Assert.DoesNotContain("RemoveAgentStartupEntries", iss); // old Run-key and scheduled-task launchers are gone
         Assert.Contains("does not taskkill", iss);
         Assert.DoesNotContain("delete \"RemotePCDiagnostics.Agent\"", iss);
         Assert.Contains("agent-instance.txt", iss);

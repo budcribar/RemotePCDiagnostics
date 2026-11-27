@@ -276,46 +276,6 @@ public class AgentRemovalTests
         Assert.DoesNotContain("agent.json", args, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Startup_entries_match_the_agent_and_not_the_desktop_workflow_task()
-    {
-        Assert.True(AgentRemoval.ShouldRemoveRunValue("RemotePCDiagnosticsAgent", null));
-        Assert.True(AgentRemoval.ShouldRemoveRunValue("Anything", "\"C:\\Program Files\\RemotePCDiagnosticsAgent\\RemotePCDiagnostics.Agent.exe\" run"));
-        Assert.False(AgentRemoval.ShouldRemoveRunValue("OneDrive", "C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe"));
-        Assert.False(AgentRemoval.CommandLaunchesAgent("C:\\Program Files\\RemotePCDiagnostics\\RemotePCDiagnostics.Host.exe"));
-
-        Assert.True(AgentRemoval.IsAgentStartupShortcut("Remote PC Diagnostics Agent.lnk"));
-        Assert.False(AgentRemoval.IsAgentStartupShortcut("Remote PC Diagnostics.lnk"));
-
-        const string list = """
-            Folder: \
-            TaskName:      \Remote PC Diagnostics - continue service workflow
-            Task To Run:   "C:\Program Files\RemotePCDiagnostics\RemotePCDiagnostics.Host.exe" --workflow
-
-            Folder: \
-            TaskName:      \RemotePCDiagnostics Agent
-            Task To Run:   "C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe" run
-
-            Folder: \
-            TaskName:      \Nightly backup
-            Task To Run:   C:\Tools\backup.exe
-            """;
-        var names = AgentRemoval.TaskNamesToDelete(list);
-        Assert.Equal(["\\RemotePCDiagnostics Agent"], names);
-        Assert.False(AgentRemoval.ShouldDeleteScheduledTask(@"\Remote PC Diagnostics - continue service workflow", "RemotePCDiagnostics.Host.exe"));
-
-        const string localized = """
-            Dossier: \
-            Nom de la tâche:      \Invite install
-            Tâche à exécuter:    C:\Tools\RemotePCDiagnostics.Agent.exe run
-
-            Dossier: \
-            Nom de la tâche:      \Remote PC Diagnostics - continue service workflow
-            Tâche à exécuter:    C:\Program Files\RemotePCDiagnostics\RemotePCDiagnostics.Host.exe
-            """;
-        Assert.Equal(["\\Invite install"], AgentRemoval.TaskNamesToDelete(localized));
-    }
-
     [Theory]
     [InlineData("BudCribar.RemotePCDiagnostics_1.2.0.0_x64__abc", true)]
     [InlineData("12345BudCribar.RemotePCDiagnostics_1.2.0.0_x64__publisher", true)]
