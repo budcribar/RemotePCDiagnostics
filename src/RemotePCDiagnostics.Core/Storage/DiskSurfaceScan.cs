@@ -141,12 +141,15 @@ public static class DiskScanPlan
     public static IEnumerable<(long Offset, int Length)> Blocks(long size, int sector, DiskScanMode mode)
     {
         if (size <= 0 || sector <= 0) yield break;
-        var lastSector = (size / sector - 1) * sector;
-        var block = (int)Math.Min(DiskScanOptions.BlockBytes, size / sector * sector);
+        var usable = size / sector * sector;
+        var maxBlock = DiskScanOptions.BlockBytes / sector * sector;
+        var block = (int)Math.Min(maxBlock, usable);
+        if (block <= 0) yield break;
+        var lastSector = usable - sector;
         if (mode == DiskScanMode.Full)
         {
             for (long at = 0; at <= lastSector; at += block)
-                yield return (at, (int)Math.Min(block, size / sector * sector - at));
+                yield return (at, (int)Math.Min(block, usable - at));
             yield break;
         }
         // Quick: the first, middle and last sectors (what a minimal surface test reads), then blocks spread evenly over the whole disk.
@@ -159,7 +162,7 @@ public static class DiskScanPlan
         for (var i = 0; i < samples; i++)
         {
             var at = (long)(i * stride + stride / 2 - block / 2.0);
-            at = Math.Clamp(at, 0, Math.Max(0, size / sector * sector - block)) / sector * sector;
+            at = Math.Clamp(at, 0, Math.Max(0, usable - block)) / sector * sector;
             yield return (at, block);
         }
     }
@@ -168,7 +171,8 @@ public static class DiskScanPlan
     {
         if (size <= 0 || sector <= 0) return 0;
         var usable = size / sector * sector;
-        var block = Math.Min(DiskScanOptions.BlockBytes, usable);
+        var maxBlock = DiskScanOptions.BlockBytes / sector * sector;
+        var block = Math.Min(maxBlock, usable);
         if (block <= 0) return 0;
         return mode == DiskScanMode.Full ? (usable + block - 1) / block : 3 + Math.Min(DiskScanOptions.QuickSamples, Math.Max(1, size / block));
     }
@@ -202,14 +206,17 @@ public static class DiskReadErrors
 /// <see cref="Run"/> blocks until the scan ends (finished, stopped, time limit, or the disk failed); <see cref="Snapshot"/> may be called
 /// from any thread meanwhile.
 /// </summary>
-public sealed class DiskSurfaceScanner(IDiskBlockDevice device, DiskScanOptions options, IDiskScanConditions? conditions = null, IScanClock? clock = null)
+public sealed class DiskSurfaceScanner(IDiskBlockDevice device, DiskScanOptions options, IDiskScanConditions? conditions = null, IScanClock? clock = null,
+    Func<bool>? isAbandoned = null)
 {
+    private enum BlockOutcome { Continue, Stopped, Gone }
+
     private readonly IScanClock _clock = clock ?? new StopwatchScanClock();
     private readonly object _gate = new();
     private readonly char[] _map = Enumerable.Repeat(DiskSurfaceMap.NotRead, DiskSurfaceMap.Bins).ToArray();
     private readonly List<DiskBadBlock> _bad = [];
     private string _state = DiskScanStatus.Running;
-    private string? _error, _throttle;
+    private string? _error, _throttle, _lastThrottle;
     private long _read, _unreadable, _retried, _slow, _bytes;
     private double _maxMs, _totalMs, _throttled, _elapsed;
     /// <summary>Refining a bad 1 MB block into sectors is capped, so a dying disk can't make the scan read forever.</summary>
@@ -219,6 +226,8 @@ public sealed class DiskSurfaceScanner(IDiskBlockDevice device, DiskScanOptions 
     public int SlowMs { get; } = device.IncursSeekPenalty == false ? DiskScanOptions.SlowSsdMs : DiskScanOptions.SlowHddMs;
 
     private string Media => device.IncursSeekPenalty switch { true => "HDD", false => "SSD", null => "" };
+
+    private bool ShouldStop(CancellationToken ct) => ct.IsCancellationRequested || isAbandoned?.Invoke() == true;
 
     public DiskScanStatus Snapshot()
     {
@@ -244,7 +253,7 @@ public sealed class DiskSurfaceScanner(IDiskBlockDevice device, DiskScanOptions 
                 BytesRead = _bytes,
                 ElapsedSeconds = Math.Round(_elapsed, 1),
                 ThrottledSeconds = Math.Round(_throttled, 1),
-                Throttle = _throttle,
+                Throttle = _state == DiskScanStatus.Running ? _throttle : _lastThrottle,
                 Map = new string(_map),
                 BadBlocks = [.. _bad],
             };
@@ -261,17 +270,23 @@ public sealed class DiskSurfaceScanner(IDiskBlockDevice device, DiskScanOptions 
         {
             foreach (var (offset, length) in DiskScanPlan.Blocks(device.SizeBytes, device.SectorBytes, options.Mode))
             {
-                if (ct.IsCancellationRequested) { end = DiskScanStatus.Stopped; break; }
+                if (ShouldStop(ct)) { end = DiskScanStatus.Stopped; break; }
                 var elapsed = _clock.Elapsed - start;
                 if (options.TimeLimit is { } limit && elapsed >= limit) { end = DiskScanStatus.TimeLimit; break; }
                 if (conditions is not null && elapsed >= nextConditions)
                 {
                     throttle = SafeThrottle();
                     nextConditions = elapsed + DiskScanOptions.ConditionsEvery;
-                    lock (_gate) _throttle = throttle ?? _throttle;
+                    lock (_gate)
+                    {
+                        _throttle = throttle;
+                        if (throttle is not null) _lastThrottle = throttle;
+                    }
                 }
 
-                if (!ReadBlock(offset, length)) { end = DiskScanStatus.Failed; break; }
+                var outcome = ReadBlock(offset, length, ct);
+                if (outcome == BlockOutcome.Gone) { end = DiskScanStatus.Failed; break; }
+                if (outcome == BlockOutcome.Stopped) { end = DiskScanStatus.Stopped; break; }
 
                 if (throttle is not null)
                 {
@@ -300,24 +315,26 @@ public sealed class DiskSurfaceScanner(IDiskBlockDevice device, DiskScanOptions 
         catch { return null; }
     }
 
-    /// <summary>False when the disk went away (the scan ends as failed).</summary>
-    private bool ReadBlock(long offset, int length)
+    /// <summary>Reads one block, retrying once on error and narrowing persistent errors down to bad sectors.</summary>
+    private BlockOutcome ReadBlock(long offset, int length, CancellationToken ct)
     {
         var (error, ms) = Timed(offset, length);
         char mark;
         if (error == 0) mark = ms > SlowMs ? DiskSurfaceMap.Slow : DiskSurfaceMap.Ok;
         else
         {
-            if (DiskReadErrors.IsGone(error)) { Gone(error); return false; }
+            if (DiskReadErrors.IsGone(error)) { Gone(error); return BlockOutcome.Gone; }
+            if (ShouldStop(ct)) return BlockOutcome.Stopped;
             // Once more: a read that works the second time is a weak spot, not a bad one.
             var (again, ms2) = Timed(offset, length);
             ms = Math.Max(ms, ms2);
             if (again == 0) mark = DiskSurfaceMap.Retried;
             else
             {
-                if (DiskReadErrors.IsGone(again)) { Gone(again); return false; }
+                if (DiskReadErrors.IsGone(again)) { Gone(again); return BlockOutcome.Gone; }
                 mark = DiskSurfaceMap.Unreadable;
-                LocateBadSectors(offset, length, again);
+                var refined = LocateBadSectors(offset, length, again, ct);
+                if (refined != BlockOutcome.Continue) return refined;
             }
         }
 
@@ -336,7 +353,7 @@ public sealed class DiskSurfaceScanner(IDiskBlockDevice device, DiskScanOptions 
             var bin = DiskSurfaceMap.BinOf(offset, device.SizeBytes);
             if (DiskSurfaceMap.Rank(mark) > DiskSurfaceMap.Rank(_map[bin])) _map[bin] = mark;
         }
-        return true;
+        return BlockOutcome.Continue;
     }
 
     private void Gone(int error)
@@ -352,27 +369,34 @@ public sealed class DiskSurfaceScanner(IDiskBlockDevice device, DiskScanOptions 
     }
 
     /// <summary>Narrows an unreadable block down to its bad sectors (64 KB pieces, then single sectors), within the refine budget.</summary>
-    private void LocateBadSectors(long offset, int length, int blockError)
+    private BlockOutcome LocateBadSectors(long offset, int length, int blockError, CancellationToken ct)
     {
         var sector = device.SectorBytes;
         var found = 0;
         const int Piece = 64 * 1024;
-        for (long at = offset; at < offset + length && _refineBudget > 0; at += Piece)
+        var piece = Math.Max(sector, Piece / sector * sector);
+        for (long at = offset; at < offset + length && _refineBudget > 0; at += piece)
         {
-            var len = (int)Math.Min(Piece, offset + length - at);
+            if (ShouldStop(ct)) return BlockOutcome.Stopped;
+            var len = (int)Math.Min(piece, offset + length - at);
             _refineBudget--;
-            if (device.Read(at, len) == 0) continue;
+            var pe = device.Read(at, len);
+            if (pe == 0) continue;
+            if (DiskReadErrors.IsGone(pe)) { Gone(pe); return BlockOutcome.Gone; }
             for (long s = at; s < at + len && _refineBudget > 0; s += sector)
             {
+                if (ShouldStop(ct)) return BlockOutcome.Stopped;
                 _refineBudget--;
                 var e = device.Read(s, sector);
-                if (e == 0 || DiskReadErrors.IsGone(e)) continue;
+                if (e == 0) continue;
+                if (DiskReadErrors.IsGone(e)) { Gone(e); return BlockOutcome.Gone; }
                 found++;
                 AddBad(s / sector, 1, e);
             }
         }
         // Couldn't single it out (out of budget, or the error came and went): list the whole block.
         if (found == 0) AddBad(offset / sector, length / sector, blockError);
+        return BlockOutcome.Continue;
     }
 
     private void AddBad(long lba, long sectors, int error)

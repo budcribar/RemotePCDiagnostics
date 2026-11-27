@@ -34,6 +34,8 @@ public sealed unsafe class WindowsDiskBlockDevice : IDiskBlockDevice
     /// <summary>Opens disk <paramref name="number"/> for reading; throws with Windows' reason when it can't.</summary>
     public static WindowsDiskBlockDevice Open(int number)
     {
+        if (number is < 0 or > DiskReadScanAction.MaxDisk)
+            throw new ArgumentOutOfRangeException(nameof(number), number, $"Disk number must be between 0 and {DiskReadScanAction.MaxDisk}.");
         var handle = CreateFileW($@"\\.\PhysicalDrive{number}", GenericRead, FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting,
             FileFlagNoBuffering, IntPtr.Zero);
         if (handle.IsInvalid)
@@ -60,8 +62,13 @@ public sealed unsafe class WindowsDiskBlockDevice : IDiskBlockDevice
         if (length <= 0 || length % SectorBytes != 0 || offset % SectorBytes != 0) return 87; // ERROR_INVALID_PARAMETER
         if (length > _bufferBytes)
         {
-            if (_buffer is not null) NativeMemory.AlignedFree(_buffer);
-            _buffer = NativeMemory.AlignedAlloc((nuint)length, 4096);
+            if (_buffer is not null)
+            {
+                NativeMemory.AlignedFree(_buffer);
+                _buffer = null;
+                _bufferBytes = 0;
+            }
+            _buffer = NativeMemory.AlignedAlloc((nuint)length, (nuint)Math.Max(4096, SectorBytes));
             _bufferBytes = length;
         }
         var overlapped = new NativeOverlapped { OffsetLow = (int)(offset & 0xFFFFFFFF), OffsetHigh = (int)(offset >> 32) };
@@ -73,7 +80,7 @@ public sealed unsafe class WindowsDiskBlockDevice : IDiskBlockDevice
     public void Dispose()
     {
         _handle.Dispose();
-        if (_buffer is not null) { NativeMemory.AlignedFree(_buffer); _buffer = null; }
+        if (_buffer is not null) { NativeMemory.AlignedFree(_buffer); _buffer = null; _bufferBytes = 0; }
     }
 
     private static int Geometry(SafeFileHandle h)
@@ -139,7 +146,7 @@ public sealed unsafe class WindowsDiskBlockDevice : IDiskBlockDevice
             if (v.IsInvalid) continue;
             if (!DeviceIoControl(v, IoctlVolumeGetVolumeDiskExtents, null, 0, buffer, Size, out var got, IntPtr.Zero) || got < 32) continue;
             var n = Math.Min(*(int*)buffer, 8);
-            for (var i = 0; i < n; i++)
+            for (var i = 0; i < n && 8 + (i + 1) * 24 <= got; i++)
             {
                 var e = buffer + 8 + i * 24;
                 if (*(int*)e == disk) found.Add((*(long*)(e + 8), letter));

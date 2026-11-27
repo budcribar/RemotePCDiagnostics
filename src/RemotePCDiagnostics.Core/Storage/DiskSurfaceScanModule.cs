@@ -131,7 +131,7 @@ public sealed class DiskSurfaceScanModule(IWmiSource wmi, IDiskScanSource scans,
             var disks = await ReadDisksAsync(ct).ConfigureAwait(false);
             if (disks is null) report = AreaReport.Failed("Couldn't list this PC's disks.");
             else if (disks.FirstOrDefault(d => d.Instance.Key == instance.Key) is not { } disk) return CouldNotRun.Result(Name, $"{instance.Label} is no longer connected.");
-            else report = await ScanAsync(disk, 0, progress, ct).ConfigureAwait(false);
+            else report = await ScanAsync(disk, progress, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
@@ -148,9 +148,9 @@ public sealed class DiskSurfaceScanModule(IWmiSource wmi, IDiskScanSource scans,
         var disks = await ReadDisksAsync(ct).ConfigureAwait(false);
         if (disks is null) return AreaReport.Failed("Couldn't list this PC's disks.");
         var reports = new List<AreaReport>();
-        foreach (var (disk, i) in disks.Where(d => d.Instance.Applies).Select((d, i) => (d, i)))
+        foreach (var disk in disks.Where(d => d.Instance.Applies))
         {
-            var r = await ScanAsync(disk, i, progress, ct).ConfigureAwait(false);
+            var r = await ScanAsync(disk, progress, ct).ConfigureAwait(false);
             reports.Add(r);
             if (r.Cancelled || r.NotOnThisPc) break;
         }
@@ -177,7 +177,7 @@ public sealed class DiskSurfaceScanModule(IWmiSource wmi, IDiskScanSource scans,
         };
     }
 
-    private async Task<AreaReport> ScanAsync(ScanDisk disk, int index, IProgress<string>? progress, CancellationToken ct)
+    private async Task<AreaReport> ScanAsync(ScanDisk disk, IProgress<string>? progress, CancellationToken ct)
     {
         if (disk.Number is not { } number) return CouldNotRunReport(disk, disk.Instance.NotApplicableReason ?? "No disk number.");
         using var scan = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -186,7 +186,20 @@ public sealed class DiskSurfaceScanModule(IWmiSource wmi, IDiskScanSource scans,
         {
             progress.ReportStep(0, 1000, $"Starting the surface scan of disk {number}…");
             var limit = Mode == DiskScanMode.Full ? Math.Clamp(TimeLimitMinutes, 0, DiskReadScanAction.MaxTimeLimitMinutes) : 0;
-            var answer = await scans.SendAsync(new(DiskReadScanAction.Start, number, Mode, limit), scan.Token).ConfigureAwait(false);
+            DiskScanAnswer answer;
+            try
+            {
+                answer = await scans.SendAsync(new(DiskReadScanAction.Start, number, Mode, limit), scan.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (scan.IsCancellationRequested)
+            {
+                var stopped = await scans.SendAsync(new(DiskReadScanAction.Stop, number), CancellationToken.None).ConfigureAwait(false);
+                var stoppedStatus = stopped.Status is { } st
+                    ? (st.IsRunning ? st with { State = DiskScanStatus.Stopped } : st)
+                    : new DiskScanStatus { Disk = number, Mode = DiskReadScanAction.ModeArg(Mode), State = DiskScanStatus.Stopped };
+                Report(progress, number, stoppedStatus);
+                return BuildReport(stoppedStatus, disk.Drive.Label, $"disk{number}");
+            }
             if (answer.NeedsAgent) return NeedsAgentReport(disk, answer.Error);
             if (answer.Status is not { } status) return CouldNotRunReport(disk, answer.Error ?? "The scan didn't start.");
 
@@ -221,18 +234,20 @@ public sealed class DiskSurfaceScanModule(IWmiSource wmi, IDiskScanSource scans,
         progress.ReportStep((int)(s.Fraction * 1000), 1000,
             $"Reading disk {disk}: {s.Read:N0} of {s.Planned:N0} blocks · {s.Unreadable:N0} unreadable · {s.Slow:N0} slow" + (s.Throttle is { } t && s.IsRunning ? $" · {t}" : ""));
 
+    private static string CardId(ScanDisk disk) => disk.Number is { } n ? $"disk{n}" : disk.Instance.Key is { Length: > 0 } k ? k : "disk";
+
     public static AreaReport NeedsAgentReport(ScanDisk disk, string? why)
     {
         var text = why is { Length: > 0 } && why.Contains("too old", StringComparison.Ordinal) ? why
             : "The surface scan reads the raw disk, which needs administrator rights. " + ElevationService.AdminRepairHint;
-        var card = new AreaCard($"disk{disk.Number}", disk.Drive.Label, AreaLevel.Neutral, NeedsAgentSummary, "Skipped", ["Reading", "Value"],
+        var card = new AreaCard(CardId(disk), disk.Drive.Label, AreaLevel.Neutral, NeedsAgentSummary, "Skipped", ["Reading", "Value"],
             [new(AreaLevel.Neutral, ["Why", text])]);
         return new AreaReport([card], NeedsAgentSummary, DiagnosticStatus.Warning) { NotOnThisPc = true };
     }
 
     public static AreaReport CouldNotRunReport(ScanDisk disk, string why)
     {
-        var card = new AreaCard($"disk{disk.Number}", disk.Drive.Label, AreaLevel.Neutral, CouldNotRun.OutcomeText, "", ["Reading", "Value"],
+        var card = new AreaCard(CardId(disk), disk.Drive.Label, AreaLevel.Neutral, CouldNotRun.OutcomeText, "", ["Reading", "Value"],
             [new(AreaLevel.Neutral, ["Why", why])]);
         return new AreaReport([card], why, DiagnosticStatus.Error) { CouldNotRunReason = why };
     }

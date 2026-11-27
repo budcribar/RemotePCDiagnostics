@@ -463,4 +463,195 @@ public sealed class DiskSurfaceScanTests
         Assert.Equal(DiagnosticStatus.Error, merged.Status);
         Assert.Equal("1 disk with problems", merged.Summary);
     }
+
+    [Fact]
+    public void Plan_is_empty_when_size_is_smaller_than_a_sector_and_rounds_block_to_sector_multiple()
+    {
+        Assert.Empty(DiskScanPlan.Blocks(256, 512, DiskScanMode.Quick));
+        Assert.Equal(0, DiskScanPlan.Count(256, 512, DiskScanMode.Quick));
+        Assert.Empty(DiskScanPlan.Blocks(256, 512, DiskScanMode.Full));
+        Assert.Equal(0, DiskScanPlan.Count(256, 512, DiskScanMode.Full));
+
+        // 520-byte sectors: 1 MB is not a multiple of 520, so block size rounds down to a multiple of 520.
+        const int sector = 520;
+        var size = 5000L * sector;
+        foreach (var mode in new[] { DiskScanMode.Quick, DiskScanMode.Full })
+        {
+            var blocks = DiskScanPlan.Blocks(size, sector, mode).ToList();
+            Assert.Equal(DiskScanPlan.Count(size, sector, mode), blocks.Count);
+            Assert.All(blocks, b => Assert.True(b.Offset % sector == 0 && b.Length > 0 && b.Length % sector == 0 && b.Offset + b.Length <= size));
+        }
+    }
+
+    [Fact]
+    public void Concurrent_start_on_the_same_disk_runs_one_scan_and_disposes_the_extra_device()
+    {
+        var clock = new FakeClock();
+        var hold = new ManualResetEventSlim(false);
+        using var bothOpened = new Barrier(2);
+        var devices = new List<FakeDisk>();
+        var scans = new AgentDiskScans(_ =>
+        {
+            var d = new FakeDisk(GB, clock) { Hold = hold };
+            lock (devices) devices.Add(d);
+            bothOpened.SignalAndWait(TimeSpan.FromSeconds(5));
+            return d;
+        }, clock: () => clock);
+
+        var t1 = Task.Run(() => scans.Run(new(DiskReadScanAction.Start, 0, DiskScanMode.Full, 0)));
+        var t2 = Task.Run(() => scans.Run(new(DiskReadScanAction.Start, 0, DiskScanMode.Full, 0)));
+        var results = Task.WhenAll(t1, t2).GetAwaiter().GetResult();
+
+        Assert.All(results, r => Assert.Equal(DiskScanStatus.Running, DiskScanStatus.Parse(r.StdOut)!.State));
+        Assert.Equal(2, devices.Count);
+        Assert.Single(devices, d => d.Disposed);
+
+        hold.Set();
+        scans.Run(new(DiskReadScanAction.Stop, 0, DiskScanMode.Quick, 0));
+        Assert.True(scans.WaitFor(0, TimeSpan.FromSeconds(10)));
+        Assert.All(devices, d => Assert.True(d.Disposed));
+    }
+
+    [Fact]
+    public void Abandoned_scan_stops_itself_without_any_new_requests()
+    {
+        var clock = new FakeClock();
+        var now = new DateTime(2026, 11, 27, 12, 0, 0, DateTimeKind.Utc);
+        var hold = new ManualResetEventSlim(false);
+        FakeDisk? disk = null;
+        var scans = new AgentDiskScans(_ => disk = new FakeDisk(GB, clock) { Hold = hold }, clock: () => clock, now: () => now);
+
+        scans.Run(new(DiskReadScanAction.Start, 0, DiskScanMode.Full, 0));
+        now += AgentDiskScans.AbandonAfter + TimeSpan.FromSeconds(1);
+        hold.Set();
+
+        // No further Run(...) call is made: the scanner loop itself notices abandonment and stops.
+        Assert.True(scans.WaitFor(0, TimeSpan.FromSeconds(10)));
+        Assert.True(disk!.Disposed);
+        Assert.Equal(DiskScanStatus.Stopped, DiskScanStatus.Parse(scans.Run(new(DiskReadScanAction.Status, 0, DiskScanMode.Quick, 0)).StdOut)!.State);
+    }
+
+    [Fact]
+    public void Disconnect_during_bad_sector_refinement_aborts_immediately_without_recording_block_as_bad()
+    {
+        var clock = new FakeClock();
+        // First 2 reads (initial + retry of block 0) fail with CRC; the 3rd read (inside LocateBadSectors) disconnects.
+        var disk = new FakeDisk(64 * GB, clock) { GoneAfterReads = 2 };
+        disk.BadSectors[0] = DiskReadErrors.Crc;
+        var s = Scan(disk, clock, DiskScanMode.Full);
+
+        Assert.Equal(DiskScanStatus.Failed, s.State);
+        Assert.Contains("device disconnected", s.Error);
+        Assert.Equal(0, s.Unreadable);
+        Assert.Empty(s.BadBlocks);
+        Assert.Equal(3, disk.Reads);
+    }
+
+    [Fact]
+    public void Cancellation_during_bad_sector_refinement_stops_immediately_without_burning_budget()
+    {
+        var clock = new FakeClock();
+        using var cts = new CancellationTokenSource();
+        var disk = new CancelOnRefineDisk(64 * GB, clock, cts);
+        var s = new DiskSurfaceScanner(disk, new DiskScanOptions(0, DiskScanMode.Full), clock: clock).Run(cts.Token);
+
+        Assert.Equal(DiskScanStatus.Stopped, s.State);
+        Assert.Empty(s.BadBlocks);
+        Assert.True(disk.Reads < 10, $"Expected refinement to stop promptly on cancellation, but did {disk.Reads} reads.");
+    }
+
+    private sealed class CancelOnRefineDisk(long size, FakeClock clock, CancellationTokenSource cts) : IDiskBlockDevice
+    {
+        public long SizeBytes => size;
+        public int SectorBytes => 512;
+        public bool? IncursSeekPenalty => false;
+        public IReadOnlyList<DiskPartitionInfo> Partitions => [];
+        public int Reads;
+
+        public int Read(long offset, int length)
+        {
+            var n = Interlocked.Increment(ref Reads);
+            clock.Advance(TimeSpan.FromMilliseconds(2));
+            if (n >= 3) cts.Cancel();
+            return DiskReadErrors.Crc;
+        }
+
+        public void Dispose() { }
+    }
+
+    [Fact]
+    public void Clearing_throttle_clears_live_snapshot_while_keeping_final_report_reason()
+    {
+        var clock = new FakeClock();
+        var throttled = true;
+        var disk = new FakeDisk(16L * (1 << 20), clock) { Latency = TimeSpan.FromSeconds(3) };
+        DiskSurfaceScanner? scanner = null;
+        string? liveWhileThrottled = null, liveAfterCleared = null;
+        var conditions = new Conditions(() =>
+        {
+            if (throttled)
+            {
+                throttled = false;
+                return "On battery at 20 %";
+            }
+            liveWhileThrottled ??= scanner!.Snapshot().Throttle;
+            return null;
+        });
+        scanner = new DiskSurfaceScanner(disk, new DiskScanOptions(0, DiskScanMode.Full), conditions, clock);
+        var final = scanner.Run(CancellationToken.None);
+        // Check a second run where we sample right after clearing via a third check.
+        Assert.Equal("On battery at 20 %", liveWhileThrottled);
+        Assert.Equal("On battery at 20 %", final.Throttle);
+
+        var clock2 = new FakeClock();
+        var calls = 0;
+        DiskSurfaceScanner? scanner2 = null;
+        var conditions2 = new Conditions(() =>
+        {
+            calls++;
+            if (calls == 1) return "On battery at 20 %";
+            if (calls == 3) liveAfterCleared = scanner2!.Snapshot().Throttle;
+            return null;
+        });
+        scanner2 = new DiskSurfaceScanner(new FakeDisk(16L * (1 << 20), clock2) { Latency = TimeSpan.FromSeconds(3) },
+            new DiskScanOptions(0, DiskScanMode.Full), conditions2, clock2);
+        var final2 = scanner2.Run(CancellationToken.None);
+        Assert.Null(liveAfterCleared);
+        Assert.Equal("On battery at 20 %", final2.Throttle);
+    }
+
+    [Fact]
+    public async Task Cancel_during_start_sends_stop_and_counts_as_cancelled()
+    {
+        var source = new CancelDuringStartSource();
+        var module = new DiskSurfaceScanModule(TwoDisks, source, pollEvery: TimeSpan.FromMilliseconds(5));
+        var ct = TestContext.Current.CancellationToken;
+        var instance = (await module.DetectAsync(ct)).Instances[0];
+
+        var run = module.RefreshAsync(instance, null, ct);
+        await source.StartEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+        module.Cancel();
+        var r = await run;
+
+        Assert.Contains("stop 0", source.Sent);
+        Assert.True(r.Cancelled);
+        Assert.Equal(RunEnd.Cancelled, ((AreaReport)r.Payload!).RunEnd);
+    }
+
+    private sealed class CancelDuringStartSource : IDiskScanSource
+    {
+        public TaskCompletionSource StartEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public List<string> Sent { get; } = [];
+
+        public async Task<DiskScanAnswer> SendAsync(DiskScanRequest request, CancellationToken ct)
+        {
+            lock (Sent) Sent.Add(request.Key);
+            if (request.Verb == DiskReadScanAction.Start)
+            {
+                StartEntered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false);
+            }
+            return DiskScanAnswer.Of(new DiskScanStatus { Disk = request.Disk, Mode = "quick", State = DiskScanStatus.Stopped });
+        }
+    }
 }

@@ -52,7 +52,5 @@ public sealed class DiskSurfaceScanDetailsTests : BunitContext
         Assert.Equal(DiskScanMode.Full, module.Mode);
         cut.Find("[data-testid='surface-scan-limit']").Change("60");
         Assert.Equal(60, module.TimeLimitMinutes);
-
-        if (Environment.GetEnvironmentVariable("RPCD_SURFACE_MARKUP") is { Length: > 0 } path) File.WriteAllText(path, cut.Markup);
     }
 }

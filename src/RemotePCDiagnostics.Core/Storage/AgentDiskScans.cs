@@ -42,16 +42,17 @@ public sealed class AgentDiskScans(Func<int, IDiskBlockDevice> open, Func<int, I
 {
     public static readonly TimeSpan AbandonAfter = TimeSpan.FromMinutes(2);
 
-    private static AgentDiskScans? _windows;
-    /// <summary>The PC's scans (raw disks through <see cref="WindowsDiskBlockDevice"/>).</summary>
-    public static AgentDiskScans Windows => _windows ??= new(
+    private static readonly Lazy<AgentDiskScans> _windows = new(() => new(
         n => OperatingSystem.IsWindows() ? WindowsDiskBlockDevice.Open(n) : throw new PlatformNotSupportedException("Reading a raw disk needs Windows."),
-        n => OperatingSystem.IsWindows() ? new WindowsDiskScanConditions(n) : null);
+        n => OperatingSystem.IsWindows() ? new WindowsDiskScanConditions(n) : null));
+    /// <summary>The PC's scans (raw disks through <see cref="WindowsDiskBlockDevice"/>).</summary>
+    public static AgentDiskScans Windows => _windows.Value;
 
     private sealed class Job(DiskSurfaceScanner scanner, CancellationTokenSource cts, DateTime started)
     {
         public DiskSurfaceScanner Scanner { get; } = scanner;
         public CancellationTokenSource Cts { get; } = cts;
+        public bool CtsDisposed { get; set; }
         public DateTime LastAsked { get; set; } = started;
         public DiskScanStatus? Final { get; set; }
         public Thread? Thread { get; set; }
@@ -88,11 +89,24 @@ public sealed class AgentDiskScans(Func<int, IDiskBlockDevice> open, Func<int, I
         catch (Exception ex) { return WindowsAgentNativeOps.Failed(ex.Message); }
 
         var options = new DiskScanOptions(a.DiskNumber, a.Mode, a.Mode == DiskScanMode.Full && a.TimeLimitMinutes > 0 ? TimeSpan.FromMinutes(a.TimeLimitMinutes) : null);
-        var scanner = new DiskSurfaceScanner(device, options, SafeConditions(a.DiskNumber), clock?.Invoke());
-        var job = new Job(scanner, new CancellationTokenSource(), Now());
-        lock (_gate) _jobs[a.DiskNumber] = job;
-        job.Thread = new Thread(() => RunJob(job, device)) { IsBackground = true, Name = $"Surface scan of disk {a.DiskNumber}" };
-        job.Thread.Start();
+        var cts = new CancellationTokenSource();
+        Job? job = null;
+        var scanner = new DiskSurfaceScanner(device, options, SafeConditions(a.DiskNumber), clock?.Invoke(),
+            () => { lock (_gate) return job is not null && Now() - job.LastAsked > AbandonAfter; });
+        job = new Job(scanner, cts, Now());
+        lock (_gate)
+        {
+            if (_jobs.TryGetValue(a.DiskNumber, out var existing) && existing.Final is null)
+            {
+                existing.LastAsked = Now();
+                device.Dispose();
+                cts.Dispose();
+                return Answer(existing.Scanner.Snapshot());
+            }
+            _jobs[a.DiskNumber] = job;
+            job.Thread = new Thread(() => RunJob(job, device)) { IsBackground = true, Name = $"Surface scan of disk {a.DiskNumber}" };
+            job.Thread.Start();
+        }
         return Answer(scanner.Snapshot());
     }
 
@@ -102,22 +116,29 @@ public sealed class AgentDiskScans(Func<int, IDiskBlockDevice> open, Func<int, I
         catch { return null; }
     }
 
-    private static void RunJob(Job job, IDiskBlockDevice device)
+    private void RunJob(Job job, IDiskBlockDevice device)
     {
         // Keeps the PC from sleeping while this thread scans (cleared when it ends; Windows clears it too if the thread dies).
         var awake = OperatingSystem.IsWindows() && SetThreadExecutionState(EsContinuous | EsSystemRequired) != 0;
+        DiskScanStatus? finalStatus = null;
         try
         {
-            job.Final = job.Scanner.Run(job.Cts.Token);
+            finalStatus = job.Scanner.Run(job.Cts.Token);
         }
         catch (Exception ex)
         {
-            job.Final = job.Scanner.Snapshot() with { State = DiskScanStatus.Failed, Error = ex.Message };
+            finalStatus = job.Scanner.Snapshot() with { State = DiskScanStatus.Failed, Error = ex.Message };
         }
         finally
         {
             if (awake) SetThreadExecutionState(EsContinuous);
             device.Dispose();
+            lock (_gate)
+            {
+                job.Final = finalStatus ?? job.Scanner.Snapshot() with { State = DiskScanStatus.Failed };
+                job.Cts.Dispose();
+                job.CtsDisposed = true;
+            }
         }
     }
 
@@ -137,11 +158,11 @@ public sealed class AgentDiskScans(Func<int, IDiskBlockDevice> open, Func<int, I
         lock (_gate)
         {
             if (!_jobs.TryGetValue(disk, out job)) return WindowsAgentNativeOps.Failed($"No surface scan of disk {disk} has run.");
+            if (job.Final is null && !job.CtsDisposed) job.Cts.Cancel();
         }
-        job.Cts.Cancel();
         // The scanner stops between blocks; one block is a second at worst, a bad one with retries a little longer.
         job.Thread?.Join(TimeSpan.FromSeconds(10));
-        return Answer(job.Final ?? job.Scanner.Snapshot());
+        lock (_gate) return Answer(job.Final ?? job.Scanner.Snapshot());
     }
 
     private void StopAbandoned()
@@ -149,7 +170,7 @@ public sealed class AgentDiskScans(Func<int, IDiskBlockDevice> open, Func<int, I
         lock (_gate)
         {
             foreach (var job in _jobs.Values)
-                if (job.Final is null && Now() - job.LastAsked > AbandonAfter) job.Cts.Cancel();
+                if (job.Final is null && !job.CtsDisposed && Now() - job.LastAsked > AbandonAfter) job.Cts.Cancel();
         }
     }
 
