@@ -163,10 +163,6 @@
     @* For browser agents: the list and its copy are the previous read until this is gone (a new range, or a result just in). *@
     <span hidden data-testid="history-loading"></span>
 }
-@if (_result is { LegacyEntries: > 0 } pendingUpdate)
-{
-    <p class="notice" data-testid="history-update-pending">History update pending: @pendingUpdate.LegacyEntries older @(pendingUpdate.LegacyEntries == 1 ? "result is" : "results are") converted once the Agent connects. Turn on Admin Repair Mode to update them now.</p>
-}
 @if (_result is null)
 {
     <p class="status-line" data-testid="history-loading">Loading history…</p>

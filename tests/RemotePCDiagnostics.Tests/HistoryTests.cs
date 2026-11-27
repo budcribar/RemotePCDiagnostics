@@ -50,7 +50,6 @@ public sealed class HistoryTests
         Assert.Equal("CpuStress", e.Module);
         Assert.Equal(ModuleIds.CpuStress, e.ModuleId);
         Assert.Equal(3, e.Format);
-        Assert.False(e.IsLegacy);
         Assert.Equal("CPU stress test", e.Test);
         Assert.Equal("OK", e.Outcome);
         Assert.Equal("Passed", e.Summary);
@@ -64,21 +63,11 @@ public sealed class HistoryTests
     }
 
     [Fact]
-    public void Parser_OldFormat_BestEffort()
+    public void Parser_OlderFormats_AreNotRead()
     {
-        var e = HistoryEventParser.Parse(OldFormat, DateTimeOffset.Now)!;
-        Assert.Equal("CpuStress", e.Module);
-        Assert.Equal("CpuStress", e.Test);
-        Assert.Equal("Passed: no errors", e.Summary);
-        Assert.Equal(61.2, e.DurationSeconds);
-        Assert.Equal("short run", e.Suite);
-        Assert.Equal("81.5", e.Measurement("MaxCpuTemperatureC"));
-        Assert.Equal("Passed", e.Measurement("Outcome"));
-        Assert.Null(e.Measurement("Headline")); // free text dropped
-        Assert.Equal("", e.Machine);
-        Assert.Equal(new DateTimeOffset(2026, 10, 30, 14, 10, 0, TimeSpan.Zero), e.TimeUtc);
-        Assert.True(e.IsLegacy);
-        Assert.Equal(Guid.Empty, e.ModuleId);
+        Assert.Null(HistoryEventParser.Parse(OldFormat, DateTimeOffset.Now));
+        Assert.Null(HistoryEventParser.Parse("Test result: DiskSpeed\nOutcome: OK\nFormat: 2", DateTimeOffset.Now));
+        Assert.Null(HistoryEventParser.Parse("Test result: DiskSpeed\nOutcome: OK\nFormat: 3", DateTimeOffset.Now)); // no Module id
     }
 
     [Theory]
@@ -93,7 +82,7 @@ public sealed class HistoryTests
     public void Parser_BadFinished_FallsBackToEventTime()
     {
         var t = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
-        var e = HistoryEventParser.Parse("Test result: X\nOutcome: Warning\nFinished: not a date\nDuration: ?? s", t)!;
+        var e = HistoryEventParser.Parse($"Test result: X\nModule id: {ModuleIds.CpuStress}\nOutcome: Warning\nFinished: not a date\nDuration: ?? s\nFormat: 3", t)!;
         Assert.Equal(t, e.TimeUtc);
         Assert.Null(e.DurationSeconds);
     }
@@ -125,11 +114,9 @@ public sealed class HistoryTests
         var r = store.Read(TimeSpan.FromDays(7));
         Assert.True(r.Available);
         Assert.Equal(new[] { "DiskSpeed", "CpuStress" }, r.Entries.Select(e => e.Module));
-        Assert.Equal(2, r.LegacyEntries); // OldFormat and the format 2 event wait for the migration
-        Assert.Contains(logs, l => l.Contains("2 event(s) in the old format"));
         Assert.Contains("timediff", xp);
         Assert.Equal(EventLogHistoryStore.MaxEvents, max);
-        Assert.Contains(logs, l => l.Contains("skipped 1"));
+        Assert.Contains(logs, l => l.Contains("skipped 3")); // junk, OldFormat and the format 2 event
     }
 
     [Fact]
@@ -216,9 +203,9 @@ public sealed class HistoryTests
         Assert.Equal("Drive health", HistoryNames.DisplayName("drivehealth", Mods));
         Assert.Equal("Mystery", HistoryNames.DisplayName("Mystery", Mods));
         var now = DateTimeOffset.UtcNow;
-        var old = HistoryEventParser.Parse("Test result: DriveHealth\nOutcome: OK", now)!;
-        var fresh = HistoryEventParser.Parse("Test result: DriveHealth\nTest: Drive health\nOutcome: OK\nFormat: 2", now)!;
-        var unknown = HistoryEventParser.Parse("Test result: Gone\nOutcome: OK", now)!;
+        var old = HistoryEventParser.Parse(F("drivehealth", "OK"), now)!;
+        var fresh = HistoryEventParser.Parse(F("DriveHealth", "OK", "Drive health"), now)!;
+        var unknown = HistoryEventParser.Parse(F("Gone", "OK"), now)!;
         var n = HistoryNames.Normalize([old, fresh, unknown], Mods);
         Assert.Equal(new[] { "Drive health", "Drive health", "Gone" }, n.Select(e => e.Test));
     }
@@ -228,10 +215,10 @@ public sealed class HistoryTests
     {
         var now = DateTimeOffset.UtcNow;
         var entries = HistoryNames.Normalize([
-            HistoryEventParser.Parse("Test result: DriveHealth\nOutcome: OK", now)!,
-            HistoryEventParser.Parse("Test result: DriveHealth\nTest: Drive health\nOutcome: OK\nFormat: 2", now)!,
-            HistoryEventParser.Parse("Test result: EventLog\nOutcome: Warning", now)!,
-            HistoryEventParser.Parse("Test result: Legacy\nOutcome: OK", now)!], Mods);
+            HistoryEventParser.Parse(F("drivehealth", "OK"), now)!,
+            HistoryEventParser.Parse(F("DriveHealth", "OK", "Drive health"), now)!,
+            HistoryEventParser.Parse(F("EventLog", "Warning"), now)!,
+            HistoryEventParser.Parse(F("Legacy", "OK"), now)!], Mods);
         var opts = HistoryNames.FilterOptions(entries, Mods);
         Assert.Equal(new[] { ("DriveHealth", "Drive health"), ("Legacy", "Legacy"), ("EventLog", "Windows error log") }, opts);
         Assert.Equal(2, HistoryQuery.Filter(entries, "DriveHealth", null, HistoryRange.All, now).Count());
@@ -240,13 +227,15 @@ public sealed class HistoryTests
     [Fact]
     public void Parser_KeepsDetailLines_Capped()
     {
-        var msg = "Test result: X\nOutcome: OK\nDetails:\n" + string.Concat(Enumerable.Range(0, 60).Select(i => $"  Line {i}: value {i}\n"));
+        var msg = F("X", "OK") + "\nDetails:\n" + string.Concat(Enumerable.Range(0, 60).Select(i => $"  Line {i}: value {i}\n"));
         var e = HistoryEventParser.Parse(msg, DateTimeOffset.Now)!;
         Assert.Equal(HistoryEventParser.MaxDetailLines, e.Details!.Count);
         Assert.Equal("Line 0: value 0", e.Details[0]);
-        var old = HistoryEventParser.Parse(OldFormat, DateTimeOffset.Now)!;
-        Assert.Contains("Headline: Passed with flying colours", old.Details!);
     }
+
+    /// <summary>A format 3 result for <paramref name="slug"/>.</summary>
+    private static string F(string slug, string outcome, string? test = null) =>
+        $"Test result: {slug}\nModule id: {TestIds.For(slug)}\n" + (test is null ? "" : $"Test: {test}\n") + $"Outcome: {outcome}\nFormat: 3";
 
     private sealed class StubServiceBackend : IServiceControlBackend
     {

@@ -186,7 +186,7 @@ internal static class AgentAdminHost
                     machineTweaks: machineTweaks,
                     changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log),
                     stateFolder: ProtectedState.Folder(),
-                    machineSetup: AgentMachineSetup.ForSignedInUser(log),
+                    machineSetup: new AgentMachineSetup(log),
                     biosOperations: new AgentBiosOperations(launcher, log: log));
                 updater.Bind(serverOptions);
 
@@ -302,7 +302,7 @@ internal static class AgentAdminHost
                         machineTweaks: machineTweaks,
                         changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log),
                         stateFolder: ProtectedState.Folder(),
-                        machineSetup: AgentMachineSetup.ForSignedInUser(log),
+                        machineSetup: new AgentMachineSetup(log),
                         biosOperations: new AgentBiosOperations(launcher, log: log));
 
                     await server.RunSingleSessionAsync(cts.Token).ConfigureAwait(false);

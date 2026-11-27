@@ -184,9 +184,8 @@ public partial class App : Application
     private static int _machineSetupDone;
 
     /// <summary>
-    /// The administrator-only setup the app used to do itself when started as administrator, done by the Agent once it is connected:
-    /// securing the state folder, registering the Event Log source and the one-time history updates. Asked again on the next connection
-    /// until it is all done.
+    /// The administrator-only setup the app needs, done by the Agent once it is connected: securing the state folder and registering
+    /// the Event Log source. Asked again on the next connection until it is all done.
     /// </summary>
     public static async Task PrepareMachineThroughAgentAsync(RemotePCDiagnostics.Core.Session.IElevatedCommandBridge agent)
     {
@@ -195,8 +194,7 @@ public partial class App : Application
         try { setup = await agent.PrepareMachineAsync().ConfigureAwait(false); }
         catch (Exception ex) { Log($"Machine setup through the Agent failed: {ex.Message}"); return; }
         if (setup is null) return;
-        Log($"Machine setup (Agent): state folder secured={setup.StateFolderSecured}, event source={setup.EventSourceReady}, " +
-            $"history update={setup.HistoryUpdate}, event log move={setup.LogMove}");
+        Log($"Machine setup (Agent): state folder secured={setup.StateFolderSecured}, event source={setup.EventSourceReady}");
         if (setup.EventSourceReady && _events.IsValueCreated) _events.Value.SourceRegistered();
         if (!setup.StateFolderSecured)
             Event(LogEventIds.Error, LogLevel.Error, $"Remote PC Diagnostics couldn't make {ProtectedState.Folder()} administrator-only. " +

@@ -21,10 +21,6 @@ public static class ProtectedState
     public static string Folder() => Path.Combine(AppDataFolder(), "state");
 
     public static string PathFor(string fileName) => Path.Combine(Folder(), fileName);
-
-    /// <summary>%LOCALAPPDATA%\RemotePCDiagnostics, where these files were before.</summary>
-    public static string LegacyFolder() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RemotePCDiagnostics");
 }
 
 /// <summary>

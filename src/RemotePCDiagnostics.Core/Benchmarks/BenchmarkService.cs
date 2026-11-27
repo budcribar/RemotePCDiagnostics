@@ -97,25 +97,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     private readonly object _gate = new();
     private BenchmarkState _state = LoadState(store);
 
-    private static BenchmarkState LoadState(IBenchmarkStore store) => LoadSaved(store) ?? new BenchmarkState(new BenchmarkSettings());
-
-    private static BenchmarkState? LoadSaved(IBenchmarkStore store)
-    {
-        var state = store.Load();
-        if (state is null) return null;
-        if (state.Settings.SchemaVersion < BenchmarkSettings.CurrentSchemaVersion)
-        {
-            var added = new List<BenchmarkKind>();
-            if (state.Settings.SchemaVersion < 2)
-                added.AddRange(Benchmarks.IdleResourceKinds.Concat(Benchmarks.ResourceSnapshotKinds));
-            if (state.Settings.SchemaVersion < 3)
-                added.Add(BenchmarkKind.Speedometer);
-            var enabled = Enum.GetValues<BenchmarkKind>().Where(state.Settings.Enabled.Union(added).Contains).ToList();
-            state = state with { Settings = state.Settings with { SchemaVersion = BenchmarkSettings.CurrentSchemaVersion, Enabled = enabled } };
-            store.Save(state);
-        }
-        return state;
-    }
+    private static BenchmarkState LoadState(IBenchmarkStore store) => store.Load() ?? new BenchmarkState(new BenchmarkSettings());
     private CancellationTokenSource? _cts;
 
     public event Action? Changed;
@@ -216,7 +198,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public bool Reload()
     {
         if (Running is not null || Settling is not null) return false;
-        var saved = LoadSaved(store);
+        var saved = store.Load();
         if (saved is null) return false;
         lock (_gate)
         {

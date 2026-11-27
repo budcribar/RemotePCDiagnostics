@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using RemotePCDiagnostics.Core.Migrations;
 
 namespace RemotePCDiagnostics.Agent;
 
@@ -9,9 +8,7 @@ namespace RemotePCDiagnostics.Agent;
 /// </summary>
 public static class AppEventLog
 {
-    /// <summary>The shared log the app wrote to before it had its own (the format 3 update and the move read it).</summary>
-    public const string LogName = EventLogMoveMigration.OldLogName;
-    public const string OwnLogName = EventLogMoveMigration.OwnLogName;
+    public const string OwnLogName = "RemotePCDiagnostics";
     public const string SourceName = "RemotePCDiagnostics";
     /// <summary>Size of the app's own log; the oldest entries are overwritten when it is full.</summary>
     public const int OwnLogKilobytes = 20480;
