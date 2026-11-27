@@ -1,6 +1,6 @@
 {
   "moduleName": "SecurityAudit",
-  "status": "Warning",
+  "status": "Error",
   "message": "1 failed, 1 warning, 2 passed",
   "report": {
     "findings": [
@@ -126,7 +126,7 @@
     "failed": 1,
     "notChecked": 0,
     "highRisk": 0,
-    "status": "Warning",
+    "status": "Error",
     "summary": "1 failed, 1 warning, 2 passed"
   }
 }

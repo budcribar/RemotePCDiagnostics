@@ -126,6 +126,76 @@
     <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="@_activeInteractiveSection" OnOutcomeChanged="OnBenchInteractiveOutcomeChanged" />
 }
 
+@{
+    // What failed or has a note on the certificate, with a fix where the app has one and Re-run for the checks behind it.
+    var problems = snap.Items.Where(i => !i.Cancelled && i.Status is DiagnosticStatus.Error or DiagnosticStatus.Warning).ToList();
+    var rerunnable = BenchQaRunner.RerunnableProblems(snap);
+}
+@if (App.Remediation is { } qaFixes)
+{
+    <RemediationActions @ref="_qaFixUi" Actions="qaFixes" ShowRecent="false" Origin="@ModuleSlugs.SecurityAudit" OnCompleted="() => RerunItems([SecurityItemId])" />
+}
+@if (problems.Count > 0)
+{
+    <section class="card wf-section qa-attention" data-testid="qa-attention" data-count="@problems.Count">
+        <div class="qa-attention-top">
+            <strong>@(problems.Count == 1 ? "1 item needs attention" : $"{problems.Count} items need attention")</strong>
+            <button type="button" class="btn btn-outline" data-testid="qa-rerun-failed" disabled="@(benchRunning || benchBusyElsewhere || rerunnable.Count == 0)"
+                    @onclick="() => RerunItems(rerunnable.Select(i => i.Id))">
+                <Icon Name="refresh" Size="14" /> Re-run @(rerunnable.Count == 1 ? "it" : $"failed ({rerunnable.Count})")
+            </button>
+        </div>
+        <ul class="qa-attention-list">
+            @foreach (var problem in problems)
+            {
+                var item = problem;
+                var fail = item.Status == DiagnosticStatus.Error;
+                <li data-testid="qa-attention-@item.Id" data-status="@(fail ? "fail" : "note")">
+                    <div class="qa-attention-head">
+                        <span class="chip chip-@(fail ? "err" : "warn")">@(fail ? "FAIL" : "NOTE")</span>
+                        <strong>@item.Label</strong>
+                        <span class="meta">@item.Summary</span>
+                        <span class="qa-attention-actions">
+                            @if (PageFor(item.Id) is { } path)
+                            {
+                                <a class="btn-small" data-testid="qa-open-@item.Id" href="@path">Open</a>
+                            }
+                            @if (BenchQaRunner.CanRerun(item.Id))
+                            {
+                                <button type="button" class="btn-small" data-testid="qa-rerun-@item.Id" disabled="@(benchRunning || benchBusyElsewhere)"
+                                        @onclick="() => RerunItems([item.Id])">Re-run</button>
+                            }
+                        </span>
+                    </div>
+                    @if (item.Id == SecurityItemId && Store.Get(ModuleSlugs.SecurityAudit).Payload is RemotePCDiagnostics.Core.Security.SecurityAuditReport audit)
+                    {
+                        <ul class="qa-attention-findings" data-testid="qa-security-findings">
+                            @foreach (var f in audit.NeedsAttention)
+                            {
+                                var finding = f;
+                                var fix = RemotePCDiagnostics.Core.Security.SecurityAuditFixes.For(finding) is { } a && RemotePCDiagnostics.Core.Areas.FixAccess.CanOffer(a, App.AgentFixes) && App.Remediation is not null ? a : null;
+                                <li data-testid="qa-security-finding-@finding.Id">
+                                    <span>@finding.Name</span>
+                                    <span class="meta"> · now @Blank(finding.CurrentValue), recommended @Blank(finding.RecommendedValue)</span>
+                                    @if (fix is not null)
+                                    {
+                                        <button type="button" class="btn-small" data-testid="qa-security-fix-@finding.Id" data-action="remediate" data-action-kind="@fix.Kind" data-action-target="@fix.Target"
+                                                disabled="@(benchRunning || App.Remediation?.Running is not null)" @onclick="() => _qaFixUi?.Ask(fix)">@fix.ButtonText</button>
+                                    }
+                                    else
+                                    {
+                                        <span class="meta" data-testid="qa-security-nofix-@finding.Id"> · no automatic fix: change it in Windows, then Re-run</span>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                    }
+                </li>
+            }
+        </ul>
+    </section>
+}
+
 <section class="card wf-section" data-testid="qa-cert-card">
     <div class="toolbar" style="margin-bottom: 8px">
         <div>
@@ -530,5 +600,29 @@
         {
             // Non-fatal if browser download / JS interop fails
         }
+    }
+}
+
+@code {
+    // Needs attention: fixes for the security audit's failed settings, and Re-run for what failed.
+    private const string SecurityItemId = "security";
+    private RemediationActions? _qaFixUi;
+
+    /// <summary>The page with a failed item's details and fixes; null for items without one (the interactive checks).</summary>
+    private static string? PageFor(string itemId)
+    {
+        if (itemId == SecurityItemId) return "security-audit";
+        return BenchQaRunner.SlugsForItem(itemId) is [var slug, ..] ? $"module/{Uri.EscapeDataString(slug)}" : null;
+    }
+
+    private static string Blank(string v) => string.IsNullOrWhiteSpace(v) ? "—" : v;
+
+    /// <summary>Runs the checks behind these items again and refreshes the certificate when they finish.</summary>
+    private void RerunItems(IEnumerable<string> itemIds)
+    {
+        if (ActiveBenchQa.IsRunning || Diagnostics.IsAnyStressRunning) return;
+        _savedCertPath = null;
+        _certGeneratedAt = DateTimeOffset.Now;
+        _ = ActiveBenchQa.RerunAsync(itemIds.ToList());
     }
 }

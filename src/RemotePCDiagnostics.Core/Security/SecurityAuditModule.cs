@@ -89,24 +89,42 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
 
     private static string Quote(string s) => "'" + s.Replace("'", "''") + "'";
 
-    public static string BuildScript(string manifestPath, string reportPath) =>
-        "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';" +
-        $"Import-Module -Name {Quote(manifestPath)} -Force;" +
-        $"Invoke-HardeningKitty -Mode Audit -Report -ReportFile {Quote(reportPath)} -SkipMachineInformation -SkipLanguageWarning | Out-Null;" + PcProfile.DetectScript;
+    /// <summary>Most finding IDs a re-check takes; a longer list runs the whole audit.</summary>
+    public const int MaxRecheckIds = 64;
+
+    /// <summary>A HardeningKitty finding ID: 1 to 6 digits. Only these go into the script.</summary>
+    public static bool IsFindingId(string? id) => id is { Length: > 0 and <= 6 } && id.All(char.IsAsciiDigit);
+
+    /// <summary>The valid, distinct IDs of <paramref name="ids"/>; empty (the whole audit) when there are none or more than <see cref="MaxRecheckIds"/>.</summary>
+    public static IReadOnlyList<string> RecheckIds(IEnumerable<string>? ids)
+    {
+        var list = (ids ?? []).Select(i => i?.Trim() ?? "").Where(IsFindingId).Distinct(StringComparer.Ordinal).ToList();
+        return list.Count <= MaxRecheckIds ? list : [];
+    }
+
+    /// <param name="onlyIds">Audit only these findings (a re-check); null or empty audits them all.</param>
+    public static string BuildScript(string manifestPath, string reportPath, IReadOnlyList<string>? onlyIds = null)
+    {
+        var ids = RecheckIds(onlyIds);
+        var filter = ids.Count == 0 ? "" : " -Filter {$_.ID -in @(" + string.Join(",", ids.Select(Quote)) + ")}";
+        return "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';" +
+            $"Import-Module -Name {Quote(manifestPath)} -Force;" +
+            $"Invoke-HardeningKitty -Mode Audit -Report -ReportFile {Quote(reportPath)} -SkipMachineInformation -SkipLanguageWarning{filter} | Out-Null;" + PcProfile.DetectScript;
+    }
 
     /// <summary>-ExecutionPolicy Bypass applies to this PowerShell process only; nothing system-wide is changed.</summary>
-    public static IReadOnlyList<string> BuildArguments(string manifestPath, string reportPath) =>
-        SystemCommandRunner.PowerShellArgs(BuildScript(manifestPath, reportPath));
+    public static IReadOnlyList<string> BuildArguments(string manifestPath, string reportPath, IReadOnlyList<string>? onlyIds = null) =>
+        SystemCommandRunner.PowerShellArgs(BuildScript(manifestPath, reportPath, onlyIds));
 
     /// <summary>
     /// Runs HardeningKitty once and reads its report: the one run both the app and the elevated helper make. Creates the report's folder;
     /// the caller deletes it. Throws when PowerShell can't start, and on cancellation (the process tree is killed).
     /// </summary>
     public static async Task<SecurityAuditRun> RunProcessAsync(IProcessLauncher launcher, string powerShellPath, string manifestPath, string reportPath,
-        TimeSpan timeout, CancellationToken ct)
+        TimeSpan timeout, CancellationToken ct, IReadOnlyList<string>? onlyIds = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);
-        var pr = await launcher.RunAsync(powerShellPath, BuildArguments(manifestPath, reportPath), timeout, ct).ConfigureAwait(false);
+        var pr = await launcher.RunAsync(powerShellPath, BuildArguments(manifestPath, reportPath, onlyIds), timeout, ct).ConfigureAwait(false);
         var csv = File.Exists(reportPath) ? await File.ReadAllTextAsync(reportPath, CancellationToken.None).ConfigureAwait(false) : null;
         return new SecurityAuditRun(pr, csv);
     }
@@ -114,9 +132,10 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
     /// <summary>
     /// What the elevated helper and the agent service run for the app's audit: HardeningKitty from <paramref name="appFolder"/> (the
     /// installed app's own folder, never a path the app passes), the report in a temp folder of the elevated account, removed afterwards.
+    /// The app may name finding IDs to re-check; only digit IDs reach the script (<see cref="RecheckIds"/>).
     /// </summary>
-    public static Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>> ElevatedRunner(string appFolder, ILogger? log = null, IProcessLauncher? launcher = null) =>
-        async (timeout, ct) =>
+    public static Func<TimeSpan, IReadOnlyList<string>?, CancellationToken, Task<SecurityAuditRun>> ElevatedRunner(string appFolder, ILogger? log = null, IProcessLauncher? launcher = null) =>
+        async (timeout, onlyIds, ct) =>
         {
             var manifest = Path.Combine(appFolder, RelativeFolder, ManifestFile);
             if (!File.Exists(manifest)) throw new FileNotFoundException("HardeningKitty isn't installed next to the app.", manifest);
@@ -124,8 +143,9 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
             var sw = Stopwatch.StartNew();
             try
             {
-                var run = await RunProcessAsync(launcher ?? new SystemProcessLauncher(), SystemCommandRunner.PowerShell, manifest, reportPath, timeout, ct).ConfigureAwait(false);
-                log.Info($"[security-audit] elevated run exit={run.Process.ExitCode} timedOut={run.Process.TimedOut} ms={sw.ElapsedMilliseconds} report_len={run.ReportCsv?.Length ?? -1}");
+                var ids = RecheckIds(onlyIds);
+                var run = await RunProcessAsync(launcher ?? new SystemProcessLauncher(), SystemCommandRunner.PowerShell, manifest, reportPath, timeout, ct, ids).ConfigureAwait(false);
+                log.Info($"[security-audit] elevated run exit={run.Process.ExitCode} timedOut={run.Process.TimedOut} ms={sw.ElapsedMilliseconds} report_len={run.ReportCsv?.Length ?? -1} recheck={ids.Count}");
                 return run;
             }
             finally
@@ -134,7 +154,57 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
             }
         };
 
+    private readonly object _recheckGate = new();
+    private IReadOnlyList<string> _recheck = [];
+    private SecurityAuditReport? _lastFull;
+
+    /// <summary>
+    /// Makes the next run re-check only these findings (normally the ones that failed) and merge them into the last report, instead of
+    /// auditing every setting. Ignored when there's no earlier report in this session or no valid ID; that run then audits everything.
+    /// </summary>
+    public void RecheckOnNextRun(IEnumerable<string> findingIds)
+    {
+        lock (_recheckGate) _recheck = RecheckIds(findingIds);
+    }
+
+    /// <summary>The IDs the next run re-checks; empty when it audits everything.</summary>
+    public IReadOnlyList<string> PendingRecheck { get { lock (_recheckGate) return _recheck; } }
+
     protected override async Task<DiagnosticResult> RunCoreAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        IReadOnlyList<string> recheck;
+        SecurityAuditReport? previous;
+        lock (_recheckGate)
+        {
+            previous = _lastFull;
+            recheck = previous is null ? [] : _recheck;
+            _recheck = [];
+        }
+        var result = await RunAuditAsync(progress, recheck, ct).ConfigureAwait(false);
+        if (result.Payload is SecurityAuditReport fresh)
+        {
+            if (recheck.Count > 0 && previous is not null)
+            {
+                var merged = previous.Merge(fresh.Findings) with { Profile = fresh.Profile ?? previous.Profile };
+                Log($"SecurityAudit: re-checked {recheck.Count} ({string.Join(",", recheck)}): {string.Join(", ", fresh.Findings.Select(f => $"{f.Id}={f.Outcome}"))}");
+                result = Result(merged.Status, merged.Summary, merged with { Notice = previous.Notice });
+                fresh = merged;
+            }
+            lock (_recheckGate) _lastFull = fresh;
+            LogNeedsAttention(fresh);
+        }
+        return result;
+    }
+
+    /// <summary>Names the findings that failed or warned in the log, so a report shows which ones without the page.</summary>
+    private void LogNeedsAttention(SecurityAuditReport report)
+    {
+        var bad = report.NeedsAttention;
+        if (bad.Count > 0)
+            LogWarn($"SecurityAudit: needs attention: {string.Join("; ", bad.Select(f => $"{f.Id} {f.Name} [{f.Severity}] {f.Outcome} current='{f.CurrentValue}' recommended='{f.RecommendedValue}'"))}");
+    }
+
+    private async Task<DiagnosticResult> RunAuditAsync(IProgress<string>? progress, IReadOnlyList<string> recheck, CancellationToken ct)
     {
         string? reportPath = null;
         try
@@ -144,14 +214,14 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
             var inAgent = false;
             try
             {
-                run = await RunInAgentAsync(progress, ct).ConfigureAwait(false);
+                run = await RunInAgentAsync(progress, recheck, ct).ConfigureAwait(false);
                 if (run is not null) inAgent = true;
                 else
                 {
                     reportPath = (_o.ReportPathFactory ?? DefaultReportPath)();
-                    Log($"SecurityAudit: start in the app timeout={Timeout} cmd={PowerShellPath} {string.Join(' ', BuildArguments(ManifestPath, reportPath))}");
-                    progress?.Report("Auditing security settings…");
-                    run = await RunProcessAsync(_launcher, PowerShellPath, ManifestPath, reportPath, Timeout, ct).ConfigureAwait(false);
+                    Log($"SecurityAudit: start in the app timeout={Timeout} cmd={PowerShellPath} {string.Join(' ', BuildArguments(ManifestPath, reportPath, recheck))}");
+                    progress?.Report(recheck.Count > 0 ? "Re-checking security settings…" : "Auditing security settings…");
+                    run = await RunProcessAsync(_launcher, PowerShellPath, ManifestPath, reportPath, Timeout, ct, recheck).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -212,7 +282,7 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
     /// connected and asking is allowed. Null when there's no Agent, or it can't run the audit (an older one), so the audit runs in the
     /// app instead. Throws only on cancellation.
     /// </summary>
-    private async Task<SecurityAuditRun?> RunInAgentAsync(IProgress<string>? progress, CancellationToken ct)
+    private async Task<SecurityAuditRun?> RunInAgentAsync(IProgress<string>? progress, IReadOnlyList<string> recheck, CancellationToken ct)
     {
         var bridge = _o.ElevatedBridge;
         if (bridge is null) return null;
@@ -230,7 +300,9 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
         Log($"SecurityAudit: running in the Agent, timeout={Timeout}");
         try
         {
-            var run = await bridge.RunSecurityAuditAsync(Timeout, ct).ConfigureAwait(false);
+            var run = recheck.Count > 0
+                ? await bridge.RunSecurityAuditAsync(Timeout, recheck, ct).ConfigureAwait(false)
+                : await bridge.RunSecurityAuditAsync(Timeout, ct).ConfigureAwait(false);
             if (run is null) LogWarn("SecurityAudit: the Agent can't run the audit; running it in the app, without administrator rights");
             return run;
         }

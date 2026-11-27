@@ -117,14 +117,15 @@ public class UiReviewFixesTests
         Assert.DoesNotContain("isn't available", CpuTemperatureFallback.ApproximateNote);
     }
 
-    // ---- Security audit: only high-risk failures are critical ----
+    // ---- Security audit: any failed setting fails it (Low-severity differences are a warning) ----
     private static AuditFinding F(string sev, AuditOutcome o) => new("1", "Cat", "Name", sev, "1", "0", o);
 
     [Fact]
-    public void SecurityAudit_MediumFailures_AreWarning_HighAreCritical()
+    public void SecurityAudit_Failures_AreCritical_LowOnesAreWarning()
     {
+        Assert.Equal(DiagnosticStatus.Warning, new SecurityAuditReport([F("Low", AuditOutcome.Warning), F("", AuditOutcome.Passed)]).Status);
         var medium = new SecurityAuditReport([F("Medium", AuditOutcome.Failed), F("Low", AuditOutcome.Warning), F("", AuditOutcome.Passed)]);
-        Assert.Equal(DiagnosticStatus.Warning, medium.Status);
+        Assert.Equal(DiagnosticStatus.Error, medium.Status);
         Assert.Equal("1 failed, 1 warning, 1 passed", medium.Summary);
         var high = new SecurityAuditReport([F("High", AuditOutcome.Failed), F("Medium", AuditOutcome.Failed)]);
         Assert.Equal(DiagnosticStatus.Error, high.Status);

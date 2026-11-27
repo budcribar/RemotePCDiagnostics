@@ -60,6 +60,9 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
             var process = await pc.Launcher.RunAsync(SecurityAuditRecording.Program, SecurityAuditRecording.Arguments, timeout, ct).ConfigureAwait(false);
             return new SecurityAuditRun(process, await pc.FileAsync(SecurityAuditRecording.ReportName, ct).ConfigureAwait(false));
         }
+        /// <summary>A re-check gives the recorded run too (the recording holds one full audit); the module merges it in.</summary>
+        public Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, IReadOnlyList<string> onlyIds, CancellationToken ct = default) =>
+            RunSecurityAuditAsync(timeout, ct);
         public Task<ProcessResult?> RunElevatedAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct,
             Action<string>? outputLine = null) => Task.FromResult<ProcessResult?>(null);
         public Task<Core.Sensors.SensorSnapshot?> ReadSensorsAsync(CancellationToken ct = default) => Task.FromResult<Core.Sensors.SensorSnapshot?>(null);
