@@ -359,7 +359,9 @@ internal static class AgentAdminHost
             {
                 var sw = Stopwatch.StartNew();
                 var ecFan = LenovoEcFanSource.Create(_log);
-                var provider = new LhmSensorProvider(ecFan, logger: _log);
+                // The Agent is elevated, so it reads drive temperatures (reliability counters) from WMI itself.
+                var drives = new WmiDriveTemperatureSource(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource(_log));
+                var provider = new LhmSensorProvider(ecFan, logger: _log, driveTemperatures: drives);
                 _log.Info($"[lazy-sensors] Hardware sensor provider initialized in {sw.ElapsedMilliseconds} ms");
                 return provider;
             }, LazyThreadSafetyMode.ExecutionAndPublication);
