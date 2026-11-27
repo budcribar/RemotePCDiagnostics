@@ -211,6 +211,58 @@ public sealed class DeveloperBenchmarkTests : IDisposable
     }
 
     [Fact]
+    public async Task TemporaryDefenderExclusion_RemovalFailureIsRetriedAndReported()
+    {
+        var temp = Path.Combine(_root, "cleanup");
+        Directory.CreateDirectory(temp);
+        var env = new FakeDevEnv
+        {
+            Toolchains = [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "10.0.404", 10)],
+            FreeGb = 80,
+            AgentConnected = true,
+            Defender = new(true, [], [], true),
+        };
+        var tweaks = new FakeDevTweaks { RemoveExclusionSucceeds = false };
+        var runner = new DeveloperBuildRunner(env, new FakeLauncher((_, _) => new(0, "ok", "")), tweaks,
+            tempRootOverride: temp);
+
+        var failure = await Assert.ThrowsAnyAsync<InvalidOperationException>(() => runner.RunCSharpCleanBuildAsync(
+            new DeveloperBuildOptions(ColdRepeats: 1, WarmWarmups: 0, WarmRepeats: 1, IncludeAntivirusComparison: true, AllowHyperfine: false)));
+        Assert.Contains("Defender", failure.Message);
+        var exclusion = Assert.Single(tweaks.TempAdded);
+        Assert.Equal([exclusion, exclusion], tweaks.TempRemoved);
+    }
+
+    [Fact]
+    public async Task CancelingTemporaryDevDriveCreationDetachesAndDeletesTheImage()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        using var canceled = new CancellationTokenSource();
+        var detached = false;
+        var launcher = new FakeLauncher((_, args) =>
+        {
+            if (args.Count == 2 && args[0] == "/s")
+            {
+                var script = File.ReadAllText(args[1]);
+                if (script.Contains("create vdisk"))
+                    File.WriteAllText(script.Split('"')[1], "");
+                else
+                    detached = script.Contains("detach vdisk");
+                return new(0, "", "");
+            }
+            canceled.Cancel();
+            canceled.Token.ThrowIfCancellationRequested();
+            return new(0, "", "");
+        });
+        var manager = new WindowsDevDriveManager(launcher: launcher, vhdxFolder: _root);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => manager.CreateAndMountAsync(50, null, canceled.Token));
+        Assert.True(detached);
+        Assert.Empty(Directory.EnumerateFiles(_root, "*.vhdx"));
+    }
+
+    [Fact]
     public async Task CSharpCleanBuild_Below10GbFreeSpace_ReportsCouldNotRun()
     {
         var env = new FakeDevEnv
@@ -913,6 +965,7 @@ public sealed class DeveloperBenchmarkTests : IDisposable
     {
         public List<string> TempAdded { get; } = [];
         public List<string> TempRemoved { get; } = [];
+        public bool RemoveExclusionSucceeds { get; set; } = true;
         public List<string> DevDrivesRemoved { get; } = [];
         public DevDriveMountResult MountResult { get; set; } = new(false, Error: "not configured");
 
@@ -935,7 +988,7 @@ public sealed class DeveloperBenchmarkTests : IDisposable
         public Task<bool> RemoveTempBuildDefenderExclusionAsync(string folder, CancellationToken ct)
         {
             TempRemoved.Add(folder);
-            return Task.FromResult(true);
+            return Task.FromResult(RemoveExclusionSucceeds);
         }
 
         public Task<DevDriveMountResult> CreateTempDevDriveAsync(int sizeGb, string? grantUserSid, CancellationToken ct) =>

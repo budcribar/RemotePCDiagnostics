@@ -9,6 +9,10 @@ using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Benchmarks;
 
+internal sealed class BenchmarkCleanupException(
+    string message = "Could not confirm removal of a temporary Defender benchmark exclusion. Check the Agent logs and Defender settings.")
+    : InvalidOperationException(message);
+
 /// <summary>Environment readings needed by the developer setup check and developer benchmarks.</summary>
 public interface IDeveloperEnvironmentProbe
 {
@@ -477,8 +481,9 @@ public sealed class DeveloperBuildRunner(
             }
             if (tempExclusionAdded && machineTweaks is not null)
             {
-                try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(workDir, CancellationToken.None).ConfigureAwait(false); }
-                catch (Exception ex) { Log("Failed to remove temp Defender exclusion: " + ex.Message); }
+                if (!await RemoveDefenderExclusionAsync(workDir).ConfigureAwait(false)
+                    && !await RemoveDefenderExclusionAsync(workDir).ConfigureAwait(false))
+                    throw new BenchmarkCleanupException();
             }
             if (!isCustomSolution)
                 TryDeleteDirectory(workDir);
@@ -559,9 +564,9 @@ public sealed class DeveloperBuildRunner(
                     }
                     finally
                     {
-                        try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(ntfsDir, CancellationToken.None).ConfigureAwait(false); }
-                        catch (Exception ex) { Log("Failed to remove temp Defender exclusion: " + ex.Message); }
-                        tempExclusionAdded = false;
+                        tempExclusionAdded = !await RemoveDefenderExclusionAsync(ntfsDir).ConfigureAwait(false);
+                        if (tempExclusionAdded)
+                            throw new BenchmarkCleanupException("The comparison stopped when temporary Defender exclusion cleanup failed. See the Agent logs for the cleanup retry.");
                     }
                 }
             }
@@ -614,9 +619,9 @@ public sealed class DeveloperBuildRunner(
                     }
                     finally
                     {
-                        try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(devDriveBuildDir, CancellationToken.None).ConfigureAwait(false); }
-                        catch (Exception ex) { Log("Failed to remove temp Dev Drive Defender exclusion: " + ex.Message); }
-                        devDriveExclusionAdded = false;
+                        devDriveExclusionAdded = !await RemoveDefenderExclusionAsync(devDriveBuildDir).ConfigureAwait(false);
+                        if (devDriveExclusionAdded)
+                            throw new BenchmarkCleanupException("The comparison stopped when temporary Defender exclusion cleanup failed. See the Agent logs for the cleanup retry.");
                     }
                 }
             }
@@ -638,15 +643,9 @@ public sealed class DeveloperBuildRunner(
         finally
         {
             if (tempExclusionAdded)
-            {
-                try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(ntfsDir, CancellationToken.None).ConfigureAwait(false); }
-                catch (Exception ex) { Log("Failed to remove temp Defender exclusion: " + ex.Message); }
-            }
+                tempExclusionAdded = !await RemoveDefenderExclusionAsync(ntfsDir).ConfigureAwait(false);
             if (devDriveExclusionAdded && devDriveBuildDir is not null)
-            {
-                try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(devDriveBuildDir, CancellationToken.None).ConfigureAwait(false); }
-                catch (Exception ex) { Log("Failed to remove temp Dev Drive Defender exclusion: " + ex.Message); }
-            }
+                devDriveExclusionAdded = !await RemoveDefenderExclusionAsync(devDriveBuildDir).ConfigureAwait(false);
             TryDeleteDirectory(ntfsDir);
             if (devDriveBuildDir is not null) TryDeleteDirectory(devDriveBuildDir);
             if (vhdxPath is not null)
@@ -654,6 +653,21 @@ public sealed class DeveloperBuildRunner(
                 try { await machineTweaks.RemoveTempDevDriveAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false); }
                 catch (Exception ex) { Log("Failed to remove temporary Dev Drive VHDX: " + ex.Message); }
             }
+            if (tempExclusionAdded || devDriveExclusionAdded)
+                throw new BenchmarkCleanupException();
+        }
+    }
+
+    private async Task<bool> RemoveDefenderExclusionAsync(string folder)
+    {
+        try
+        {
+            return await machineTweaks!.RemoveTempBuildDefenderExclusionAsync(folder, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log("Failed to remove temporary Defender exclusion: " + ex.Message);
+            return false;
         }
     }
 

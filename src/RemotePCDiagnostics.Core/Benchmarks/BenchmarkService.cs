@@ -580,9 +580,15 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             Message = res.Succeeded ? res.FormatDetail() : res.Note ?? "Antivirus comparison did not complete.";
             return res;
         }
+        catch (BenchmarkCleanupException ex)
+        {
+            LastAntivirusComparison = null;
+            Message = ex.Message;
+            return null;
+        }
         catch (OperationCanceledException)
         {
-            Message = "Antivirus comparison cancelled; temporary exclusion and build folder were cleaned up.";
+            Message = "Antivirus comparison cancelled.";
             return null;
         }
         finally
@@ -639,9 +645,15 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             Message = res.FormatSummary();
             return res;
         }
+        catch (BenchmarkCleanupException ex)
+        {
+            LastDevDriveComparison = null;
+            Message = ex.Message;
+            return null;
+        }
         catch (OperationCanceledException)
         {
-            Message = "Dev Drive comparison cancelled; temporary VHDX and build folders were cleaned up.";
+            Message = "Dev Drive comparison cancelled.";
             return null;
         }
         finally
