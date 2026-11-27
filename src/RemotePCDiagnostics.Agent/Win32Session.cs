@@ -187,6 +187,17 @@ internal static class Win32Session
     /// Starts a command line in the active signed-in user's desktop session when running as <c>LocalSystem</c> in Session 0,
     /// or directly via <see cref="Process.Start(ProcessStartInfo)"/> when running interactively in a user console.
     /// </summary>
+    /// <summary>
+    /// Makes <paramref name="process"/> keep its own handle. A Process from GetProcessById opens a handle only when asked, so once
+    /// the process exits and nobody else holds one, its exit code is gone and ExitCode throws (the launch then reported "exit code 1"
+    /// for an app that exited 2, "already open").
+    /// </summary>
+    internal static void HoldHandle(Process process)
+    {
+        try { _ = process.SafeHandle; }
+        catch { } // no access or already gone: HasExited still answers, only the exit code may be missing
+    }
+
     public static (Process? Process, string? Error) StartInActiveUserSession(
         string executablePath,
         string fullCommandLine,
@@ -292,16 +303,20 @@ internal static class Win32Session
             }
 
             CloseHandle(pi.hThread);
-            CloseHandle(pi.hProcess);
-
             try
             {
+                // Opened while pi.hProcess still keeps the process object alive, so even an app that has already exited is found.
                 var proc = Process.GetProcessById((int)pi.dwProcessId);
+                HoldHandle(proc);
                 return (proc, null);
             }
             catch
             {
                 return (null, "Remote PC Diagnostics exited immediately after starting.");
+            }
+            finally
+            {
+                CloseHandle(pi.hProcess);
             }
         }
         finally

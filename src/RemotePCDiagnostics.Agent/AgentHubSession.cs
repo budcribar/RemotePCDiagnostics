@@ -38,6 +38,11 @@ public interface IAgentPlatform
     (IAgentLaunchedProcess? Process, string? Error) StartHostProcess(string hostExePath, string fullCommandLine);
     Task<bool?> CheckRelaySessionConnectedAsync(string statusUrl, CancellationToken ct);
     Task RemoveSelfAfterSessionAsync();
+    /// <summary>
+    /// True when a copy of the app is open on the PC that this agent didn't start or no longer follows, such as the copy started
+    /// again after an update. A new copy would only exit at once ("already open"), so a launch is refused instead.
+    /// </summary>
+    bool IsAppRunning() => false;
 }
 
 /// <summary>Works out when Windows started from the current time and the milliseconds since boot.</summary>
@@ -433,6 +438,8 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
         return Task.CompletedTask;
     }
 
+    public bool IsAppRunning() => DesktopInstallProbe.HostProcessRunning();
+
     public void Dispose()
     {
         _http.Dispose();
@@ -580,6 +587,7 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
                         try
                         {
                             var child = Process.GetProcessById((int)pid);
+                            Win32Session.HoldHandle(child);
                             if (!child.HasExited) return child;
                             child.Dispose();
                         }
@@ -1051,6 +1059,12 @@ public sealed class AgentHubWorker(
         return (running, sessionId);
     }
 
+    private bool AppAlreadyOpen()
+    {
+        try { return platform.IsAppRunning(); }
+        catch { return false; } // can't tell: start it; the app itself exits "already open" if it is
+    }
+
     private Task HandleLaunchCommand(
         LaunchCommand launch,
         Func<AgentMessage, CancellationToken, Task> writeAsync,
@@ -1058,6 +1072,10 @@ public sealed class AgentHubWorker(
         CancellationToken stoppingToken)
     {
         CancellationTokenSource launchCts;
+        bool tracking;
+        lock (_stateGate) tracking = _sessionRunning || _activeRequestId is not null;
+        // Looked up outside the lock (it lists processes), and only when no session of ours explains a running app.
+        var appOpen = !tracking && AppAlreadyOpen();
         lock (_stateGate)
         {
             if (_sessionRunning || _activeRequestId is not null)
@@ -1068,6 +1086,18 @@ public sealed class AgentHubWorker(
                     launch.SessionId,
                     LaunchStage.StageFailed,
                     "A Remote PC Diagnostics session is already running on this computer.",
+                    0,
+                    streamCts.Token);
+            }
+
+            if (appOpen)
+            {
+                return ReportProgressSafeAsync(
+                    writeAsync,
+                    launch.RequestId,
+                    launch.SessionId,
+                    LaunchStage.StageFailed,
+                    LaunchRules.AlreadyOpenText,
                     0,
                     streamCts.Token);
             }

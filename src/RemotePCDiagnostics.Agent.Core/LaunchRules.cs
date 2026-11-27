@@ -76,9 +76,11 @@ public static class LaunchRules
     }
 
     /// <summary>Plain words for an app that exited before it was ready (exit codes from RemotePCDiagnostics.Host App.xaml.cs).</summary>
+    public const string AlreadyOpenText = "Remote PC Diagnostics is already open on this computer";
+
     public static string EarlyExitText(uint exitCode) => exitCode switch
     {
-        2 => "Remote PC Diagnostics is already open on this computer",
+        2 => AlreadyOpenText,
         5 => "Remote PC Diagnostics needs administrator rights, and the signed-in user isn't an administrator",
         _ => $"Remote PC Diagnostics closed right after starting (exit code {exitCode})",
     };

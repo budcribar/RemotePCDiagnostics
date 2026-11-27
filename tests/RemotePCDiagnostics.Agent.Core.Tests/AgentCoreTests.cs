@@ -755,6 +755,52 @@ public class AgentHubWorkerTests
         Assert.Equal("Launch cancelled", terminal.Detail);
     }
 
+    [Fact]
+    public async Task Launch_is_refused_as_already_open_when_an_untracked_app_copy_is_running()
+    {
+        // The copy the agent starts again after an update isn't one of its sessions; a new copy would only exit "already open".
+        var config = AgentConfig.ForInstall(
+            existing: null,
+            new AgentArgs(AgentCommand.Install, Server: "https://relay.example:34544", Consent: ConsentCeiling.Unattended),
+            Guid.Parse("7e57c0de-0000-4000-8000-000000000040"));
+        var hostStarted = false;
+        var platform = new FakeAgentPlatform
+        {
+            AppRunning = true,
+            ProcessFactory = (_, _) => { hostStarted = true; return (new FakeLaunchedProcess(), null); },
+        };
+        var hub = new FakeAgentHubClient();
+        var worker = new AgentHubWorker(config, platform, new AgentSessionOptions { HeartbeatInterval = TimeSpan.FromMinutes(5) });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var runTask = worker.RunSingleConnectionAsync(hub, cts.Token);
+        _ = await hub.ReadAgentMessageAsync(cts.Token); // Hello
+        await hub.SendHubCommandAsync(new HubCommand
+        {
+            Launch = new LaunchCommand
+            {
+                RequestId = "req-open",
+                SessionId = Guid.Parse("7e57c0de-0000-4000-8000-000000000041").ToString("D"),
+                ServerUrl = "https://relay.example:34544",
+                Requester = "Bob Tech",
+            },
+        }, cts.Token);
+
+        LaunchProgress? failed = null;
+        while (failed is null)
+        {
+            var msg = await hub.ReadAgentMessageAsync(cts.Token);
+            if (msg.BodyCase == AgentMessage.BodyOneofCase.Progress && msg.Progress.Stage == LaunchStage.StageFailed)
+                failed = msg.Progress;
+        }
+        hub.CompleteServerStream();
+        await runTask;
+
+        Assert.Equal(LaunchRules.AlreadyOpenText, failed.Detail);
+        Assert.Equal("req-open", failed.RequestId);
+        Assert.False(hostStarted);
+    }
+
     private static async Task<AgentHubWorker> LaunchToReadyAsync(
         FakeAgentHubClient hub, FakeLaunchedProcess proc, string requestId, Guid machineGuid, Guid sessionGuid,
         CancellationToken ct, Action<Task> keepRunTask)
@@ -1046,6 +1092,9 @@ public class AgentHubWorkerTests
             Task.FromResult(RelayConnectedResult);
 
         public Task RemoveSelfAfterSessionAsync() => Task.CompletedTask;
+
+        public bool AppRunning { get; init; }
+        public bool IsAppRunning() => AppRunning;
     }
 
     private sealed class FakeAgentHubClient : AgentHub.AgentHubClient
