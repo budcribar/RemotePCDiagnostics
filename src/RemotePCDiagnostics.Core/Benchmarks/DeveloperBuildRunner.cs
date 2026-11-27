@@ -9,6 +9,10 @@ using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Benchmarks;
 
+internal sealed class BenchmarkCleanupException(
+    string message = "Could not confirm removal of a temporary Defender benchmark exclusion. Check the Agent logs and Defender settings.")
+    : InvalidOperationException(message);
+
 /// <summary>Environment readings needed by the developer setup check and developer benchmarks.</summary>
 public interface IDeveloperEnvironmentProbe
 {
@@ -391,7 +395,7 @@ public sealed class DeveloperBuildRunner(
             if (!isCustomSolution && options.IncludeAntivirusComparison && machineTweaks is not null && env.IsAgentConnected)
             {
                 progress.ReportStep(++step, totalSteps, $"Running warm C# clean builds with temporary Defender exclusion ({options.WarmRepeats} repeats)…");
-                var (added, _) = await machineTweaks.AddTempBuildDefenderExclusionAsync(workDir, ct).ConfigureAwait(false);
+                var (added, _) = await machineTweaks.AddTempBuildDefenderExclusionAsync(workDir, CancellationToken.None).ConfigureAwait(false);
                 if (added)
                 {
                     tempExclusionAdded = true;
@@ -475,13 +479,14 @@ public sealed class DeveloperBuildRunner(
                 }
                 catch (Exception ex) { Log("Failed to restore global.json: " + ex.Message); }
             }
-            if (tempExclusionAdded && machineTweaks is not null)
-            {
-                try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(workDir, CancellationToken.None).ConfigureAwait(false); }
-                catch (Exception ex) { Log("Failed to remove temp Defender exclusion: " + ex.Message); }
-            }
+            var exclusionLeft = tempExclusionAdded && machineTweaks is not null
+                && !await RemoveDefenderExclusionAsync(workDir).ConfigureAwait(false)
+                && !await RemoveDefenderExclusionAsync(workDir).ConfigureAwait(false);
+            // The build folder goes either way; only then is a left-over exclusion reported.
             if (!isCustomSolution)
                 TryDeleteDirectory(workDir);
+            if (exclusionLeft)
+                throw new BenchmarkCleanupException();
         }
     }
 
@@ -518,6 +523,8 @@ public sealed class DeveloperBuildRunner(
         var devDriveExclusionAdded = false;
         var includeAv = options.IncludeAntivirusComparison && env.IsAgentConnected;
         var totalSteps = includeAv ? 9 : 7;
+        // Conditions that were asked for but not measured, reported with the result.
+        var notMeasured = new List<string>();
         var step = 0;
 
         try
@@ -545,7 +552,7 @@ public sealed class DeveloperBuildRunner(
             if (includeAv)
             {
                 progress.ReportStep(++step, totalSteps, $"Timing warm C# builds on NTFS with Defender exclusion ({options.WarmRepeats} repeats)…");
-                var (added, _) = await machineTweaks.AddTempBuildDefenderExclusionAsync(ntfsDir, ct).ConfigureAwait(false);
+                var (added, _) = await machineTweaks.AddTempBuildDefenderExclusionAsync(ntfsDir, CancellationToken.None).ConfigureAwait(false);
                 if (added)
                 {
                     tempExclusionAdded = true;
@@ -555,24 +562,33 @@ public sealed class DeveloperBuildRunner(
                         if (exclFail is null && exclSamples.Count > 0)
                             ntfsExcludedWarm = DeveloperScoring.Median(exclSamples);
                         else
+                        {
                             Log((exclFail ?? CommandFailure.Empty).Format("NTFS warm dotnet build with temporary exclusion"));
+                            notMeasured.Add("NTFS + AV exclusion: the builds failed");
+                        }
                     }
                     finally
                     {
-                        try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(ntfsDir, CancellationToken.None).ConfigureAwait(false); }
-                        catch (Exception ex) { Log("Failed to remove temp Defender exclusion: " + ex.Message); }
-                        tempExclusionAdded = false;
+                        tempExclusionAdded = !await RemoveDefenderExclusionAsync(ntfsDir).ConfigureAwait(false);
+                        if (tempExclusionAdded)
+                            throw new BenchmarkCleanupException("The comparison stopped when temporary Defender exclusion cleanup failed. See the Agent logs for the cleanup retry.");
                     }
                 }
+                else
+                    notMeasured.Add("NTFS + AV exclusion: Windows refused the temporary exclusion");
             }
 
             // 2. Ask Agent to create & mount temporary ~50 GB Dev Drive VHDX
             progress.ReportStep(++step, totalSteps, "Creating temporary 50 GB Dev Drive VHDX through Agent…");
-            var mount = await machineTweaks.CreateTempDevDriveAsync(DevDriveRules.DefaultSizeGb, env.ReadCurrentUserSid(), ct).ConfigureAwait(false);
+            // Not cancelled while the Agent creates it: the Agent finishes the mount anyway, and only its answer says which VHDX to
+            // remove. A cancel is honoured as soon as the answer is in, and the finally below removes the drive.
+            var mount = await machineTweaks.CreateTempDevDriveAsync(DevDriveRules.DefaultSizeGb, env.ReadCurrentUserSid(), CancellationToken.None).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(mount.VhdxPath))
+                vhdxPath = mount.VhdxPath;
             if (!mount.Ok || string.IsNullOrWhiteSpace(mount.VhdxPath) || string.IsNullOrWhiteSpace(mount.BuildFolder))
                 return new(false, DeveloperCSharpPin.PinId, sha256, Note: mount.Error ?? "Could not create temporary Dev Drive.");
+            ct.ThrowIfCancellationRequested();
 
-            vhdxPath = mount.VhdxPath;
             devDriveBuildDir = Path.Combine(mount.BuildFolder, $"{DevDriveRules.BuildTempPrefix}{Guid.NewGuid():N}");
 
             // Check Defender performance mode on the mounted Dev Drive
@@ -600,7 +616,7 @@ public sealed class DeveloperBuildRunner(
             if (includeAv)
             {
                 progress.ReportStep(++step, totalSteps, $"Timing warm C# builds on Dev Drive with Defender exclusion ({options.WarmRepeats} repeats)…");
-                var (ddAdded, _) = await machineTweaks.AddTempBuildDefenderExclusionAsync(devDriveBuildDir, ct).ConfigureAwait(false);
+                var (ddAdded, _) = await machineTweaks.AddTempBuildDefenderExclusionAsync(devDriveBuildDir, CancellationToken.None).ConfigureAwait(false);
                 if (ddAdded)
                 {
                     devDriveExclusionAdded = true;
@@ -610,22 +626,40 @@ public sealed class DeveloperBuildRunner(
                         if (ddExclFail is null && ddExclSamples.Count > 0)
                             devDriveExcludedWarm = DeveloperScoring.Median(ddExclSamples);
                         else
+                        {
                             Log((ddExclFail ?? CommandFailure.Empty).Format("Dev Drive warm dotnet build with temporary exclusion"));
+                            notMeasured.Add("Dev Drive + AV exclusion: the builds failed");
+                        }
                     }
                     finally
                     {
-                        try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(devDriveBuildDir, CancellationToken.None).ConfigureAwait(false); }
-                        catch (Exception ex) { Log("Failed to remove temp Dev Drive Defender exclusion: " + ex.Message); }
-                        devDriveExclusionAdded = false;
+                        devDriveExclusionAdded = !await RemoveDefenderExclusionAsync(devDriveBuildDir).ConfigureAwait(false);
+                        if (devDriveExclusionAdded)
+                            throw new BenchmarkCleanupException("The comparison stopped when temporary Defender exclusion cleanup failed. See the Agent logs for the cleanup retry.");
                     }
                 }
+                else
+                    notMeasured.Add("Dev Drive + AV exclusion: Windows refused the temporary exclusion");
             }
+
+            // Removed here rather than only in finally, so a drive that is left behind is reported with the result.
+            var leftBehind = await RemoveTempDevDriveAsync(vhdxPath).ConfigureAwait(false);
+            vhdxPath = null;
+
+            var order = new List<string> { "NTFS" };
+            if (ntfsExcludedWarm is not null) order.Add("NTFS + AV exclusion");
+            order.Add("Dev Drive");
+            if (devDriveExcludedWarm is not null) order.Add("Dev Drive + AV exclusion");
+            var notes = new List<string>();
+            if (notMeasured.Count > 0) notes.Add("Not measured: " + string.Join("; ", notMeasured) + ".");
+            if (leftBehind is not null) notes.Add(leftBehind);
 
             return new(
                 Succeeded: true,
                 PinId: DeveloperCSharpPin.PinId,
                 PinSha256: sha256,
-                Order: includeAv ? "NTFS, NTFS + AV exclusion, Dev Drive, then Dev Drive + AV exclusion" : "NTFS, then Dev Drive",
+                Order: order.Count == 2 ? "NTFS, then Dev Drive" : string.Join(", ", order[..^1]) + ", then " + order[^1],
+                Note: notes.Count > 0 ? string.Join(" ", notes) : null,
                 NtfsColdMedianSeconds: ntfsCold,
                 NtfsWarmMedianSeconds: ntfsWarm,
                 DevDriveColdMedianSeconds: ddCold,
@@ -638,23 +672,46 @@ public sealed class DeveloperBuildRunner(
         finally
         {
             if (tempExclusionAdded)
-            {
-                try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(ntfsDir, CancellationToken.None).ConfigureAwait(false); }
-                catch (Exception ex) { Log("Failed to remove temp Defender exclusion: " + ex.Message); }
-            }
+                tempExclusionAdded = !await RemoveDefenderExclusionAsync(ntfsDir).ConfigureAwait(false);
             if (devDriveExclusionAdded && devDriveBuildDir is not null)
-            {
-                try { await machineTweaks.RemoveTempBuildDefenderExclusionAsync(devDriveBuildDir, CancellationToken.None).ConfigureAwait(false); }
-                catch (Exception ex) { Log("Failed to remove temp Dev Drive Defender exclusion: " + ex.Message); }
-            }
+                devDriveExclusionAdded = !await RemoveDefenderExclusionAsync(devDriveBuildDir).ConfigureAwait(false);
             TryDeleteDirectory(ntfsDir);
             if (devDriveBuildDir is not null) TryDeleteDirectory(devDriveBuildDir);
             if (vhdxPath is not null)
-            {
-                try { await machineTweaks.RemoveTempDevDriveAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false); }
-                catch (Exception ex) { Log("Failed to remove temporary Dev Drive VHDX: " + ex.Message); }
-            }
+                await RemoveTempDevDriveAsync(vhdxPath).ConfigureAwait(false);
+            if (tempExclusionAdded || devDriveExclusionAdded)
+                throw new BenchmarkCleanupException();
         }
+    }
+
+    private async Task<bool> RemoveDefenderExclusionAsync(string folder)
+    {
+        try
+        {
+            return await machineTweaks!.RemoveTempBuildDefenderExclusionAsync(folder, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log("Failed to remove temporary Defender exclusion: " + ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Asks the Agent to detach and delete the temporary Dev Drive. Null when it is gone; otherwise what to tell the person (the Agent's
+    /// start-up sweep removes a left-over drive the next time it starts).
+    /// </summary>
+    private async Task<string?> RemoveTempDevDriveAsync(string? vhdxPath)
+    {
+        if (vhdxPath is null || machineTweaks is null) return null;
+        try
+        {
+            if (await machineTweaks.RemoveTempDevDriveAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false))
+                return null;
+            Log("The Agent could not remove the temporary Dev Drive VHDX.");
+        }
+        catch (Exception ex) { Log("Failed to remove temporary Dev Drive VHDX: " + ex.Message); }
+        return "The temporary Dev Drive could not be removed; the Agent removes it the next time it starts.";
     }
 
     private async Task ShutdownBuildServersAsync(string dotnetExe, string workDir, CancellationToken ct)

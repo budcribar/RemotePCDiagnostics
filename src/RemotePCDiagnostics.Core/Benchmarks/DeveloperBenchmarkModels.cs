@@ -382,8 +382,10 @@ public sealed record DevDriveComparisonResult(
         if (DevDriveExcludedWarmMedianSeconds is { } ddExclWarm)
             warmParts.Add(string.Create(CultureInfo.InvariantCulture, $"Dev Drive+AV exclusion {ddExclWarm:0.0} s ({FormatDelta(DevDriveExcludedWarmPercentFaster)})"));
 
-        return string.Create(CultureInfo.InvariantCulture,
+        var summary = string.Create(CultureInfo.InvariantCulture,
             $"Warm: {string.Join(" vs ", warmParts)}; Cold: NTFS {NtfsColdMedianSeconds:0.0} s vs Dev Drive {DevDriveColdMedianSeconds:0.0} s ({coldDelta}). {perf}.");
+        // What was skipped or left behind (an exclusion Windows refused, a drive that couldn't be removed) is said, not hidden.
+        return string.IsNullOrWhiteSpace(Note) ? summary : summary + " " + Note;
     }
 }
 

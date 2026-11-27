@@ -33,6 +33,8 @@ public class BenchmarkUploadTests
         Assert.Equal(3, cpu.Samples.Count);
         Assert.True(req.Results[1].LowerIsBetter);
         Assert.Equal("Edge 131.0 · Speedometer 3.1", req.Results[2].Detail);
+        Assert.Equal("chromium|3.1|headless-new", req.Results[2].Comparable); // Admin ranks Speedometer only within this group
+        Assert.Null(req.Results[0].Comparable);
         Assert.Equal(0, req.Results[3].Weight); // inventory counts are listed, not ranked
         Assert.Equal("Balanced", req.Conditions.PowerPlan);
     }

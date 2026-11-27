@@ -121,6 +121,15 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     /// <summary>Clock for the restart countdown (tests replace it).</summary>
     public TimeProvider Clock { get; init; } = TimeProvider.System;
 
+    /// <summary>How long Windows has been running (tests replace it): a pass saved for after a restart runs only on a later boot.</summary>
+    public Func<TimeSpan> Uptime { get; init; } = () => TimeSpan.FromMilliseconds(Environment.TickCount64);
+
+    /// <summary>
+    /// True when Windows has started since the restart was asked for. A pass saved before this change has no request time and is
+    /// taken as restarted, as it always was.
+    /// </summary>
+    private bool RestartedSince(DateTimeOffset? asked) => asked is not { } at || Clock.GetUtcNow() - Uptime() >= at;
+
     /// <summary>How long after this app asks Windows to restart (60 s warning) a pass without a restart stays blocked.</summary>
     public static readonly TimeSpan RestartCountdown = TimeSpan.FromMinutes(2);
     private DateTimeOffset? _restartScheduledAt;
@@ -291,7 +300,8 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         BenchmarkState? commit = null;
         lock (_gate)
         {
-            if (Running is not null || Settling is not null) return null;
+            // One admission rule for every caller (the page, the service workflow, a resume): never beside a developer action or experiment.
+            if (Running is not null || Settling is not null || RunningDeveloperAction || ExperimentRunning) return null;
             if (restartChoice is { } choice)
             {
                 var next = _state with { Settings = _state.Settings with { RestartBeforeAfter = choice } };
@@ -318,10 +328,17 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
                 : null;
             var run = await runner.RunAsync(phase, settings, phase == BenchmarkPhase.After ? Before?.TimeUtc : null, prog, cts.Token,
                 phase == BenchmarkPhase.Before ? bootsSince : null, preferredSpeedometerEngine).ConfigureAwait(false);
-            Save(phase == BenchmarkPhase.Before
-                ? _state with { Before = run, After = null, ActiveBaselineId = null, RunBeforeOnStartup = false }
-                : _state with { After = run });
-            Message = run.Completed ? null : "Stopped before every benchmark finished; the finished ones are kept.";
+            // A stopped pass that measured nothing replaces nothing: the earlier before/after pair stays.
+            var measuredSomething = run.Completed || run.Measurements.Any(m => m.Median is not null);
+            if (!measuredSomething)
+                Save(phase == BenchmarkPhase.Before ? _state with { RunBeforeOnStartup = false } : _state);
+            else
+                Save(phase == BenchmarkPhase.Before
+                    ? _state with { Before = run, After = null, ActiveBaselineId = null, RunBeforeOnStartup = false }
+                    : _state with { After = run });
+            Message = run.Completed ? null
+                : measuredSomething ? "Stopped before every benchmark finished; the finished ones are kept."
+                : "Stopped before anything was measured; the earlier results are kept.";
             WriteEvent(run);
             try { PassFinished?.Invoke(run); } catch (Exception ex) { LogWarn("PassFinished handler failed: " + ex.Message); }
             return run;
@@ -364,7 +381,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         if (Running is not null || Settling is not null) return new(false, "A benchmark is running.");
         if (Before is null) return new(false, "Run the before benchmark first.");
         var previous = _state;
-        Save(_state with { Settings = _state.Settings with { RestartBeforeAfter = true }, RunAfterOnStartup = true });
+        Save(_state with { Settings = _state.Settings with { RestartBeforeAfter = true }, RunAfterOnStartup = true, RestartRequestedUtc = Clock.GetUtcNow() });
         if (store.Load() is not { RunAfterOnStartup: true }) return RestartNotSaved(previous);
         var r = await ScheduleRestartAsync(previous, ct).ConfigureAwait(false);
         Message = r.Success ? "Restarting in 60 seconds. The after benchmark runs by itself a few minutes after the PC is back." : r.Message;
@@ -414,6 +431,13 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public async Task ResumeAfterRestartAsync(CancellationToken ct = default)
     {
         if (!BeforePendingRestart && !AfterPendingRestart) return;
+        // The app can start again without a restart (closed and reopened, the restart canceled or still counting down): the pass waits
+        // for the boot it was saved for, as the service workflow does.
+        if (!RestartedSince(_state.RestartRequestedUtc))
+        {
+            Log("resume: the PC hasn't restarted since the benchmark was saved for after a restart; waiting for it");
+            return;
+        }
         var phase = BeforePendingRestart ? BenchmarkPhase.Before : BenchmarkPhase.After;
         var since = BeforePendingRestart ? _state.RestartRequestedUtc : null;
         var label = phase == BenchmarkPhase.Before ? "before" : "after";
@@ -562,9 +586,15 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             Message = res.Succeeded ? res.FormatDetail() : res.Note ?? "Antivirus comparison did not complete.";
             return res;
         }
+        catch (BenchmarkCleanupException ex)
+        {
+            LastAntivirusComparison = null;
+            Message = ex.Message;
+            return null;
+        }
         catch (OperationCanceledException)
         {
-            Message = "Antivirus comparison cancelled; temporary exclusion and build folder were cleaned up.";
+            Message = "Antivirus comparison cancelled.";
             return null;
         }
         finally
@@ -621,9 +651,15 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             Message = res.FormatSummary();
             return res;
         }
+        catch (BenchmarkCleanupException ex)
+        {
+            LastDevDriveComparison = null;
+            Message = ex.Message;
+            return null;
+        }
         catch (OperationCanceledException)
         {
-            Message = "Dev Drive comparison cancelled; temporary VHDX and build folders were cleaned up.";
+            Message = "Dev Drive comparison cancelled.";
             return null;
         }
         finally

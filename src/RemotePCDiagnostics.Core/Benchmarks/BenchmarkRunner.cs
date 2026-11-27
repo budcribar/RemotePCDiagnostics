@@ -359,6 +359,10 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
         return new(BenchmarkKind.ProgramStart, samples, samples.Count == 0 ? note : null);
     }
 
+    /// <summary>A resolver's real negative answer (no such name, or the name has no address): the lookup did a full round trip.</summary>
+    internal static bool IsDnsAnswer(System.Net.Sockets.SocketException ex) =>
+        ex.SocketErrorCode is System.Net.Sockets.SocketError.HostNotFound or System.Net.Sockets.SocketError.NoData;
+
     private async Task<BenchmarkMeasurement> DnsAsync(int runs, CancellationToken ct)
     {
         var r = resolve ?? (async (name, c) => await System.Net.Dns.GetHostAddressesAsync(name, c).ConfigureAwait(false));
@@ -375,7 +379,8 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
                 var sw = Stopwatch.StartNew();
                 try { await r(name, to.Token).ConfigureAwait(false); times.Add(sw.Elapsed.TotalMilliseconds); }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { /* timed out: not counted */ }
-                catch (System.Net.Sockets.SocketException) { times.Add(sw.Elapsed.TotalMilliseconds); } // "no such name" is still a full answer
+                catch (System.Net.Sockets.SocketException ex) when (IsDnsAnswer(ex)) { times.Add(sw.Elapsed.TotalMilliseconds); } // "no such name" is still a full answer
+                catch (System.Net.Sockets.SocketException) { /* no answer (network down, resolver unreachable, server failure): not counted */ }
             }
             if (times.Count >= LookupDomains.Length / 2) samples.Add(new BenchmarkMeasurement(BenchmarkKind.DnsLookup, times).Median!.Value);
         }

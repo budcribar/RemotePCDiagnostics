@@ -256,13 +256,32 @@ public sealed class WindowsDevDriveManager(ILogger? log = null, IProcessLauncher
                     [buildFolder, "/grant", $"*{grantUserSid}:(OI)(CI)M", "/Q"],
                     TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
                 if (acl.ExitCode != 0)
-                    Log($"icacls grant warning (exit {acl.ExitCode}): {acl.StdErr.Trim()}");
+                {
+                    // The app runs as the standard user: without this grant it can't build on the drive, so the mount is no use to it.
+                    Log($"icacls grant failed (exit {acl.ExitCode}): {acl.StdErr.Trim()}");
+                    await RemoveAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false);
+                    return new(false, Error: AclError(acl.StdErr));
+                }
             }
 
+            ct.ThrowIfCancellationRequested();
             Log($"Mounted temporary Dev Drive {driveLetter}: ({vhdxPath})");
             return new(true, vhdxPath, driveLetter.ToUpperInvariant(), buildFolder);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!await RemoveAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false))
+                    Log("Could not clean up the canceled Dev Drive creation.");
+            }
+            catch (Exception ex)
+            {
+                Log("Could not clean up the canceled Dev Drive creation: " + ex.Message);
+            }
+            throw;
+        }
+        catch (Exception ex)
         {
             await RemoveAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false);
             Log("CreateAndMount failed: " + ex.Message);
@@ -324,7 +343,11 @@ public sealed class WindowsDevDriveManager(ILogger? log = null, IProcessLauncher
                     [driveRoot, "/grant", $"*{grantUserSid}:(OI)(CI)M", "/Q"],
                     TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
                 if (acl.ExitCode != 0)
-                    Log($"icacls grant warning on persistent Dev Drive (exit {acl.ExitCode}): {acl.StdErr.Trim()}");
+                {
+                    Log($"icacls grant failed on persistent Dev Drive (exit {acl.ExitCode}): {acl.StdErr.Trim()}");
+                    await RemovePersistentAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false);
+                    return new(false, Error: AclError(acl.StdErr));
+                }
             }
 
             Log($"Mounted persistent Dev Drive {driveRoot} ({vhdxPath})");
@@ -350,6 +373,9 @@ public sealed class WindowsDevDriveManager(ILogger? log = null, IProcessLauncher
         Log($"Removed persistent Dev Drive VHDX {vhdxPath} (deleted={deleted})");
         return deleted;
     }
+
+    private static string AclError(string? stdErr) =>
+        "Couldn't give your account access to the Dev Drive" + (string.IsNullOrWhiteSpace(stdErr) ? "." : ": " + stdErr.Trim());
 
     /// <summary>
     /// Called on Agent startup: detaches and deletes any leftover RPCD Dev Drive VHDX files in the Agent's temp folder
