@@ -308,6 +308,9 @@ if (-not (Test-Path -LiteralPath $SetupExePath)) {
     throw "Expected installer output was not created: $SetupExePath"
 }
 
+# Signed before hashing so the .sha256 describes the published (signed) Setup. A no-op without signing secrets.
+& (Join-Path $PSScriptRoot 'Sign-ReleaseFile.ps1') -Path $SetupExePath
+
 $Hash = (Get-FileHash -LiteralPath $SetupExePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $ShaFile = "$SetupExePath.sha256"
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)

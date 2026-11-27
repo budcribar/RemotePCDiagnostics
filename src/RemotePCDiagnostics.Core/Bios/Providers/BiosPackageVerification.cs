@@ -170,8 +170,81 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
     private static bool VerifyAuthenticodeWindows(string filePath, bool checkRevocation, CancellationToken ct) =>
         VerifyAuthenticodeStatusWindows(filePath, checkRevocation, ct) == 0;
 
+    /// <summary>
+    /// True when <paramref name="filePath"/> has a valid Authenticode signature (whole chain revocation checked) and
+    /// <paramref name="verifySigner"/> accepts the signing certificate and the root of the chain WinVerifyTrust built.
+    /// Both certificates come from WinVerifyTrust's own state, not from a second read of the file.
+    /// </summary>
+    internal static bool VerifySignerChain(string filePath, Func<X509Certificate2, X509Certificate2, bool> verifySigner, CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            return false;
+        var accepted = false;
+        var status = VerifyAuthenticodeStatusWindows(filePath, checkRevocation: true, ct, state =>
+        {
+            accepted = ReadSignerChain(state) is var (leaf, root) && Accept(leaf, root, verifySigner);
+        });
+        return status == 0 && accepted;
+    }
+
+    private static bool Accept(X509Certificate2 leaf, X509Certificate2 root, Func<X509Certificate2, X509Certificate2, bool> verifySigner)
+    {
+        using (leaf)
+        using (root)
+            return verifySigner(leaf, root);
+    }
+
+    [DllImport("wintrust.dll", ExactSpelling = true)]
+    private static extern IntPtr WTHelperProvDataFromStateData(IntPtr state);
+
+    [DllImport("wintrust.dll", ExactSpelling = true)]
+    private static extern IntPtr WTHelperGetProvSignerFromChain(IntPtr provider, uint signerIndex,
+        [MarshalAs(UnmanagedType.Bool)] bool counterSigner, uint counterSignerIndex);
+
+    [DllImport("wintrust.dll", ExactSpelling = true)]
+    private static extern IntPtr WTHelperGetProvCertFromChain(IntPtr signer, uint certificateIndex);
+
+    // CRYPT_PROVIDER_SGNR starts with DWORD cbStruct, FILETIME sftVerifyAsOf, DWORD csCertChain.
+    private const int SignerCertChainCountOffset = 12;
+
+    /// <summary>The signing certificate and the chain root from an open WinVerifyTrust state, or null.</summary>
     [SupportedOSPlatform("windows")]
-    private static uint VerifyAuthenticodeStatusWindows(string filePath, bool checkRevocation, CancellationToken ct)
+    private static (X509Certificate2 Leaf, X509Certificate2 Root)? ReadSignerChain(IntPtr state)
+    {
+        var provider = WTHelperProvDataFromStateData(state);
+        if (provider == IntPtr.Zero)
+            return null;
+        var signer = WTHelperGetProvSignerFromChain(provider, 0, false, 0);
+        if (signer == IntPtr.Zero)
+            return null;
+        var count = Marshal.ReadInt32(signer, SignerCertChainCountOffset);
+        if (count < 2)
+            return null;
+        var leaf = CertificateAt(signer, 0);
+        var root = CertificateAt(signer, (uint)(count - 1));
+        if (leaf is null || root is null)
+        {
+            leaf?.Dispose();
+            root?.Dispose();
+            return null;
+        }
+        return (leaf, root);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static X509Certificate2? CertificateAt(IntPtr signer, uint index)
+    {
+        var entry = WTHelperGetProvCertFromChain(signer, index);
+        if (entry == IntPtr.Zero)
+            return null;
+        // CRYPT_PROVIDER_CERT: DWORD cbStruct, then PCCERT_CONTEXT pCert (pointer aligned).
+        var context = Marshal.ReadIntPtr(entry, IntPtr.Size);
+        return context == IntPtr.Zero ? null : new X509Certificate2(context);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static uint VerifyAuthenticodeStatusWindows(string filePath, bool checkRevocation, CancellationToken ct,
+        Action<IntPtr>? inspectState = null)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -213,7 +286,10 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
             };
 
             stateOpened = true;
-            return WinVerifyTrust(InvalidHandleValue, ref actionGuid, ref trustData);
+            var status = WinVerifyTrust(InvalidHandleValue, ref actionGuid, ref trustData);
+            if (status == 0 && inspectState is not null)
+                inspectState(trustData.hWVTStateData);
+            return status;
         }
         catch
         {

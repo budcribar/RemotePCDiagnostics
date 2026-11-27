@@ -57,6 +57,9 @@ env:
   FULL_RELEASE: ${{ (inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]'))) && 'true' || 'false' }}
   TESTSHOP_RELEASE: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.testshop_release || (github.event_name == 'push' && contains(github.event.head_commit.message, '[testshop-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[testshop-release]'))) && 'true' || 'false' }}
   PUBLISH_ARTIFACTS: ${{ (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch') && (inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')))) && 'true' || 'false' }}
+  # Code signing (installer/Sign-ReleaseFile.ps1, docs/update-signing.md). Only main and v* tags sign; the Azure federated
+  # credential trusts only those refs too. Empty on other refs or until the ARTIFACT_SIGNING_* repository variables exist.
+  SIGN_RELEASE: ${{ (github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && vars.ARTIFACT_SIGNING_ACCOUNT != '') && 'true' || 'false' }}
   # Full compression for release installers (default push to main TestShop release, or full-release); PR/branch dev runs use fast.
   INSTALLER_COMPRESSION: ${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'workflow_dispatch' && (inputs.full_release || inputs.testshop_release || inputs.release_tag != ''))) && 'lzma2/ultra64' || 'lzma2/fast' }}
 
@@ -238,9 +241,26 @@ jobs:
     if: ${{ inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]')) }}
     runs-on: windows-latest
     timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rpcd
+      - name: Sign in to Artifact Signing (main and v* tags)
+        if: env.SIGN_RELEASE == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Enable release signing
+        if: env.SIGN_RELEASE == 'true'
+        shell: pwsh
+        run: |
+          "ARTIFACT_SIGNING_ENDPOINT=${{ vars.ARTIFACT_SIGNING_ENDPOINT }}" >> $env:GITHUB_ENV
+          "ARTIFACT_SIGNING_ACCOUNT=${{ vars.ARTIFACT_SIGNING_ACCOUNT }}" >> $env:GITHUB_ENV
+          "ARTIFACT_SIGNING_PROFILE=${{ vars.ARTIFACT_SIGNING_PROFILE }}" >> $env:GITHUB_ENV
 
       - name: Ensure Inno Setup 6
         shell: pwsh
@@ -417,9 +437,26 @@ jobs:
     if: ${{ inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]')) }}
     runs-on: windows-latest
     timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rpcd
+      - name: Sign in to Artifact Signing (main and v* tags)
+        if: env.SIGN_RELEASE == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Enable release signing
+        if: env.SIGN_RELEASE == 'true'
+        shell: pwsh
+        run: |
+          "ARTIFACT_SIGNING_ENDPOINT=${{ vars.ARTIFACT_SIGNING_ENDPOINT }}" >> $env:GITHUB_ENV
+          "ARTIFACT_SIGNING_ACCOUNT=${{ vars.ARTIFACT_SIGNING_ACCOUNT }}" >> $env:GITHUB_ENV
+          "ARTIFACT_SIGNING_PROFILE=${{ vars.ARTIFACT_SIGNING_PROFILE }}" >> $env:GITHUB_ENV
 
       - name: Ensure Inno Setup 6
         shell: pwsh
@@ -527,9 +564,26 @@ jobs:
     name: TestShop demo bundle (RPCD + RPCDA)
     runs-on: windows-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rpcd
+      - name: Sign in to Artifact Signing (main and v* tags)
+        if: env.SIGN_RELEASE == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Enable release signing
+        if: env.SIGN_RELEASE == 'true'
+        shell: pwsh
+        run: |
+          "ARTIFACT_SIGNING_ENDPOINT=${{ vars.ARTIFACT_SIGNING_ENDPOINT }}" >> $env:GITHUB_ENV
+          "ARTIFACT_SIGNING_ACCOUNT=${{ vars.ARTIFACT_SIGNING_ACCOUNT }}" >> $env:GITHUB_ENV
+          "ARTIFACT_SIGNING_PROFILE=${{ vars.ARTIFACT_SIGNING_PROFILE }}" >> $env:GITHUB_ENV
 
       - name: Ensure Inno Setup 6
         shell: pwsh
@@ -701,9 +755,26 @@ jobs:
     if: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.testshop_release || (github.event_name == 'push' && contains(github.event.head_commit.message, '[testshop-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[testshop-release]'))) && !(inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]'))) }}
     runs-on: windows-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rpcd
+      - name: Sign in to Artifact Signing (main and v* tags)
+        if: env.SIGN_RELEASE == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Enable release signing
+        if: env.SIGN_RELEASE == 'true'
+        shell: pwsh
+        run: |
+          "ARTIFACT_SIGNING_ENDPOINT=${{ vars.ARTIFACT_SIGNING_ENDPOINT }}" >> $env:GITHUB_ENV
+          "ARTIFACT_SIGNING_ACCOUNT=${{ vars.ARTIFACT_SIGNING_ACCOUNT }}" >> $env:GITHUB_ENV
+          "ARTIFACT_SIGNING_PROFILE=${{ vars.ARTIFACT_SIGNING_PROFILE }}" >> $env:GITHUB_ENV
 
       - name: Ensure Inno Setup 6
         shell: pwsh
@@ -828,9 +899,26 @@ jobs:
     if: ${{ inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]')) }}
     runs-on: windows-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rpcd
+      - name: Sign in to Artifact Signing (main and v* tags)
+        if: env.SIGN_RELEASE == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Enable release signing
+        if: env.SIGN_RELEASE == 'true'
+        shell: pwsh
+        run: |
+          "ARTIFACT_SIGNING_ENDPOINT=${{ vars.ARTIFACT_SIGNING_ENDPOINT }}" >> $env:GITHUB_ENV
+          "ARTIFACT_SIGNING_ACCOUNT=${{ vars.ARTIFACT_SIGNING_ACCOUNT }}" >> $env:GITHUB_ENV
+          "ARTIFACT_SIGNING_PROFILE=${{ vars.ARTIFACT_SIGNING_PROFILE }}" >> $env:GITHUB_ENV
 
       - name: Publish and smoke-test standalone MSP Fleet Agent (RemotePCDiagnostics.Agent)
         shell: pwsh

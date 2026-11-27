@@ -366,7 +366,8 @@ public static class AppUpdateInstaller
 
     /// <summary>
     /// Downloads an installer from a trusted release URL into <paramref name="stagingDirectory"/> and checks it against the
-    /// release's <c>.sha256</c> file. Throws when there is no checksum URL, the checksum can't be read, or it doesn't match.
+    /// release's <c>.sha256</c> file, then against <see cref="UpdatePublisher.Pin"/> when one is set. Throws when there is no
+    /// checksum URL, the checksum can't be read, it doesn't match, or the file is not signed by the pinned publisher.
     /// </summary>
     public static async Task<string> DownloadAndVerifyAsync(
         HttpClient http,
@@ -439,11 +440,15 @@ public static class AppUpdateInstaller
             }
 
             File.Move(tempPath, targetPath, overwrite: true);
+            if (UpdatePublisher.Pin is not null)
+                progress?.Invoke(new AppUpdateProgress("verifying", null, "Verifying the publisher's signature..."));
+            await UpdatePublisher.VerifyAsync(targetPath, ct).ConfigureAwait(false);
             return targetPath;
         }
         catch
         {
             try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+            try { if (File.Exists(targetPath)) File.Delete(targetPath); } catch { }
             throw;
         }
     }
