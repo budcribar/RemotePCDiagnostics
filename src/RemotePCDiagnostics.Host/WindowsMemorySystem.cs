@@ -499,14 +499,18 @@ public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSetti
         using var root = OpenBase(s);
         var created = RegistryKeyCleanup.TopmostMissing(s.Key, path => KeyExists(root, path));
         var k = root.CreateSubKey(s.Key, writable: true) ?? throw new UnauthorizedAccessException($"Can't open {s.Key}.");
-        try { k.SetValue(s.Name, value, RegistryValueKind.DWord); }
+        try
+        {
+            using (k)
+            {
+                k.SetValue(s.Name, value, RegistryValueKind.DWord);
+            }
+        }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
         {
-            k.Dispose();
             RemoveCreatedKeys(root, s.Root, s.Key, created);
             throw;
         }
-        finally { k.Dispose(); }
         Log($"{s.Target} set to {value}" + (created is null ? "" : $" (created {created})"));
     }
 

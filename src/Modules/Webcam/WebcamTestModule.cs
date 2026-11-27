@@ -42,8 +42,8 @@ public sealed class WebcamTestModule(IWebcamIo io, ILogger? log = null) : OnDema
     }
 
     /// <summary>Tests the camera <paramref name="instance"/> names (its <see cref="ModuleInstance.Details"/> is the device id).</summary>
-    public Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken cancellationToken = default) =>
-        RunGuardedAsync(ct => RunCoreAsync(instance.Details ?? DeviceId, progress, ct), cancellationToken);
+    public Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken ct = default) =>
+        RunGuardedAsync(token => RunCoreAsync(instance.Details ?? DeviceId, progress, token), ct);
 
     protected override Task<DiagnosticResult> RunCoreAsync(IProgress<string>? progress, CancellationToken ct) =>
         RunCoreAsync(DeviceId, progress, ct);

@@ -158,13 +158,23 @@ public sealed class ResultEventLogger
             sb.Append("Instance id: ").Append(One(instanceKey)).AppendLine();
             if (!string.IsNullOrWhiteSpace(r.InstanceLabel)) sb.Append("Instance: ").Append(One(r.InstanceLabel)).AppendLine();
         }
-        if (ctx?.DisplayName is { } dn) { string? t = null; try { t = dn(r.ModuleName); } catch { } if (!string.IsNullOrEmpty(t)) sb.Append("Test: ").Append(One(t)).AppendLine(); }
+        if (ctx?.DisplayName is { } dn)
+        {
+            string? t = null;
+            try { t = dn(r.ModuleName); } catch { }
+            if (!string.IsNullOrEmpty(t)) sb.Append("Test: ").Append(One(t)).AppendLine();
+        }
         sb.Append("Outcome: ").Append(Outcome(r)).AppendLine();
         sb.Append("Summary: ").Append(One(r.Message)).AppendLine();
         if (duration is { } d) sb.Append("Duration: ").Append(d.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)).AppendLine(" s");
         if (suiteLabel is not null) sb.Append("Stress suite: ").Append(suiteLabel).AppendLine();
         sb.Append("Finished: ").Append(r.Timestamp.ToString("O", CultureInfo.InvariantCulture)).AppendLine();
-        if (ctx?.Machine is { } mf) { string? m = null; try { m = mf(); } catch { } if (!string.IsNullOrEmpty(m)) sb.Append("Machine: ").Append(One(m)).AppendLine(); }
+        if (ctx?.Machine is { } mf)
+        {
+            string? m = null;
+            try { m = mf(); } catch { }
+            if (!string.IsNullOrEmpty(m)) sb.Append("Machine: ").Append(One(m)).AppendLine();
+        }
         if (!string.IsNullOrEmpty(ctx?.AppVersion)) sb.Append("App version: ").Append(ctx!.AppVersion).AppendLine();
         sb.Append("Format: ").Append(FormatVersion).AppendLine();
         var ms = Measurements(r.Payload);

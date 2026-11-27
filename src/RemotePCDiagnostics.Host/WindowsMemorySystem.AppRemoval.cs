@@ -112,7 +112,14 @@ public sealed partial class WindowsMemorySystem
     {
         try
         {
-            if (Process.GetProcessesByName("Narrator") is { Length: > 0 } running) { foreach (var p in running) p.Dispose(); return true; }
+            if (Process.GetProcessesByName("Narrator") is { Length: > 0 } running)
+            {
+                foreach (var p in running)
+                {
+                    p.Dispose();
+                }
+                return true;
+            }
             const string acc = @"Software\Microsoft\Windows NT\CurrentVersion\Accessibility";
             using var hkcu = Registry.CurrentUser.OpenSubKey(acc);
             using var hklm = Registry.LocalMachine.OpenSubKey(acc);

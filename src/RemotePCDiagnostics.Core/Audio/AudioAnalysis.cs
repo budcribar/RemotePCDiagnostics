@@ -254,7 +254,15 @@ public sealed class MonitorController
     /// <summary>Returns the gain for this block (0 = stop playback now).</summary>
     public float Process(ReadOnlySpan<float> mic)
     {
-        foreach (var v in mic) { var a = Math.Abs(v); if (a > _peak) _peak = a; _sumSq += (double)v * v; }
+        foreach (var v in mic)
+        {
+            var a = Math.Abs(v);
+            if (a > _peak)
+            {
+                _peak = a;
+            }
+            _sumSq += (double)v * v;
+        }
         _count += mic.Length;
         switch (_howl.Feed(mic))
         {

@@ -197,11 +197,11 @@ internal static class WindowsMlNpuRunner
 
     private static void EnsureCatalogRegistered(Action<string> log, Action<string> logWarn, CancellationToken ct)
     {
-        if (_catalogRegistered) return;
+        if (Volatile.Read(ref _catalogRegistered)) return;
         InitGate.Wait(ct);
         try
         {
-            if (_catalogRegistered) return;
+            if (Volatile.Read(ref _catalogRegistered)) return;
             var catalog = ExecutionProviderCatalog.GetDefault();
             try
             {
@@ -219,7 +219,7 @@ internal static class WindowsMlNpuRunner
                     logWarn($"NpuTest/WinML: RegisterCertifiedAsync failed ({ex2.Message}).");
                 }
             }
-            _catalogRegistered = true;
+            Volatile.Write(ref _catalogRegistered, true);
             log("NpuTest/WinML: ExecutionProviderCatalog initialized.");
         }
         finally

@@ -91,7 +91,7 @@ public sealed class AgentConfig
             Consent = ConsentText(args.Consent ?? existing?.ConsentCeiling ?? ConsentCeiling.Ask),
             Lifetime = LifetimeText(args.Lifetime ?? existing?.AgentLifetime ?? AgentLifetime.Persistent),
             Group = AgentLayout.NormalizeShopGroup(args.Group) ?? AgentLayout.NormalizeShopGroup(existing?.Group) ?? "",
-            AgentToken = keepToken ? (existing?.AgentToken ?? "").Trim() : "",
+            AgentToken = keepToken ? (existing!.AgentToken ?? "").Trim() : "",
         };
     }
 }

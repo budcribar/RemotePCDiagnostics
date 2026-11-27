@@ -124,7 +124,15 @@ public sealed class MemoryTest(IMemoryInfo memory, IMemTestHelperLauncher launch
 
     private bool SafeAvailability()
     {
-        try { var a = sensors.CheckAvailability(); if (!a.IsAvailable) log.Info($"Memory test: sensors unavailable: {a.Reason}"); return a.IsAvailable; }
+        try
+        {
+            var a = sensors.CheckAvailability();
+            if (!a.IsAvailable)
+            {
+                log.Info($"Memory test: sensors unavailable: {a.Reason}");
+            }
+            return a.IsAvailable;
+        }
         catch (Exception ex) { log.Warn($"Memory test: sensor availability failed: {ex.Message}"); return false; }
     }
 

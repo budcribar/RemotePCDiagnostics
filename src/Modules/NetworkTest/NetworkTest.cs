@@ -420,7 +420,15 @@ public sealed class NetworkTest(
 
     private bool SafeAvailability()
     {
-        try { var a = sensors.CheckAvailability(); if (!a.IsAvailable) log.Info($"Network test: sensors unavailable: {a.Reason}"); return a.IsAvailable; }
+        try
+        {
+            var a = sensors.CheckAvailability();
+            if (!a.IsAvailable)
+            {
+                log.Info($"Network test: sensors unavailable: {a.Reason}");
+            }
+            return a.IsAvailable;
+        }
         catch (Exception ex) { log.Warn($"Network test: sensor availability failed: {ex.Message}"); return false; }
     }
 

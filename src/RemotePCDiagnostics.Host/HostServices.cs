@@ -345,7 +345,14 @@ public static class HostServices
         {
             var ids = BuiltInModules.Descriptors.ToDictionary(d => d.Id, d => d.Slug);
             var slugs = new HashSet<string>(BuiltInModules.Descriptors.Select(d => d.Slug), StringComparer.OrdinalIgnoreCase);
-            foreach (var r in plugins.Records) { if (r.ModuleId is { } id) ids[id] = r.PluginId; slugs.Add(r.PluginId); }
+            foreach (var r in plugins.Records)
+            {
+                if (r.ModuleId is { } id)
+                {
+                    ids[id] = r.PluginId;
+                }
+                slugs.Add(r.PluginId);
+            }
             var problems = new List<(string File, string Problem)>();
             foreach (var c in RemotePCDiagnostics.Core.Checks.JsonCheckModule.LoadFolder(folder ?? RemotePCDiagnostics.Core.Checks.JsonCheckModule.DefaultFolder(), ids, slugs, problems))
             {
