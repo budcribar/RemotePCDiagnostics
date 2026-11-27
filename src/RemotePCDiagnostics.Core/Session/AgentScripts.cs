@@ -54,6 +54,11 @@ public static class AgentScripts
     public const string HpBatteryRead = "hp_battery_read";
     /// <summary>Args: the setting's name and the value to set (the Agent checks the setting lists it).</summary>
     public const string HpBatterySet = "hp_battery_set";
+    /// <summary>
+    /// Args: "status", "cancel" or "clear"; or "schedule" and "standard" or "extended". The Windows boot memory test
+    /// (<see cref="Stress.AgentMemoryDiagnostic"/>); prints <see cref="Stress.MemoryDiagnosticAnswer"/> JSON.
+    /// </summary>
+    public const string MemoryDiagnostic = "memory_diagnostic";
 
     public const string RebootTask = "reboot";
     public const string WorkflowTask = "workflow";
@@ -167,6 +172,13 @@ public static class AgentScripts
             case HpBatterySet:
                 return a.Count == 2 && Battery.HpBatteryCharge.IsSetting(Arg(0)) && Battery.HpBatteryCharge.IsValue(Arg(1))
                     ? Native(new Battery.HpBatterySetAction(Arg(0)!, Arg(1)!)) : Refuse("That isn't an HP battery setting this app changes.");
+
+            case MemoryDiagnostic:
+                if (a.Count == 0 || !Stress.AgentMemoryDiagnostic.IsVerb(Arg(0))) return Refuse("That isn't a memory test request.");
+                if (Arg(0) == "schedule")
+                    return a.Count == 2 && Stress.AgentMemoryDiagnostic.ParseMix(Arg(1)) is { } mix
+                        ? Native(new Stress.MemoryDiagnosticAction("schedule", mix)) : Refuse("Choose the standard or extended test.");
+                return a.Count == 1 ? Native(new Stress.MemoryDiagnosticAction(Arg(0)!, null)) : Refuse("That isn't a memory test request.");
 
             default:
                 return Refuse($"Unknown script '{request.Name}'.");

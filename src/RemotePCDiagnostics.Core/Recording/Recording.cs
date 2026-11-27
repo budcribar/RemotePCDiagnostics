@@ -92,6 +92,9 @@ public sealed record RecordedCall
     public const string FileKind = "file";
     /// <summary>What the Agent's alerts read (<see cref="Alerts.IAlertReadings"/>): events and levels, kept as rows like WMI.</summary>
     public const string AlertsKind = "alerts";
+    /// <summary>One boot memory test request to the Agent (<see cref="Stress.IMemoryDiagnosticSource"/>): <see cref="Query"/> is the request
+    /// ("status"), <see cref="StdOut"/> the Agent's JSON answer, <see cref="Error"/> why there was none (<see cref="TimedOut"/> marks "no Agent").</summary>
+    public const string MemoryDiagnosticKind = "memdiag";
 
     public string Kind { get; init; } = "";
 
@@ -141,9 +144,18 @@ public sealed record RecordedCall
 
     public static RecordedCall FromAudio(Audio.AudioState s) => new() { Kind = AudioKind, StdOut = s.ToJson(), Error = s.Error };
 
+    public static RecordedCall FromMemoryDiagnostic(IReadOnlyList<string> args, Stress.MemoryDiagnosticReply r) => new()
+    {
+        Kind = MemoryDiagnosticKind, Query = string.Join(' ', args), StdOut = r.Answer?.ToJson(), Error = r.Error, TimedOut = r.NoAgent ? true : null,
+    };
+
+    public Stress.MemoryDiagnosticReply ToMemoryDiagnosticReply() =>
+        Error is null && Stress.MemoryDiagnosticAnswer.Parse(StdOut) is { } answer ? new(answer, null)
+            : Stress.MemoryDiagnosticReply.Failed(Error ?? "The answer couldn't be read.", noAgent: TimedOut == true);
+
     /// <summary>Kept as rows, like WMI (WMI, registry, the package list, antivirus products).</summary>
     public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind or AntivirusKind;
 
     /// <summary>Short text naming the call, for test messages.</summary>
-    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind == AudioKind ? "audio" : $"{File} {string.Join(' ', Args ?? [])}";
+    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind == AudioKind ? "audio" : Kind == MemoryDiagnosticKind ? $"memdiag {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
 }

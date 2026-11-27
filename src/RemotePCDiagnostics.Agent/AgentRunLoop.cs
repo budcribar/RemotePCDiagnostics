@@ -26,6 +26,8 @@ internal static class AgentRunLoop
         if (OperatingSystem.IsWindows() && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(AgentLayout.ConfigPathEnvVar)))
             try { ProtectedStateFolder.Ensure(null); } catch { }
         try { AgentPaths.EnsureSessionsDirectory(); } catch { }
+        // The Windows boot memory test ran at this boot (or was dropped): put back the test mix it was scheduled with.
+        if (OperatingSystem.IsWindows()) RemotePCDiagnostics.Core.Stress.AgentMemoryDiagnosticHost.RecoverAtStart(RemotePCDiagnostics.Core.Logging.AppLoggerFactory.From(log).CreateLogger("MemoryDiagnostic"));
         // An in-app update may have replaced this service mid-way (Setup's Agent MSI step): bring the session's app back.
         try { platform.ResumePendingRelaunch(); } catch { }
         var publisher = new AgentStatusPublisher();

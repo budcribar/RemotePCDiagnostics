@@ -78,6 +78,17 @@ public sealed class RecordingRegistrySource(IRegistrySource inner, CallRecorder 
     }
 }
 
+/// <summary>Passes each boot memory test request to the Agent and records the answer.</summary>
+public sealed class RecordingMemoryDiagnosticSource(Stress.IMemoryDiagnosticSource inner, CallRecorder recorder) : Stress.IMemoryDiagnosticSource
+{
+    public async Task<Stress.MemoryDiagnosticReply> RunAsync(IReadOnlyList<string> args, CancellationToken ct)
+    {
+        var r = await inner.RunAsync(args, ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromMemoryDiagnostic(args, r));
+        return r;
+    }
+}
+
 /// <summary>Records a report file under a fixed name (its real path changes every run).</summary>
 public sealed class FileRecorder(CallRecorder recorder)
 {
@@ -136,6 +147,7 @@ public sealed class RecordingReplay
     public Audio.IAudioStateSource Audio => new ReplayAudio(this);
     public IProcessLauncher Launcher => new ReplayLauncher(this);
     public Alerts.IAlertReadings Alerts => new ReplayAlerts(this);
+    public Stress.IMemoryDiagnosticSource MemoryDiagnostic => new ReplayMemoryDiagnostic(this);
 
     /// <summary>The report file recorded under <paramref name="name"/>; null when it wasn't made or isn't in the recording.</summary>
     public string? FileText(string name) => Answer(FileKey(name), $"file {name}") is { Error: null } c ? c.StdOut : null;
@@ -162,6 +174,7 @@ public sealed class RecordingReplay
         RecordedCall.AudioKind => AudioKey,
         RecordedCall.FileKind => FileKey(c.File ?? ""),
         RecordedCall.AlertsKind => AlertsKey(c.Query ?? ""),
+        RecordedCall.MemoryDiagnosticKind => MemoryDiagnosticKey(c.Query ?? ""),
         _ => ProcessKey(c.File ?? "", c.Args ?? []),
     };
 
@@ -170,6 +183,7 @@ public sealed class RecordingReplay
     public const string AudioKey = "audio";
     public static string FileKey(string name) => "file\n" + name;
     public static string AlertsKey(string reading) => "alerts\n" + reading;
+    public static string MemoryDiagnosticKey(string request) => "memdiag\n" + request;
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
     /// <remarks>WQL ignores case, and a path in a query is spelled as Windows gave it (C:\WINDOWS on one PC, C:\Windows on another).</remarks>
     public static string WmiKey(string ns, string wql) => "wmi\n" + ns.ToLowerInvariant() + "\n" + wql.ToLowerInvariant();
@@ -212,6 +226,16 @@ public sealed class RecordingReplay
     }
 
     /// <summary>The recorded events are replayed whatever the window asked for; the Agent drops the ones it has seen by record id.</summary>
+    private sealed class ReplayMemoryDiagnostic(RecordingReplay replay) : Stress.IMemoryDiagnosticSource
+    {
+        public Task<Stress.MemoryDiagnosticReply> RunAsync(IReadOnlyList<string> args, CancellationToken ct)
+        {
+            var request = string.Join(' ', args);
+            return Task.FromResult(replay.Answer(MemoryDiagnosticKey(request), $"memdiag {request}")?.ToMemoryDiagnosticReply()
+                                   ?? Stress.MemoryDiagnosticReply.Failed("Not in the recording."));
+        }
+    }
+
     private sealed class ReplayAlerts(RecordingReplay replay) : Alerts.IAlertReadings
     {
         public Task<WmiQueryResult> ReadAsync(string reading, long afterRecordId, TimeSpan lookBack, CancellationToken ct) =>

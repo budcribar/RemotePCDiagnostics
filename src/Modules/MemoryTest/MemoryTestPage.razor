@@ -86,10 +86,78 @@ else if (report is not null)
     </div>
 }
 
+@{
+    var off = Module?.Offline;
+    var os = off?.State;
+}
 <div class="card" data-testid="memtest-deeper" style="margin-top:16px">
-    <div class="card-head"><span class="dot dot-neutral"></span><strong>Want a deeper check?</strong></div>
-    <div class="deeper-text">Windows has its own memory test that runs while the PC restarts, before Windows starts. It can check memory this app can't reach while Windows is running.</div>
-    @if (Module?.CanLaunchWindowsDiagnostic == true)
+    <div class="card-head"><span class="@OfflineDot(os)"></span><strong>Windows boot memory test</strong></div>
+    <div class="deeper-text">Windows has its own memory test that runs while the PC restarts, before Windows starts. It can check memory this app can't reach while Windows is running. The PC restarts again by itself when the test is done, and its result shows here.</div>
+    @if (off is not null && os is not null)
+    {
+        <AgentData TestId="memdiag-data" CheckId="@MemoryTestModule.ModuleName" Json="@OfflineMemoryExport.ToJson(os, _mix, _when, _offlineConfirm)" />
+        <div data-testid="memdiag" data-phase="@OfflineMemoryExport.Phase(os.Phase)">
+        @if (os.Phase == OfflineMemoryPhase.Loading) { <div class="meta" data-testid="memdiag-loading">Checking the boot memory test…</div> }
+        @if (os.LastResult is { } lr)
+        {
+            <div data-testid="memdiag-result" data-outcome="@(lr.Outcome == OfflineMemoryOutcome.NoErrors ? "no-errors" : "errors")">
+                <div class="headline"><span class="dot @(lr.Outcome == OfflineMemoryOutcome.NoErrors ? "dot-ok" : "dot-error")"></span> @lr.Headline</div>
+                <div class="meta">@(os.Phase == OfflineMemoryPhase.Done ? "Finished" : "Last run") @lr.TimeUtc.ToLocalTime().ToString("g"). @lr.Explanation</div>
+            </div>
+        }
+        else if (os.Phase != OfflineMemoryPhase.Loading)
+        {
+            <div class="meta" data-testid="memdiag-no-result">Windows has no boot memory test result on this PC yet.</div>
+        }
+        <p class="meta" data-testid="memdiag-status">@OfflineStatus(os)</p>
+        @if (os.Message is { } msg) { <div class="meta" data-testid="memdiag-message">@msg</div> }
+        @if (os.CanCancel)
+        {
+            <button class="btn" data-testid="memdiag-cancel" @onclick="CancelOfflineAsync" disabled="@_offlineBusy">Don't run it</button>
+        }
+        @if (os.CanSchedule)
+        {
+            <div class="toolbar" style="margin-top:8px">
+                <label class="meta">Test
+                    <select data-testid="memdiag-mode" disabled="@(_offlineBusy || _offlineConfirm)" @onchange="SetMix">
+                        <option value="standard" selected="@(_mix == OfflineMemoryMix.Standard)">Standard (about 15–30 minutes)</option>
+                        <option value="extended" selected="@(_mix == OfflineMemoryMix.Extended)">Extended (much longer, finds more)</option>
+                    </select>
+                </label>
+                <label class="meta">When
+                    <select data-testid="memdiag-when" disabled="@(_offlineBusy || _offlineConfirm)" @onchange="SetWhen">
+                        <option value="now" selected="@(_when == OfflineMemoryWhen.Now)">Restart now</option>
+                        <option value="next" selected="@(_when == OfflineMemoryWhen.NextRestart)">Next time the PC restarts</option>
+                    </select>
+                </label>
+                @if (!_offlineConfirm)
+                {
+                    <button class="btn" data-testid="memdiag-schedule" disabled="@(_offlineBusy || running)" @onclick="() => _offlineConfirm = true">Schedule the boot test…</button>
+                }
+            </div>
+            @if (_offlineConfirm)
+            {
+                <div class="notice notice-error" data-testid="memdiag-confirm">
+                    @if (_when == OfflineMemoryWhen.Now)
+                    {
+                        <p><strong>The PC restarts in 60 seconds.</strong> Programs close and unsaved work is lost: save your work first. The test runs before Windows starts and the PC restarts again when it's done.</p>
+                    }
+                    else
+                    {
+                        <p><strong>The test runs the next time the PC restarts.</strong> That restart takes longer than usual while the test runs.</p>
+                    }
+                    @foreach (var w in OfflineMemoryDiagnostic.Warnings(os.Agent, _when, _mix))
+                    {
+                        <p data-testid="memdiag-warning" data-warning-id="@w.Id">@(w.Serious ? "⚠ " : "")@w.Text</p>
+                    }
+                    <button data-testid="memdiag-confirm-yes" disabled="@_offlineBusy" @onclick="ScheduleOfflineAsync">@(_when == OfflineMemoryWhen.Now ? "Yes, restart and test" : "Yes, test at the next restart")</button>
+                    <button data-testid="memdiag-confirm-no" disabled="@_offlineBusy" @onclick="() => _offlineConfirm = false">Cancel</button>
+                </div>
+            }
+        }
+        </div>
+    }
+    @if ((off is null || os?.Phase == OfflineMemoryPhase.NeedsAgent) && Module?.CanLaunchWindowsDiagnostic == true)
     {
         @if (!_confirm)
         {
@@ -111,6 +179,77 @@ else if (report is not null)
     private MemoryTestMode _mode = MemoryTestMode.Quick;
     private bool _confirm;
     private string? _launchMessage;
+    private OfflineMemoryMix _mix = OfflineMemoryMix.Standard;
+    private OfflineMemoryWhen _when = OfflineMemoryWhen.Now;
+    private bool _offlineConfirm, _offlineBusy;
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        if (Module?.Offline is { } off) off.Changed += OnOfflineChanged;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        // Read the boot test's state each time the page opens: after a restart this is where its result comes in.
+        if (Module?.Offline is { } off)
+        {
+            try { await off.RefreshAsync(); }
+            catch (Exception) { }
+        }
+    }
+
+    private void OnOfflineChanged(object? sender, EventArgs e) => _ = InvokeAsync(StateHasChanged);
+
+    public override void Dispose()
+    {
+        if (Module?.Offline is { } off) off.Changed -= OnOfflineChanged;
+        base.Dispose();
+    }
+
+    private void SetMix(ChangeEventArgs e) => _mix = e.Value?.ToString() == "extended" ? OfflineMemoryMix.Extended : OfflineMemoryMix.Standard;
+    private void SetWhen(ChangeEventArgs e) => _when = e.Value?.ToString() == "next" ? OfflineMemoryWhen.NextRestart : OfflineMemoryWhen.Now;
+
+    private async Task ScheduleOfflineAsync()
+    {
+        if (Module?.Offline is not { } off || _offlineBusy) return;
+        _offlineBusy = true;
+        try { await off.ScheduleAsync(_mix, _when); }
+        finally { _offlineBusy = false; _offlineConfirm = false; }
+    }
+
+    private async Task CancelOfflineAsync()
+    {
+        if (Module?.Offline is not { } off || _offlineBusy) return;
+        _offlineBusy = true;
+        try { await off.CancelAsync(); }
+        finally { _offlineBusy = false; }
+    }
+
+    private static string OfflineDot(OfflineMemoryState? s) => s switch
+    {
+        { Phase: OfflineMemoryPhase.Scheduled or OfflineMemoryPhase.Restarting or OfflineMemoryPhase.WaitingForResult } => "dot dot-running",
+        { LastResult.Outcome: OfflineMemoryOutcome.Errors } => "dot dot-error",
+        { Phase: OfflineMemoryPhase.NotRun } => "dot dot-warning",
+        { LastResult.Outcome: OfflineMemoryOutcome.NoErrors } => "dot dot-ok",
+        _ => "dot dot-neutral",
+    };
+
+    private static string OfflineStatus(OfflineMemoryState s) => s.Phase switch
+    {
+        OfflineMemoryPhase.Loading => "",
+        OfflineMemoryPhase.NeedsAgent => "Needs the Agent: scheduling the boot test needs administrator rights, which this app gets only through the Agent." + (s.Error is { Length: > 0 } e ? $" ({e})" : ""),
+        OfflineMemoryPhase.Unavailable => "The boot memory test can't be scheduled on this PC: " + s.Error,
+        OfflineMemoryPhase.Scheduled => $"Set to run the next time Windows restarts ({MixText(s.Agent?.Mix)}).",
+        OfflineMemoryPhase.Restarting => $"The PC is restarting into the {MixText(s.Agent?.Mix)}.",
+        OfflineMemoryPhase.WaitingForResult => "The PC has restarted. Windows records the boot test's result a few minutes after sign-in; this page shows it then.",
+        OfflineMemoryPhase.NotRun => "The PC restarted, but Windows recorded no boot memory test result, so the test didn't run. If the PC was shut down with Fast Startup on, schedule it again and use Restart.",
+        OfflineMemoryPhase.Done => "The boot memory test is finished.",
+        _ => "",
+    };
+
+    private static string MixText(OfflineMemoryMix? m) => m == OfflineMemoryMix.Extended ? "extended test" : "standard test";
 
     protected override void SyncFromModule(MemoryTestModule m) { _mode = m.Mode; _duration = m.Duration; }
     protected override void ApplyToModule(MemoryTestModule m) { m.Mode = _mode; m.Duration = _duration; }

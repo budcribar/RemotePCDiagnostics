@@ -49,6 +49,7 @@ public static class RecordReplaySwitches
         Replace(services, _ => replay.Packages);
         Replace(services, _ => replay.AntivirusProducts);
         Replace(services, _ => replay.Audio);
+        Replace(services, _ => replay.MemoryDiagnostic);
         Decorate<SystemCommandRunner>(services, (_, c) =>
             new SystemCommandRunner(replay.Launcher, c.Log, c.Timeout, c.ElevatedBridge, c.IsProcessElevatedCheck, c.NativeOps));
     }
@@ -63,6 +64,7 @@ public static class RecordReplaySwitches
         Decorate<IPackageSource>(services, (_, p) => new RecordingPackageSource(p, calls));
         Decorate<Security.IAntivirusProductSource>(services, (_, a) => new RecordingAntivirusProductSource(a, calls));
         Decorate<Audio.IAudioStateSource>(services, (_, a) => new RecordingAudioStateSource(a, calls));
+        Decorate<Stress.IMemoryDiagnosticSource>(services, (_, s) => new RecordingMemoryDiagnosticSource(s, calls));
         // The checks behave as they do without the recorder (scripted: false): it only notes what the real tools answer.
         Decorate<SystemCommandRunner>(services, (_, c) => new SystemCommandRunner(new RecordingProcessLauncher(c.Launcher, calls), c.Log, c.Timeout,
             c.ElevatedBridge, c.IsProcessElevatedCheck, c.NativeOps, scripted: c.IsScripted));

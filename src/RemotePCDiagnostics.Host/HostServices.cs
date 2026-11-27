@@ -97,6 +97,8 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IDefenderConfig>(sp => sp.GetRequiredService<IMemorySystem>());
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IAppManagementSystem>(sp => sp.GetRequiredService<IMemorySystem>());
         // Last retrim per SSD volume: Windows' Defrag event 258 plus this app's own record (retrim.json), so Drive health only offers it when needed.
+        // Windows boot memory test: every request goes to the Agent (bcdedit). Registered here so RPCD_LOG / RPCD_REPLAY can record and replay it.
+        services.AddSingleton<RemotePCDiagnostics.Core.Stress.IMemoryDiagnosticSource>(sp => new RemotePCDiagnostics.Core.Stress.AgentMemoryDiagnosticSource(sp.GetRequiredService<SystemCommandRunner>()));
         services.AddSingleton(_ => new RetrimLog(RetrimLog.DefaultPath(), L<RetrimLog>()));
         services.AddSingleton<IRetrimHistory>(sp => new RetrimHistory(sp.GetRequiredService<RetrimLog>(), new WindowsRetrimEvents(L<WindowsRetrimEvents>()), L<RetrimHistory>()));
         services.AddSingleton<RemotePCDiagnostics.Core.Areas.IDriveHealthHistoryStore>(_ => new RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore(RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore.DefaultPath(), L<RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore>()));
