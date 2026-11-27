@@ -20,9 +20,7 @@
 <div class="toolbar">
     <span class="icon-badge page-icon"><Icon Name="play" Size="20" /></span><h1 data-rpcd-page="workflow" data-rpcd-contract="@BrowserContract.Workflow" data-workflow-stage="@s.Stage" data-testid="wf-title">Service workflow</h1>
 </div>
-<p class="meta">Runs every check, lets you choose the fixes once, then does the rest by itself: restart → before benchmark → apply the fixes →
-    restart → after benchmark → client report. Plan on 20–40 minutes, mostly waiting for restarts and updates.
-    Need a quick standalone measurement? <a href="/benchmark">Open Benchmark →</a></p>
+<p class="meta" data-testid="wf-intro">Runs all checks, applies the fixes you pick, and measures before and after. About 20–40 min. <a href="/benchmark">Benchmark only →</a></p>
 
 <AgentData TestId="workflow-data" Json="@WorkflowJson(s)" />
 <section class="card wf-pipeline-card" aria-label="Service workflow progress">
@@ -291,9 +289,6 @@
         {
             @if (Flow.SettleFraction is { } sf && Flow.SettleRemaining is { } rem && Flow.SettleTotal is { } total)
             {
-                <div class="progress run-progress wf-overall-progress" data-testid="wf-settle-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@((int)Math.Ceiling(total.TotalSeconds))" aria-valuenow="@((int)Math.Round(total.TotalSeconds - rem.TotalSeconds))">
-                    <div class="progress-bar" style="width:@($"{sf * 100:0.#}%")"></div>
-                </div>
                 <div class="cards">
                     <div class="card is-running card-with-visual" data-testid="wf-bench-live">
                         <div class="card-main">
@@ -307,7 +302,6 @@
             }
             else if (Bench.Running is not null)
             {
-                <div class="run-progress run-progress-indeterminate wf-overall-progress" data-testid="wf-bench-progress" aria-hidden="true"><div></div></div>
                 <div class="cards">
                     <div class="card is-running card-with-visual" data-testid="wf-bench-live">
                         <div class="card-main">
@@ -321,7 +315,6 @@
             }
             else if (Flow.Rescan is { } rescan)
             {
-                <div class="run-progress run-progress-indeterminate wf-overall-progress" data-testid="wf-rescan-progress" aria-hidden="true"><div></div></div>
                 <div class="cards">
                     <div class="card is-running card-with-visual" data-testid="wf-rescan-live">
                         <div class="card-main">
@@ -337,7 +330,6 @@
         }
         @if (s.Stage == WorkflowStage.Applying && approved > 0)
         {
-            <div class="progress run-progress wf-overall-progress" data-testid="wf-apply-progress"><div class="progress-bar" style="width:@($"{Math.Clamp((s.Outcomes.Count + (Flow.RepairFraction ?? 0)) / approved * 100, 0, 100):0.#}%")"></div></div>
             @if (Flow.RepairFraction is { } rf)
             {
                 <div class="progress run-progress wf-check-bar" data-testid="wf-repair-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@($"{rf * 100:0}")"><div class="progress-bar" style="width:@($"{rf * 100:0.#}%")"></div></div>
@@ -359,9 +351,13 @@
         }
         @if (s.Outcomes.Count > 0)
         {
-            <table class="detail grid"><tr><th scope="col">Fix</th><th scope="col">Result</th></tr>
-                @foreach (var o in s.Outcomes) { <tr><td>@o.Title</td><td><span class="dot dot-@(o.Success ? "ok" : o.Skipped ? "neutral" : "warning")"></span>@o.Message</td></tr> }
-            </table>
+            @* Starts collapsed: the Progress card above says how far along it is; open this for each fix's result. *@
+            <details class="wf-outcomes" data-testid="wf-outcomes">
+                <summary class="meta">Fix results (@s.Outcomes.Count)</summary>
+                <table class="detail grid"><tr><th scope="col">Fix</th><th scope="col">Result</th></tr>
+                    @foreach (var o in s.Outcomes) { <tr><td>@o.Title</td><td><span class="dot dot-@(o.Success ? "ok" : o.Skipped ? "neutral" : "warning")"></span>@o.Message</td></tr> }
+                </table>
+            </details>
         }
         break;
 }

@@ -640,11 +640,16 @@ tr.history-day.clickable:hover td { background: var(--surface-hover); }
 @keyframes wfDashFlow {
     to { background-position: 24px 0; }
 }
-.wf-pipeline-card { margin: 12px 0; padding: 14px 16px; }
-.wf-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 0; list-style: none; padding: 0; margin: 0; }
-.wf-step { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 7px 11px; border-radius: 10px; min-width: 96px; font-size: 12.5px; transition: border-color .15s, background-color .15s, box-shadow .15s; }
-.wf-step-head { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; white-space: nowrap; }
-.wf-step-caption { font-size: 11.5px; color: var(--text-muted); padding-left: 22px; white-space: nowrap; }
+.wf-pipeline-card { margin: 12px 0; padding: 12px 14px; container: wf-pipeline / inline-size; }
+/* One row: when space is short, a step's words wrap inside its box instead of the steps wrapping onto a second row. */
+.wf-steps { display: flex; flex-wrap: nowrap; align-items: stretch; gap: 0; list-style: none; padding: 0; margin: 0; }
+.wf-step { position: relative; display: flex; flex-direction: column; justify-content: center; gap: 1px; padding: 5px 7px; border-radius: 9px; flex: 0 1 auto; font-size: 12px; line-height: 1.25; transition: border-color .15s, background-color .15s, box-shadow .15s; }
+.wf-step-head { display: flex; align-items: flex-start; gap: 5px; font-weight: 700; }
+.wf-step-caption { font-size: 11px; color: var(--text-muted); padding-left: 21px; }
+/* Narrow: captions sit under the badge so each step's box can be narrower. */
+@container wf-pipeline (max-width: 900px) { .wf-step-caption { padding-left: 0; } .wf-step { padding: 5px 6px; } }
+/* Too narrow for one row even then: wrap rather than spill out of the card. */
+@container wf-pipeline (max-width: 740px) { .wf-steps { flex-wrap: wrap; row-gap: 6px; } }
 .wf-step-badge { width: 16px; height: 16px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 800; flex: none; }
 .wf-step.wf-done { border: 2px solid var(--dot-ok); background: var(--ok-bg); color: var(--text-strong); }
 .wf-step.wf-done .wf-step-badge { background: var(--dot-ok); color: #ffffff; }
@@ -657,7 +662,7 @@ tr.history-day.clickable:hover td { background: var(--surface-hover); }
 .wf-step.wf-todo .wf-step-badge { border: 2px solid var(--border-strong); }
 .wf-step-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--progress-track); border-radius: 0 0 8px 8px; overflow: hidden; }
 .wf-step-bar > div { height: 100%; background: var(--accent); transition: width .2s ease; }
-.wf-connector { flex: 1 1 12px; min-width: 10px; height: 2px; margin: 0 4px; border-radius: 99px; }
+.wf-connector { flex: 1 1 8px; min-width: 3px; height: 2px; margin: 0 2px; border-radius: 99px; align-self: center; }
 .wf-conn-done { background: var(--dot-ok); }
 .wf-conn-active { background-image: repeating-linear-gradient(90deg, var(--accent) 0 7px, transparent 7px 13px); background-size: 24px 2px; animation: wfDashFlow .9s linear infinite; }
 .wf-conn-rebooting { background-image: repeating-linear-gradient(90deg, var(--dot-warning) 0 7px, transparent 7px 13px); background-size: 24px 2px; animation: wfDashFlow .9s linear infinite; }
@@ -741,6 +746,9 @@ tr.history-day.clickable:hover td { background: var(--surface-hover); }
 .wf-filter.is-dimmed { opacity: .55; }
 .wf-log { margin-top: 16px; }
 .wf-overall-progress { max-width: 100%; margin: 8px 0 12px; }
+.wf-outcomes { margin: 12px 0; }
+.wf-outcomes > summary { cursor: pointer; padding: 4px 0; }
+.wf-outcomes > table { margin-top: 6px; }
 .wf-check-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .wf-check-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .wf-check-row.wf-check-active { border-color: var(--accent); background: var(--surface-active, var(--surface)); box-shadow: var(--glow-soft); }
@@ -1549,7 +1557,6 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
   .wf-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .wf-connector { display: none; }
   .wf-step { min-width: 0; padding: 8px 10px; }
-  .wf-step-head, .wf-step-caption { white-space: normal; }
   .wf-step-caption { padding-left: 0; }
   .wf-field { flex-direction: column; align-items: stretch; gap: 4px; }
   .wf-field input { width: 100%; }
