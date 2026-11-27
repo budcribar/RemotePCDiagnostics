@@ -264,10 +264,24 @@ public sealed class WindowsDevDriveManager(ILogger? log = null, IProcessLauncher
                 }
             }
 
+            ct.ThrowIfCancellationRequested();
             Log($"Mounted temporary Dev Drive {driveLetter}: ({vhdxPath})");
             return new(true, vhdxPath, driveLetter.ToUpperInvariant(), buildFolder);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!await RemoveAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false))
+                    Log("Could not clean up the canceled Dev Drive creation.");
+            }
+            catch (Exception ex)
+            {
+                Log("Could not clean up the canceled Dev Drive creation: " + ex.Message);
+            }
+            throw;
+        }
+        catch (Exception ex)
         {
             await RemoveAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false);
             Log("CreateAndMount failed: " + ex.Message);
