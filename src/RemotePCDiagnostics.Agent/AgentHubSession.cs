@@ -38,6 +38,16 @@ public interface IAgentPlatform
     (IAgentLaunchedProcess? Process, string? Error) StartHostProcess(string hostExePath, string fullCommandLine);
     Task<bool?> CheckRelaySessionConnectedAsync(string statusUrl, CancellationToken ct);
     Task RemoveSelfAfterSessionAsync();
+    /// <summary>
+    /// True when a copy of the app is open on the PC that this agent didn't start or no longer follows, such as the copy started
+    /// again after an update. A new copy would only exit at once ("already open"), so a launch is refused instead.
+    /// </summary>
+    bool IsAppRunning() => false;
+    /// <summary>
+    /// The app the agent started again after an update (see <see cref="PendingAppRelaunch"/>), handed over once so the worker can
+    /// follow it as a session: it reports it ready, closes it on an end request, and reports it ended. Null when there is none.
+    /// </summary>
+    (IAgentLaunchedProcess Process, string SessionId)? TakeRelaunchedApp() => null;
 }
 
 /// <summary>Works out when Windows started from the current time and the milliseconds since boot.</summary>
@@ -402,10 +412,31 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             (hostExe, cmdLine) =>
             {
                 var (proc, error) = StartHostProcess(hostExe, cmdLine);
-                // The pipe server lives as long as the app; nothing else tracks this copy of the app.
-                return proc is null ? error ?? "Failed to start Remote PC Diagnostics." : null;
+                if (proc is null)
+                    return error ?? "Failed to start Remote PC Diagnostics.";
+                // The worker takes it from here and follows it as a session (TakeRelaunchedApp).
+                var session = RestartedCopy.SessionIdFrom(cmdLine);
+                lock (_relaunchGate)
+                {
+                    if (_relaunched is null && !string.IsNullOrEmpty(session))
+                        _relaunched = (proc, session);
+                }
+                return null;
             },
             Log);
+
+    private readonly object _relaunchGate = new();
+    private (IAgentLaunchedProcess Process, string SessionId)? _relaunched;
+
+    public (IAgentLaunchedProcess Process, string SessionId)? TakeRelaunchedApp()
+    {
+        lock (_relaunchGate)
+        {
+            var taken = _relaunched;
+            _relaunched = null;
+            return taken;
+        }
+    }
 
     public async Task<bool?> CheckRelaySessionConnectedAsync(string statusUrl, CancellationToken ct)
     {
@@ -432,6 +463,8 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
         AgentServiceInstaller.CleanupPerSessionAgentBestEffort();
         return Task.CompletedTask;
     }
+
+    public bool IsAppRunning() => DesktopInstallProbe.HostProcessRunning();
 
     public void Dispose()
     {
@@ -580,6 +613,7 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
                         try
                         {
                             var child = Process.GetProcessById((int)pid);
+                            Win32Session.HoldHandle(child);
                             if (!child.HasExited) return child;
                             child.Dispose();
                         }
@@ -766,6 +800,7 @@ public sealed class AgentHubWorker(
         // A READY session is still running on this new stream: say so again. A relay that restarted (a redeploy) has forgotten
         // the launch, and without it an end request finds nothing to close ("not started through the agent"). A relay that
         // kept it just stores the same stage again.
+        AdoptRelaunchedApp(ct);
         LaunchProgress? stillRunning = null;
         lock (_stateGate)
         {
@@ -787,7 +822,7 @@ public sealed class AgentHubWorker(
             catch { /* the next connection says it again */ }
         }
 
-        var heartbeatTask = PumpHeartbeatsAsync(WriteMessageAsync, token);
+        var heartbeatTask = PumpHeartbeatsAsync(WriteMessageAsync, ct, token);
         _options.Metrics?.Attach(WriteMessageAsync);
         _options.Alerts?.Attach(WriteMessageAsync);
         Task? activeLaunchTask = null;
@@ -905,6 +940,7 @@ public sealed class AgentHubWorker(
 
     private async Task PumpHeartbeatsAsync(
         Func<AgentMessage, CancellationToken, Task> writeAsync,
+        CancellationToken stoppingToken,
         CancellationToken ct)
     {
         using var timer = new PeriodicTimer(_options.HeartbeatInterval);
@@ -912,6 +948,10 @@ public sealed class AgentHubWorker(
         {
             while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
             {
+                // An update that didn't replace this service starts the app again while the stream is up.
+                if (AdoptRelaunchedApp(stoppingToken) is { } ready)
+                    await writeAsync(new AgentMessage { Progress = ready }, ct).ConfigureAwait(false);
+
                 bool internalRunning;
                 string internalSessionId;
                 lock (_stateGate)
@@ -1051,6 +1091,82 @@ public sealed class AgentHubWorker(
         return (running, sessionId);
     }
 
+    private bool AppAlreadyOpen()
+    {
+        try { return platform.IsAppRunning(); }
+        catch { return false; } // can't tell: start it; the app itself exits "already open" if it is
+    }
+
+    /// <summary>
+    /// Follows the app started again after an update as a session of its own (a new request id: the relay has already seen the
+    /// old request end when Setup closed the app). Returns its READY stage, which the caller sends; on connect the "still
+    /// running" READY covers it. Null when there is nothing to adopt.
+    /// </summary>
+    private LaunchProgress? AdoptRelaunchedApp(CancellationToken stoppingToken)
+    {
+        (IAgentLaunchedProcess Process, string SessionId)? taken;
+        try { taken = platform.TakeRelaunchedApp(); }
+        catch { return null; }
+        if (taken is not { } relaunched)
+            return null;
+        var (proc, sessionId) = relaunched;
+
+        var requestId = "relaunch-" + Guid.NewGuid().ToString("N");
+        var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        lock (_stateGate)
+        {
+            if (_sessionRunning || _activeRequestId is not null)
+            {
+                // Something else is already followed; leave this copy as it was before (it ends itself).
+                sessionCts.Dispose();
+                return null;
+            }
+            _activeRequestId = requestId;
+            _activeLaunchCts = sessionCts;
+            _sessionRunning = true;
+            _runningSessionId = sessionId;
+        }
+        Log($"Following the app started again after an update: session {sessionId}, request {requestId}.");
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await proc.WaitForExitAsync(sessionCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+            {
+                proc.Kill(); // an end request
+            }
+            catch { }
+            finally
+            {
+                lock (_stateGate)
+                {
+                    _sessionRunning = false;
+                    _runningSessionId = "";
+                    if (string.Equals(_activeRequestId, requestId, StringComparison.Ordinal))
+                    {
+                        _activeRequestId = null;
+                        _activeLaunchCts = null;
+                    }
+                }
+                sessionCts.Dispose();
+                proc.Dispose();
+            }
+            await ReportEndedAsync(requestId, sessionId, stoppingToken).ConfigureAwait(false);
+        }, CancellationToken.None);
+
+        return new LaunchProgress
+        {
+            RequestId = requestId,
+            SessionId = sessionId,
+            Stage = LaunchStage.StageReady,
+            Detail = "Remote PC Diagnostics is running again after an update",
+            Percent = 100,
+        };
+    }
+
     private Task HandleLaunchCommand(
         LaunchCommand launch,
         Func<AgentMessage, CancellationToken, Task> writeAsync,
@@ -1058,6 +1174,10 @@ public sealed class AgentHubWorker(
         CancellationToken stoppingToken)
     {
         CancellationTokenSource launchCts;
+        bool tracking;
+        lock (_stateGate) tracking = _sessionRunning || _activeRequestId is not null;
+        // Looked up outside the lock (it lists processes), and only when no session of ours explains a running app.
+        var appOpen = !tracking && AppAlreadyOpen();
         lock (_stateGate)
         {
             if (_sessionRunning || _activeRequestId is not null)
@@ -1068,6 +1188,18 @@ public sealed class AgentHubWorker(
                     launch.SessionId,
                     LaunchStage.StageFailed,
                     "A Remote PC Diagnostics session is already running on this computer.",
+                    0,
+                    streamCts.Token);
+            }
+
+            if (appOpen)
+            {
+                return ReportProgressSafeAsync(
+                    writeAsync,
+                    launch.RequestId,
+                    launch.SessionId,
+                    LaunchStage.StageFailed,
+                    LaunchRules.AlreadyOpenText,
                     0,
                     streamCts.Token);
             }
