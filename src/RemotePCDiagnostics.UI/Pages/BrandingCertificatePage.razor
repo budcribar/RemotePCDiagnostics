@@ -182,7 +182,18 @@
     {
         <p class="notice notice-error" role="alert">@_saveError</p>
     }
-    <iframe class="wf-report" data-testid="qa-preview-frame" sandbox="allow-same-origin" title="Hardware QA certificate preview" srcdoc="@certHtml"></iframe>
+    <details class="qa-preview" data-testid="qa-preview" open="@_previewOpen">
+        <summary class="bench-customize-summary qa-preview-summary" data-testid="qa-preview-toggle" aria-expanded="@(_previewOpen ? "true" : "false")"
+                 @onclick="() => _previewOpen = !_previewOpen" @onclick:preventDefault="true">
+            <span class="bench-customize-title">Certificate preview</span>
+            <span class="chevron-icon @(_previewOpen ? "is-open" : "")" aria-hidden="true">▾</span>
+        </summary>
+        @if (_previewOpen)
+        {
+            @* data-keep-scroll: frame-scroll.js keeps the reader's place when a running QA check refreshes the preview. *@
+            <iframe class="wf-report" data-testid="qa-preview-frame" data-keep-scroll sandbox="allow-same-origin" title="Hardware QA certificate preview" srcdoc="@certHtml"></iframe>
+        }
+    </details>
 </section>
 
 @code {
@@ -230,6 +241,9 @@
         if (selected) _selectedItems.Add(itemId);
         else _selectedItems.Remove(itemId);
     }
+
+    // The certificate preview starts collapsed; the header above it already shows the live ID and verdict.
+    private bool _previewOpen;
 
     private string? _activeInteractiveSection;
     private TaskCompletionSource<bool>? _benchInteractiveTcs;

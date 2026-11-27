@@ -201,6 +201,8 @@ try {
   await page.getByTestId('bench-qa-start').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('qa-cert-card').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('qa-save-html').waitFor({ state: 'visible', timeout: 15_000 });
+  // The certificate preview starts collapsed.
+  await page.getByTestId('qa-preview-toggle').click();
   await page.getByTestId('qa-preview-frame').waitFor({ state: 'visible', timeout: 15_000 });
   console.log('QA Certificate ID:', await page.getByTestId('qa-live-id').innerText());
   await page.screenshot({ path: `${outDir}/certificates.png`, fullPage: true });
