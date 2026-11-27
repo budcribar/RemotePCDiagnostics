@@ -92,11 +92,22 @@ public static class AudioDevicesTest
                 var row = Row(e, policy);
                 if (row.IsActive && previous?.Devices.FirstOrDefault(p => p.Id == e.Id && p.IsActive) is { } old)
                     row = row with { Outcome = old.Outcome, Result = old.Result, Heard = old.Heard, Channels = old.Channels, LevelDbfs = old.LevelDbfs,
-                        PeakDbfs = old.PeakDbfs, Hint = old.Hint ?? row.Hint };
+                        PeakDbfs = old.PeakDbfs, Hint = KeepHint(old, row) };
                 rows.Add(row);
             }
         }
         return new(rows);
+    }
+
+    private static string? KeepHint(AudioDeviceRow old, AudioDeviceRow updated)
+    {
+        if (old.Hint is null) return updated.Hint;
+        if (updated.Muted != true && old.Hint.Contains("muted", StringComparison.OrdinalIgnoreCase))
+            return updated.Hint;
+        var low = updated.Flow == AudioFlow.Output ? LowOutputVolume : LowInputVolume;
+        if ((updated.Volume is not { } nv || nv >= low) && old.Hint.Contains("very low", StringComparison.OrdinalIgnoreCase))
+            return updated.Hint;
+        return old.Hint;
     }
 
     /// <summary>Rows from the plain device list, when Core Audio's full reader isn't there (only active devices, no mute or level).</summary>
@@ -137,7 +148,9 @@ public static class AudioDevicesTest
         for (var o = 0; o < s.Length; o += block)
             loudest = Math.Max(loudest, AudioMath.Rms(s.Slice(o, Math.Min(block, s.Length - o))));
         var peak = AudioMath.Peak(s);
-        return new(Math.Round(AudioMath.ToDbfs(loudest), 1), Math.Round(AudioMath.ToDbfs(peak), 1), peak == 0, AudioMath.ToDbfs(peak) >= ToneAnalyzer.ClipDbfs);
+        var levelDb = AudioMath.ToDbfs(loudest);
+        var peakDb = AudioMath.ToDbfs(peak);
+        return new(Math.Round(levelDb, 1), Math.Round(peakDb, 1), peak == 0, peakDb >= ToneAnalyzer.ClipDbfs);
     }
 
     /// <summary>A microphone's result from its recording: no signal (Failed), very low (Warning, speak closer), clipping (Warning) or OK.</summary>

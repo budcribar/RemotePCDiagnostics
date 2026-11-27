@@ -829,7 +829,7 @@
                                                     @foreach (var a in fixes)
                                                     {
                                                         <button type="button" class="btn-small" data-testid="audiodevices-fix-@a.Kind" data-action="remediate"
-                                                                data-action-kind="@a.Kind" data-action-target="@a.Target" @onclick="() => _audioDevicesFixUi?.Ask(a)">@a.ButtonText</button>
+                                                                data-action-kind="@a.Kind" data-action-target="@a.Target" disabled="@(adBusyId is not null)" @onclick="() => _audioDevicesFixUi?.Ask(a)">@a.ButtonText</button>
                                                     }
                                                 }
                                             </div>
@@ -921,6 +921,7 @@
     }
 
     private DotNetObjectReference<InteractiveTestsPage>? _dotNetRef;
+    private volatile bool _disposed;
     private bool _isRemoteDisplay;
     private bool _hasRemoteSession;
     private bool _technicianHasControl;
@@ -941,10 +942,11 @@
     /// <summary>Redraws the meter while a microphone records, at most 10 times a second.</summary>
     private void OnMicLevel()
     {
+        if (_disposed) return;
         var now = Environment.TickCount64;
         if (now - Interlocked.Read(ref _lastMeterTick) < 100 && _levelSource?.BusyId is not null) return;
         Interlocked.Exchange(ref _lastMeterTick, now);
-        _ = InvokeAsync(StateHasChanged);
+        try { _ = InvokeAsync(() => { if (!_disposed) StateHasChanged(); }); } catch (ObjectDisposedException) { }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -976,8 +978,10 @@
 
     public override void Dispose()
     {
+        _disposed = true;
         base.Dispose();
         if (_levelSource is not null) _levelSource.LevelChanged -= OnMicLevel;
+        CancelAudioDevices();
         _batchCts?.Cancel();
         _interactiveWaitTcs?.TrySetCanceled();
         _batchCts?.Dispose();
@@ -1212,7 +1216,12 @@
 
     private async Task ReadAudioDevicesIfNeededAsync()
     {
-        if (Store.Get(ModuleSlugs.AudioDevices).Status == DiagnosticStatus.NotRun) await Diagnostics.RunAsync(ModuleSlugs.AudioDevices);
+        try
+        {
+            if (!_disposed && Store.Get(ModuleSlugs.AudioDevices).Status == DiagnosticStatus.NotRun)
+                await Diagnostics.RunAsync(ModuleSlugs.AudioDevices);
+        }
+        catch (Exception) { }
     }
 
     private void CancelAudioDevices() => GetAudioDevicesModule()?.Cancel();
@@ -1220,11 +1229,11 @@
     /// <summary>Runs one device step; a cancelled step stores the report as it stands (cancelling doesn't change a device's result).</summary>
     private async Task DeviceStepAsync(Func<IAudioDevicesTestModule, Task<DiagnosticResult>> step)
     {
-        if (Diagnostics.IsStressSuiteRunning || GetAudioDevicesModule() is not { BusyId: null } m) return;
+        if (_disposed || Diagnostics.IsStressSuiteRunning || GetAudioDevicesModule() is not { BusyId: null } m) return;
         _personResults.Remove(ModuleSlugs.AudioDevices);
         var r = await step(m);
         if (r.Cancelled) Store.Set(AudioDevicesTest.ToResult(m.Report));
-        await InvokeAsync(StateHasChanged);
+        if (!_disposed) await InvokeAsync(StateHasChanged);
     }
 
     private Task PlayDeviceAsync(string id) => DeviceStepAsync(m => m.PlayAsync(id));
@@ -1261,7 +1270,7 @@
     }
 
     /// <summary>The meter's fill: -60 dBFS (empty) to 0 dBFS (full).</summary>
-    private static int MeterPercent(double dbfs) => (int)Math.Clamp(Math.Round((dbfs + 60) / 60 * 100), 0, 100);
+    private static int MeterPercent(double dbfs) => !double.IsFinite(dbfs) ? 0 : (int)Math.Clamp(Math.Round((dbfs + 60) / 60 * 100), 0, 100);
 
     private void ResetSoundCheck()
     {

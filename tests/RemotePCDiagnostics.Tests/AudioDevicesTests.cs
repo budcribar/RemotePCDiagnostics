@@ -268,11 +268,85 @@ public class AudioDevicesTests : BunitContext
         var data = page.Find("[data-testid='interactive-data']").GetAttribute("data-report") ?? "";
         Assert.Contains("\"id\":\"audiodevices\"", data);
         Assert.Equal(DiagnosticStatus.Warning, store.Get(ModuleSlugs.AudioDevices).Status);
-        File.WriteAllText(Path.Combine(Path.GetTempPath(), "audiodevices-pane.html"), page.Markup);
+    }
+
+    [Theory]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void Non_finite_samples_never_pass_and_export_cleanly_to_json(float badSample)
+    {
+        var samples = new float[4800];
+        Array.Fill(samples, badSample);
+        var level = AudioDevicesTest.Measure(samples, 48000);
+        Assert.True(double.IsFinite(level.LevelDbfs));
+        Assert.True(double.IsFinite(level.PeakDbfs));
+        Assert.Equal(AudioMath.SilenceDbfs, level.LevelDbfs);
+        Assert.Equal(AudioMath.SilenceDbfs, level.PeakDbfs);
+        Assert.False(level.Clipped);
+
+        var report = AudioDevicesTest.Build(State());
+        var mic = report.Devices.Single(d => d.Id == MicId);
+        var judged = AudioDevicesTest.Judge(mic, level, privacyBlocked: false);
+        Assert.Equal(AudioDeviceOutcome.Failed, judged.Outcome);
+        Assert.Equal(AudioDevicesTest.NoSignal, judged.Result);
+
+        var updated = AudioDevicesTest.Replace(report, judged);
+        var json = InteractiveExport.ToJson(new InteractiveExport.PageState("audiodevices", ["audiodevices"], false, false, false, false),
+            new PhysicalBenchQaSnapshot(), New(ModuleSlugs.Webcam), New(ModuleSlugs.SpeakerToMic), New(ModuleSlugs.MicToSpeaker),
+            audioDevices: new InteractiveExport.ModuleState(AudioDevicesTest.ToResult(updated), false));
+        using var doc = JsonDocument.Parse(json);
+        var exportedMic = doc.RootElement.GetProperty("tests").EnumerateArray()
+            .Single(t => t.GetProperty("id").GetString() == "audiodevices")
+            .GetProperty("devices").EnumerateArray()
+            .Single(d => d.GetProperty("id").GetString() == MicId);
+        Assert.Equal("failed", exportedMic.GetProperty("result").GetString());
+        Assert.Equal(AudioMath.SilenceDbfs, exportedMic.GetProperty("measured").GetProperty("levelDbfs").GetDouble());
+    }
+
+    [Fact]
+    public async Task Stale_hints_and_recordings_clear_on_retry_and_refresh()
+    {
+        var io = new DeviceIo(Speech(-25));
+        var stateSource = new MutableAudio(State(spkMuted: true));
+        var m = new AudioDevicesModule(io, state: stateSource);
+        await m.RefreshAsync(null);
+
+        // Play muted speaker and answer Nothing -> sets muted hint
+        await m.PlayAsync(SpkId);
+        m.Answer(SpkId, SoundCheckAnswer.Nothing);
+        Assert.Contains("muted", m.Report.Devices.Single(d => d.Id == SpkId).Hint);
+
+        // Unmute and refresh -> stale muted hint is cleared
+        stateSource.Current = State(spkMuted: false);
+        await m.RefreshAsync(null);
+        Assert.Null(m.Report.Devices.Single(d => d.Id == SpkId).Hint);
+
+        // Fail play with a device error -> sets error hint, then retry succeeds -> hint cleared
+        io.ThrowOnPlay = new AudioDeviceException("temporarily unavailable");
+        await m.PlayAsync(SpkId);
+        Assert.Contains("temporarily unavailable", m.Report.Devices.Single(d => d.Id == SpkId).Hint);
+        io.ThrowOnPlay = null;
+        await m.PlayAsync(SpkId);
+        Assert.Null(m.Report.Devices.Single(d => d.Id == SpkId).Hint);
+
+        // Record mic successfully -> has level and recording; subsequent blocked/failed record clears them
+        await m.RecordAsync(MicId);
+        Assert.True(m.HasRecording(MicId));
+        Assert.NotNull(m.Report.Devices.Single(d => d.Id == MicId).LevelDbfs);
+
+        stateSource.Current = State(micBusy: true);
+        await m.RecordAsync(MicId);
+        Assert.False(m.HasRecording(MicId));
+        var failedMic = m.Report.Devices.Single(d => d.Id == MicId);
+        Assert.Equal(AudioDeviceOutcome.Failed, failedMic.Outcome);
+        Assert.Null(failedMic.LevelDbfs);
+        Assert.Null(failedMic.PeakDbfs);
     }
 
     private sealed class DeviceIo(float[] recording) : IAudioIo
     {
+        public Exception? ThrowOnPlay { get; set; }
         public List<PlayChannelRequest> Played { get; } = [];
         public List<RecordRequest> Recorded { get; } = [];
         public List<PlaySamplesRequest> PlayedBack { get; } = [];
@@ -281,7 +355,12 @@ public class AudioDevicesTests : BunitContext
         public bool IsMicrophoneBlockedByPrivacy() => false;
         public Task<PlayCaptureResult> PlayAndCaptureAsync(PlayCaptureRequest r, CancellationToken ct) => throw new NotSupportedException();
         public Task<MonitorResult> MonitorAsync(MonitorRequest r, CancellationToken ct) => throw new NotSupportedException();
-        public Task<int> PlayOnChannelAsync(PlayChannelRequest r, CancellationToken ct) { Played.Add(r); return Task.FromResult(2); }
+        public Task<int> PlayOnChannelAsync(PlayChannelRequest r, CancellationToken ct)
+        {
+            if (ThrowOnPlay is { } ex) throw ex;
+            Played.Add(r);
+            return Task.FromResult(2);
+        }
         public Task<RecordResult> RecordAsync(RecordRequest r, CancellationToken ct)
         {
             Recorded.Add(r);
@@ -294,5 +373,11 @@ public class AudioDevicesTests : BunitContext
     private sealed class FakeAudio(AudioState state) : IAudioStateSource
     {
         public Task<AudioState> ReadAsync(CancellationToken ct = default) => Task.FromResult(state);
+    }
+
+    private sealed class MutableAudio(AudioState state) : IAudioStateSource
+    {
+        public AudioState Current { get; set; } = state;
+        public Task<AudioState> ReadAsync(CancellationToken ct = default) => Task.FromResult(Current);
     }
 }
