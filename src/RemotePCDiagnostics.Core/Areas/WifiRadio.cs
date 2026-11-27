@@ -155,7 +155,7 @@ public static class WifiRadio
                 [$"{name}Wi-Fi in Windows", i.SoftwareOn switch { true => "On", false => "Off (turned off in Windows settings or quick settings)", null => "Not reported" }]));
             rows.Add(new(AreaLevel.Neutral, [$"{name}State", i.IsConnected && i.ConnectedSsid is { Length: > 0 } ssid ? $"Connected to {ssid}" : i.State]));
             if (i.IsConnected)
-                rows.Add(new(RssiLevel(i.Rssi), [$"{name}Connected signal", i.Rssi is { } r ? $"{FormatRssi(r)} ({QualityOf(r)}%)" : "Not reported"]));
+                rows.Add(new(RssiLevel(i.Rssi), [$"{name}Connected signal", i.Rssi is { } r ? $"{FormatRssi(r)} ({ConnectedQuality(i) ?? QualityOf(r)}%)" : "Not reported"]));
             if (i.Supports5Ghz is { } dual)
                 rows.Add(new(dual ? AreaLevel.Ok : AreaLevel.Warning, [$"{name}Bands", dual ? "2.4 GHz and 5 GHz" : "2.4 GHz only"]));
             if (i.ScanRefused)
@@ -242,6 +242,9 @@ public static class WifiRadio
     /// <summary>The strongest RSSI the scan saw (the number Admin compares across the shop's PCs), or null.</summary>
     public static int? StrongestRssi(WifiRadioReading reading) =>
         reading.Interfaces.Where(i => i.RadioOn).SelectMany(i => i.Networks).Where(n => n.Rssi is not null).Select(n => n.Rssi).Max();
+
+    /// <summary>Windows' own signal quality for the connected network (what the taskbar shows), when the scan listed it.</summary>
+    private static int? ConnectedQuality(WifiRadioInterface i) => i.Networks.FirstOrDefault(n => n.Connected)?.SignalPercent;
 
     private static AreaLevel RssiLevel(int? dbm) => dbm is { } d && d < WeakRssiDbm ? AreaLevel.Warning : AreaLevel.Neutral;
 
