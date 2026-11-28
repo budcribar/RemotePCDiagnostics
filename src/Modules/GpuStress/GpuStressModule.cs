@@ -16,6 +16,8 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.GpuStress;
     public override string DisplayName => "Graphics (GPU) stress test";
+    protected override LiveProgress? DescribeProgress(GpuStressProgress p) => new(LiveProgress.OfTotal(p), p.Fraction,
+        p.AdapterName is { Length: > 0 } a ? [a] : null, p.Mismatches > 0 ? $"Wrong answers so far: {p.Mismatches:N0}" : null);
     string IStressSuiteModule.SuiteName => "GPU";
 
     public static ModuleInstance InstanceOf(GpuAdapterInfo a) => new(InstanceKeys.From(a.Id ?? a.Name), a.Name, a.Id);

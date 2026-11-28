@@ -4,6 +4,8 @@
 @page "/checks"
 @page "/stress"
 @using Microsoft.JSInterop
+@using RemotePCDiagnostics.Core.Stress
+@using System.Globalization
 @inherits StoreAwareComponent
 @inject ChecksScreenState Screen
 @inject IJSRuntime JS
@@ -27,32 +29,34 @@
     var checksRunning = Screen.RunningGroup == CheckGroup.Checks || Screen.Modules(CheckGroup.Checks).Any(m => Store.Get(m.Name).Status == DiagnosticStatus.Running);
     // Stress tests page while a test runs: the list tucks away to the left (a slim "Show tests" rail) so the running test gets the
     // width, and Cancel sits in the Running banner. The list comes back by itself when the run ends or is cancelled.
-    var stressRunning = _group == CheckGroup.Stress && StressRunning(pageModules);
+    var stressRunning = _stressRunning = _group == CheckGroup.Stress && StressRunning(pageModules);
     if (!stressRunning) _listPeek = false;
     var listTucked = stressRunning && !_listPeek;
+    // One Cancel for each running operation: the banner's for a group run or a stress test, the scan card's own Cancel scan for a long
+    // scan started on its own. The group's Run selected button is not drawn while the banner has Cancel (they share the test id).
+    var groupRunHere = Screen.RunningGroup == _group;
+    _bannerCancel = groupRunHere || (stressRunning && !SoloScanRunning(pageModules));
+    if (groupRunHere && Screen.Progress is null && !stressRunning) banner = ("run", "Starting…");
     if (stressRunning && Screen.Progress is null) banner = ("run", "Running " + string.Join(", ", pageModules.Where(m => Store.Get(m.Name).Status == DiagnosticStatus.Running).Select(m => m.DisplayName).DefaultIfEmpty("a stress test")));
 }
 <div class="ct-page">
     <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="dash" Size="20" /></span><h1 data-rpcd-page="@(_group == CheckGroup.Stress ? "stress" : "checks")" data-rpcd-contract="@(_group == CheckGroup.Stress ? BrowserContract.Stress : BrowserContract.Checks)" data-testid="checks-title">@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")</h1>
         @if (_group == CheckGroup.Checks)
         {
-            <button type="button" class="icon-refresh-btn" data-testid="checks-refresh"
-                    title="@(checksRunning ? "Stop checks" : "Refresh enabled checks")"
-                    aria-label="@(checksRunning ? "Stop checks" : "Refresh enabled checks")"
-                    @onclick="RefreshOrStopChecks">
+            @* While checks run it only spins: Cancel is in the Running banner. *@
+            <button type="button" class="icon-refresh-btn" data-testid="checks-refresh" disabled="@checksRunning"
+                    title="@(checksRunning ? "Checks are running" : "Refresh enabled checks")"
+                    aria-label="@(checksRunning ? "Checks are running" : "Refresh enabled checks")"
+                    @onclick="() => { _ = Screen.RunAllChecksAsync(); }">
                 <span class="@(checksRunning ? "dash-spin" : "")"><Icon Name="refresh" Size="15" /></span>
             </button>
-            @if (checksRunning)
-            {
-                <button type="button" class="btn btn-stop" data-testid="checks-stop" @onclick="Screen.Stop">Stop</button>
-            }
         }
         <span class="ct-expand-group">
             <button class="btn-small" data-testid="checks-expand-all" @onclick="() => Screen.SetAllCollapsed(false)">Expand all</button>
             <button class="btn-small" data-testid="checks-collapse-all" @onclick="() => Screen.SetAllCollapsed(true)">Collapse all</button>
         </span>
     </div>
-    @if ((_group == CheckGroup.Stress && anyResult) || Screen.Progress is not null || stressRunning)
+    @if ((_group == CheckGroup.Stress && anyResult) || Screen.Progress is not null || stressRunning || groupRunHere)
     {
     <section class="banner banner-@banner.Kind ct-banner" data-testid="checks-banner">
         <span class="banner-icon"><Icon Name="@(banner.Kind is "warn" or "err" ? "crash" : "sec")" Size="22" /></span>
@@ -62,10 +66,12 @@
             @if (Screen.Progress is null && _group == CheckGroup.Stress && summary.StressNotRunNote is { } note) { <div class="banner-note">@note</div> }
             else if (Screen.Progress is null && !stressRunning) { <div class="banner-sub">Expand a group or click a test to see its full results on the right.</div> }
         </div>
-        @if (stressRunning)
+        @if (_bannerCancel)
         {
-            @* Same test id as the Run selected button it replaces, so Admin's stop_stress_tests keeps clicking checks-run-stress. *@
-            <button type="button" class="btn btn-stop ct-banner-cancel" data-testid="checks-run-stress" data-action="cancel-run" data-check-group="stress"
+            @* Same test id as the Run selected button it replaces (checks-run-stress, checks-run-checks), so Admin's stop_stress_tests and
+               stop_checks keep clicking it. *@
+            var groupId = _group.ToString().ToLowerInvariant();
+            <button type="button" class="btn btn-stop ct-banner-cancel" data-testid="checks-run-@groupId" data-action="cancel-run" data-check-group="@groupId"
                     @onclick="Screen.Stop">Cancel</button>
         }
     </section>
@@ -186,6 +192,7 @@
         Screen.Changed += OnScreenChanged;
         Nav.LocationChanged += OnLocationChanged;
         if (App.CheckSettings is { } checks) checks.Changed += OnScreenChanged;
+        foreach (var source in Diagnostics.Modules.OfType<ILiveProgressSource>()) { source.LiveProgressChanged += OnLiveProgress; _liveSources.Add(source); }
         _ = LoadLastRunsAsync();
     }
 
@@ -263,10 +270,37 @@
         Screen.Changed -= OnScreenChanged;
         Nav.LocationChanged -= OnLocationChanged;
         if (App.CheckSettings is { } checks) checks.Changed -= OnScreenChanged;
+        foreach (var source in _liveSources) source.LiveProgressChanged -= OnLiveProgress;
         base.Dispose();
     }
 
     private bool _checksOpen;
+
+    /// <summary>The banner has this page's Cancel (a group run, or a stress test that isn't a lone long scan). Set each render.</summary>
+    private bool _bannerCancel;
+    /// <summary>A stress test runs on this (Stress tests) page: the test pages' own Start/Stop toolbars are hidden, Cancel is in the banner.</summary>
+    private bool _stressRunning;
+
+    /// <summary>The only thing running is a long scan started on its own (no group run, no stress suite): its card's Cancel scan stops it.</summary>
+    private bool SoloScanRunning(IReadOnlyList<IDiagnosticModule> mods)
+    {
+        if (Screen.RunningGroup is not null || Diagnostics.IsStressSuiteRunning) return false;
+        var running = mods.Where(m => Store.Get(m.Name).Status == DiagnosticStatus.Running).ToList();
+        return running.Count > 0 && running.All(m => m is ICancellableScan);
+    }
+
+    /// <summary>The running test's progress for its card: the test's own live progress, else a scan's percent, else its step message.</summary>
+    private LiveProgress LiveFor(IDiagnosticModule m, DiagnosticResult r)
+    {
+        if (m is ILiveProgressSource source) return source.LiveProgress ?? new LiveProgress("Getting ready…");
+        if (m is ICancellableScan && ScanPercent(m, r) is { } percent) return new LiveProgress($"{percent:0.#}% complete", percent / 100);
+        if (Diagnostics.GetProgress(m.Name) is { } cp && !string.IsNullOrWhiteSpace(cp.Message))
+            return new LiveProgress(cp.Message, cp.HasProgress ? Math.Clamp((double)cp.Step / cp.Total, 0, 1) : null);
+        return new LiveProgress(m is ICancellableScan ? "This can take several minutes." : "Running…");
+    }
+
+    private readonly List<ILiveProgressSource> _liveSources = [];
+    private void OnLiveProgress(object? sender, EventArgs e) => OnScreenChanged();
 
     /// <summary>The tucked test list was opened again during a run ("Show tests"); cleared when the run ends.</summary>
     private bool _listPeek;
@@ -279,11 +313,6 @@
 
     private void ToggleChecksPanel() => _checksOpen = !_checksOpen;
 
-    private void RefreshOrStopChecks()
-    {
-        if (Screen.RunningGroup == CheckGroup.Checks) Screen.Stop();
-        else _ = Screen.RunAllChecksAsync();
-    }
 
     private async Task SaveRemotePrefsIfNeededAsync()
     {
@@ -488,15 +517,11 @@
                                     data-testid="checks-mode-extended" @onclick="() => Screen.Mode = StressSuiteMode.Extended">Extended (~5&nbsp;min&nbsp;each)</button>
                         </div>
                     }
-                    @* Stress tests: Cancel is in the Running banner while a test runs (its own checks-run-stress), not here. *@
-                    @if (running)
-                    {
-                        if (g != CheckGroup.Stress) { <button class="btn btn-stop" data-testid="checks-run-@id" @onclick="Screen.Stop">Stop</button> }
-                    }
-                    else
+                    @* While a run goes, Cancel is in the Running banner (with this button's test id), so nothing is drawn here. *@
+                    @if (!_bannerCancel)
                     {
                         <button class="btn btn-primary" data-testid="checks-run-@id" data-action="run-selected" data-check-group="@id"
-                                data-selected-check-ids="@string.Join(" ", mods.Where(m => Screen.IsSelected(m.Name)).Select(m => m.Name))" disabled="@(count == 0 || otherBusy)"
+                                data-selected-check-ids="@string.Join(" ", mods.Where(m => Screen.IsSelected(m.Name)).Select(m => m.Name))" disabled="@(count == 0 || otherBusy || running)"
                                 @onclick="() => { _ = Screen.RunGroupAsync(g); }"><Icon Name="play" Size="12" /> Run selected (@count)</button>
                     }
                 </div>
@@ -601,7 +626,7 @@
             <div class="ct-card-top">
                 <span class="icon-badge"><Icon Name="@Icon.ForModule(m.Name)" /></span>
                 <h2 data-testid="checks-detail-title">@m.DisplayName</h2>
-                @if (m is ICancellableScan scan && kind == RowKind.Running)
+                @if (m is ICancellableScan scan && kind == RowKind.Running && !_bannerCancel)
                 {
                     <button type="button" class="btn btn-stop ct-run-one" data-testid="checks-cancel-scan" data-action="cancel-check" data-check-id="@m.Name" @onclick="scan.Cancel">Cancel scan</button>
                 }
@@ -637,6 +662,23 @@
                     }
                 }
             </div>
+            @if (kind == RowKind.Running)
+            {
+                @* The standard place for a running test's progress: here in its card, for every test, so the details below get the room. *@
+                var live = LiveFor(m, r);
+                <div class="ct-live" role="status" data-testid="checks-detail-progress" data-check-id="@m.Name">
+                    <div class="ct-live-text">
+                        <div class="ct-live-headline" data-testid="checks-detail-progress-headline">@live.Headline</div>
+                        @if (live.Facts is { Count: > 0 } facts) { <div class="meta ct-live-facts" data-testid="checks-detail-progress-facts">@string.Join(" · ", facts)</div> }
+                        @if (live.Problem is { } problem) { <div class="meta error-text" data-testid="checks-detail-progress-problem">@problem</div> }
+                        @if (live.Fraction is { } share)
+                        {
+                            <div class="progress ct-live-bar" aria-label="@($"{m.DisplayName} progress")"><div style="width:@((share * 100).ToString("0.#", CultureInfo.InvariantCulture))%"></div></div>
+                        }
+                    </div>
+                    <TestRunningVisual Slug="@m.Name" TestId="checks-detail-visual" />
+                </div>
+            }
             @if (historyOpen)
             {
                 <div id="ct-trend-@m.Name"><CheckTrendPanel Module="@m.Name" Entries="@_trendEntries" Days="TrendDays" HistoryHref="@history" /></div>
@@ -658,7 +700,7 @@
             <VideoPlaybackChoices Module="videoPlayback" Running="@(kind == RowKind.Running)" Disabled="@(!canRun && kind != RowKind.Running)" />
         }
         @* Collapsed details stay in the page (hidden), so the result data is still there for the shop's tools; they expand it to click. *@
-        <div class="ct-detail-body" id="ct-detail-body-@m.Name" @key="m.Name" hidden="@(Collapsible(kind) && !DetailsOpen(m.Name, kind))" data-testid="checks-detail-body">
+        <div class="ct-detail-body @(kind == RowKind.Running ? "is-running" : "") @(_stressRunning ? "is-stress-run" : "")" id="ct-detail-body-@m.Name" @key="m.Name" hidden="@(Collapsible(kind) && !DetailsOpen(m.Name, kind))" data-testid="checks-detail-body">
             @* The Windows integrity scans (DISM, SFC) show their result here, not on an area page: their single repair steps and the fix
                dialog live here too. Mounted while the scan re-runs after a fix, so the fix's result stays visible.
                The other long scans (large files, duplicate files) only share the live card and Cancel while they run: their result is
@@ -667,29 +709,8 @@
             {
                 <RemediationActions @ref="_scanFixUi" Actions="scanFixes" ShowRecent="false" Origin="@m.Name" OnCompleted="() => { _ = Screen.RunSingleAsync(m); }" />
             }
-            @if (m is ICancellableScan && kind == RowKind.Running)
-            {
-                <div class="cards">
-                    <div class="card is-running card-with-visual" data-testid="checks-scan-live">
-                        <div class="card-main">
-                            <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-                            <p role="status">Running @m.DisplayName. This can take several minutes.</p>
-                            @* The scan's own updates carry the percent; its step messages in between don't, so the last percent is kept
-                               (the step progress, out of 100). Otherwise the percent line came and went and the card jumped up and down. *@
-                            @if (ScanPercent(m, r) is { } percent)
-                            {
-                                <progress max="100" value="@percent" aria-label="@($"{m.DisplayName} scan progress")"></progress>
-                                <span role="status" data-testid="checks-scan-percent"> @percent.ToString("0.#")% complete</span>
-                            }
-                            else
-                            {
-                                <progress aria-label="@($"{m.DisplayName} scan in progress")"></progress>
-                            }
-                        </div>
-                        <TestRunningVisual Slug="@m.Name" TestId="checks-scan-visual" />
-                    </div>
-                </div>
-            }
+            @* A running scan's progress is in its card above (ct-live), like every other test's: nothing more here while it runs. *@
+            @if (m is ICancellableScan && kind == RowKind.Running) { }
             else if (m is WindowsIntegrityModule && r.Payload is AreaReport integrity && kind != RowKind.Cancelled)
             {
                 <AreaReportData Report="integrity" CheckId="@m.Name" RunId="r.RunId" />

@@ -92,7 +92,7 @@ public class InteractiveTestsTests
 
         // The technician in control can press Start: the tests hand control to the person at the PC (HandToPersonAsync) and give it back.
         Assert.Contains("Interactive tests must run locally on the physical machine", content); // Ethernet still needs the person at the PC
-        Assert.Contains("disabled=\"@(_selected.Count == 0)\"", content);
+        Assert.Contains("disabled=\"@(_selected.Count == 0 || anyRunning)\"", content);
         Assert.Contains("title=\"@(_isRemoteDisplay ? HandOffTitle : null)\"", content);
         Assert.Contains("HandToPersonAsync(\"batch\")", content);
         Assert.Contains("ReturnControlAsync(\"batch\")", content);

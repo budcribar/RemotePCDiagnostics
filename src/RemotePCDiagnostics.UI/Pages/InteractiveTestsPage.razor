@@ -140,14 +140,15 @@
                         <div class="meta">Run selected tests together or interact individually · click any test to open controls</div>
                     </div>
                     <div class="ct-group-actions">
-                        @if (anyRunning)
+                        @* One Cancel per run: this one for Run selected; a test started on its own is cancelled from its own pane. *@
+                        @if (_isBatchRunning)
                         {
-                            <button class="btn btn-stop" data-testid="interactive-stop" @onclick="StopRunning">Stop</button>
+                            <button class="btn btn-stop" data-testid="interactive-stop" @onclick="StopRunning">Cancel</button>
                         }
                         else
                         {
                             <button class="btn btn-primary" data-testid="interactive-run-selected"
-                                    disabled="@(_selected.Count == 0)"
+                                    disabled="@(_selected.Count == 0 || anyRunning)"
                                     title="@(_isRemoteDisplay ? HandOffTitle : null)"
                                     @onclick="RunSelectedAsync">
                                 <Icon Name="play" Size="12" /> Run selected (@_selected.Count)

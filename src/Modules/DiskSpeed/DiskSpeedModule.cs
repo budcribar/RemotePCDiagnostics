@@ -9,6 +9,8 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.DiskSpeed;
     public override string DisplayName => "Disk speed test";
+    protected override LiveProgress? DescribeProgress(DiskSpeedProgress p) => new(p.PhaseText + "…", p.Fraction,
+        [$"{LiveProgress.Clock(p.Elapsed)} so far · at most {LiveProgress.Clock(p.Duration)}"]);
     string IStressSuiteModule.SuiteName => "Disk";
 
     public long SizeBytes { get; set; } = DiskSpeedOptions.GB;
