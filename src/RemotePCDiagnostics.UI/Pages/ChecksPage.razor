@@ -343,7 +343,9 @@
             kind == RowKind.NotRun ? null : r.RunId, finished ? r.Timestamp : null, finished ? r.Message : null);
     });
 
-    private static bool HasOwnStart(IDiagnosticModule m) => m is IStressSuiteModule ||
+    /// <summary>A stress test starts from its own details panel, except one that is also a cancellable scan (the graphics memory test):
+    /// that keeps the card's Run button and Cancel scan.</summary>
+    private static bool HasOwnStart(IDiagnosticModule m) => m is IStressSuiteModule and not ICancellableScan ||
         (m is not ICancellableScan && ChecksScreenState.IsSeparateStep(m));
 
     /// <summary>Enter/Space selects; ↑/↓ move to the previous/next visible test (and select it).</summary>
@@ -526,8 +528,19 @@
         </div>
     };
 
+    private readonly Dictionary<string, double> _scanPercent = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The running scan's percent: from its last update that carried one, else its step progress out of 100; null before either.</summary>
+    private double? ScanPercent(IDiagnosticModule m, DiagnosticResult r)
+    {
+        if (r.Payload is double p) return _scanPercent[m.Name] = p;
+        if (Diagnostics.GetProgress(m.Name) is { HasProgress: true, Total: 100 } cp) return Math.Max(cp.Step, _scanPercent.GetValueOrDefault(m.Name));
+        return _scanPercent.TryGetValue(m.Name, out var last) ? last : null;
+    }
+
     private string SideText(IDiagnosticModule m, DiagnosticResult r, RowKind kind)
     {
+        if (kind != RowKind.Running) _scanPercent.Remove(m.Name); // the next run starts from nothing
         if (kind is RowKind.Running)
             return Diagnostics.GetProgress(m.Name) is { HasProgress: true } cp && cp.Total != 100 && !r.Message.Contains('%')
                 ? $"{cp.Step}/{cp.Total}" : "";
@@ -634,10 +647,12 @@
                         <div class="card-main">
                             <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
                             <p role="status">Running @m.DisplayName. This can take several minutes.</p>
-                            @if (r.Payload is double percent)
+                            @* The scan's own updates carry the percent; its step messages in between don't, so the last percent is kept
+                               (the step progress, out of 100). Otherwise the percent line came and went and the card jumped up and down. *@
+                            @if (ScanPercent(m, r) is { } percent)
                             {
                                 <progress max="100" value="@percent" aria-label="@($"{m.DisplayName} scan progress")"></progress>
-                                <span role="status"> @percent.ToString("0.#")% complete</span>
+                                <span role="status" data-testid="checks-scan-percent"> @percent.ToString("0.#")% complete</span>
                             }
                             else
                             {

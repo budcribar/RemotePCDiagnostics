@@ -29,7 +29,7 @@ public class ModuleOrderingTests
     public void The_built_in_stress_suite_order_comes_from_RunAfter()
     {
         var stress = BuiltInModules.Descriptors.Where(d => d.Kind == ModuleKind.StressTest).Reverse();
-        Assert.Equal([ModuleSlugs.CpuStress, ModuleSlugs.MemoryTest, ModuleSlugs.DiskSpeed, ModuleSlugs.GpuStress, ModuleSlugs.NetworkTest],
+        Assert.Equal([ModuleSlugs.CpuStress, ModuleSlugs.MemoryTest, ModuleSlugs.DiskSpeed, ModuleSlugs.GpuStress, ModuleSlugs.GpuMemory, ModuleSlugs.NetworkTest],
             ModuleOrdering.Sort(stress).Select(d => d.Slug));
         Assert.Empty(ModuleOrdering.FindCycles(BuiltInModules.Descriptors));
     }

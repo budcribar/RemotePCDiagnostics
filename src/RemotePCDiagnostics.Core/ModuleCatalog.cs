@@ -33,11 +33,12 @@ public static class BuiltInModules
         new(ModuleIds.DismScanHealth, ModuleSlugs.DismScanHealth, "Windows component store (DISM)", ModuleKind.OnDemand, ModuleGroups.Windows, 400),
         new(ModuleIds.SfcVerifyOnly, ModuleSlugs.SfcVerifyOnly, "Protected system files (SFC)", ModuleKind.OnDemand, ModuleGroups.Windows, 500),
         new(ModuleIds.CpuStress, ModuleSlugs.CpuStress, "CPU stress test", ModuleKind.StressTest, ModuleGroups.Cpu, 200),
-        // The stress suite runs CPU, Memory, Disk, GPU, Network: an order only (RunAfter), so one failing test never skips the next.
+        // The stress suite runs CPU, Memory, Disk, GPU, graphics memory, Network: an order only (RunAfter), so one failing test never skips the next.
         new(ModuleIds.MemoryTest, ModuleSlugs.MemoryTest, "Memory test", ModuleKind.StressTest, ModuleGroups.Memory, 100) { RunAfter = [ModuleIds.CpuStress] },
         new(ModuleIds.DiskSpeed, ModuleSlugs.DiskSpeed, "Disk speed test", ModuleKind.StressTest, ModuleGroups.Storage, 200) { RunAfter = [ModuleIds.MemoryTest] },
         new(ModuleIds.GpuStress, ModuleSlugs.GpuStress, "Graphics (GPU) stress test", ModuleKind.StressTest, ModuleGroups.Graphics, 100) { RunAfter = [ModuleIds.DiskSpeed] },
-        new(ModuleIds.NetworkTest, ModuleSlugs.NetworkTest, "Network stability test", ModuleKind.StressTest, ModuleGroups.Network, 200) { RunAfter = [ModuleIds.GpuStress] },
+        new(ModuleIds.GpuMemory, ModuleSlugs.GpuMemory, "Graphics memory (VRAM) test", ModuleKind.StressTest, ModuleGroups.Graphics, 150) { RunAfter = [ModuleIds.GpuStress] },
+        new(ModuleIds.NetworkTest, ModuleSlugs.NetworkTest, "Network stability test", ModuleKind.StressTest, ModuleGroups.Network, 200) { RunAfter = [ModuleIds.GpuStress, ModuleIds.GpuMemory] },
         // Sound: the read-only checks (Run all), listed before the interactive audio tests in the same group.
         new(ModuleIds.Sound, ModuleSlugs.Sound, "Sound", ModuleKind.Check, ModuleGroups.Audio, 50),
         new(ModuleIds.SpeakerToMic, ModuleSlugs.SpeakerToMic, "Speaker to microphone test", ModuleKind.OnDemand, ModuleGroups.Audio, 100) { Page = "interactive" },
@@ -54,7 +55,6 @@ public static class BuiltInModules
         new(ModuleIds.DuplicateFiles, ModuleSlugs.DuplicateFiles, "Duplicate files", ModuleKind.OnDemand, ModuleGroups.Storage, 400),
         new(ModuleIds.DiskSurfaceScan, ModuleSlugs.DiskSurfaceScan, "Disk surface scan", ModuleKind.OnDemand, ModuleGroups.Storage, 500),
         new(ModuleIds.DriveSelfTest, ModuleSlugs.DriveSelfTest, "Drive self-test", ModuleKind.OnDemand, ModuleGroups.Storage, 600),
-        new(ModuleIds.GpuMemory, ModuleSlugs.GpuMemory, "Graphics memory (VRAM) test", ModuleKind.OnDemand, ModuleGroups.Graphics, 200),
         new(ModuleIds.VideoPlayback, ModuleSlugs.VideoPlayback, "Video playback test", ModuleKind.OnDemand, ModuleGroups.Graphics, 300),
         // Merged into other modules; kept so History can still name their old results.
         new(ModuleIds.BsodHistory, ModuleSlugs.BsodHistory, "Blue screens & unexpected restarts", ModuleKind.Check, ModuleGroups.Windows, 310) { MergedInto = ModuleIds.Crashes },

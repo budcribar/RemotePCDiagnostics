@@ -431,12 +431,57 @@ public sealed class GpuMemoryTests
     }
 
     [Fact]
-    public void The_module_is_on_demand_and_never_in_run_all()
+    public void The_module_is_a_stress_test_after_the_gpu_stress_test_and_never_in_run_all()
     {
         var m = new GpuMemoryModule(new NoGpuMemorySource());
         Assert.False(m.IncludeInRunAll);
         Assert.IsAssignableFrom<ICancellableScan>(m);
-        Assert.Equal(ModuleKind.OnDemand, BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.GpuMemory).Kind);
+        Assert.IsAssignableFrom<IStressSuiteModule>(m);
+        var d = BuiltInModules.Descriptors.Single(x => x.Id == ModuleIds.GpuMemory);
+        Assert.Equal(ModuleKind.StressTest, d.Kind);
+        Assert.Contains(ModuleIds.GpuStress, d.RunAfter);
+    }
+
+    [Fact]
+    public void The_suite_picks_quick_or_extended_for_its_time_and_puts_the_settings_back()
+    {
+        var m = new GpuMemoryModule(new NoGpuMemorySource()) { Mode = GpuMemoryMode.Extended };
+        var saved = m.SaveSuiteSettings();
+        m.ApplySuiteMode(StressSuiteMode.Short);
+        Assert.Equal(GpuMemoryMode.Quick, m.Mode);
+        Assert.Equal(TimeSpan.FromMinutes(1), m.Duration);
+        m.ApplySuiteMode(StressSuiteMode.Extended);
+        Assert.Equal(GpuMemoryMode.Extended, m.Mode);
+        Assert.Equal(TimeSpan.FromMinutes(5), m.Duration);
+        m.RestoreSuiteSettings(saved);
+        Assert.Equal(GpuMemoryMode.Extended, m.Mode);
+        Assert.Equal(GpuMemoryOptions.DefaultDuration(GpuMemoryMode.Extended), m.Duration); // on its own again: the mode's full time per chip
+    }
+
+    [Fact]
+    public async Task In_the_suite_the_chips_share_the_time_per_test()
+    {
+        var sim = new SimulatedGpuMemory(Discrete(dedicated: 1 * GB, free: 1 * GB), Integrated());
+        var m = Module(sim);
+        m.ApplySuiteMode(StressSuiteMode.Short); // 1 minute for both chips
+        var (report, result) = await RunAsync(m);
+        Assert.Equal(2, m.LastResults!.Count);
+        Assert.All(m.LastResults!, r =>
+        {
+            Assert.Equal(GpuMemoryOutcome.Passed, r.Outcome);
+            Assert.InRange(r.Ran, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(59));
+        });
+        Assert.False(m.IsCouldNotRunResult(result));
+        Assert.False(m.IsUnavailableResult(result));
+        Assert.False(m.IsStoppedByUserResult(result));
+    }
+
+    [Fact]
+    public async Task No_graphics_chip_is_skipped_by_the_suite_as_not_on_this_pc()
+    {
+        var m = new GpuMemoryModule(new NoGpuMemorySource());
+        var (_, result) = await RunAsync(m);
+        Assert.True(m.IsUnavailableResult(result));
     }
 
     [Fact]
