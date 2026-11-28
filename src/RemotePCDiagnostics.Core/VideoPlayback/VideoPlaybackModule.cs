@@ -17,7 +17,7 @@ public sealed class VideoPlaybackModule(
     ILogger? log = null,
     Func<IStressClock>? clockFactory = null,
     Func<int, IStressClock>? streamClock = null,
-    VideoPlaybackOptions? options = null) : AreaModuleBase(log), ICancellableScan
+    VideoPlaybackOptions? options = null) : AreaModuleBase(log), IDiagnosticModule, ICancellableScan // relisted so IncludeInRunAll below reimplements it
 {
     public const string ModuleName = ModuleSlugs.VideoPlayback;
     private readonly object _gate = new();

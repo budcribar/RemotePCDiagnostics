@@ -102,6 +102,27 @@ public class ChecksScreenTests
     }
 
     [Fact]
+    public void Disk_surface_drive_self_test_vram_and_video_playback_are_stress_tests_only()
+    {
+        // Each says IncludeInRunAll => false; through IDiagnosticModule (what the Checks list and Run all see) it must say the same.
+        IDiagnosticModule[] tests =
+        [
+            new Core.Storage.DiskSurfaceScanModule(null!, null!),
+            new Core.Storage.DriveSelfTestModule(null!),
+            new Core.GpuMemory.GpuMemoryModule(new Core.GpuMemory.NoGpuMemorySource()),
+            new Core.VideoPlayback.VideoPlaybackModule(null!),
+        ];
+        Assert.All(tests, m => Assert.False(m.IncludeInRunAll));
+        var store = new ResultStore();
+        var svc = new DiagnosticsService(store, [new FakeModule("A", _ => Task.FromResult(FakeModule.Ok("A"))), .. tests]);
+        var s = new ChecksScreenState(svc, store);
+        Assert.Equal(["A"], s.ChecksModules.Select(m => m.Name));
+        // On the Stress tests page (other tests may have turned one of them off in the shared module catalog, so not all four need show).
+        Assert.NotEmpty(s.StressModules);
+        Assert.All(s.StressModules, m => Assert.Contains(m.Name, (string[])["DiskSurfaceScan", "DriveSelfTest", "GpuMemory", "VideoPlayback"]));
+    }
+
+    [Fact]
     public void Pages_ChecksAndStressAreSeparate_AuditHasItsOwnPage()
     {
         var (_, _, s, _) = Build();
