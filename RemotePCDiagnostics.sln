@@ -137,6 +137,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules.BatteryDrain", "src\Modules\BatteryDrain\RemotePCDiagnostics.Modules.BatteryDrain.csproj", "{979F6A29-84EF-42FB-985C-50868050BB23}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules.VideoPlayback", "src\Modules\VideoPlayback\RemotePCDiagnostics.Modules.VideoPlayback.csproj", "{D475DB94-55D5-4A8F-8A3C-5E428C90EE97}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -831,6 +833,18 @@ Global
 		{979F6A29-84EF-42FB-985C-50868050BB23}.Release|x64.Build.0 = Release|Any CPU
 		{979F6A29-84EF-42FB-985C-50868050BB23}.Release|x86.ActiveCfg = Release|Any CPU
 		{979F6A29-84EF-42FB-985C-50868050BB23}.Release|x86.Build.0 = Release|Any CPU
+		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97}.Debug|x64.Build.0 = Debug|Any CPU
+		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97}.Debug|x86.Build.0 = Debug|Any CPU
+		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97}.Release|x64.ActiveCfg = Release|Any CPU
+		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97}.Release|x64.Build.0 = Release|Any CPU
+		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97}.Release|x86.ActiveCfg = Release|Any CPU
+		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -898,5 +912,6 @@ Global
 		{8F2EFA48-FABF-468A-8D92-A8952A31AF6B} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
 		{22059808-585E-4828-9ACC-55A7DA77FE95} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
 		{979F6A29-84EF-42FB-985C-50868050BB23} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
+		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
 	EndGlobalSection
 EndGlobal

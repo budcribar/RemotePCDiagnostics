@@ -263,6 +263,20 @@ public sealed class RecordingReplay
     public GpuMemory.IGpuMemorySource GpuMemorySource => new ReplayGpuMemory(this);
     /// <summary>The cooling test's recorded samples, in order (then the last again), and its thermal mode answers.</summary>
     public Cooling.ICoolingSource Cooling => new ReplayCooling(this);
+    public VideoPlayback.IVideoPlaybackSource VideoPlayback => new ReplayVideoPlaybackSource(this);
+
+    /// <summary>The next recorded answer to <paramref name="key"/> (see <see cref="Answer"/>), for replay sources kept in their own files.</summary>
+    internal RecordedCall? AnswerFor(string key, string description) => Answer(key, description);
+
+    /// <summary>The next recorded answer to <paramref name="key"/> without taking it, or null (not counted as a miss).</summary>
+    internal RecordedCall? PeekFor(string key)
+    {
+        lock (_byKey)
+        {
+            if (_byKey.TryGetValue(key, out var q) && q.Count > 0) return q.Peek();
+            return _last.GetValueOrDefault(key);
+        }
+    }
 
     /// <summary>The report file recorded under <paramref name="name"/>; null when it wasn't made or isn't in the recording.</summary>
     public string? FileText(string name) => Answer(FileKey(name), $"file {name}") is { Error: null } c ? c.StdOut : null;
@@ -301,6 +315,7 @@ public sealed class RecordingReplay
         RecordedCall.SelfTestKind => SelfTestKey(c.Query ?? ""),
         RecordedCall.GpuMemoryKind => GpuMemoryKey(c.Query ?? ""),
         RecordedCall.CoolingKind => CoolingKey(c.Query ?? ""),
+        RecordedCall.VideoKind => VideoKey(c.Query ?? ""),
         _ => ProcessKey(c.File ?? "", c.Args ?? []),
     };
 
@@ -320,6 +335,7 @@ public sealed class RecordingReplay
     public static string GpuMemoryRun(string adapterId, int block, int n) => GpuMemoryQuery(adapterId, "run") + "\n" + block.ToString(System.Globalization.CultureInfo.InvariantCulture)
         + "\n" + n.ToString(System.Globalization.CultureInfo.InvariantCulture);
     public static string CoolingKey(string request) => "cooling\n" + request;
+    public static string VideoKey(string query) => "video\n" + query;
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
     /// <remarks>WQL ignores case, and a path in a query is spelled as Windows gave it (C:\WINDOWS on one PC, C:\Windows on another).</remarks>
     public static string WmiKey(string ns, string wql) => "wmi\n" + ns.ToLowerInvariant() + "\n" + wql.ToLowerInvariant();

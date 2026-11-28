@@ -115,6 +115,9 @@ public sealed record RecordedCall
     /// with its answer JSON in <see cref="StdOut"/>, <see cref="Error"/> and <see cref="ExitCode"/> 2 when the Agent was missing.
     /// </summary>
     public const string CoolingKind = "cooling";
+    /// <summary>The video playback test's clip, decoders, engine loads, processes and media sessions (<see cref="VideoPlayback.IVideoPlaybackSource"/>):
+    /// <see cref="Query"/> says which (<see cref="VideoPlaybackKeys"/>), <see cref="StdOut"/> holds the answer as JSON, <see cref="Error"/> why there was none.</summary>
+    public const string VideoKind = "video";
 
     public string Kind { get; init; } = "";
 
@@ -203,6 +206,7 @@ public sealed record RecordedCall
             : Stress.MemoryDiagnosticReply.Failed(Error ?? "The answer couldn't be read.", noAgent: TimedOut == true);
     public static RecordedCall FromWifi(Areas.WifiRadioReading r) => new() { Kind = WifiKind, StdOut = r.Scrubbed().ToJson(), Error = r.Error };
     public static RecordedCall FromGpuMemory(string query, string? json, string? error = null) => new() { Kind = GpuMemoryKind, Query = query, StdOut = json, Error = error };
+    public static RecordedCall FromVideo(string query, string? json, string? error = null) => new() { Kind = VideoKind, Query = query, StdOut = json, Error = error };
 
     /// <summary>Kept as rows, like WMI (WMI, registry, the package list, antivirus products).</summary>
     public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind or AntivirusKind;
