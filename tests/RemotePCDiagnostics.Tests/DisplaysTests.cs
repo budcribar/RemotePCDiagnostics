@@ -443,8 +443,8 @@ public class DisplaysTests
         var live = new DisplayOutputCheckReport([Arrived("k1", edid: "No EDID"), Arrived("k2", true)], [new(DateTimeOffset.UnixEpoch, "rear VGA")], true);
         var json = InteractiveExport.ToJson(page, new Core.Workflow.PhysicalBenchQaSnapshot(),
             new(DiagnosticResult.NotRun(ModuleSlugs.Webcam), false), new(DiagnosticResult.NotRun(ModuleSlugs.SpeakerToMic), false),
-            new(DiagnosticResult.NotRun(ModuleSlugs.MicToSpeaker), false), null, null,
-            new(new(new DiagnosticResult(ModuleSlugs.DisplayOutputCheck, DiagnosticStatus.Running, "", DateTimeOffset.UnixEpoch), false), live));
+            new(DiagnosticResult.NotRun(ModuleSlugs.MicToSpeaker), false),
+            displayOutputs: new(new(new DiagnosticResult(ModuleSlugs.DisplayOutputCheck, DiagnosticStatus.Running, "", DateTimeOffset.UnixEpoch), false), live));
         using var doc = JsonDocument.Parse(json);
         var t = doc.RootElement.GetProperty("tests").EnumerateArray().Single(x => x.GetProperty("id").GetString() == "displayoutputs");
         Assert.Equal("in-progress", t.GetProperty("state").GetString());
@@ -462,8 +462,8 @@ public class DisplaysTests
         var partial = DisplayOutputCheck.ToResult(new DisplayOutputCheckReport([Arrived("k1", true), Arrived("k2", null)], [], false));
         var partialJson = InteractiveExport.ToJson(page, new Core.Workflow.PhysicalBenchQaSnapshot(),
             new(DiagnosticResult.NotRun(ModuleSlugs.Webcam), false), new(DiagnosticResult.NotRun(ModuleSlugs.SpeakerToMic), false),
-            new(DiagnosticResult.NotRun(ModuleSlugs.MicToSpeaker), false), null, null,
-            new(new(partial, PersonEntered: true), DisplayOutputCheckReport.Empty));
+            new(DiagnosticResult.NotRun(ModuleSlugs.MicToSpeaker), false),
+            displayOutputs: new(new(partial, PersonEntered: true), DisplayOutputCheckReport.Empty));
         using (var doc = JsonDocument.Parse(partialJson))
         {
             var t = doc.RootElement.GetProperty("tests").EnumerateArray().Single(x => x.GetProperty("id").GetString() == "displayoutputs");
@@ -475,8 +475,8 @@ public class DisplaysTests
         var complete = DisplayOutputCheck.Answer(partial, "k2", true)!;
         var completeJson = InteractiveExport.ToJson(page, new Core.Workflow.PhysicalBenchQaSnapshot(),
             new(DiagnosticResult.NotRun(ModuleSlugs.Webcam), false), new(DiagnosticResult.NotRun(ModuleSlugs.SpeakerToMic), false),
-            new(DiagnosticResult.NotRun(ModuleSlugs.MicToSpeaker), false), null, null,
-            new(new(complete, PersonEntered: true), DisplayOutputCheckReport.Empty));
+            new(DiagnosticResult.NotRun(ModuleSlugs.MicToSpeaker), false),
+            displayOutputs: new(new(complete, PersonEntered: true), DisplayOutputCheckReport.Empty));
         using (var doc = JsonDocument.Parse(completeJson))
         {
             var t = doc.RootElement.GetProperty("tests").EnumerateArray().Single(x => x.GetProperty("id").GetString() == "displayoutputs");

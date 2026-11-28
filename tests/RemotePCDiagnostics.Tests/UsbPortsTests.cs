@@ -413,8 +413,8 @@ public class UsbPortsTests
         var live = new UsbPortCheckReport([Arrived("PC · port 1", slow: true)], [], null, true);
         var json = InteractiveExport.ToJson(page, new Core.Workflow.PhysicalBenchQaSnapshot(),
             new(DiagnosticResult.NotRun(ModuleSlugs.Webcam), false), new(DiagnosticResult.NotRun(ModuleSlugs.SpeakerToMic), false),
-            new(DiagnosticResult.NotRun(ModuleSlugs.MicToSpeaker), false), null, null,
-            new(new(new DiagnosticResult(ModuleSlugs.UsbPortCheck, DiagnosticStatus.Running, "", DateTimeOffset.UnixEpoch), false), live));
+            new(DiagnosticResult.NotRun(ModuleSlugs.MicToSpeaker), false),
+            usbPortCheck: new(new(new DiagnosticResult(ModuleSlugs.UsbPortCheck, DiagnosticStatus.Running, "", DateTimeOffset.UnixEpoch), false), live));
         using var doc = JsonDocument.Parse(json);
         var usb = doc.RootElement.GetProperty("tests").EnumerateArray().Single(t => t.GetProperty("id").GetString() == "usbports");
         Assert.Equal("in-progress", usb.GetProperty("state").GetString());
