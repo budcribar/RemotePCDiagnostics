@@ -270,9 +270,43 @@ public sealed class CoolingTests
         var load = new FakeLoad();
         var pc = new FakePc(load, Healthy);
         var m = new CoolingTestModule(pc, load, clock: new InstantClock()) { Mode = CoolingTestMode.Full, SwitchModes = false };
-        await Run(m);
+        var r = await Run(m);
         Assert.Equal(300, m.LiveSamples.Last(s => s.Phase == CoolingRules.Idle).At);
         Assert.Equal(TimeSpan.FromMinutes(7), m.Estimated);
+        var samples = Card(r, CoolingJudge.SamplesCard);
+        Assert.True(samples.Rows.Count <= AreaReportExport.MaxRowsPerCard);
+        Assert.Contains(samples.Rows, x => x.Key == CoolingRules.Idle);
+        Assert.Contains(samples.Rows, x => x.Key == CoolingRules.Load);
+        Assert.Contains(samples.Rows, x => x.Key == CoolingRules.Cool);
+    }
+
+    [Fact]
+    public async Task A_cool_zero_rpm_pc_warming_modestly_does_not_false_fail()
+    {
+        var (m, _, _) = Make((i, loaded) => loaded ? new(Math.Min(45, 38 + i * 0.5), null, 99, 0, 1) : new(38, null, 5, 0, 1));
+        var fans = Card(await Run(m), CoolingJudge.FansCard);
+        Assert.Equal(AreaLevel.Ok, fans.Level);
+        Assert.DoesNotContain("Fan not responding", fans.Headline);
+    }
+
+    [Fact]
+    public async Task Missing_idle_fan_baseline_does_not_false_fail_fan_not_responding()
+    {
+        var (m, _, _) = Make((i, loaded) => loaded ? new(Math.Min(75, 45 + i), null, 99, 3200, 1) : new(45, null, 5, null, 0));
+        var fans = Card(await Run(m), CoolingJudge.FansCard);
+        Assert.Equal(AreaLevel.Warning, fans.Level);
+        Assert.DoesNotContain("Fan not responding", fans.Headline);
+    }
+
+    [Fact]
+    public async Task A_non_cancellation_exception_while_modes_switch_still_puts_them_back()
+    {
+        var sets = 0;
+        var (m, pc, _) = Make(Healthy, onRequest: req => { if (req.StartsWith("set", StringComparison.Ordinal) && ++sets == 2) throw new InvalidOperationException("boom"); });
+        var r = await Run(m);
+        Assert.False(r.Cancelled);
+        Assert.Equal(CoolingModesAction.Restore, pc.Requests[^1]);
+        Assert.Equal(WindowsPowerMode.Balanced.ToString(), pc.Modes[CoolingModes.WindowsKind].Current);
     }
 
     [Fact]
@@ -463,7 +497,5 @@ public sealed class CoolingDetailsTests : BunitContext
         cut.Find("[data-testid='cooling-switch-modes']").Change(false);
         Assert.False(module.SwitchModes);
         Assert.Equal("false", cut.Find("[data-testid='cooling-options']").GetAttribute("data-switch-modes"));
-
-        if (Environment.GetEnvironmentVariable("RPCD_COOLING_MARKUP") is { Length: > 0 } path) File.WriteAllText(path, cut.Markup);
     }
 }

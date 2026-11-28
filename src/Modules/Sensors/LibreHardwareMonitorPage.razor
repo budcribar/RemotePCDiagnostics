@@ -2,6 +2,7 @@
 @inherits ModuleDetailsBase
 @implements IAsyncDisposable
 @inject NavigationManager Nav
+@inject ChecksScreenState Screen
 @{
     var r = Shown();
     var report = r.Payload as SensorReport;
@@ -162,11 +163,12 @@
     private PeriodicTimer? _timer;
     private CancellationTokenSource? _cts;
 
-    /// <summary>Starts the cooling test and goes to the Checks page, where its progress, choices and chart show.</summary>
+    /// <summary>Starts the cooling test and goes to the Stress tests page, where its progress, choices and chart show.</summary>
     private void RunCooling(IDiagnosticModule cooling)
     {
+        Screen.SelectedModule = cooling.Name;
         _ = Diagnostics.RunAsync(cooling.Name);
-        Nav.NavigateTo("checks");
+        Nav.NavigateTo("stress");
     }
 
     private async Task Refresh()

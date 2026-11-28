@@ -178,7 +178,7 @@ public sealed class AgentCoolingModes(IReadOnlyList<IThermalModeSetting> setting
         if (File.Exists(journalPath)) return true;
         var originals = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var g in ReadAll())
-            if (g.Current is { } c) originals[g.Kind] = c;
+            if (g.Options.Count > 0 && g.Current is { } c) originals[g.Kind] = c;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(journalPath)!);
@@ -194,9 +194,11 @@ public sealed class AgentCoolingModes(IReadOnlyList<IThermalModeSetting> setting
 
     private bool RestoreAll()
     {
+        if (!File.Exists(journalPath)) return true;
         CoolingModesJournal? journal;
-        try { journal = File.Exists(journalPath) ? JsonSerializer.Deserialize<CoolingModesJournal>(File.ReadAllText(journalPath), Json) : null; }
-        catch (Exception ex) when (ex is JsonException or IOException) { log.Warn($"[cooling] The journal couldn't be read: {ex.Message}"); journal = null; }
+        try { journal = JsonSerializer.Deserialize<CoolingModesJournal>(File.ReadAllText(journalPath), Json); }
+        catch (JsonException ex) { log.Warn($"[cooling] The journal couldn't be read: {ex.Message}"); TryDelete(); return true; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log.Warn($"[cooling] The journal couldn't be read: {ex.Message}"); return false; }
         if (journal is null) { TryDelete(); return true; }
         var failed = 0;
         foreach (var (kind, original) in journal.Originals)
