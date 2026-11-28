@@ -175,7 +175,7 @@
                 </div>
             </div>
 
-            <div class="bench-kinds" style="margin-top:12px">
+            <div class="bench-kinds" style="margin-top:var(--space-6)">
                 @foreach (var info in available)
                 {
                     var k = info.Kind;
@@ -196,7 +196,7 @@
 
             @if (s.HasDeveloperKindEnabled)
             {
-                <div class="bench-inline-field" style="margin-top:12px">
+                <div class="bench-inline-field" style="margin-top:var(--space-6)">
                     <label for="bench-custom-solution" class="meta"><strong>Solution / project (optional):</strong></label>
                     <input id="bench-custom-solution"
                            type="text"
@@ -206,7 +206,7 @@
                            @onchange="OnBaselineSolutionChanged"
                            placeholder="Leave blank for built-in C# benchmark, or paste path to .sln / .slnx / .csproj" />
                 </div>
-                <p class="notice" data-testid="bench-dev-warning" style="margin-top:10px">@DeveloperScoring.BusyPcWarning</p>
+                <p class="notice" data-testid="bench-dev-warning" style="margin-top:var(--space-5)">@DeveloperScoring.BusyPcWarning</p>
             }
 
             <div class="bench-wizard-footer">
@@ -285,7 +285,7 @@ else if (stage == "review-baseline" && before is not null)
         }
         @if (beforeCautions.Count > 0)
         {
-            <p class="notice" data-testid="bench-conditions-warning" style="margin-top:10px">@string.Join(" · ", beforeCautions)</p>
+            <p class="notice" data-testid="bench-conditions-warning" style="margin-top:var(--space-5)">@string.Join(" · ", beforeCautions)</p>
         }
 
         <div class="bench-wizard-footer">
@@ -362,7 +362,7 @@ else if (stage == "modify" && before is not null)
                 }
                 @if (activeGoal == BenchmarkGoals.Build && impCtx.HasUnmountedDevDrive && existingDevDriveRoot is null)
                 {
-                    <div class="notice" data-testid="bench-unmounted-devdrive" style="margin-top:6px">
+                    <div class="notice" data-testid="bench-unmounted-devdrive" style="margin-top:var(--space-3)">
                         Dev Drive detected, but it has no drive letter assigned. Assign a drive letter (e.g. D:) in Windows Settings → System → Storage → Disks &amp; volumes → Properties to use it for builds and package caches.
                     </div>
                 }
@@ -375,7 +375,7 @@ else if (stage == "modify" && before is not null)
 
         @if (activeGoal == BenchmarkGoals.Build && hasDevEnv)
         {
-            <div class="bench-inline-field" style="margin-top:12px">
+            <div class="bench-inline-field" style="margin-top:var(--space-6)">
                 <label for="bench-after-solution" class="meta"><strong>Solution / project:</strong></label>
                 <input id="bench-after-solution"
                        type="text"
@@ -389,11 +389,11 @@ else if (stage == "modify" && before is not null)
 
         @if (_manualChangesMode)
         {
-            <p class="meta" style="margin:12px 0">No automatic changes will be applied. Clicking <strong>Run Comparison →</strong> measures the After pass directly against your baseline.</p>
+            <p class="meta" style="margin:var(--space-6) 0">No automatic changes will be applied. Clicking <strong>Run Comparison →</strong> measures the After pass directly against your baseline.</p>
         }
         else
         {
-            <div class="bench-kinds" style="margin-top:12px">
+            <div class="bench-kinds" style="margin-top:var(--space-6)">
                 @if (existingDevDriveRoot is not null && !hasCustomSolution)
                 {
                     <label class="bench-kind" title="Runs the After build on your existing Dev Drive (@existingDevDriveRoot) without creating a new drive.">
@@ -437,8 +437,8 @@ else if (stage == "modify" && before is not null)
 
             @if (showSdkOption && singleAltSdkMajor is null)
             {
-                <div data-testid="bench-sdk-choice" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
-                    <div class="meta" style="margin-bottom:6px"><strong>.NET SDK for comparison</strong></div>
+                <div data-testid="bench-sdk-choice" style="margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--border)">
+                    <div class="meta" style="margin-bottom:var(--space-3)"><strong>.NET SDK for comparison</strong></div>
                     <div class="bench-kinds" role="radiogroup" aria-label=".NET SDK for comparison">
                         <label class="bench-kind">
                             <input type="radio" name="bench-sdk-target" data-testid="bench-sdk-10" checked="@(_targetDotNetSdkMajor == 10)" @onchange="() => _targetDotNetSdkMajor = 10" />
@@ -455,9 +455,9 @@ else if (stage == "modify" && before is not null)
 
         @if (Bench.LastExperiment is { Outcomes.Count: > 0 } prevExp && !prevExp.Completed)
         {
-            <div data-testid="bench-experiment-summary" style="margin-top:10px">
+            <div data-testid="bench-experiment-summary" style="margin-top:var(--space-5)">
                 <div class="meta"><strong>Last attempt:</strong></div>
-                <ul class="meta" style="margin:4px 0 0 18px;padding:0">
+                <ul class="meta" style="margin:var(--space-2) 0 0 var(--space-9);padding:0">
                     @foreach (var o in prevExp.Outcomes)
                     {
                         <li>@(o.Succeeded ? "✓" : o.Skipped ? "–" : "✗") <strong>@o.Title</strong> — @o.Message</li>
@@ -507,7 +507,7 @@ else if (stage == "results" && before is not null && after is not null)
                 <h2 class="bench-verdict bench-verdict-@kind">@cmp.OverallText</h2>
                 <span class="meta">Baseline: <strong>@(activeBaseline?.Name ?? BenchmarkService.SuggestRunName(before))</strong></span>
             </div>
-            <div class="bench-inline-field" style="margin-top:10px">
+            <div class="bench-inline-field" style="margin-top:var(--space-5)">
                 <label for="bench-after-name"><strong>After:</strong></label>
                 <input id="bench-after-name"
                        type="text"
@@ -521,11 +521,11 @@ else if (stage == "results" && before is not null && after is not null)
 
         @if (condCautions.Count > 0)
         {
-            <p class="notice" data-testid="bench-conditions-warning" style="margin:10px 16px 0">@string.Join(" · ", condCautions)</p>
+            <p class="notice" data-testid="bench-conditions-warning" style="margin:var(--space-5) var(--space-8) 0">@string.Join(" · ", condCautions)</p>
         }
         @foreach (var w in cmp.Warnings)
         {
-            <p class="notice" data-testid="bench-warning" style="margin:8px 16px 0">@w</p>
+            <p class="notice" data-testid="bench-warning" style="margin:var(--space-4) var(--space-8) 0">@w</p>
         }
 
         <div class="table-scroll">
@@ -570,7 +570,7 @@ else if (stage == "results" && before is not null && after is not null)
         {
             <p class="@(Uploader.Failed ? "notice notice-error" : "notice")" data-testid="bench-upload-status"
                data-upload-seq="@Uploader.Seq" data-upload-failed="@(Uploader.Failed ? "true" : "false")" data-uploading="@(Uploader.Uploading ? "true" : "false")"
-               style="margin:8px 16px 0">@um</p>
+               style="margin:var(--space-4) var(--space-8) 0">@um</p>
         }
 
         <div class="bench-wizard-footer bench-results-footer">

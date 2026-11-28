@@ -87,7 +87,7 @@
         <h1 data-rpcd-page="interactive" data-rpcd-contract="@BrowserContract.Interactive" data-testid="interactive-title">Interactive tests</h1>
     </div>
 
-    <section class="banner banner-neutral ct-banner" data-testid="interactive-guidance-banner" style="margin-bottom: 16px">
+    <section class="banner banner-neutral ct-banner" data-testid="interactive-guidance-banner" style="margin-bottom: var(--space-8)">
         <span class="banner-icon"><Icon Name="eye" Size="22" /></span>
         <div class="banner-text">
             <div class="banner-title" data-testid="interactive-banner-title">Hands-on physical hardware verification</div>
@@ -100,7 +100,7 @@
                     @if (_handOffTechId is not null && !_isRemoteDisplay)
                     {
                         <span data-testid="interactive-handoff-note">The technician handed control to this PC for the test. It goes back to them when the test ends, or after a minute with no mouse or keyboard input here. The technician can also take it back.</span>
-                        <button type="button" class="btn btn-small" style="margin-left: 8px" data-testid="interactive-give-back" @onclick="() => ReturnControlAsync(null)">
+                        <button type="button" class="btn btn-small" style="margin-left: var(--space-4)" data-testid="interactive-give-back" @onclick="() => ReturnControlAsync(null)">
                             Give control back now
                         </button>
                     }
@@ -109,7 +109,7 @@
                         <span>The technician has control. Pressing Start on a test hands control to the person at the PC while it runs, and gives it back to the technician when it ends.</span>
                         @if (_isRemoteDisplay)
                         {
-                            <button type="button" class="btn btn-small btn-primary" style="margin-left: 8px" data-testid="interactive-release-control" @onclick="ReleaseControlAsync">
+                            <button type="button" class="btn btn-small btn-primary" style="margin-left: var(--space-4)" data-testid="interactive-release-control" @onclick="ReleaseControlAsync">
                                 Release control
                             </button>
                         }
@@ -574,7 +574,7 @@
             else if (_selectedTestId == "webcam")
             {
                 <div class="phys-qa-pane" data-testid="interactive-webcam-pane">
-                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                    <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
                         <strong>Webcam test</strong>
                         <span class="chip chip-@camChip" data-testid="webcam-status-chip">@camLabel</span>
                         @if (camRunning)
@@ -598,7 +598,7 @@
                         Opens the camera to inspect live video feed, capture resolution, frame rate, stalls, and brightness. A live preview window opens on the PC screen.
                     </p>
 
-                    <div class="toolbar" style="margin-bottom: 4px; flex-wrap: wrap">
+                    <div class="toolbar" style="margin-bottom: var(--space-2); flex-wrap: wrap">
                         <label class="meta">Camera
                             <select data-testid="webcam-device-select" disabled="@camRunning" @onchange="OnCamDeviceChange">
                                 @if (_camDevices.Count == 0)
@@ -680,7 +680,7 @@
             else if (_selectedTestId == "speakertomic")
             {
                 <div class="phys-qa-pane" data-testid="interactive-speakertomic-pane">
-                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                    <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
                         <strong>Speaker to mic loopback test</strong>
                         <span class="chip chip-@s2mChip" data-testid="speakertomic-status-chip">@s2mLabel</span>
                         @if (s2mRunning)
@@ -704,7 +704,7 @@
                         Plays a short 1 kHz tone through the speakers while the microphone listens to verify speaker output and microphone capture automatically.
                     </p>
 
-                    <div class="toolbar" style="margin-bottom: 4px; flex-wrap: wrap">
+                    <div class="toolbar" style="margin-bottom: var(--space-2); flex-wrap: wrap">
                         <label class="meta">Speaker
                             <select data-testid="speakertomic-output-select" disabled="@s2mRunning" @onchange="OnAudioOutputChange">
                                 @DeviceOptions(_outputs, _selectedOutputId)
@@ -741,7 +741,7 @@
                         {
                             <p class="notice" data-testid="speakertomic-notice">@s2mNotice</p>
                         }
-                        <div class="kb-stats meta" style="margin: 4px 0">
+                        <div class="kb-stats meta" style="margin: var(--space-2) 0">
                             <span>Tone: <strong>@(s2mRep.Mic.ToneDetected ? "Detected" : "Not detected")</strong> (SNR @s2mRep.Mic.SnrDb.ToString("0.0") dB)</span>
                             <span> · Output: <strong>@Db(s2mRep.Loopback?.PeakDbfs ?? s2mRep.Mic.PeakDbfs)</strong></span>
                             <span> · Raw mic: <strong>@(s2mRep.RawMic ? "Yes" : "No")</strong></span>
@@ -772,7 +772,7 @@
             else if (_selectedTestId == "mictospeaker")
             {
                 <div class="phys-qa-pane" data-testid="interactive-mictospeaker-pane">
-                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                    <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
                         <strong>Mic to speaker live monitor</strong>
                         <span class="chip chip-@m2sChip" data-testid="mictospeaker-status-chip">@m2sLabel</span>
                         @if (m2sRunning)
@@ -796,7 +796,7 @@
                         Plays the microphone through the speakers so someone at the PC can speak and hear themselves live (or recorded in half-duplex). Capped volume and automatic feedback brake.
                     </p>
 
-                    <div class="toolbar" style="margin-bottom: 4px; flex-wrap: wrap">
+                    <div class="toolbar" style="margin-bottom: var(--space-2); flex-wrap: wrap">
                         <label class="meta">Speaker
                             <select data-testid="mictospeaker-output-select" disabled="@m2sRunning" @onchange="OnAudioOutputChange">
                                 @DeviceOptions(_outputs, _selectedOutputId)
@@ -833,7 +833,7 @@
                         {
                             <p class="notice" data-testid="mictospeaker-notice">@m2sNotice</p>
                         }
-                        <div class="kb-stats meta" style="margin: 4px 0">
+                        <div class="kb-stats meta" style="margin: var(--space-2) 0">
                             <span>Microphone peak: <strong>@Db(m2sRep.MicPeakDbfs)</strong></span>
                             <span> · RMS: <strong>@Db(m2sRep.MicRmsDbfs)</strong></span>
                             @if (m2sRep.FeedbackDetected)
@@ -843,7 +843,7 @@
                         </div>
                         @if (m2sRep.MicHeardSomething && !m2sRep.FeedbackDetected)
                         {
-                            <div class="toolbar" style="margin-top: 4px; align-items: center">
+                            <div class="toolbar" style="margin-top: var(--space-2); align-items: center">
                                 <span class="meta">Did the person at the PC hear the microphone through @m2sRep.Output?</span>
                                 <button type="button"
                                         class="btn-small @(m2sRep.HeardByListener == true ? "btn-primary" : "")"
@@ -882,7 +882,7 @@
             {
                 var scLeftDone = scRunning && (scResult.Message ?? "").Contains("right", StringComparison.OrdinalIgnoreCase);
                 <div class="phys-qa-pane" data-testid="interactive-soundcheck-pane">
-                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                    <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
                         <strong>Sound check (left and right)</strong>
                         <span class="chip chip-@(scRep is { Answer: null } && !scRunning && scResult.Status == DiagnosticStatus.Warning ? "run" : OutcomeChip(scResult.Status))" data-testid="soundcheck-status-chip">
                             @(scRep is { Answer: null } && !scRunning && scResult.Status == DiagnosticStatus.Warning ? "Waiting for answer" : OutcomeLabel(scResult.Status))
@@ -992,7 +992,7 @@
                     {
                         <div class="sc-help" data-testid="soundcheck-cant-hear-section">
                             <strong>No sound at all?</strong>
-                            <p class="meta" style="margin: 2px 0 6px">Finds what's stopping sound and lists the fixes in the order to try them.</p>
+                            <p class="meta" style="margin: var(--space-1) 0 var(--space-3)">Finds what's stopping sound and lists the fixes in the order to try them.</p>
                             <button type="button" class="btn-small" data-testid="soundcheck-cant-hear-btn" @onclick="OpenCantHearAsync">Can't hear sound</button>
                         </div>
                     }
@@ -1017,7 +1017,7 @@
             {
                 var chNaPane = chRep?.RunEnd == RunEnd.CouldNotRun;
                 <div class="phys-qa-pane" data-testid="interactive-charger-pane">
-                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                    <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
                         <strong>Charger replug</strong>
                         <span class="chip chip-@(chNaPane ? "na" : OutcomeChip(chResult.Status))" data-testid="charger-status-chip">@(chNaPane ? "Not applicable" : OutcomeLabel(chResult.Status))</span>
                         @if (chRunning)
@@ -1057,7 +1057,7 @@
             else if (_selectedTestId == "batterydrain")
             {
                 <div class="phys-qa-pane" data-testid="interactive-batterydrain-pane">
-                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                    <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
                         <strong>Battery drain &amp; runtime</strong>
                         <span class="chip chip-@(bdRunning ? "run" : OutcomeChip(bdResult.Status))" data-testid="batterydrain-status-chip">@OutcomeLabel(bdResult.Status)</span>
                         @if (bdRunning)
@@ -1093,7 +1093,7 @@
                 var wfNeedsPassword = wfPicked is { HasProfile: false, CanTypePassword: true } && wfPicked.Security is not (WifiRadio.Open or WifiRadio.Owe);
                 var wfCantTest = wfPicked is { HasProfile: false, CanTypePassword: false };
                 <div class="phys-qa-pane" data-testid="interactive-wifi-pane">
-                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                    <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
                         <strong>Wi-Fi connect</strong>
                         <span class="chip chip-@(wfNaPane ? "na" : OutcomeChip(wfResult.Status))" data-testid="wifi-status-chip">@(wfNaPane ? "Not run" : OutcomeLabel(wfResult.Status))</span>
                         @if (wfRunning)
@@ -1109,7 +1109,7 @@
                     {
                         <p class="notice" data-testid="wifi-session-warning">This PC reaches the internet only through this Wi-Fi, so a remote session drops for about a minute while the test runs, and reconnects by itself afterwards.</p>
                     }
-                    <div class="toolbar" style="flex-wrap: wrap; gap: 8px">
+                    <div class="toolbar" style="flex-wrap: wrap; gap: var(--space-4)">
                         <select data-testid="wifi-network-select" aria-label="Network to connect to" disabled="@(wfRunning || _wifiScanning)"
                                 @onchange="e => PickWifi(e.Value?.ToString())">
                             @if (_wifiNetworks.Count == 0)
@@ -1175,7 +1175,7 @@
             {
                 var ethNaPane = ethRep?.RunEnd == RunEnd.CouldNotRun;
                 <div class="phys-qa-pane" data-testid="interactive-ethernet-pane">
-                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                    <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
                         <strong>Ethernet port</strong>
                         <span class="chip chip-@(ethNaPane ? "na" : OutcomeChip(ethResult.Status))" data-testid="ethernet-status-chip">@(ethNaPane ? "Not run" : OutcomeLabel(ethResult.Status))</span>
                         @if (ethRunning)
@@ -1192,7 +1192,7 @@
                     {
                         <p class="notice" data-testid="ethernet-session-warning">This PC reaches the internet only through this port, so unplugging its cable drops a remote session until the cable is back in.</p>
                     }
-                    <div class="toolbar" style="flex-wrap: wrap; gap: 8px">
+                    <div class="toolbar" style="flex-wrap: wrap; gap: var(--space-4)">
                         <select data-testid="ethernet-port-select" aria-label="Port to test" disabled="@ethRunning" @onchange="e => PickEthernet(e.Value?.ToString())">
                             @if (_ethPorts.Count == 0)
                             {
@@ -1245,7 +1245,7 @@
             {
                 var usbWaitingAnswer = !usbRunning && usbRep is { EveryDeviceWorked: null, Watching: false } && usbResult.Status == DiagnosticStatus.Warning;
                 <div class="phys-qa-pane" data-testid="interactive-usbports-pane">
-                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                    <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
                         <strong>USB port check</strong>
                         <span class="chip chip-@(usbRunning || usbWaitingAnswer ? "run" : OutcomeChip(usbResult.Status))" data-testid="usbports-status-chip">
                             @(usbRunning ? "Watching…" : usbWaitingAnswer ? "Waiting for answer" : OutcomeLabel(usbResult.Status))
@@ -1323,7 +1323,7 @@
             else if (_selectedTestId == "audiodevices")
             {
                 <div class="phys-qa-pane" data-testid="interactive-audiodevices-pane">
-                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                    <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
                         <strong>@AudioDevicesTest.DisplayName</strong>
                         <span class="chip chip-@adChip" data-testid="audiodevices-status-chip">@adLabel</span>
                         @if (adBusyId is not null)
@@ -1426,7 +1426,7 @@
             {
                 var dvWaitingAnswer = !dvRunning && dvRep is { Watching: false, Unanswered: > 0 };
                 <div class="phys-qa-pane" data-testid="interactive-displayoutputs-pane">
-                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                    <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
                         <strong>Video output check</strong>
                         <span class="chip chip-@(dvRunning || dvWaitingAnswer ? "run" : OutcomeChip(dvResult.Status))" data-testid="displayoutputs-status-chip">
                             @(dvRunning ? "Watching…" : dvWaitingAnswer ? "Waiting for answer" : OutcomeLabel(dvResult.Status))
@@ -2671,22 +2671,9 @@
         }
     };
 
-    private static string OutcomeChip(DiagnosticStatus status) => status switch
-    {
-        DiagnosticStatus.Ok => "ok",
-        DiagnosticStatus.Warning => "warn",
-        DiagnosticStatus.Error => "err",
-        DiagnosticStatus.Running => "run",
-        _ => "na",
-    };
+    private static string OutcomeChip(DiagnosticStatus status) => ResultBadge.ChipFor(status);
 
-    private static string OutcomeChip(PhysicalCheckOutcome outcome) => outcome switch
-    {
-        PhysicalCheckOutcome.Passed => "ok",
-        PhysicalCheckOutcome.PassedWithNote => "warn",
-        PhysicalCheckOutcome.Failed => "err",
-        _ => "na",
-    };
+    private static string OutcomeChip(PhysicalCheckOutcome outcome) => ResultBadge.ChipFor(outcome);
 
     private static string OutcomeLabel(DiagnosticStatus status) => status switch
     {

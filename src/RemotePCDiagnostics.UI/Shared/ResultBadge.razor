@@ -1,0 +1,44 @@
+@using RemotePCDiagnostics.Core.Workflow
+@* The pass / warn / fail badge every test and check shows: one chip in the shared colours (chip-ok, chip-warn, chip-err, chip-run,
+   chip-na). The static ChipFor and DotFor helpers are the one place a status, a check row or a physical check outcome turns into those
+   colours, so a page never keeps its own copy of the mapping. Without Text it says what the Checks list says (Passed, Warning, ...). *@
+<span class="chip chip-@ChipKind" data-testid="@TestId" title="@Title">@(Text ?? CheckRows.Label(EffectiveRow, RunLabel))</span>
+@code {
+    /// <summary>The status the badge shows. <see cref="Row"/> wins when both are set.</summary>
+    [Parameter] public DiagnosticStatus Status { get; set; }
+    /// <summary>A Checks list row kind (Passed, Cancelled, Couldn't run...), for a whole result: see <see cref="CheckRows.KindOf"/>.</summary>
+    [Parameter] public RowKind? Row { get; set; }
+    /// <summary>The badge's words, when the page has its own ("Not applicable", "Passed w/ note").</summary>
+    [Parameter] public string? Text { get; set; }
+    /// <summary>A colour other than the status's own ("na" for a test that doesn't apply to this PC).</summary>
+    [Parameter] public string? Kind { get; set; }
+    /// <summary>"extended run" and the like, added to the default words of a finished stress test ("Passed (extended run)").</summary>
+    [Parameter] public string? RunLabel { get; set; }
+    [Parameter] public string? TestId { get; set; }
+    [Parameter] public string? Title { get; set; }
+
+    private RowKind EffectiveRow => Row ?? RowFor(Status);
+    private string ChipKind => Kind ?? ChipFor(EffectiveRow);
+
+    /// <summary>A status as the Checks list names it: Ok is Passed, Error is Critical.</summary>
+    public static RowKind RowFor(DiagnosticStatus s) => s switch
+    {
+        DiagnosticStatus.Ok => RowKind.Passed, DiagnosticStatus.Warning => RowKind.Warning, DiagnosticStatus.Error => RowKind.Critical,
+        DiagnosticStatus.Running => RowKind.Running, _ => RowKind.NotRun,
+    };
+
+    /// <summary>Chip colour (chip-ok / chip-warn / chip-err / chip-run / chip-na) for a status.</summary>
+    public static string ChipFor(DiagnosticStatus s) => ChipFor(RowFor(s));
+    /// <summary>Chip colour for a Checks list row kind.</summary>
+    public static string ChipFor(RowKind k) => CheckRows.ChipKind(k);
+    /// <summary>Chip colour for a physical check (keyboard, display) answered by the person at the PC.</summary>
+    public static string ChipFor(PhysicalCheckOutcome o) => o switch
+    {
+        PhysicalCheckOutcome.Passed => "ok", PhysicalCheckOutcome.PassedWithNote => "warn", PhysicalCheckOutcome.Failed => "err", _ => "na",
+    };
+
+    /// <summary>Dot colour (dot-ok / dot-warning / dot-error / dot-running / dot-notrun) for a status.</summary>
+    public static string DotFor(DiagnosticStatus s) => s.ToString().ToLowerInvariant();
+    /// <summary>Dot colour for a Checks list row kind (dot-neutral for cancelled, skipped and the like).</summary>
+    public static string DotFor(RowKind k) => CheckRows.DotKind(k);
+}

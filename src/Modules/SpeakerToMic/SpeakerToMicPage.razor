@@ -64,11 +64,9 @@ else
     private static RenderFragment LevelCard(string id, string title, ToneMeasurement? t, string device, string meta) => __builder =>
     {
         var dot = t is null ? "neutral" : t.ToneDetected ? "ok" : "error";
-        <div class="card" data-testid="s2m-card-@id">
-            <div class="card-head"><span class="dot dot-@dot"></span><strong>@title</strong></div>
-            <div class="headline">@(t is null ? "Not available" : t.ToneDetected ? "Tone found" : "No tone")</div>
+        <ResultCard TestId="@($"s2m-card-{id}")" Title="@title" Dot="@dot" Headline="@(t is null ? "Not available" : t.ToneDetected ? "Tone found" : "No tone")">
             <CardList Items="@([ device, t is not null ? $"Tone {Db(t.ToneDbfs)} · noise {Db(t.NoiseDbfs)} · SNR {t.SnrDb:0.0} dB" : null, t is not null ? $"Peak {Db(t.PeakDbfs)} · RMS {Db(t.RmsDbfs)}{(t.Clipped ? " · clipping" : "")}" : null, meta ])" />
-        </div>
+        </ResultCard>
     };
 }
 

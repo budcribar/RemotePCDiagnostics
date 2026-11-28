@@ -41,7 +41,7 @@
 
 @if (_result is not null)
 {
-    <div class="cards" data-testid="history-summary-cards" style="margin-bottom: 16px;">
+    <div class="cards" data-testid="history-summary-cards" style="margin-bottom: var(--space-8);">
         <div class="card" data-testid="history-summary-disk">
             <div class="card-head"><span class="icon-badge"><Icon Name="disk" /></span><strong>Disk space reclaimed</strong></div>
             <div class="headline">@impact.DiskHeadline</div>
@@ -74,7 +74,7 @@
             <p class="@(undoRes.Success || undoRes.Skipped ? "meta" : "notice")" data-testid="history-fix-undo-result">@undoRes.Change.Label: @undoRes.Message</p>
         }
         <div class="table-scroll">
-        <table class="detail grid sticky-head history-table" data-testid="history-fixes-table" style="margin-bottom: 18px;">
+        <table class="detail grid sticky-head history-table" data-testid="history-fixes-table" style="margin-bottom: var(--space-9);">
             <tr>
                 <th>Time</th>
                 <th>Area</th>
@@ -129,7 +129,7 @@
                                 <span class="history-status"><span class="dot dot-@(fx.Success ? "ok" : "warning")"></span>@(fx.Success ? "Applied" : "Failed")</span>
                                 @if (fx.ImpactBadge is { } badge)
                                 {
-                                    <span class="chip chip-ok" style="margin-left: 6px;">@badge</span>
+                                    <span class="chip chip-ok" style="margin-left: var(--space-3);">@badge</span>
                                 }
                             </td>
                             <td class="summary">@fx.Summary</td>

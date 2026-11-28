@@ -1,5 +1,5 @@
 @* Pill showing a module status in plain words: OK / Check / Problem / Not run / Running… *@
-<span class="chip chip-@Kind(Status)" data-testid="@TestId"><span class="dot dot-@Status.ToString().ToLowerInvariant()"></span>@(Text ?? Label(Status))</span>
+<span class="chip chip-@Kind(Status)" data-testid="@TestId"><span class="dot dot-@ResultBadge.DotFor(Status)"></span>@(Text ?? Label(Status))</span>
 @code {
     [Parameter] public DiagnosticStatus Status { get; set; }
     [Parameter] public string? Text { get; set; }
@@ -9,9 +9,6 @@
         DiagnosticStatus.Ok => "OK", DiagnosticStatus.Warning => "Check", DiagnosticStatus.Error => "Problem",
         DiagnosticStatus.Running => "Running…", _ => "Not run",
     };
-    public static string Kind(DiagnosticStatus s) => s switch
-    {
-        DiagnosticStatus.Ok => "ok", DiagnosticStatus.Warning => "warn", DiagnosticStatus.Error => "err",
-        DiagnosticStatus.Running => "run", _ => "na",
-    };
+    /// <summary>Chip colour for a status: the shared mapping in <see cref="ResultBadge"/>.</summary>
+    public static string Kind(DiagnosticStatus s) => ResultBadge.ChipFor(s);
 }

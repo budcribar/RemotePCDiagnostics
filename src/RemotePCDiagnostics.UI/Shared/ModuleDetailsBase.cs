@@ -45,36 +45,39 @@ public interface IStressTestPage
     void Stop();
 }
 
-/// <summary>Shared lifecycle, progress subscription, run length, and Start/Stop for the 5 stress test pages. Their look is
-/// <see cref="StressTestShell{TReport}"/>.</summary>
+/// <summary>Shared lifecycle, run length, and Start/Stop for the stress test pages. Their look is <see cref="StressTestShell{TReport}"/>;
+/// starting, stopping, progress and timing are the <see cref="Runner"/>'s (<see cref="StressTestRunner{TProgress, TReport}"/>), so every
+/// stress test follows the same rules.</summary>
 public abstract class StressPageBase<TModule, TProgress, TReport> : ModuleDetailsBase, IStressTestPage
     where TModule : StressModuleBase<TProgress, TReport>
     where TProgress : class
     where TReport : class
 {
     protected TModule? Module => DiagnosticModule as TModule;
+    /// <summary>Starts, stops and times this page's test; null when no module was passed.</summary>
+    protected StressTestRunner<TProgress, TReport>? Runner { get; private set; }
     protected TimeSpan _duration = TimeSpan.FromMinutes(1);
 
     /// <summary>The test's latest result.</summary>
-    protected DiagnosticResult Result => Store.Get(DiagnosticModule?.Name ?? "");
-    protected bool Running => Result.Status == DiagnosticStatus.Running;
+    protected DiagnosticResult Result => Runner?.Result ?? Store.Get(DiagnosticModule?.Name ?? "");
+    protected bool Running => Runner?.IsRunning ?? Result.Status == DiagnosticStatus.Running;
     /// <summary>Another stress test or the stress run is going.</summary>
-    protected bool OtherBusy => Diagnostics.IsAnyStressRunning && !Running;
+    protected bool OtherBusy => Runner?.IsOtherBusy ?? (Diagnostics.IsAnyStressRunning && !Running);
     /// <summary>The page's choices can't change now: this test or another one runs.</summary>
     protected bool Locked => Running || OtherBusy;
     /// <summary>The last run's report (for a test that runs once per device, the one the result names).</summary>
     protected TReport? Report => Result.Report() as TReport;
     /// <summary>The current run's live readings (null when it isn't running or before its first report).</summary>
-    protected TProgress? Progress => Running ? Module?.LastProgress : null;
+    protected TProgress? Progress => Runner?.Progress;
     /// <summary>Whether Start can be pressed once nothing else runs.</summary>
     protected virtual bool CanStart => Module is not null;
 
     DiagnosticResult IStressTestPage.Result => Result;
     bool IStressTestPage.IsBlocked => OtherBusy;
-    bool IStressTestPage.ShowStop => Running || Diagnostics.IsStressSuiteRunning;
+    bool IStressTestPage.ShowStop => Runner?.CanStop ?? (Running || Diagnostics.IsStressSuiteRunning);
     bool IStressTestPage.CanStart => CanStart;
     TimeSpan IStressTestPage.Duration => _duration;
-    LiveProgress? IStressTestPage.Progress => Running ? Module?.LiveProgress : null;
+    LiveProgress? IStressTestPage.Progress => Runner?.LiveProgress;
     void IStressTestPage.SetDuration(TimeSpan duration) => _duration = duration;
     void IStressTestPage.Start() => Start();
     void IStressTestPage.Stop() => Stop();
@@ -85,41 +88,46 @@ public abstract class StressPageBase<TModule, TProgress, TReport> : ModuleDetail
         if (Module is { } m)
         {
             SyncFromModule(m);
-            m.ProgressChanged += OnProgress;
+            Runner = new StressTestRunner<TProgress, TReport>(Diagnostics, Store, m);
+            Runner.SuiteFinished += OnSuiteFinished;
+            Runner.Changed += OnRunnerChanged;
         }
-        Diagnostics.StressSuiteProgressChanged += OnSuite;
+        else Diagnostics.StressSuiteProgressChanged += OnSuiteWithoutModule;
     }
 
     protected virtual void SyncFromModule(TModule m) => _duration = m.Duration;
     protected virtual void ApplyToModule(TModule m) => m.Duration = _duration;
 
-    private void OnProgress(object? s, TProgress p) => _ = InvokeAsync(StateHasChanged);
-
-    private void OnSuite(object? s, StressSuiteProgress p)
+    private void OnSuiteFinished(object? s, EventArgs e)
     {
-        if (p.Finished && Module is { } m) SyncFromModule(m);
-        _ = InvokeAsync(StateHasChanged);
+        if (Module is { } m) SyncFromModule(m);
     }
+
+    private void OnRunnerChanged(object? s, EventArgs e) => _ = InvokeAsync(StateHasChanged);
+    private void OnSuiteWithoutModule(object? s, StressSuiteProgress p) => _ = InvokeAsync(StateHasChanged);
 
     protected void Start()
     {
-        if (Module is not { } m || Diagnostics.IsRunning(m.Name) || Diagnostics.IsAnyStressRunning || !CanStart) return;
-        ApplyToModule(m);
-        _ = Diagnostics.RunAsync(m.Name);
+        if (Module is { } m && CanStart) Runner?.Start(() => ApplyToModule(m));
     }
 
     protected void Stop()
     {
-        if (Diagnostics.IsStressSuiteRunning) Diagnostics.CancelStressSuite();
-        Module?.Stop();
+        if (Runner is { } r) r.Stop();
+        else if (Diagnostics.IsStressSuiteRunning) Diagnostics.CancelStressSuite();
     }
 
     protected static string Clock(TimeSpan t) => LiveProgress.Clock(t);
 
     public override void Dispose()
     {
-        if (Module is { } m) m.ProgressChanged -= OnProgress;
-        Diagnostics.StressSuiteProgressChanged -= OnSuite;
+        if (Runner is { } r)
+        {
+            r.SuiteFinished -= OnSuiteFinished;
+            r.Changed -= OnRunnerChanged;
+            r.Dispose();
+        }
+        Diagnostics.StressSuiteProgressChanged -= OnSuiteWithoutModule;
         base.Dispose();
     }
 }

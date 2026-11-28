@@ -248,8 +248,8 @@ public class DashboardUiPolishTests : BunitContext
 
         // Descendant `.card-head .dot` would leak margin-top: 6px into `.card-head .chip .dot` and knock pill dots off-center.
         Assert.DoesNotContain(".card-head .dot", css);
-        Assert.Contains(".card-head > .dot { margin-top: 6px; }", css);
-        Assert.Contains(".chip { font-size: 12px; line-height: 1; padding: 5px 9px; }", css);
+        Assert.Contains(".card-head > .dot { margin-top: var(--space-3); }", css);
+        Assert.Contains(".chip { font-size: var(--fs-xs); line-height: 1; padding: 5px 9px; }", css);
         Assert.Contains(".chip .dot { margin: 0; }", css);
     }
 
@@ -418,12 +418,12 @@ public class DashboardUiPolishTests : BunitContext
         var css = File.ReadAllText(Path.Combine(root, "src", "RemotePCDiagnostics.UI", "wwwroot", "app.css"));
 
         Assert.Contains(".card-details p.meta { max-width: none; }", css);
-        Assert.Contains(".card-details > p { margin: 0 0 8px; }", css);
+        Assert.Contains(".card-details > p { margin: 0 0 var(--space-4); }", css);
         Assert.Contains("a.btn-small {", css);
         Assert.Contains(".row-detail-actions {", css);
         Assert.Contains(".issue-group-actions {", css);
         Assert.Contains("td.svc-actions { display: table-cell; white-space: nowrap; word-break: normal; width: 1%; }", css);
-        Assert.Contains(".svc-actions button { min-height: 28px; padding: 3px 9px; font-size: 12px; white-space: nowrap; word-break: normal; }", css);
+        Assert.Contains(".svc-actions button { min-height: 28px; padding: 3px 9px; font-size: var(--fs-xs); white-space: nowrap; word-break: normal; }", css);
     }
 
     [Fact]
@@ -521,7 +521,9 @@ public class DashboardUiPolishTests : BunitContext
             Assert.Empty(cut.FindAll("[data-testid='area-drawer-crashes'] tr.row-expandable"));
 
             cut.Find("[data-testid='area-show-reviewed']").Click();
-            cut.Find("tr.row-expandable").Click();
+            // "Show reviewed" was already showing before the refresh's result rendered (the row moves at once), so the reviewed row
+            // appears only once that render lands: wait for it rather than look straight away.
+            cut.WaitForElement("tr.row-expandable", TimeSpan.FromSeconds(5)).Click();
             var undo = cut.WaitForElement("button[data-action='review-row']");
             Assert.Equal("Undo review", undo.TextContent.Trim());
             undo.Click();

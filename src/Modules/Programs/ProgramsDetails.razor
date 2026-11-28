@@ -4,12 +4,12 @@
 @* The module's own UI: find an installed program or update in the last run. It runs in the module UI host (user mode, its own process)
    and is framed on the module page above the generic report, so it only adds what the report doesn't have: a search. It uses nothing but
    Components and Core types (the app's UI assembly isn't in that process) and styles itself inline (the frame has none of the app's CSS). *@
-<div class="programs-find" style="display: flex; flex-direction: column; gap: 8px">
-    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+<div class="programs-find" style="display: flex; flex-direction: column; gap: var(--space-4)">
+    <div style="display: flex; gap: var(--space-4); align-items: center; flex-wrap: wrap">
         <input type="search" placeholder="Find a program or update (name, publisher, KB number)" aria-label="Find a program or update"
-               data-testid="programs-find" style="flex: 1 1 260px; min-width: 0; padding: 6px 8px; border: 1px solid rgba(128,128,128,.5); border-radius: 6px; font: inherit; color: inherit; background: transparent"
+               data-testid="programs-find" style="flex: 1 1 260px; min-width: 0; padding: var(--space-3) var(--space-4); border: 1px solid rgba(128,128,128,.5); border-radius: var(--radius-sm); font: inherit; color: inherit; background: transparent"
                @bind="_query" @bind:event="oninput" />
-        <label style="display: flex; gap: 4px; align-items: center; white-space: nowrap">
+        <label style="display: flex; gap: var(--space-2); align-items: center; white-space: nowrap">
             <input type="checkbox" data-testid="programs-recent" @bind="_recentOnly" /> Last 30 days only
         </label>
     </div>
@@ -26,15 +26,15 @@
         @if (matches.Count > 0)
         {
             <table style="border-collapse: collapse; width: 100%">
-                <thead><tr>@foreach (var h in new[] { "Name", "Version / type", "Publisher", "Installed" }) { <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid rgba(128,128,128,.4)">@h</th> }</tr></thead>
+                <thead><tr>@foreach (var h in new[] { "Name", "Version / type", "Publisher", "Installed" }) { <th style="text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 1px solid rgba(128,128,128,.4)">@h</th> }</tr></thead>
                 <tbody>
                 @foreach (var m in matches.Take(MaxShown))
                 {
                     <tr data-testid="programs-find-row">
-                        <td style="padding: 4px 6px">@m.Name@if (m.IsUpdate) { <span style="margin-left: 6px; font-size: 12px; opacity: .7">update</span> }</td>
-                        <td style="padding: 4px 6px">@m.Version</td>
-                        <td style="padding: 4px 6px">@m.Publisher</td>
-                        <td style="padding: 4px 6px; white-space: nowrap">@m.Installed</td>
+                        <td style="padding: var(--space-2) var(--space-3)">@m.Name@if (m.IsUpdate) { <span style="margin-left: var(--space-3); font-size: var(--fs-xs); opacity: .7">update</span> }</td>
+                        <td style="padding: var(--space-2) var(--space-3)">@m.Version</td>
+                        <td style="padding: var(--space-2) var(--space-3)">@m.Publisher</td>
+                        <td style="padding: var(--space-2) var(--space-3); white-space: nowrap">@m.Installed</td>
                     </tr>
                 }
                 </tbody>
