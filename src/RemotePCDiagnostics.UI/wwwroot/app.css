@@ -1816,3 +1816,15 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
 .vplay-streams th, .vplay-streams td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
 .vplay-streams th { color: var(--text-muted); font-weight: 600; }
 @media (max-width: 600px) { .vplay-streams th:nth-child(6), .vplay-streams td:nth-child(6) { display: none; } }
+/* Every speaker and microphone (Interactive tests) */
+.ad-group { margin-top: 10px; }
+.ad-list { list-style: none; padding: 0; margin: 6px 0; display: flex; flex-direction: column; gap: 8px; }
+.ad-dev { padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.ad-dev.on { border-color: var(--accent); box-shadow: var(--glow-soft); }
+.ad-dev-head { display: flex; gap: 10px; align-items: flex-start; }
+.ad-dev-name { flex: 1; min-width: 0; }
+.ad-dev-name b { color: var(--text-strong); overflow-wrap: anywhere; }
+.ad-dev-name .meta { margin: 2px 0 0; }
+.ad-dev > .meta { margin: 6px 0 0; }
+.ad-meter { height: 8px; border-radius: 4px; background: var(--badge-bg); margin: 8px 0 2px; overflow: hidden; }
+.ad-meter span { display: block; height: 100%; background: var(--accent); transition: width .1s linear; }

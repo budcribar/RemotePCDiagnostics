@@ -79,6 +79,8 @@ public static class ModuleIds
     public static readonly Guid EthernetPort = new("6f2cda7d-0f7b-456c-a0dc-dedd9582c069");
     /// <summary>Slug <c>ChargerReplug</c>.</summary>
     public static readonly Guid ChargerReplug = new("6e740559-6220-4ea6-b09b-303928f1982f");
+    /// <summary>Slug <c>AudioDevices</c>.</summary>
+    public static readonly Guid AudioDevices = new("0541d464-e4d7-4efe-8d0a-3b8357e4110e");
     /// <summary>Slug <c>WindowsMaintenance</c>.</summary>
     public static readonly Guid WindowsMaintenance = new("f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41");
     /// <summary>Slug <c>DiskSurfaceScan</c>.</summary>
@@ -146,6 +148,7 @@ public static class ModuleIds
         [VideoPlayback] = ModuleSlugs.VideoPlayback,
         [UsbPorts] = ModuleSlugs.UsbPorts,
         [UsbPortCheck] = ModuleSlugs.UsbPortCheck,
+        [AudioDevices] = ModuleSlugs.AudioDevices,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -217,4 +220,6 @@ public static class ModuleSlugs
     public const string UsbPorts = "UsbPorts";
     /// <summary>The interactive USB port check: plug a device into each port in turn (Interactive tests page).</summary>
     public const string UsbPortCheck = "UsbPortCheck";
+    /// <summary>The interactive per-device test: play every speaker, record every microphone (Interactive tests page).</summary>
+    public const string AudioDevices = "AudioDevices";
 }

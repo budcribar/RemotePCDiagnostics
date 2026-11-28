@@ -34,8 +34,9 @@ public static class InteractiveExport
 
     public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
-        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane, charger, usbPortCheck), Json);
+        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null,
+        ModuleState? audioDevices = null, string? audioDevicesBusyId = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane, charger, usbPortCheck, audioDevices, audioDevicesBusyId), Json);
 
     /// <summary>The USB port check's result and what it has seen so far in the watch that is running (the result is Running meanwhile).</summary>
     public sealed record UsbPortCheckState(ModuleState Module, Usb.UsbPortCheckReport Live);
@@ -54,7 +55,8 @@ public static class InteractiveExport
 
     public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
-        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null) => new
+        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null,
+        ModuleState? audioDevices = null, string? audioDevicesBusyId = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -76,6 +78,7 @@ public static class InteractiveExport
             EthernetTest(page, ethernet ?? DiagnosticResult.NotRun(ModuleSlugs.EthernetPort), ethernetPane),
             ChargerTest(page, charger ?? DiagnosticResult.NotRun(ModuleSlugs.ChargerReplug)),
             UsbPortCheckTest(page, usbPortCheck ?? new(new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.UsbPortCheck), false), Usb.UsbPortCheckReport.Empty)),
+            AudioDevicesExport(page, audioDevices ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.AudioDevices), false), audioDevicesBusyId),
         },
     };
 
@@ -402,6 +405,75 @@ public static class InteractiveExport
         };
     }
 
+    private static string Outcome(AudioDeviceOutcome o) => o switch
+    {
+        AudioDeviceOutcome.Passed => "passed",
+        AudioDeviceOutcome.Warning => "warning",
+        AudioDeviceOutcome.Failed => "failed",
+        AudioDeviceOutcome.Skipped => "skipped",
+        _ => "notrun",
+    };
+
+    private static string? Heard(SoundCheckAnswer? a) => a switch
+    {
+        SoundCheckAnswer.Both => "both", SoundCheckAnswer.OnlyLeft => "only-left", SoundCheckAnswer.OnlyRight => "only-right",
+        SoundCheckAnswer.Nothing => "nothing", _ => null,
+    };
+
+    /// <summary>
+    /// The per-device test: one entry per speaker and microphone, with its state, what RPCD measured (the recorded level for a microphone)
+    /// or what the person heard (for a speaker), its result and the Sound fixes on its row.
+    /// </summary>
+    private static object AudioDevicesExport(PageState page, ModuleState m, string? busyId)
+    {
+        var r = m.Result;
+        var rep = r.Payload as AudioDevicesReport;
+        var waiting = rep?.Devices.Any(d => d.WaitingForAnswer) == true;
+        return new
+        {
+            id = "audiodevices",
+            name = AudioDevicesTest.DisplayName,
+            @checked = page.CheckedTestIds.Contains("audiodevices"),
+            open = page.SelectedTestId == "audiodevices",
+            state = r.Status == DiagnosticStatus.Running ? "running" : m.PersonEntered ? "done"
+                : waiting ? "waiting-for-person-verdict"
+                : rep is { Untested: 0, Tested: > 0 } ? "done"
+                : rep is { Tested: > 0 } ? "in-progress" : "waiting-for-person",
+            runId = r.RunId,
+            busyDevice = busyId,
+            tested = rep?.Tested,
+            untested = rep?.Untested,
+            notice = T(rep?.Notice),
+            devices = rep?.Devices.Select(d => new
+            {
+                id = d.Id,
+                name = V(d.Name),
+                flow = d.Flow == AudioFlow.Output ? "output" : "input",
+                kind = V(d.Kind),
+                state = d.State.ToString().ToLowerInvariant(),
+                isDefault = d.IsDefault,
+                muted = d.Muted,
+                volume = d.Volume is { } v ? Math.Round(v * 100) : (double?)null,
+                result = Outcome(d.Outcome),
+                summary = V(d.Result),
+                waitingForAnswer = d.WaitingForAnswer,
+                measured = d.Flow == AudioFlow.Output
+                    ? d.Channels is null ? null : (object)new { channels = d.Channels }
+                    : d.LevelDbfs is null ? null : new { levelDbfs = d.LevelDbfs, peakDbfs = d.PeakDbfs },
+                heard = Heard(d.Heard),
+                hint = T(d.Hint),
+                fixes = d.Actions?.Select(a => new { kind = a.Kind.ToString(), button = V(a.ButtonText), target = a.Target }).ToList(),
+            }).ToList(),
+            personOutcome = m.PersonEntered ? Person(r.Status) : null,
+            message = T(r.Message),
+            instructions = "Every speaker and microphone is listed with its state. For a speaker, press Play: a chime plays on the left, then "
+                + "the right, and the person answers Heard both, Only left, Only right or Nothing. For a microphone, press Record and talk for "
+                + "3 seconds: RPCD judges the level (no signal = failed, very low = speak closer) and Play back lets the person hear it. "
+                + "Disabled, muted or very quiet devices show their fix button. For HDMI or DisplayPort sound, connect a monitor or TV with speakers.",
+            reportIf = ReportIf.AudioDevices,
+        };
+    }
+
     /// <summary>
     /// When an agent coaching a test should report a learning (Admin's report_learning tool): the test's instructions or screen did not
     /// match what the person has. One line each, written for the agent, not the person.
@@ -480,6 +552,8 @@ public static class InteractiveExport
             + "the test said it didn't, or the PC charges only from a dock the test doesn't account for.";
         public const string UsbPortCheck = "A device the person plugs in doesn't show, shows on the wrong port, or shows a speed that "
             + "disagrees with the device or the port (for example a USB 3 stick in a blue port shown at USB 2 speed when it works fast).";
+        public const string AudioDevices = "A speaker or microphone the person has is not listed, the chime plays on a different device than "
+            + "the one pressed, a microphone the person hears in Play back is judged no signal, or a fix button doesn't change the device.";
         public const string MicToSpeaker = "The person's microphone or speaker is not listed, there is no playback, or feedback makes the test "
             + "unusable.";
     }

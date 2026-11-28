@@ -57,6 +57,7 @@ public class ModuleIdsTests
         ["BatteryDrain"] = "32ea07c3-6c63-4453-a03e-7d778b74b308",
         ["UsbPorts"] = "b6237a7b-102a-4a68-8553-0fed276ef946",
         ["UsbPortCheck"] = "1b68970d-8ec7-45ee-bc39-bc88bca9de77",
+        ["AudioDevices"] = "0541d464-e4d7-4efe-8d0a-3b8357e4110e",
     };
 
     [Fact]

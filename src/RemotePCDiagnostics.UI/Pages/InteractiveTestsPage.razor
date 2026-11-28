@@ -46,15 +46,28 @@
     var usbModule = GetUsbPortCheckModule();
     var usbRep = usbRunning ? usbModule?.Live : usbResult.Payload as UsbPortCheckReport;
 
+    var adResult = Store.Get(ModuleSlugs.AudioDevices);
+    var adRep = adResult.Payload as AudioDevicesReport;
+    var adModule = GetAudioDevicesModule();
+    var adBusyId = adModule?.BusyId;
+    var adRunning = adResult.Status == DiagnosticStatus.Running;
+    // Waiting: devices left to test, or a played speaker waiting for the person's answer (not a warning yet).
+    var adAnswer = !adRunning && adRep?.Devices.Any(d => d.WaitingForAnswer) == true;
+    var adWaiting = !adRunning && adResult.Status == DiagnosticStatus.Warning && !_personResults.ContainsKey(ModuleSlugs.AudioDevices)
+                    && (adAnswer || adRep is { Untested: > 0 });
+    var adChip = adRunning ? "run" : adWaiting ? "run" : OutcomeChip(adResult.Status);
+    var adDot = adWaiting ? "running" : DotKind(adResult.Status);
+    var adLabel = adRunning ? "Running…" : adAnswer ? "Waiting for answer" : adWaiting ? "In progress" : OutcomeLabel(adResult.Status);
+
     var kbSnap = ActivePhysicalQa.Current;
-    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning || scRunning || wfRunning || ethRunning || chRunning || usbRunning;
+    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning || scRunning || wfRunning || ethRunning || chRunning || usbRunning || adRunning;
 
     var allSelected = _selected.Count == AllTestIds.Length;
     var mixedSelected = _selected.Count > 0 && _selected.Count < AllTestIds.Length;
 }
 
 <div class="ct-page">
-    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), wfResult, ethResult, chResult, usbResult, usbModule?.Live)" />
+    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), wfResult, ethResult, chResult, usbResult, usbModule?.Live, adResult, adBusyId)" />
     <div class="toolbar">
         <span class="icon-badge page-icon"><Icon Name="eye" Size="20" /></span>
         <h1 data-rpcd-page="interactive" data-rpcd-contract="@BrowserContract.Interactive" data-testid="interactive-title">Interactive tests</h1>
@@ -383,6 +396,29 @@
                         </div>
                         <div class="ct-row-side">
                             <span class="chip chip-@usbChip" data-testid="interactive-status-usbports">@usbLabel</span>
+                        </div>
+                    </div>
+
+                    @* 7. Every speaker and microphone: play each output, record each input *@
+                    @{
+                        var adIsSel = _selectedTestId == "audiodevices";
+                        var adSummary = adRunning ? adResult.Message : adResult.Status == DiagnosticStatus.NotRun ? "Play each speaker and record each microphone, one by one" : adResult.Message;
+                    }
+                    <div class="ct-row @(adIsSel ? "selected" : "") @(adRunning ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(adIsSel ? "true" : "false")"
+                         data-testid="interactive-row-audiodevices" @onclick='() => SelectTest("audiodevices")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("audiodevices") ? "true" : "false")"
+                                aria-label="Include Every speaker and microphone"
+                                data-testid="interactive-check-audiodevices"
+                                @onclick='() => ToggleItem("audiodevices")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("audiodevices") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@adDot"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">@AudioDevicesTest.DisplayName</div>
+                            <div class="ct-row-summary meta" title="@adSummary">@adSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@adChip" data-testid="interactive-status-audiodevices">@adLabel</span>
                         </div>
                     </div>
                 </div>
@@ -1114,6 +1150,108 @@
                     }
                 </div>
             }
+            else if (_selectedTestId == "audiodevices")
+            {
+                <div class="phys-qa-pane" data-testid="interactive-audiodevices-pane">
+                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                        <strong>@AudioDevicesTest.DisplayName</strong>
+                        <span class="chip chip-@adChip" data-testid="audiodevices-status-chip">@adLabel</span>
+                        @if (adBusyId is not null)
+                        {
+                            <button type="button" class="btn-small" data-testid="audiodevices-cancel-btn" @onclick="CancelAudioDevices">Cancel</button>
+                        }
+                    </div>
+                    <p class="meta" style="margin-top: 0">Tests each speaker and microphone on its own, not only the Windows default. Mute and volume are left as they are, so a muted device shows its fix.</p>
+                    @if (adRep?.Notice is { } adNotice) { <p class="notice" data-testid="audiodevices-notice">@adNotice</p> }
+                    <p data-testid="audiodevices-status" class="status-line"><span class="@DotClass(adRunning ? DiagnosticStatus.Running : adResult.Status)"></span><span>@(adResult.Status == DiagnosticStatus.NotRun ? "Reading the sound devices…" : adResult.Message)</span></p>
+                    @if (adRep is not null)
+                    {
+                        foreach (var (flow, title, empty) in new[] { (AudioFlow.Output, "Speakers & headphones", "No speakers or headphones found."), (AudioFlow.Input, "Microphones", "No microphones found.") })
+                        {
+                            var list = adRep.Devices.Where(d => d.Flow == flow).ToList();
+                            <div class="ad-group" data-testid="audiodevices-group-@(flow == AudioFlow.Output ? "output" : "input")">
+                                <strong class="sc-q">@title</strong>
+                                @if (list.Count == 0) { <p class="meta">@empty</p> }
+                                <ul class="ad-list">
+                                    @foreach (var d in list)
+                                    {
+                                        var busy = adBusyId == d.Id;
+                                        <li class="ad-dev @(busy ? "on" : "")" data-testid="audiodevices-device" data-device-id="@d.Id" data-flow="@(flow == AudioFlow.Output ? "output" : "input")"
+                                            data-result="@d.Outcome.ToString().ToLowerInvariant()">
+                                            <div class="ad-dev-head">
+                                                <span class="@DotClass(ToStatus(d.Outcome))"></span>
+                                                <div class="ad-dev-name">
+                                                    <b>@d.Name</b>
+                                                    <div class="meta">@d.Kind@(d.IsDefault ? " · Windows default" : "") · @StateText(d)</div>
+                                                </div>
+                                                <span class="chip chip-@(d.WaitingForAnswer ? "run" : OutcomeChip(ToStatus(d.Outcome)))" data-testid="audiodevices-device-result">@d.Result</span>
+                                            </div>
+                                            @if (busy && flow == AudioFlow.Input && adModule is not null)
+                                            {
+                                                <div class="ad-meter" data-testid="audiodevices-meter" role="meter" aria-label="Microphone level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@MeterPercent(adModule.LiveLevelDbfs)">
+                                                    <span style="width: @(MeterPercent(adModule.LiveLevelDbfs))%"></span>
+                                                </div>
+                                            }
+                                            @if (d.Flow == AudioFlow.Input && d.LevelDbfs is { } lvl && !busy)
+                                            {
+                                                <div class="meta" data-testid="audiodevices-level">Level @Db(lvl) · peak @Db(d.PeakDbfs ?? AudioMath.SilenceDbfs)</div>
+                                            }
+                                            @if (d.Hint is { } hint) { <div class="meta" data-testid="audiodevices-hint">@hint</div> }
+                                            <div class="phys-qa-actions">
+                                                @if (d.Testable && flow == AudioFlow.Output)
+                                                {
+                                                    <button type="button" class="btn-small @(d.Channels is null ? "btn-primary" : "")" data-testid="audiodevices-play" disabled="@(adBusyId is not null || Diagnostics.IsStressSuiteRunning)"
+                                                            @onclick="() => PlayDeviceAsync(d.Id)">▶ @(d.Channels is null ? "Play" : "Play again")</button>
+                                                    @if (d.Channels is not null && !busy)
+                                                    {
+                                                        @foreach (var (ans, text, id) in d.Channels == 1 ? MonoAnswerButtons : AnswerButtons)
+                                                        {
+                                                            <button type="button" class="btn-small @(d.Heard == ans ? "btn-primary" : "")" data-testid="audiodevices-answer-@id" data-answer="@id"
+                                                                    aria-pressed="@(d.Heard == ans ? "true" : "false")" @onclick="() => AnswerDevice(d.Id, ans)">@text</button>
+                                                        }
+                                                    }
+                                                }
+                                                else if (d.Testable)
+                                                {
+                                                    <button type="button" class="btn-small @(d.LevelDbfs is null ? "btn-primary" : "")" data-testid="audiodevices-record" disabled="@(adBusyId is not null || Diagnostics.IsStressSuiteRunning)"
+                                                            @onclick="() => RecordDeviceAsync(d.Id)">● @(busy ? "Recording…" : d.LevelDbfs is null ? "Record 3 s" : "Record again")</button>
+                                                    @if (adModule?.HasRecording(d.Id) == true)
+                                                    {
+                                                        <button type="button" class="btn-small" data-testid="audiodevices-playback" disabled="@(adBusyId is not null)" @onclick="() => PlayBackAsync(d.Id)">Play back</button>
+                                                    }
+                                                }
+                                                @if (App.Remediation is not null && FixAccess.Offerable(d.Actions, App.AgentFixes) is { Count: > 0 } fixes)
+                                                {
+                                                    @foreach (var a in fixes)
+                                                    {
+                                                        <button type="button" class="btn-small" data-testid="audiodevices-fix-@a.Kind" data-action="remediate"
+                                                                data-action-kind="@a.Kind" data-action-target="@a.Target" disabled="@(adBusyId is not null)" @onclick="() => _audioDevicesFixUi?.Ask(a)">@a.ButtonText</button>
+                                                    }
+                                                }
+                                            </div>
+                                        </li>
+                                    }
+                                </ul>
+                            </div>
+                        }
+                    }
+                    @if (App.Remediation is not null)
+                    {
+                        <RemediationActions @ref="_audioDevicesFixUi" Actions="App.Remediation" ShowRecent="false" Origin="@ModuleSlugs.AudioDevices" OnStateChanged="StateHasChanged"
+                                            OnCompleted="() => Diagnostics.RunAsync(ModuleSlugs.AudioDevices)" />
+                    }
+                    <label class="phys-qa-note">
+                        <span class="meta">Optional note (e.g. headset mic crackles)</span>
+                        <input data-testid="audiodevices-notes" value="@_audioDevicesNotes" @oninput="e => _audioDevicesNotes = e.Value?.ToString() ?? string.Empty" maxlength="240" placeholder="Optional note…" />
+                    </label>
+                    <div class="phys-qa-actions">
+                        <button type="button" class="btn-small" data-testid="audiodevices-refresh" disabled="@(adBusyId is not null)" @onclick="() => Diagnostics.RunAsync(ModuleSlugs.AudioDevices)">Check devices again</button>
+                        <button type="button" class="btn-small" data-testid="audiodevices-note-btn" @onclick="() => SetAudioOutcome(ModuleSlugs.AudioDevices, DiagnosticStatus.Warning, _audioDevicesNotes)">Pass with note</button>
+                        <button type="button" class="btn-small" data-testid="audiodevices-fail" @onclick="() => SetAudioOutcome(ModuleSlugs.AudioDevices, DiagnosticStatus.Error, _audioDevicesNotes)">Fail with note</button>
+                        <button type="button" class="btn-small" data-testid="audiodevices-reset" disabled="@(adBusyId is not null)" @onclick="ResetAudioDevices">Reset</button>
+                    </div>
+                </div>
+            }
         </section>
     </div>
 </div>
@@ -1122,8 +1260,8 @@
     private readonly PhysicalBenchQaService _fallbackPhysicalQa = new();
     private PhysicalBenchQaService ActivePhysicalQa => App.PhysicalQa ?? _fallbackPhysicalQa;
 
-    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "charger", "wifi", "ethernet", "usbports"];
-    private readonly HashSet<string> _selected = new(["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "charger", "wifi", "ethernet", "usbports"], StringComparer.OrdinalIgnoreCase);
+    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "charger", "wifi", "ethernet", "usbports", "audiodevices"];
+    private readonly HashSet<string> _selected = new(AllTestIds, StringComparer.OrdinalIgnoreCase);
 
     // The Wi-Fi connect pane: the last scan's networks, the one picked (null = the network the PC is on), and the typed password.
     private IReadOnlyList<WifiNetworkSeen> _wifiNetworks = [];
@@ -1158,6 +1296,12 @@
     private string? _soundHelp;
     private string _soundNotes = "";
     private RemediationActions? _soundFixUi;
+    private RemediationActions? _audioDevicesFixUi;
+    private string _audioDevicesNotes = "";
+    private IAudioDevicesTestModule? _levelSource;
+    private long _lastMeterTick;
+    private static readonly (SoundCheckAnswer Answer, string Text, string Id)[] MonoAnswerButtons =
+        [(SoundCheckAnswer.Both, "Heard it", "both"), (SoundCheckAnswer.Nothing, "Nothing", "nothing")];
     private static readonly (SoundCheckAnswer Answer, string Text, string Id)[] AnswerButtons =
         [(SoundCheckAnswer.Both, "Heard both", "both"), (SoundCheckAnswer.OnlyLeft, "Only left", "only-left"),
          (SoundCheckAnswer.OnlyRight, "Only right", "only-right"), (SoundCheckAnswer.Nothing, "Nothing", "nothing")];
@@ -1177,13 +1321,13 @@
 
     /// <summary>The page's state for browser agents (interactive-data): measured evidence and person-entered verdicts kept apart.</summary>
     private string InteractiveJson(RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaSnapshot kb, DiagnosticResult cam, DiagnosticResult s2m, DiagnosticResult m2s,
-        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, DiagnosticResult wifi, DiagnosticResult ethernet, DiagnosticResult charger, DiagnosticResult usb, UsbPortCheckReport? usbLive) =>
+        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, DiagnosticResult wifi, DiagnosticResult ethernet, DiagnosticResult charger, DiagnosticResult usb, UsbPortCheckReport? usbLive, DiagnosticResult ad, string? adBusyId) =>
         InteractiveExport.ToJson(
             new InteractiveExport.PageState(_selectedTestId, _selected, _isBatchRunning, _isRemoteDisplay, Session.Mode == SessionMode.Remote || _hasRemoteSession, _technicianHasControl),
             kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help, wifi,
             new InteractiveExport.WifiPane(_wifiNetworks, WifiPicked?.Ssid, _wifiPassword.Length > 0, _wifiDropsSession, _wifiScanning),
             ethernet, new InteractiveExport.EthernetPane(_ethPorts, EthernetPicked?.Name, _ethMode, _ethDropsSession, _ethLoading), charger,
-            new InteractiveExport.UsbPortCheckState(PersonState(usb), usbLive ?? UsbPortCheckReport.Empty));
+            new InteractiveExport.UsbPortCheckState(PersonState(usb), usbLive ?? UsbPortCheckReport.Empty), PersonState(ad), adBusyId);
 
     private IReadOnlyList<AudioDevice> _outputs = [];
     private IReadOnlyList<AudioDevice> _inputs = [];
@@ -1202,7 +1346,7 @@
 
     private DotNetObjectReference<InteractiveTestsPage>? _dotNetRef;
     private IUsbPortCheckModule? _usbPortCheckModule;
-    private bool _disposed;
+    private volatile bool _disposed;
     private bool _isRemoteDisplay;
     private bool _hasRemoteSession;
     private bool _technicianHasControl;
@@ -1219,6 +1363,19 @@
         if (_selectedTestId == "ethernet") _ = LoadEthernetPortsAsync();
         if (_selectedTestId == "soundcheck" && HelpQuery == "cant-hear") _ = OpenCantHearAsync();
         if (_selectedTestId == "wifi") _ = ScanWifiAsync();
+        _levelSource = GetAudioDevicesModule();
+        if (_levelSource is not null) _levelSource.LevelChanged += OnMicLevel;
+        if (_selectedTestId == "audiodevices") _ = ReadAudioDevicesIfNeededAsync();
+    }
+
+    /// <summary>Redraws the meter while a microphone records, at most 10 times a second.</summary>
+    private void OnMicLevel()
+    {
+        if (_disposed) return;
+        var now = Environment.TickCount64;
+        if (now - Interlocked.Read(ref _lastMeterTick) < 100 && _levelSource?.BusyId is not null) return;
+        Interlocked.Exchange(ref _lastMeterTick, now);
+        try { _ = InvokeAsync(() => { if (!_disposed) StateHasChanged(); }); } catch (ObjectDisposedException) { }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -1257,6 +1414,8 @@
             _usbPortCheckModule.Changed -= OnUsbPortCheckChanged;
             _usbPortCheckModule = null;
         }
+        if (_levelSource is not null) _levelSource.LevelChanged -= OnMicLevel;
+        CancelAudioDevices();
         _batchCts?.Cancel();
         _interactiveWaitTcs?.TrySetCanceled();
         _batchCts?.Dispose();
@@ -1275,6 +1434,7 @@
         _selectedTestId = id;
         if (id == "wifi" && !_wifiScanned) _ = ScanWifiAsync();
         if (id == "ethernet" && !_ethLoaded) _ = LoadEthernetPortsAsync();
+        if (id == "audiodevices") _ = ReadAudioDevicesIfNeededAsync();
     }
 
     private IWifiConnectModule? GetWifiModule() =>
@@ -1496,6 +1656,10 @@
                     case "usbports":
                         await StartUsbPortCheckAsync();
                         break;
+                    case "audiodevices":
+                        // Lists the devices only: each one plays or records when the person presses its button.
+                        await Diagnostics.RunAsync(ModuleSlugs.AudioDevices);
+                        break;
                 }
             }
         }
@@ -1521,6 +1685,7 @@
         CancelWifi();
         CancelEthernet();
         CancelUsbPortCheck();
+        CancelAudioDevices();
         Diagnostics.CancelStressSuite();
     }
 
@@ -1645,6 +1810,66 @@
         await StartSpeakerToMicAsync();
         await Diagnostics.RunAsync(ModuleSlugs.Sound);
     }
+
+    private IAudioDevicesTestModule? GetAudioDevicesModule() => GetAudioModule(ModuleSlugs.AudioDevices) as IAudioDevicesTestModule;
+
+    private async Task ReadAudioDevicesIfNeededAsync()
+    {
+        try
+        {
+            if (!_disposed && Store.Get(ModuleSlugs.AudioDevices).Status == DiagnosticStatus.NotRun)
+                await Diagnostics.RunAsync(ModuleSlugs.AudioDevices);
+        }
+        catch (Exception) { }
+    }
+
+    private void CancelAudioDevices() => GetAudioDevicesModule()?.Cancel();
+
+    /// <summary>Runs one device step; a cancelled step stores the report as it stands (cancelling doesn't change a device's result).</summary>
+    private async Task DeviceStepAsync(Func<IAudioDevicesTestModule, Task<DiagnosticResult>> step)
+    {
+        if (_disposed || Diagnostics.IsStressSuiteRunning || GetAudioDevicesModule() is not { BusyId: null } m) return;
+        _personResults.Remove(ModuleSlugs.AudioDevices);
+        var r = await step(m);
+        if (r.Cancelled) Store.Set(AudioDevicesTest.ToResult(m.Report));
+        if (!_disposed) await InvokeAsync(StateHasChanged);
+    }
+
+    private Task PlayDeviceAsync(string id) => DeviceStepAsync(m => m.PlayAsync(id));
+    private Task RecordDeviceAsync(string id) => DeviceStepAsync(m => m.RecordAsync(id));
+    private Task PlayBackAsync(string id) => DeviceStepAsync(m => m.PlayBackAsync(id));
+
+    private void AnswerDevice(string id, SoundCheckAnswer answer)
+    {
+        _personResults.Remove(ModuleSlugs.AudioDevices);
+        GetAudioDevicesModule()?.Answer(id, answer);
+    }
+
+    private void ResetAudioDevices()
+    {
+        _audioDevicesNotes = "";
+        _personResults.Remove(ModuleSlugs.AudioDevices);
+        if (GetAudioDevicesModule() is { } m) m.Reset();
+    }
+
+    private static DiagnosticStatus ToStatus(AudioDeviceOutcome o) => o switch
+    {
+        AudioDeviceOutcome.Passed => DiagnosticStatus.Ok,
+        AudioDeviceOutcome.Warning => DiagnosticStatus.Warning,
+        AudioDeviceOutcome.Failed => DiagnosticStatus.Error,
+        _ => DiagnosticStatus.NotRun,
+    };
+
+    private static string StateText(AudioDeviceRow d)
+    {
+        if (!d.IsActive) return d.State == AudioEndpointState.Disabled ? "Disabled" : "Not connected";
+        var parts = new List<string> { d.Muted == true ? "Muted" : "Ready" };
+        if (d.Volume is { } v) parts.Add($"{Math.Round(v * 100):0}% {(d.Flow == AudioFlow.Output ? "volume" : "level")}");
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>The meter's fill: -60 dBFS (empty) to 0 dBFS (full).</summary>
+    private static int MeterPercent(double dbfs) => !double.IsFinite(dbfs) ? 0 : (int)Math.Clamp(Math.Round((dbfs + 60) / 60 * 100), 0, 100);
 
     private void ResetSoundCheck()
     {

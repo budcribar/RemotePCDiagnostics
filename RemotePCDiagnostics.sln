@@ -143,6 +143,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules.UsbPortCheck", "src\Modules\UsbPortCheck\RemotePCDiagnostics.Modules.UsbPortCheck.csproj", "{8BC1ADDD-241C-402C-ACEB-2A8955BBA1A7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules.AudioDevices", "src\Modules\AudioDevices\RemotePCDiagnostics.Modules.AudioDevices.csproj", "{2C8014E8-9362-4A3B-B786-F1D465981D54}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -873,6 +875,18 @@ Global
 		{8BC1ADDD-241C-402C-ACEB-2A8955BBA1A7}.Release|x64.Build.0 = Release|Any CPU
 		{8BC1ADDD-241C-402C-ACEB-2A8955BBA1A7}.Release|x86.ActiveCfg = Release|Any CPU
 		{8BC1ADDD-241C-402C-ACEB-2A8955BBA1A7}.Release|x86.Build.0 = Release|Any CPU
+		{2C8014E8-9362-4A3B-B786-F1D465981D54}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2C8014E8-9362-4A3B-B786-F1D465981D54}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2C8014E8-9362-4A3B-B786-F1D465981D54}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{2C8014E8-9362-4A3B-B786-F1D465981D54}.Debug|x64.Build.0 = Debug|Any CPU
+		{2C8014E8-9362-4A3B-B786-F1D465981D54}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{2C8014E8-9362-4A3B-B786-F1D465981D54}.Debug|x86.Build.0 = Debug|Any CPU
+		{2C8014E8-9362-4A3B-B786-F1D465981D54}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2C8014E8-9362-4A3B-B786-F1D465981D54}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2C8014E8-9362-4A3B-B786-F1D465981D54}.Release|x64.ActiveCfg = Release|Any CPU
+		{2C8014E8-9362-4A3B-B786-F1D465981D54}.Release|x64.Build.0 = Release|Any CPU
+		{2C8014E8-9362-4A3B-B786-F1D465981D54}.Release|x86.ActiveCfg = Release|Any CPU
+		{2C8014E8-9362-4A3B-B786-F1D465981D54}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -943,5 +957,6 @@ Global
 		{D475DB94-55D5-4A8F-8A3C-5E428C90EE97} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
 		{C0729B8F-F0C1-4D91-BDBA-9AE8C62C26C5} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
 		{8BC1ADDD-241C-402C-ACEB-2A8955BBA1A7} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
+		{2C8014E8-9362-4A3B-B786-F1D465981D54} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
 	EndGlobalSection
 EndGlobal
