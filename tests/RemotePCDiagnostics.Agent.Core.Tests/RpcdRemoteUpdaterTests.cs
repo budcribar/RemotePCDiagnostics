@@ -428,9 +428,29 @@ public class RpcdRemoteUpdaterTests
         var path = Path.Combine(dir, "active-session.json");
         File.WriteAllText(path, new ActiveSessionInfo(4242, running, Guid.NewGuid().ToString(), null, "Remote", DateTimeOffset.UtcNow).ToJson());
 
-        var args = RpcdRemoteUpdater.RelaunchForActiveSession("https://server.example.com:34544", path, pid => alive && pid == 4242);
+        var args = RpcdRemoteUpdater.RelaunchForActiveSession("https://server.example.com:34544", path, pid => alive && pid == 4242, DateTimeOffset.UtcNow);
 
         Assert.Equal(relaunched, args is not null);
+    }
+
+    [Theory]
+    [InlineData(true, null, true)]       // the technician has control as the update starts
+    [InlineData(false, -30, true)]       // their page left in control 30 s ago
+    [InlineData(false, -600, false)]     // long ago
+    [InlineData(false, null, false)]     // the person at the PC has control
+    public void Relaunch_after_an_update_gives_control_back_to_the_technician_who_had_it(bool control, int? leftSecondsAgo, bool giveControl)
+    {
+        var now = DateTimeOffset.Parse("2026-11-28T15:40:00Z");
+        var dir = TempDir();
+        var path = Path.Combine(dir, "active-session.json");
+        File.WriteAllText(path, new ActiveSessionInfo(4242, true, Guid.NewGuid().ToString(), "test-shop", "Remote", now.AddHours(-1),
+            Admin: true, RemoteControl: control, RemoteLeftInControlUtc: leftSecondsAgo is { } s ? now.AddSeconds(s) : null).ToJson());
+
+        var args = RpcdRemoteUpdater.RelaunchForActiveSession("https://server.example.com:34544", path, _ => true, now);
+
+        Assert.NotNull(args);
+        Assert.Equal(giveControl, args.Contains(SessionLaunchOptions.GiveControlArg));
+        Assert.Equal(giveControl, SessionLaunchOptions.Parse(args).GiveControl);
     }
 
     private sealed class FreeLock : IDisposable

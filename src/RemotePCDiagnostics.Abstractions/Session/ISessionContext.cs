@@ -18,6 +18,11 @@ public interface ISessionContext
     string? Group => null;
     /// <summary>True when the session should ensure admin repair capabilities (starts elevated helper if unelevated).</summary>
     bool Admin => false;
+    /// <summary>
+    /// True when the remote user has control (or their page left while in control a moment ago). A restart or update started
+    /// now hands control back to them when the new copy's session page rejoins.
+    /// </summary>
+    bool RemoteUserHadControl => false;
 }
 
 public sealed class SessionContext : ISessionContext
@@ -50,6 +55,9 @@ public sealed class SessionContext : ISessionContext
     public string? Group { get; }
     public bool Admin { get; }
     public string MachineName { get; } = Environment.MachineName;
+    /// <summary>The window's session audit answers this once the remote session is set up (null: nobody has control remotely).</summary>
+    public Func<bool>? RemoteControlSource { get; set; }
+    public bool RemoteUserHadControl => RemoteControlSource?.Invoke() ?? false;
 
     private static string? NormalizeGroup(string? value)
     {

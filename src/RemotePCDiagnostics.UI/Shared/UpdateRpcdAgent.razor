@@ -91,7 +91,7 @@
         var busy = AgentExports.UpdateBlockReason(Snapshot());
         IReadOnlyList<string>? relaunch = null;
         if (Session.Mode == SessionMode.Remote && Session.ServerUri is { } server && Session.SessionId != Guid.Empty)
-            relaunch = SessionLaunchOptions.RestartArguments(server, Session.SessionId, Session.Unattended, Session.Voice, Session.Group, Session.Admin);
+            relaunch = SessionLaunchOptions.RestartArguments(server, Session.SessionId, Session.Unattended, Session.Voice, Session.Group, Session.Admin, Session.RemoteUserHadControl);
 
         var status = await bridge.StartRpcdUpdateAsync(new RpcdUpdateRequest(
             string.IsNullOrWhiteSpace(_channel) ? "prerelease" : _channel.Trim(),

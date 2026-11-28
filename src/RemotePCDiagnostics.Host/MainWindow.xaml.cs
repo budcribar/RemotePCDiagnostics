@@ -30,6 +30,8 @@ public partial class MainWindow : Window
     private Uri? _remoteUserUrl;
     private DispatcherTimer? _readyTimer;
     private readonly SessionAudit _audit = new(App.Audit);
+    /// <summary>What this window last wrote to the active session file (Remote, once the relay assigned the id).</summary>
+    private volatile ActiveSessionInfo? _activeSession;
     private readonly SystemAwake _awake = new();
     public MainWindow()
     {
@@ -316,7 +318,8 @@ public partial class MainWindow : Window
             if (_provider.GetService<ISessionContext>() is SessionContext sc && e.Id != Guid.Empty)
             {
                 sc.SessionId = e.Id;
-                ActiveSessionInfo.TryWrite(new ActiveSessionInfo(
+                sc.RemoteControlSource = () => _audit.RemoteUserHadControl;
+                _activeSession = new ActiveSessionInfo(
                     Process.GetCurrentProcess().Id,
                     Running: true,
                     SessionId: e.Id.ToString(),
@@ -325,7 +328,10 @@ public partial class MainWindow : Window
                     StartedUtc: DateTimeOffset.UtcNow,
                     Unattended: sc.Unattended,
                     Voice: sc.Voice,
-                    Admin: sc.Admin));
+                    Admin: sc.Admin,
+                    RemoteControl: _audit.RemoteUserHasControl,
+                    RemoteLeftInControlUtc: _audit.RemoteLeftInControlUtc);
+                ActiveSessionInfo.TryWrite(_activeSession);
             }
             // The link to share is the read-only /mirror page: this window holds the app's own page, and the remote user is
             // handed control from the session bar.
@@ -340,6 +346,13 @@ public partial class MainWindow : Window
         RemoteBlazorWebView.ParticipantsChanged += (_, e) =>
         {
             _audit.Update([.. e.Participants.Select(p => new SessionParticipant(p.ClientId, p.IsOwner, p.HasControl, p.UserName))]);
+            // The Agent reads who has control from the session file when Admin starts an update, so the relaunched app hands
+            // control back to the technician.
+            if (_activeSession is { } active)
+            {
+                var updated = active with { RemoteControl = _audit.RemoteUserHasControl, RemoteLeftInControlUtc = _audit.RemoteLeftInControlUtc };
+                if (updated != active && ActiveSessionInfo.TryWrite(updated)) _activeSession = updated;
+            }
             _provider.GetService<RemoteUsers>()?.Set(e.Participants.Count(p => !p.IsOwner)); // the top bar's badge
         };
         RemoteBlazorWebView.Connected += (_, e) => Dispatcher.BeginInvoke(() =>

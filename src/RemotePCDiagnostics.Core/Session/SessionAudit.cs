@@ -118,13 +118,28 @@ public sealed class SessionAudit(Action<LogEntry> write, Func<DateTimeOffset>? c
     {
         get
         {
-            lock (_lock)
-            {
-                if (_controller is { } c && _present.TryGetValue(c, out var p) && !p.IsOwner) return true;
-                return _remoteLeftInControlUtc is { } left && _clock() - left <= ControlLeftGrace;
-            }
+            lock (_lock) return HadControl(RemoteUserHasControlLocked(), _remoteLeftInControlUtc, _clock());
         }
     }
+
+    /// <summary>The remote user has control right now.</summary>
+    public bool RemoteUserHasControl
+    {
+        get { lock (_lock) return RemoteUserHasControlLocked(); }
+    }
+
+    /// <summary>When the remote user's page last left while it had control (null once the person at this PC took it back).</summary>
+    public DateTimeOffset? RemoteLeftInControlUtc
+    {
+        get { lock (_lock) return _remoteLeftInControlUtc; }
+    }
+
+    /// <summary><see cref="RemoteUserHadControl"/> from saved state (the Agent reads it from the active session file).</summary>
+    public static bool HadControl(bool hasControlNow, DateTimeOffset? leftInControlUtc, DateTimeOffset nowUtc) =>
+        hasControlNow || (leftInControlUtc is { } left && nowUtc - left <= ControlLeftGrace && nowUtc >= left);
+
+    private bool RemoteUserHasControlLocked() =>
+        _controller is { } c && _present.TryGetValue(c, out var p) && !p.IsOwner;
 
     public void Ended(string reason)
     {
