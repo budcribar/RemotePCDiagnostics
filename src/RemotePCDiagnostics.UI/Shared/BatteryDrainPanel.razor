@@ -1,7 +1,7 @@
 @using System.Text.Json
 @using RemotePCDiagnostics.Core.Battery
 @implements IDisposable
-@* The battery drain test's choices and live readings on the Checks page. Before a run: the mode, the shutdown confirmation and the battery
+@* The battery drain test's choices and live readings in its Interactive tests pane. Before a run: the mode, the shutdown confirmation and the battery
    now. During a run: the state line, what has been measured so far and the confirmation (it can be given until the run reaches 15 %).
    Browser agents read the same, plus every 30 s reading, from batterydrain-data (docs/agent-guides/browser-contract.md). *@
 <div class="card drain-options" data-testid="batterydrain-options" data-mode="@BatteryDrainReport.ModeArg(Module.Mode)"

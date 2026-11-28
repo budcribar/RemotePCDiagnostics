@@ -1,12 +1,14 @@
 using System.Text.Json;
 using Bunit;
+using Microsoft.AspNetCore.Components;
+using Microsoft.Extensions.DependencyInjection;
 using RemotePCDiagnostics.Core.Battery;
 using RemotePCDiagnostics.UI.Shared;
 using static RemotePCDiagnostics.Tests.BatteryDrainTests;
 
 namespace RemotePCDiagnostics.Tests;
 
-/// <summary>The battery drain test's panel on the Checks page and the batterydrain-data copy Admin's run_battery_drain_test reads.</summary>
+/// <summary>The battery drain test's pane on the Interactive tests page, its panel, and the batterydrain-data copy Admin's run_battery_drain_test reads.</summary>
 public sealed class BatteryDrainPanelTests : BunitContext
 {
     private static JsonElement Data(IRenderedComponent<BatteryDrainPanel> cut) =>
@@ -84,5 +86,40 @@ public sealed class BatteryDrainPanelTests : BunitContext
         var measured = data.GetProperty("measured");
         Assert.InRange(measured.GetProperty("deliveredPercent").GetDouble(), 95, 105);
         Assert.Equal(100, measured.GetProperty("startPercent").GetInt32());
+    }
+
+    [Fact]
+    public void The_Interactive_tests_pane_shows_the_panel_runs_the_drain_and_a_remote_viewer_cannot_start_it()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var store = new RemotePCDiagnostics.Core.ResultStore();
+        var (module, agent, _, _) = Make(new FakeBattery());
+        var diagnostics = new RemotePCDiagnostics.Core.DiagnosticsService(store, [module]);
+        Services.AddSingleton(store);
+        Services.AddSingleton(diagnostics);
+        Services.AddSingleton(new RemotePCDiagnostics.Core.ChecksScreenState(diagnostics, store));
+        Services.AddSingleton<RemotePCDiagnostics.Core.Session.ISessionContext>(new RemotePCDiagnostics.Core.Session.SessionContext(RemotePCDiagnostics.Core.Session.SessionMode.Local));
+        Services.AddSingleton(new RemotePCDiagnostics.UI.AppServices(Remediation: new RemotePCDiagnostics.Core.Areas.RemediationService(new RemotePCDiagnostics.Core.Areas.SystemCommandRunner())));
+        Services.GetRequiredService<NavigationManager>().NavigateTo("interactive?test=batterydrain");
+        var page = Render<RemotePCDiagnostics.UI.Pages.InteractiveTestsPage>();
+
+        page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-testid=batterydrain-options]")));
+        Assert.True(page.Find("[data-testid=interactive-check-batterydrain]").HasAttribute("disabled"));
+        var data = JsonDocument.Parse(page.Find("[data-testid=interactive-data]").GetAttribute("data-report")!).RootElement;
+        var t = data.GetProperty("tests").EnumerateArray().Single(x => x.GetProperty("id").GetString() == "batterydrain");
+        Assert.True(t.GetProperty("open").GetBoolean());
+        Assert.Equal("waiting-for-person", t.GetProperty("state").GetString());
+
+        page.Find("[data-testid=batterydrain-confirm]").Change(true);
+        page.Find("[data-testid=batterydrain-start-btn]").Click();
+        page.WaitForAssertion(() => Assert.Equal(RemotePCDiagnostics.Core.DiagnosticStatus.Ok, store.Get(RemotePCDiagnostics.Core.ModuleSlugs.BatteryDrain).Status));
+        Assert.Equal("shutdown", agent.Verbs[^1]);
+        page.WaitForAssertion(() => Assert.Contains("Run again", page.Find("[data-testid=batterydrain-start-btn]").TextContent));
+
+        page.InvokeAsync(() => page.Instance.OnControlStateChanged(new RemotePCDiagnostics.UI.Pages.InteractiveTestsPage.RemoteControlInfo
+        {
+            IsRemoteDisplay = true, HasRemoteSession = true, TechnicianHasControl = true,
+        }));
+        page.WaitForAssertion(() => Assert.True(page.Find("[data-testid=batterydrain-start-btn]").HasAttribute("disabled")));
     }
 }

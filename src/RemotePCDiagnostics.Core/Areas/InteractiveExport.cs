@@ -40,8 +40,11 @@ public static class InteractiveExport
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
         DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null,
         ModuleState? audioDevices = null, string? audioDevicesBusyId = null, PointerTestSnapshot? pointer = null, DisplayOutputCheckState? displayOutputs = null,
-        SensorTestSnapshot? sensors = null) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane, charger, usbPortCheck, audioDevices, audioDevicesBusyId, pointer, displayOutputs, sensors), Json);
+        SensorTestSnapshot? sensors = null, BatteryDrainState? batteryDrain = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane, charger, usbPortCheck, audioDevices, audioDevicesBusyId, pointer, displayOutputs, sensors, batteryDrain), Json);
+
+    /// <summary>The battery drain test's result, the pane's choices, and the run that is going on (null when none is).</summary>
+    public sealed record BatteryDrainState(DiagnosticResult Result, Battery.BatteryDrainMode Mode, bool ShutdownConfirmed, Battery.BatteryDrainLive? Live);
 
     /// <summary>The display output check's result and what it has seen so far in the watch that is running (the result is Running meanwhile).</summary>
     public sealed record DisplayOutputCheckState(ModuleState Module, Display.DisplayOutputCheckReport Live);
@@ -65,7 +68,7 @@ public static class InteractiveExport
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
         DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null,
         ModuleState? audioDevices = null, string? audioDevicesBusyId = null, PointerTestSnapshot? pointer = null, DisplayOutputCheckState? displayOutputs = null,
-        SensorTestSnapshot? sensors = null) => new
+        SensorTestSnapshot? sensors = null, BatteryDrainState? batteryDrain = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -88,6 +91,7 @@ public static class InteractiveExport
             WifiTest(page, wifi ?? DiagnosticResult.NotRun(ModuleSlugs.WifiConnect), wifiPane),
             EthernetTest(page, ethernet ?? DiagnosticResult.NotRun(ModuleSlugs.EthernetPort), ethernetPane),
             ChargerTest(page, charger ?? DiagnosticResult.NotRun(ModuleSlugs.ChargerReplug)),
+            BatteryDrainTest(page, batteryDrain ?? new(DiagnosticResult.NotRun(ModuleSlugs.BatteryDrain), Battery.BatteryDrainMode.MaxLoad, false, null)),
             UsbPortCheckTest(page, usbPortCheck ?? new(new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.UsbPortCheck), false), Usb.UsbPortCheckReport.Empty)),
             AudioDevicesExport(page, audioDevices ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.AudioDevices), false), audioDevicesBusyId),
             DisplayOutputCheckTest(page, displayOutputs ?? new(new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.DisplayOutputCheck), false),
@@ -495,6 +499,52 @@ public static class InteractiveExport
         };
     }
 
+    /// <summary>
+    /// The battery drain & runtime test: hours long, never part of Run selected (<c>checked</c> is always false). The person unplugs the
+    /// charger, picks the load, confirms their work is saved and presses Start; RPCD measures. Every reading is in the pane's batterydrain-data.
+    /// </summary>
+    private static object BatteryDrainTest(PageState page, BatteryDrainState d)
+    {
+        var r = d.Result;
+        var running = r.Status == DiagnosticStatus.Running;
+        var m = d.Live?.Measure;
+        var last = d.Live is { Samples.Count: > 0 } live ? live.Samples[^1] : null;
+        return new
+        {
+            id = "batterydrain",
+            name = "Battery drain & runtime",
+            @checked = false,
+            open = page.SelectedTestId == "batterydrain",
+            state = running ? d.Live?.Paused == true ? "paused" : "running"
+                : r.Cancelled ? "cancelled"
+                : r.Status != DiagnosticStatus.NotRun ? "done"
+                : "waiting-for-person",
+            runId = r.RunId,
+            mode = Battery.BatteryDrainReport.ModeArg(d.Mode),
+            shutdownConfirmed = d.ShutdownConfirmed,
+            // While running, the live state line ("Draining at 64 %…", "Charger connected: paused…").
+            step = running ? T(d.Live?.Message ?? r.Message) : null,
+            measured = m is null ? null : new
+            {
+                percent = last?.Percent,
+                startPercent = m.StartPercent,
+                batterySeconds = Math.Round(m.BatterySeconds),
+                deliveredWh = Math.Round(m.DeliveredMWh / 1000.0, 2),
+                averageWatts = m.AverageWatts is { } w ? Math.Round(w, 2) : (double?)null,
+            },
+            result = running ? null
+                : r.Cancelled ? "cancelled"
+                : r.Status switch { DiagnosticStatus.NotRun => null, DiagnosticStatus.Ok => "passed", DiagnosticStatus.Error => "failed", DiagnosticStatus.Warning => "warning", _ => "not-run" },
+            message = T(r.Message),
+            instructions = "Charge the battery to 100 %, then unplug the charger. Pick Maximum load (about 1 to 2 hours) or Balanced (up to about "
+                + $"4 hours; the PC can be used), tick 'Work is saved' to let RPCD shut the PC down at {Battery.BatteryDrainLimits.StopAtPercent} % "
+                + $"(without it the run stops at {Battery.BatteryDrainLimits.ConfirmByPercent} %), and press Start drain test. Plugging the charger "
+                + $"in pauses the run for up to {(int)Battery.BatteryDrainLimits.ResumeWindow.TotalMinutes} minutes. If the PC turned off, run it "
+                + "again to record that run. The pane's batterydrain-data has every reading.",
+            reportIf = ReportIf.BatteryDrain,
+        };
+    }
+
     /// <summary>The Ethernet port test: measured only (link, speed, duplex, pings or loopback frames), with no verdict a person enters.</summary>
     private static object EthernetTest(PageState page, DiagnosticResult r, EthernetPane? pane)
     {
@@ -822,6 +872,8 @@ public static class InteractiveExport
 
     public static class ReportIf
     {
+        public const string BatteryDrain = "The test says the PC is plugged in although the charger is out, the charge or discharge rate never changes "
+            + "while the battery drains, or the PC slept, dimmed or turned the screen off during the run.";
         public const string Wifi = "The person's network is not listed, the test says it couldn't connect although the password is right and "
             + "other devices connect, or the PC didn't go back to its original network.";
         public const string Ethernet = "The person's wired port is not listed, the link never comes up although the cable works on another "
