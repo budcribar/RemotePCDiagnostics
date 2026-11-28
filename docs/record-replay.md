@@ -82,6 +82,7 @@ A check whose answers a recording doesn't hold (a recording made before the reco
 | Windows error log | The event logs (wevtutil) | The same |
 | Sleep, wake & standby drain | powercfg, the System log (wevtutil), the battery report (`powercfg /batteryreport`, kept by name) | The same |
 | Sound | Core Audio (`IAudioStateSource`, kept as one JSON answer, `RecordedCall.AudioKind`), WMI (`Win32_Service`, `Win32_PnPEntity`, `Win32_PnPSignedDriver` for MEDIA, `BatteryStaticData`), the registry (microphone privacy, mono audio) | None (no Store edition fallback; without Core Audio its device cards say they couldn't be read) |
+| Motion, light & presence sensors | The Sensor API answer (`IDeviceSensorSource`, kept as one JSON answer, `RecordedCall.DeviceSensorsKind`), `Win32_PnPEntity` for sensor devices (WMI) | The Store edition reads `Win32_PnPEntity` as the signed-in user; with no answer the Sensor drivers card says "Needs the Agent" |
 
 The event log checks are built at the time the PC was recorded, in UTC (`ReportClock`, `FixedClock`), so "in the last 7 days" and the
 times shown stay the same wherever and whenever the tests run. The battery report is a file powercfg writes under a new name each run, so it

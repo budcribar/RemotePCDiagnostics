@@ -4,6 +4,7 @@
 @using RemotePCDiagnostics.Core.Webcam
 @using RemotePCDiagnostics.Core.Workflow
 @using RemotePCDiagnostics.Core.Areas
+@using RemotePCDiagnostics.Core.DeviceSensors
 @inherits StoreAwareComponent
 @inject ISessionContext Session
 @inject IJSRuntime JS
@@ -32,14 +33,15 @@
     var scServicesOk = soundRep is not null && SoundCheck.ServicesOk(soundRep);
 
     var kbSnap = ActivePhysicalQa.Current;
-    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning || scRunning;
+    var senSnap = ActiveSensorTest.Current;
+    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning || scRunning || senSnap.Verdict == SensorTestVerdict.Running;
 
     var allSelected = _selected.Count == AllTestIds.Length;
     var mixedSelected = _selected.Count > 0 && _selected.Count < AllTestIds.Length;
 }
 
 <div class="ct-page">
-    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk))" />
+    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), senSnap)" />
     <div class="toolbar">
         <span class="icon-badge page-icon"><Icon Name="eye" Size="20" /></span>
         <h1 data-rpcd-page="interactive" data-rpcd-contract="@BrowserContract.Interactive" data-testid="interactive-title">Interactive tests</h1>
@@ -50,7 +52,7 @@
         <div class="banner-text">
             <div class="banner-title" data-testid="interactive-banner-title">Hands-on physical hardware verification</div>
             <div class="banner-sub" data-testid="interactive-banner-desc">
-                Select and run interactive hardware tests (keyboard matrix, LCD uniformity &amp; touch digitizer, live webcam feed, and microphone/speaker loopback).
+                Select and run interactive hardware tests (keyboard matrix, LCD uniformity &amp; touch digitizer, live webcam feed, microphone/speaker loopback, and the motion, light &amp; presence sensors).
             </div>
             @if (Session.Mode == SessionMode.Remote || _hasRemoteSession)
             {
@@ -264,6 +266,31 @@
                             <span class="chip chip-@scChip" data-testid="interactive-status-soundcheck">@scLabel</span>
                         </div>
                     </div>
+
+                    @* 7. Sensor test: tilt, cover the light sensor, presence *@
+                    @{
+                        var senIsSel = _selectedTestId == "devicesensors";
+                        var senRunning = senSnap.Verdict == SensorTestVerdict.Running;
+                        var senChip = SensorChip(senSnap.Verdict);
+                        var senSummary = DeviceSensorTestService.Summary(senSnap);
+                    }
+                    <div class="ct-row @(senIsSel ? "selected" : "") @(senRunning ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(senIsSel ? "true" : "false")"
+                         data-testid="interactive-row-devicesensors" @onclick='() => SelectTest("devicesensors")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("devicesensors") ? "true" : "false")"
+                                aria-label="Include Sensor test"
+                                data-testid="interactive-check-devicesensors"
+                                @onclick='() => ToggleItem("devicesensors")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("devicesensors") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@(senChip == "ok" ? "ok" : senChip == "err" ? "critical" : senChip == "run" ? "running" : "na")"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">Sensors (tilt, light &amp; presence)</div>
+                            <div class="ct-row-summary meta" title="@senSummary">@senSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@senChip" data-testid="interactive-status-devicesensors">@SensorLabel(senSnap.Verdict)</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -276,6 +303,10 @@
             @if (_selectedTestId == "keyboard")
             {
                 <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="keyboard" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" OnOutcomeChanged="OnPhysicalQaOutcomeCompleted" />
+            }
+            else if (_selectedTestId == "devicesensors")
+            {
+                <DeviceSensorTestPane Service="ActiveSensorTest" IsRemoteDisplay="_isRemoteDisplay" AutoStart="_isBatchRunning" />
             }
             else if (_selectedTestId == "display")
             {
@@ -726,8 +757,11 @@
     private readonly PhysicalBenchQaService _fallbackPhysicalQa = new();
     private PhysicalBenchQaService ActivePhysicalQa => App.PhysicalQa ?? _fallbackPhysicalQa;
 
-    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck"];
-    private readonly HashSet<string> _selected = new(["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck"], StringComparer.OrdinalIgnoreCase);
+    private DeviceSensorTestService? _fallbackSensorTest;
+    private DeviceSensorTestService ActiveSensorTest => App.SensorTest ?? (_fallbackSensorTest ??= new DeviceSensorTestService());
+
+    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "devicesensors"];
+    private readonly HashSet<string> _selected = new(["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "devicesensors"], StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Opens a test's pane from a link ("interactive?test=soundcheck"); help=cant-hear also opens the Can't hear sound list.</summary>
     [SupplyParameterFromQuery(Name = "test")] public string? TestQuery { get; set; }
@@ -756,10 +790,10 @@
 
     /// <summary>The page's state for browser agents (interactive-data): measured evidence and person-entered verdicts kept apart.</summary>
     private string InteractiveJson(RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaSnapshot kb, DiagnosticResult cam, DiagnosticResult s2m, DiagnosticResult m2s,
-        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help) =>
+        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, SensorTestSnapshot sensors) =>
         InteractiveExport.ToJson(
             new InteractiveExport.PageState(_selectedTestId, _selected, _isBatchRunning, _isRemoteDisplay, Session.Mode == SessionMode.Remote || _hasRemoteSession, _technicianHasControl),
-            kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help);
+            kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help, sensors);
 
     private IReadOnlyList<AudioDevice> _outputs = [];
     private IReadOnlyList<AudioDevice> _inputs = [];
@@ -787,6 +821,8 @@
     {
         base.OnInitialized();
         LoadDevices();
+        // The row's chip and interactive-data follow the Sensor test as it runs.
+        ActiveSensorTest.Changed += OnSensorTestChanged;
         if (TestQuery is { Length: > 0 } t && AllTestIds.Contains(t, StringComparer.OrdinalIgnoreCase)) _selectedTestId = t.ToLowerInvariant();
         if (_selectedTestId == "soundcheck" && HelpQuery == "cant-hear") _ = OpenCantHearAsync();
     }
@@ -818,9 +854,12 @@
         try { await JS.InvokeVoidAsync("rpdSession.releaseControlToLocal"); } catch { }
     }
 
+    private void OnSensorTestChanged() => _ = InvokeAsync(StateHasChanged);
+
     public override void Dispose()
     {
         base.Dispose();
+        ActiveSensorTest.Changed -= OnSensorTestChanged;
         _batchCts?.Cancel();
         _interactiveWaitTcs?.TrySetCanceled();
         _batchCts?.Dispose();
@@ -907,6 +946,48 @@
         }
     }
 
+    /// <summary>Run selected: the pane starts the Sensor test when it opens; waits until it ends (passed, failed, skipped or stopped).</summary>
+    private async Task WaitForSensorTestAsync(CancellationToken ct)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = false;
+        void OnChanged()
+        {
+            var v = ActiveSensorTest.Current.Verdict;
+            if (v == SensorTestVerdict.Running) started = true;
+            else if (started) tcs.TrySetResult();
+        }
+        using var reg = ct.Register(() => tcs.TrySetCanceled(ct));
+        ActiveSensorTest.Changed += OnChanged;
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+            await tcs.Task;
+        }
+        finally
+        {
+            ActiveSensorTest.Changed -= OnChanged;
+        }
+    }
+
+    private static string SensorChip(SensorTestVerdict v) => v switch
+    {
+        SensorTestVerdict.Passed => "ok",
+        SensorTestVerdict.Failed => "err",
+        SensorTestVerdict.Running => "run",
+        _ => "na",
+    };
+
+    private static string SensorLabel(SensorTestVerdict v) => v switch
+    {
+        SensorTestVerdict.Passed => "Passed",
+        SensorTestVerdict.Failed => "Failed",
+        SensorTestVerdict.Running => "Running",
+        SensorTestVerdict.Skipped => "Skipped",
+        SensorTestVerdict.Cancelled => "Stopped",
+        _ => "Not tested",
+    };
+
     private async Task RunSelectedAsync()
     {
         if (Diagnostics.IsStressSuiteRunning || _isBatchRunning || _isRemoteDisplay) return;
@@ -943,6 +1024,9 @@
                     case "soundcheck":
                         await StartSoundCheckAsync();
                         break;
+                    case "devicesensors":
+                        await WaitForSensorTestAsync(ct);
+                        break;
                 }
             }
         }
@@ -964,6 +1048,7 @@
         CancelSpeakerToMic();
         CancelMicToSpeaker();
         CancelSoundCheck();
+        ActiveSensorTest.Cancel();
         Diagnostics.CancelStressSuite();
     }
 

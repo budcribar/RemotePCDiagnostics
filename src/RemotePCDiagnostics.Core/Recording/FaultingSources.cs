@@ -16,6 +16,7 @@ public sealed class FaultingSources(FaultPlan plan)
     public IPackageSource Packages(IPackageSource inner) => new FaultingPackages(inner, plan);
     public Security.IAntivirusProductSource Antivirus(Security.IAntivirusProductSource inner) => new FaultingAntivirus(inner, plan);
     public Core.Audio.IAudioStateSource Audio(Core.Audio.IAudioStateSource inner) => new FaultingAudio(inner, plan);
+    public Core.DeviceSensors.IDeviceSensorSource DeviceSensors(Core.DeviceSensors.IDeviceSensorSource inner) => new FaultingDeviceSensors(inner, plan);
     public IProcessLauncher Launcher(IProcessLauncher inner) => new FaultingLauncher(inner, plan);
     public Alerts.IAlertReadings Alerts(Alerts.IAlertReadings inner) => new FaultingAlerts(inner, plan);
 
@@ -81,6 +82,24 @@ public sealed class FaultingSources(FaultPlan plan)
             var answer = await inner.ReadAsync(ct).ConfigureAwait(false);
             if (plan.ErrorFor(rule) is { } error) return Security.AntivirusInventoryResult.Unavailable(error);
             return rule.Fault == Faults.Empty ? answer with { Products = [] } : answer;
+        }
+    }
+
+    private sealed class FaultingDeviceSensors(Core.DeviceSensors.IDeviceSensorSource inner, FaultPlan plan) : Core.DeviceSensors.IDeviceSensorSource
+    {
+        public async Task<Core.DeviceSensors.DeviceSensorSnapshot> ReadAsync(CancellationToken ct = default)
+        {
+            if (plan.For(RecordedCall.DeviceSensorsKind, RecordingReplay.DeviceSensorsKey) is not { } rule)
+                return await inner.ReadAsync(ct).ConfigureAwait(false);
+            await FaultPlan.WaitAsync(rule, ct).ConfigureAwait(false);
+            var answer = await inner.ReadAsync(ct).ConfigureAwait(false);
+            if (plan.ErrorFor(rule) is { } error) return Core.DeviceSensors.DeviceSensorSnapshot.Unavailable(error);
+            return rule.Fault switch
+            {
+                Faults.Empty => answer with { Sensors = [] },
+                Faults.Garbage => Core.DeviceSensors.DeviceSensorSnapshot.FromJson(Faults.GarbageText),
+                _ => answer,
+            };
         }
     }
 

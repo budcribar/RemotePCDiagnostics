@@ -1175,6 +1175,22 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; gap:
 .kb-stats { margin-top: 8px; margin-bottom: 0; }
 .phys-qa-note { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
 .phys-qa-note input { width: 100%; box-sizing: border-box; }
+/* Sensor test (Interactive tests): tilt ball, axis bars, light bar */
+.sen-step { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.sen-step-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.sen-tilt { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+.sen-pad { position: relative; width: 160px; height: 160px; flex: none; border: 2px dashed var(--border-strong); border-radius: 50%; background: var(--surface-2); }
+.sen-ball { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%; background: var(--accent); box-shadow: 0 2px 6px rgba(0,0,0,.25); transition: left .12s linear, top .12s linear; }
+.sen-axes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; min-width: 200px; flex: 1; }
+.sen-axes li { display: grid; grid-template-columns: 18px 1fr 64px 16px; align-items: center; gap: 8px; }
+.sen-axis-name { font-weight: 600; }
+.sen-bar { position: relative; display: block; height: 8px; border-radius: 4px; background: var(--badge-bg); overflow: hidden; }
+.sen-bar > span { display: block; height: 100%; background: var(--accent); }
+.sen-bar > span.ok { background: var(--chip-ok); }
+.sen-bar > i { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--text); }
+.sen-bar-wide { height: 12px; max-width: 360px; }
+.sen-light, .sen-presence { display: flex; flex-direction: column; gap: 6px; }
+.sen-lux { font-size: 22px; font-weight: 600; }
 .phys-qa-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .display-swatches { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .display-swatch { width: 28px; height: 20px; border-radius: 5px; border: 1px solid var(--border-strong); display: inline-block; }

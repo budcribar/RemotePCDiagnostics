@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using RemotePCDiagnostics.Core.Audio;
+using RemotePCDiagnostics.Core.DeviceSensors;
 using RemotePCDiagnostics.Core.Webcam;
 using RemotePCDiagnostics.Core.Workflow;
 
@@ -33,8 +34,8 @@ public static class InteractiveExport
     private static string? T(string? v) => AreaReportExport.Text(v, AreaReportExport.MaxTextLength);
 
     public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
-        ModuleState? soundCheck = null, SoundCheckHelp? help = null) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help), Json);
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null, SensorTestSnapshot? sensors = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, sensors), Json);
 
     /// <summary>The Sound check pane's helper lists: what it shows and why (Can't hear sound, or only one side heard).</summary>
     /// <param name="Mode">"cant-hear", "one-side" or null when no list shows.</param>
@@ -42,7 +43,7 @@ public static class InteractiveExport
     public sealed record SoundCheckHelp(string? Mode, bool Reading, IReadOnlyList<SoundCheckStep> Steps, bool ServicesOk);
 
     public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
-        ModuleState? soundCheck = null, SoundCheckHelp? help = null) => new
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null, SensorTestSnapshot? sensors = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -60,6 +61,7 @@ public static class InteractiveExport
             SpeakerToMicTest(page, speakerToMic),
             MicToSpeakerTest(page, micToSpeaker),
             SoundCheckTest(page, soundCheck ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.SoundCheck), false), help),
+            DeviceSensorTest(page, sensors ?? new SensorTestSnapshot()),
         },
     };
 
@@ -256,6 +258,65 @@ public static class InteractiveExport
         };
     }
 
+    private static string StepId(SensorTestStep s) => s.ToString().ToLowerInvariant();
+
+    private static string StepState(SensorStepState s) => s == SensorStepState.NotSupported ? "not-supported" : s.ToString().ToLowerInvariant();
+
+    private static double? R(double? v, int digits) => v is { } x ? Math.Round(x, digits) : null;
+
+    private static object DeviceSensorTest(PageState page, SensorTestSnapshot s) => new
+    {
+        id = "devicesensors",
+        name = "Sensor test (tilt, light, presence)",
+        @checked = page.CheckedTestIds.Contains("devicesensors"),
+        open = page.SelectedTestId == "devicesensors",
+        state = s.Verdict switch
+        {
+            SensorTestVerdict.Running => s.Current == SensorTestStep.Presence ? "waiting-for-person-verdict" : "running",
+            SensorTestVerdict.NotRun => "waiting-for-person",
+            _ => "done",
+        },
+        // Measured by RPCD from the sensors, except presence, which the person confirms (presenceConfirmed).
+        verdict = s.Verdict switch
+        {
+            SensorTestVerdict.Passed => "passed",
+            SensorTestVerdict.Failed => "failed",
+            SensorTestVerdict.Skipped => "skipped",
+            SensorTestVerdict.Cancelled => "stopped",
+            SensorTestVerdict.Running => "running",
+            _ => "notrun",
+        },
+        currentStep = s.Current is { } c ? StepId(c) : null,
+        secondsLeft = s.Current is null ? (int?)null : s.SecondsLeft,
+        steps = s.Steps.Select(x => new { id = StepId(x.Step), title = DeviceSensorTestService.Title(x.Step), state = StepState(x.State), sensor = V(x.Sensor), reason = V(x.Reason) }).ToList(),
+        measured = new
+        {
+            accelerationG = s.X is null ? null : new { x = R(s.X, 3), y = R(s.Y, 3), z = R(s.Z, 3) },
+            // How far each axis has moved in this tilt step; each must reach tiltAxisG.
+            tiltRangeG = s.RangeX is null ? null : new { x = R(s.RangeX.Span, 3), y = R(s.RangeY?.Span, 3), z = R(s.RangeZ?.Span, 3) },
+            tiltAxisG = DeviceSensorTestService.TiltAxisG,
+            stillAxes = s.RangeX is null ? null : DeviceSensorTestService.StillAxes(s),
+            lux = R(s.Lux, 1),
+            luxHigh = R(s.LuxHigh, 1),
+            luxLow = R(s.LuxLow, 1),
+            lightDropRatio = DeviceSensorTestService.LightDropRatio,
+            present = s.Present,
+            distanceMm = R(s.DistanceMm, 0),
+            hingeDegrees = R(s.HingeDegrees, 0),
+            orientation = s.Orientation is { } o ? DeviceSensorTypes.OrientationText(o) : null,
+            headingDegrees = R(s.HeadingDegrees, 0),
+        },
+        presenceConfirmed = s.PresenceConfirmed,
+        readError = V(s.ReadError),
+        notes = T(s.Notes),
+        message = T(DeviceSensorTestService.Summary(s)),
+        instructions = s.Current is { } now ? DeviceSensorTestService.Instructions(now)
+            : "Press Start test. Tilt the PC until the ball has moved on all three axes (within 20 s), cover the light sensor next to the "
+            + "camera until the level halves, then sit in front of the PC and lean away and say whether the presence reading follows. Each "
+            + "step has Skip and Doesn't work; a sensor the PC doesn't have is Not supported. A remote viewer cannot do these steps.",
+        reportIf = ReportIf.DeviceSensors,
+    };
+
     /// <summary>
     /// When an agent coaching a test should report a learning (Admin's report_learning tool): the test's instructions or screen did not
     /// match what the person has. One line each, written for the agent, not the person.
@@ -272,6 +333,8 @@ public static class InteractiveExport
             + "the test cannot start.";
         public const string SoundCheck = "The person hears the chime on the wrong side, hears nothing although the Can't hear sound list is "
             + "empty, or the list shows a problem the person doesn't have.";
+        public const string DeviceSensors = "The ball doesn't move although the person tilts the PC, the light level doesn't change when they "
+            + "cover the sensor (or they can't find it), the presence reading doesn't follow them, or a sensor the PC has is shown as Not supported.";
         public const string MicToSpeaker = "The person's microphone or speaker is not listed, there is no playback, or feedback makes the test "
             + "unusable.";
     }

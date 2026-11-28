@@ -1,0 +1,232 @@
+@using System.Globalization
+@using RemotePCDiagnostics.Core.DeviceSensors
+@implements IDisposable
+@{
+    var snap = Service.Current;
+    var running = snap.Verdict == SensorTestVerdict.Running;
+    var current = snap.Current;
+}
+
+<div class="phys-qa-pane" data-testid="interactive-devicesensors-pane">
+    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+        <strong>Sensors (tilt, light &amp; presence)</strong>
+        <span class="chip chip-@Chip(snap.Verdict)" data-testid="devicesensors-status-chip">@Label(snap.Verdict)</span>
+        @if (running)
+        {
+            <button type="button" class="btn-small" data-testid="devicesensors-stop" @onclick="Service.Cancel">Stop</button>
+        }
+        else
+        {
+            <button type="button" class="btn-small btn-primary" data-testid="devicesensors-start"
+                    disabled="@(IsRemoteDisplay || _starting)"
+                    title="@(IsRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                    @onclick="StartAsync">
+                @(snap.Verdict == SensorTestVerdict.NotRun ? "Start test" : "Run again")
+            </button>
+        }
+    </div>
+
+    <p class="meta" style="margin-top: 0">
+        Checks the accelerometer (auto-rotate), the light sensor (auto-brightness) and the presence sensor (wake on approach) by hand. Someone
+        has to be at the PC: tilt it, cover the light sensor, and lean away from the screen. Nothing on the PC is changed.
+    </p>
+
+    @if (snap.ReadError is { } readError)
+    {
+        <p class="notice" data-testid="devicesensors-read-error">The sensors couldn't be read just now: @readError</p>
+    }
+
+    @if (running && current is { } step)
+    {
+        <div class="sen-step" data-testid="devicesensors-current" data-step="@step.ToString().ToLowerInvariant()">
+            <div class="sen-step-head">
+                <b>@DeviceSensorTestService.Title(step)</b>
+                <span class="meta" data-testid="devicesensors-seconds-left">@snap.SecondsLeft s left</span>
+            </div>
+            <p class="meta" data-testid="devicesensors-instructions">@DeviceSensorTestService.Instructions(step)</p>
+            @if (step == SensorTestStep.Tilt)
+            {
+                var bx = Pos(snap.X);
+                var by = Pos(snap.Y is { } y ? -y : null);
+                <div class="sen-tilt">
+                    <div class="sen-pad" data-testid="devicesensors-ball-pad" aria-hidden="true">
+                        <div class="sen-ball" data-testid="devicesensors-ball" style="left: @bx%; top: @by%"></div>
+                    </div>
+                    <ul class="sen-axes" data-testid="devicesensors-axes">
+                        @foreach (var (axis, value, range) in new[] { ("X", snap.X, snap.RangeX), ("Y", snap.Y, snap.RangeY), ("Z", snap.Z, snap.RangeZ) })
+                        {
+                            var moved = range is { Span: >= DeviceSensorTestService.TiltAxisG };
+                            var share = range is null ? 0 : Math.Min(100, range.Span / DeviceSensorTestService.TiltAxisG * 100);
+                            <li data-testid="devicesensors-axis-@axis.ToLowerInvariant()" data-moved="@(moved ? "true" : "false")">
+                                <span class="sen-axis-name">@axis</span>
+                                <span class="sen-bar"><span style="width: @share.ToString("0", CultureInfo.InvariantCulture)%" class="@(moved ? "ok" : "")"></span></span>
+                                <span class="meta">@G(value)</span>
+                                <span class="@(moved ? "ptr-ok" : "meta")">@(moved ? "✓" : "")</span>
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
+            else if (step == SensorTestStep.Light)
+            {
+                var high = snap.LuxHigh ?? 0;
+                var share = high > 0 && snap.Lux is { } lux ? Math.Min(100, lux / high * 100) : 0;
+                <div class="sen-light" data-testid="devicesensors-light">
+                    <div class="sen-lux" data-testid="devicesensors-lux">@Lux(snap.Lux)</div>
+                    <span class="sen-bar sen-bar-wide"><span style="width: @share.ToString("0", CultureInfo.InvariantCulture)%"></span><i style="left: @((DeviceSensorTestService.LightDropRatio * 100).ToString("0", CultureInfo.InvariantCulture))%"></i></span>
+                    <span class="meta">Brightest @Lux(snap.LuxHigh) · lowest @Lux(snap.LuxLow) · cover it until the bar is left of the line</span>
+                    @if (snap.LuxHigh is < DeviceSensorTestService.MinLightLux)
+                    {
+                        <span class="notice" data-testid="devicesensors-too-dark">It's too dark to tell: turn on a light or face the PC toward a window.</span>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="sen-presence" data-testid="devicesensors-presence" data-present="@(snap.Present switch { true => "true", false => "false", _ => "" })">
+                    <div class="sen-lux">@(snap.Present switch { true => "Someone present", false => "No one detected", _ => "No reading yet" })</div>
+                    @if (snap.DistanceMm is { } mm)
+                    {
+                        <span class="meta" data-testid="devicesensors-distance">@mm.ToString("0", CultureInfo.InvariantCulture) mm away</span>
+                    }
+                    <div class="phys-qa-actions">
+                        <span class="meta">Does it follow you?</span>
+                        <button type="button" class="btn-small btn-primary" data-testid="devicesensors-presence-yes" @onclick="() => Service.ConfirmPresence(true)">Yes</button>
+                        <button type="button" class="btn-small" data-testid="devicesensors-presence-no" @onclick="() => Service.ConfirmPresence(false)">No</button>
+                    </div>
+                </div>
+            }
+            <div class="phys-qa-actions">
+                <button type="button" class="btn-small" data-testid="devicesensors-skip" @onclick="Service.Skip">Skip</button>
+                <button type="button" class="btn-small" data-testid="devicesensors-fail" @onclick="Service.DoesNotWork">Doesn't work</button>
+            </div>
+        </div>
+    }
+
+    @if (snap.Steps.Count > 0)
+    {
+        <table class="detail" data-testid="devicesensors-steps">
+            @foreach (var s in snap.Steps)
+            {
+                <tr data-testid="devicesensors-step-@s.Step.ToString().ToLowerInvariant()" data-state="@s.State.ToString().ToLowerInvariant()">
+                    <th>@DeviceSensorTestService.Title(s.Step)</th>
+                    <td>
+                        <span class="chip chip-@StepChip(s.State)">@StepLabel(s.State)</span>
+                        <span class="meta"> @(s.Sensor ?? "")@(s.Reason is { } why ? (s.Sensor is null ? why : $" · {why}") : "")</span>
+                    </td>
+                </tr>
+            }
+        </table>
+    }
+
+    @if (OtherReadings(snap) is { Length: > 0 } other)
+    {
+        <p class="meta" data-testid="devicesensors-other">@other</p>
+    }
+
+    <label class="phys-qa-note">
+        <span class="meta">Optional note (e.g. screen doesn't auto-rotate, brightness jumps)</span>
+        <input data-testid="devicesensors-notes" value="@snap.Notes" @onchange="OnNotes" maxlength="240" placeholder="Optional note…" />
+    </label>
+
+    <div class="phys-qa-actions">
+        <button type="button" class="btn-small" data-testid="devicesensors-reset" disabled="@running" @onclick="Service.Reset">Reset</button>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public DeviceSensorTestService Service { get; set; } = default!;
+    [Parameter] public bool IsRemoteDisplay { get; set; }
+    /// <summary>Run selected: start the test as soon as the pane opens.</summary>
+    [Parameter] public bool AutoStart { get; set; }
+
+    private bool _starting;
+    private bool _autoStarted;
+    private DeviceSensorTestService? _subscribed;
+
+    protected override void OnParametersSet()
+    {
+        if (!ReferenceEquals(_subscribed, Service))
+        {
+            if (_subscribed is not null) _subscribed.Changed -= OnChanged;
+            Service.Changed += OnChanged;
+            _subscribed = Service;
+        }
+        if (AutoStart && !_autoStarted && !IsRemoteDisplay && !Service.IsRunning)
+        {
+            _autoStarted = true;
+            _ = StartAsync();
+        }
+        if (!AutoStart) _autoStarted = false;
+    }
+
+    private async Task StartAsync()
+    {
+        if (IsRemoteDisplay || _starting) return;
+        _starting = true;
+        try { await Service.StartAsync(); }
+        finally { _starting = false; await InvokeAsync(StateHasChanged); }
+    }
+
+    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+
+    private void OnNotes(ChangeEventArgs e) => Service.SetNotes(e.Value?.ToString());
+
+    /// <summary>The ball's position (percent of the pad) for an acceleration in g: ±1 g reaches the edge.</summary>
+    private static string Pos(double? g) =>
+        (50 + Math.Clamp(g ?? 0, -1, 1) * 42).ToString("0.0", CultureInfo.InvariantCulture);
+
+    private static string OtherReadings(SensorTestSnapshot s)
+    {
+        var parts = new List<string>();
+        if (s.HingeDegrees is { } hinge) parts.Add($"Hinge {hinge.ToString("0", CultureInfo.InvariantCulture)}°");
+        if (s.Orientation is { } o) parts.Add("Screen " + DeviceSensorTypes.OrientationText(o).ToLowerInvariant());
+        if (s.HeadingDegrees is { } h) parts.Add($"Heading {h.ToString("0", CultureInfo.InvariantCulture)}°");
+        return string.Join(" · ", parts);
+    }
+
+    private static string G(double? g) => g is { } v ? v.ToString("0.00", CultureInfo.InvariantCulture) + " g" : "–";
+
+    private static string Lux(double? v) => v is { } x ? x.ToString(x < 10 ? "0.0" : "0", CultureInfo.InvariantCulture) + " lux" : "–";
+
+    private static string Chip(SensorTestVerdict v) => v switch
+    {
+        SensorTestVerdict.Passed => "ok",
+        SensorTestVerdict.Failed => "err",
+        SensorTestVerdict.Running => "run",
+        _ => "na",
+    };
+
+    private static string Label(SensorTestVerdict v) => v switch
+    {
+        SensorTestVerdict.Passed => "Passed",
+        SensorTestVerdict.Failed => "Failed",
+        SensorTestVerdict.Running => "Running",
+        SensorTestVerdict.Skipped => "Skipped",
+        SensorTestVerdict.Cancelled => "Stopped",
+        _ => "Not tested",
+    };
+
+    private static string StepChip(SensorStepState s) => s switch
+    {
+        SensorStepState.Passed => "ok",
+        SensorStepState.Failed => "err",
+        SensorStepState.Active => "run",
+        _ => "na",
+    };
+
+    private static string StepLabel(SensorStepState s) => s switch
+    {
+        SensorStepState.Pending => "Waiting",
+        SensorStepState.Active => "Now",
+        SensorStepState.Passed => "Passed",
+        SensorStepState.Failed => "Failed",
+        SensorStepState.Skipped => "Skipped",
+        _ => "Not supported",
+    };
+
+    public void Dispose()
+    {
+        if (_subscribed is not null) _subscribed.Changed -= OnChanged;
+    }
+}

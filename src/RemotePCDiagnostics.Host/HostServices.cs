@@ -121,6 +121,10 @@ public static class HostServices
         // Audio tests (speaker→mic, mic→speaker): on-demand only, own pages, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioIo>(_ => new WasapiAudioIo(L<WasapiAudioIo>()));
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(_ => new WasapiAudioStateSource(L<WasapiAudioStateSource>()));
+        // Motion, light and presence sensors (the Windows Sensor API), read in the app: no administrator rights needed. The Sensor test on
+        // the Interactive tests page polls them only while it runs.
+        services.AddSingleton<RemotePCDiagnostics.Core.DeviceSensors.IDeviceSensorSource>(_ => new RemotePCDiagnostics.Core.DeviceSensors.WindowsDeviceSensorSource(L<RemotePCDiagnostics.Core.DeviceSensors.WindowsDeviceSensorSource>()));
+        services.AddSingleton(sp => new RemotePCDiagnostics.Core.DeviceSensors.DeviceSensorTestService(sp.GetService<RemotePCDiagnostics.Core.DeviceSensors.IDeviceSensorSource>()));
         // NPU test: on-demand only, own page, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(L<WindowsNpuIo>()));
         // GPU stress test: Direct3D 11 compute devices.
@@ -280,7 +284,8 @@ public static class HostServices
             sp.GetService<SystemCommandRunner>(),
             sp.GetService<CheckSettingsService>(),
             sp.GetService<IBiosUpdateService>(),
-            sp.GetService<RemotePCDiagnostics.Agent.Core.AgentModeMonitor>()));
+            sp.GetService<RemotePCDiagnostics.Agent.Core.AgentModeMonitor>(),
+            SensorTest: sp.GetService<RemotePCDiagnostics.Core.DeviceSensors.DeviceSensorTestService>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
         // RPCD_REPLAY (Debug builds): the checks read a recording instead of this PC. RPCD_LOG: they also record what they read.
@@ -407,6 +412,7 @@ public sealed class HostQueryBackendSlot
             Wmi = sp.GetService<RemotePCDiagnostics.Core.DataSources.IWmiSource>(),
             Packages = sp.GetService<RemotePCDiagnostics.Core.DataSources.IPackageSource>(),
             Audio = sp.GetService<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(),
+            DeviceSensors = sp.GetService<RemotePCDiagnostics.Core.DeviceSensors.IDeviceSensorSource>(),
         };
     }
 }

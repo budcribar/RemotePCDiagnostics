@@ -12,7 +12,7 @@ namespace RemotePCDiagnostics.Core.Recording;
 /// </summary>
 public sealed record FaultRule
 {
-    /// <summary>wmi, registry, packages, antivirus, audio, process, file, or * for any.</summary>
+    /// <summary>wmi, registry, packages, antivirus, audio, devicesensors, process, file, or * for any.</summary>
     public string Source { get; init; } = "*";
     /// <summary>Text the answer's <see cref="RecordingReplay.Key"/> contains (case ignored), or * for any.</summary>
     public string Match { get; init; } = "*";

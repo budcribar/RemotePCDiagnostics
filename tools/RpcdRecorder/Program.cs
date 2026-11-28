@@ -6,6 +6,7 @@
 // v9 (Nov 26): also records Security Center's antivirus list and WMI error probes (ErrorProbes), and WMI errors carry their code.
 // v10 (Nov 26): also records what the Agent's alerts read (the watched events of the last 30 days, free space, memory, power) and one
 // security audit run (HardeningKitty, as the Agent runs it), for the Agent's replay tests. The audit takes a few minutes.
+// Nov 27: also records the motion, light and presence sensors (Sensor API) for Motion, light & presence sensors.
 //
 // Each check runs twice: once on the new WMI path and once on the old osquery / powercfg / PowerShell path, so the tests can check the two agree.
 
@@ -46,6 +47,8 @@ var commands = new SystemCommandRunner(launcher);
 var files = new FileRecorder(recorder);
 // Core Audio (endpoints, defaults, mute, volume, formats, app sessions), read as the app does in the signed-in user's session.
 var audio = new RecordingAudioStateSource(new RemotePCDiagnostics.Host.WasapiAudioStateSource(), recorder);
+// The motion, light and presence sensors (the Windows Sensor API), read as the app does.
+var deviceSensors = new RecordingDeviceSensorSource(new RemotePCDiagnostics.Core.DeviceSensors.WindowsDeviceSensorSource(), recorder);
 // Security Center's antivirus list (third-party antivirus and Defender), as the app's Security essentials reads it.
 var antivirus = new RecordingAntivirusProductSource(new RemotePCDiagnostics.Host.WindowsAntivirusProductSource(), recorder);
 if (!osquery.Exists) Console.WriteLine($"osqueryi.exe not found ({osqueryPath}); the old osquery path won't be recorded. Pass --osquery <path>.");
@@ -89,6 +92,7 @@ var checks = new (string Label, IDiagnosticModule Module)[]
         batteryReport: new RecordedBatteryReport(files, new PowerCfgBatteryReport(new SystemCommandRunner())))),
     ("Sound (Core Audio + WMI + registry)", new RemotePCDiagnostics.Modules.Sound.SoundModule(audio, new WmiServiceSource(wmi),
         new WmiDeviceDriverSource(wmi), wmi, registry)),
+    ("Motion, light & presence sensors (Sensor API + WMI)", new RemotePCDiagnostics.Modules.DeviceSensors.DeviceSensorsModule(deviceSensors, wmi)),
 };
 foreach (var (label, module) in checks)
 {

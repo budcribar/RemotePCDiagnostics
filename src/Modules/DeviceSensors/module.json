@@ -1,0 +1,12 @@
+{
+  "id": "07dc23a6-391f-4404-8151-a59781088800",
+  "slug": "DeviceSensors",
+  "displayName": "Motion, light & presence sensors",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.DeviceSensors.DeviceSensorsPlugin",
+  "needsAdmin": false,
+  // Out of process (the module host): the sensors are read by the app in the signed-in user's session (devicesensors.state), and
+  // Device Manager through the app to the Agent (wmi.query), as in process.
+  "capabilities": [ "devicesensors.state", "wmi.query" ],
+  "hasUi": false
+}
