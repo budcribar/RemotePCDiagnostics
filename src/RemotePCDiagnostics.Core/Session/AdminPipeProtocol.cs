@@ -772,6 +772,18 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
 
     public bool IsConnected => Volatile.Read(ref _disposed) == 0 && _pipe.IsConnected;
 
+    private int _busy;
+    private int _startedBiosJob;
+
+    /// <summary>No request, command or BIOS wait is running on this client right now.</summary>
+    public bool IsIdle => Volatile.Read(ref _busy) == 0;
+
+    /// <summary>
+    /// A BIOS install or firmware update was started through this client. The Agent keeps running it after the app stops waiting,
+    /// so a helper that started one is never closed early: its job object would end the flash.
+    /// </summary>
+    public bool StartedBiosJob => Volatile.Read(ref _startedBiosJob) != 0;
+
     private AdminPipeClient(string pipeName, NamedPipeClientStream pipe, ILogger? log)
     {
         PipeName = pipeName;
@@ -1042,6 +1054,18 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         TimeSpan timeout,
         CancellationToken ct = default,
         Action<string>? outputLine = null)
+    {
+        Interlocked.Increment(ref _busy);
+        try { return await RunCommandCoreAsync(fileName, arguments, timeout, ct, outputLine).ConfigureAwait(false); }
+        finally { Interlocked.Decrement(ref _busy); }
+    }
+
+    private async Task<AdminPipeResponse> RunCommandCoreAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        TimeSpan timeout,
+        CancellationToken ct,
+        Action<string>? outputLine)
     {
         void EmitLines(IReadOnlyList<string>? lines)
         {
@@ -1378,6 +1402,14 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
     /// </summary>
     private async Task<AdminPipeResponse> RunBiosJobAsync(AdminPipeRequest start, int timeoutMs, CancellationToken ct)
     {
+        Interlocked.Exchange(ref _startedBiosJob, 1);
+        Interlocked.Increment(ref _busy);
+        try { return await RunBiosJobCoreAsync(start, timeoutMs, ct).ConfigureAwait(false); }
+        finally { Interlocked.Decrement(ref _busy); }
+    }
+
+    private async Task<AdminPipeResponse> RunBiosJobCoreAsync(AdminPipeRequest start, int timeoutMs, CancellationToken ct)
+    {
         var r = await SendAsync(start, ct).ConfigureAwait(false);
         if (r.BiosJobId is not { Length: > 0 } jobId)
             return r; // Refused or answered at once.
@@ -1488,6 +1520,13 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
     }
 
     private async Task<AdminPipeResponse> SendAsync(AdminPipeRequest request, CancellationToken ct)
+    {
+        Interlocked.Increment(ref _busy);
+        try { return await SendCoreAsync(request, ct).ConfigureAwait(false); }
+        finally { Interlocked.Decrement(ref _busy); }
+    }
+
+    private async Task<AdminPipeResponse> SendCoreAsync(AdminPipeRequest request, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         await _requestLock.WaitAsync(ct).ConfigureAwait(false);
@@ -2235,9 +2274,18 @@ public sealed class AdminPipeServer(
                 Elevated: Environment.IsPrivilegedProcess,
                 HelperPid: Environment.ProcessId,
                 ExitCode: -1,
-                Error: ex.Message);
+                Error: LaunchError(resolvedTool, ex));
         }
     }
+
+    /// <summary>
+    /// The reason a command could not start, with the Windows error number: "The request is not supported" alone (VH1, Nov 28) did not
+    /// say which call refused it.
+    /// </summary>
+    internal static string LaunchError(string tool, Exception ex) =>
+        ex is System.ComponentModel.Win32Exception w
+            ? $"{ex.Message} (Windows error {w.NativeErrorCode} starting {tool})"
+            : ex.Message;
 
     private sealed record BiosJob(string Id, string Key, Task<AdminPipeResponse> Work);
 

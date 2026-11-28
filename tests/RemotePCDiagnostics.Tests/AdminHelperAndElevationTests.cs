@@ -784,6 +784,64 @@ public sealed class AdminHelperAndElevationTests
         try { await secondTask; } catch { }
     }
 
+    [Fact]
+    public async Task ElevationService_LeavesAdminRepairModeWhenTheAgentPipeComesBack()
+    {
+        // VH1, Nov 28: the app started while an update was replacing the Agent service, fell back to the UAC helper and never left it.
+        var keptPipe = $"rpd-back-{Guid.NewGuid():N}";
+        var previousEvery = ElevationService.ReturnToPipeEveryLoops;
+        ElevationService.ReturnToPipeEveryLoops = 1;
+        AdminPipeServer? helperServer = null;
+        Task? helperTask = null;
+        try
+        {
+            using var elevation = new ElevationService(
+                new SessionContext(SessionMode.Local),
+                isProcessElevated: () => false,
+                initialPipeName: keptPipe,
+                customConnector: async (req, token) =>
+                {
+                    helperServer = new AdminPipeServer(
+                        new AdminPipeServerOptions { PipeName = req.PipeName, ExpectedClientPid = req.ParentPid },
+                        new RecordingLauncher());
+                    helperTask = helperServer.RunSingleSessionAsync(CancellationToken.None);
+                    return await AdminPipeClient.ConnectAsync(req.PipeName, TimeSpan.FromSeconds(10), token);
+                });
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            Assert.True((await elevation.EnableAdminModeAsync(cts.Token)).Success);
+            Assert.StartsWith("rpd-admin-", elevation.ConnectedPipeName);
+
+            await using var agentServer = new AdminPipeServer(
+                new AdminPipeServerOptions { PipeName = keptPipe, ExpectedClientPid = Environment.ProcessId },
+                new RecordingLauncher());
+            var agentTask = agentServer.RunSingleSessionAsync(CancellationToken.None);
+
+            Assert.True(await WaitUntilAsync(() => elevation.ConnectedPipeName == keptPipe, TimeSpan.FromSeconds(15)));
+            Assert.True(elevation.HasAdminCapabilities);
+            // The helper's session ends once nothing runs on it, which is what ends a real helper process.
+            Assert.True(await WaitUntilAsync(() => helperTask!.IsCompleted, TimeSpan.FromSeconds(10)));
+
+            elevation.Dispose();
+            agentServer.Dispose();
+            try { await agentTask; } catch { }
+        }
+        finally
+        {
+            ElevationService.ReturnToPipeEveryLoops = previousEvery;
+            helperServer?.Dispose();
+        }
+    }
+
+    [Fact]
+    public void A_command_that_cannot_start_names_the_windows_error()
+    {
+        var message = AdminPipeServer.LaunchError(@"C:\Windows\System32\wevtutil.exe", new System.ComponentModel.Win32Exception(50));
+        Assert.Contains("Windows error 50", message);
+        Assert.Contains("wevtutil.exe", message);
+        Assert.Equal("boom", AdminPipeServer.LaunchError("x.exe", new InvalidOperationException("boom")));
+    }
+
     private static async Task<bool> WaitUntilAsync(Func<bool> ready, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
