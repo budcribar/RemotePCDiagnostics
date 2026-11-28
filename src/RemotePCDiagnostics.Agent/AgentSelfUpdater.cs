@@ -41,8 +41,14 @@ internal static class AgentSelfUpdater
         };
         var feed = await AppUpdateInstaller.FetchFeedAsync(http, feedUrl, ct).ConfigureAwait(false);
         var selected = channel == AppUpdateChannel.Prerelease ? feed?.Prerelease : feed?.Stable;
-        if (selected is null || string.IsNullOrWhiteSpace(selected.InstallerUrl))
+        // The feed lists x64 and ARM64 downloads; pick this PC's (an ARM64 PC that got the x64 build ran RPCD under emulation).
+        var osArch = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture;
+        if (selected is null)
             return new AppUpdateResult(false, Error: "No RPCD installer was found in the release feed.");
+        var (installerUrl, installerShaUrl, agentMsiUrl, agentMsiShaUrl) = selected.ResolveDownloads(osArch);
+        if (string.IsNullOrWhiteSpace(installerUrl))
+            return new AppUpdateResult(false, Error: "No RPCD installer was found in the release feed.");
+        log.Info($"[agent-update] OS architecture {osArch}: installer {Path.GetFileName(installerUrl)}.");
 
         if (!string.IsNullOrWhiteSpace(installed) && AppVersionComparer.IsNewer(selected.Version, installed) == false)
             return new AppUpdateResult(false, Error: $"RPCD {installed} is already up to date.");
@@ -65,8 +71,8 @@ internal static class AgentSelfUpdater
         {
             installerPath = await AppUpdateInstaller.DownloadAndVerifyAsync(
                 http,
-                selected.InstallerUrl,
-                selected.InstallerSha256Url,
+                installerUrl,
+                installerShaUrl,
                 packageDir,
                 progress: null,
                 ct).ConfigureAwait(false);
@@ -83,8 +89,8 @@ internal static class AgentSelfUpdater
             // A failed MSI check does not block the desktop update. Remote update_rpcd uses the same helper with required: true.
             msiPath = await AppUpdateInstaller.DownloadAgentMsiAsync(
                 http,
-                selected.AgentMsiUrl,
-                selected.AgentMsiSha256Url,
+                agentMsiUrl,
+                agentMsiShaUrl,
                 packageDir,
                 required: false,
                 progress: null,
