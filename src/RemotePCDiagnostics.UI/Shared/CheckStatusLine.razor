@@ -1,0 +1,45 @@
+@* Status line shared by the check pages: the status dot, what the check found (or that it is running), and its run button.
+   One copy keeps the pages alike: red text on an error, the running stripe and Running badge while it runs, and the same
+   button labels (Run check before the first run, Check again after). It renders the p itself and nothing around it, so the
+   Checks pane and Dashboard cards still hide it through app.css. *@
+<p data-testid="@TestId" class="@LineClass">
+    <span class="@("dot dot-" + Status.ToString().ToLowerInvariant())"></span>
+    <span class="status-text">@if (ChildContent is not null) { @ChildContent } else if (IsBusy) { <span>@BusyText</span> } else if (Status == DiagnosticStatus.NotRun && NotRunText is not null) { <span>@NotRunText</span> } else { <CardList Text="@Message" Strong="true" /> }</span>
+    @if (Status == DiagnosticStatus.Running && RunningBadge) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
+    @if (ActionTestId is not null && (ShowAction ?? !IsBusy))
+    {
+        <button class="btn-small status-action" data-testid="@ActionTestId" disabled="@ActionDisabled" @onclick="OnAction">@(ActionText ?? (Status == DiagnosticStatus.NotRun ? "Run check" : "Check again"))</button>
+    }
+</p>
+@code {
+    [Parameter, EditorRequired] public string TestId { get; set; } = "";
+    [Parameter] public DiagnosticStatus Status { get; set; }
+    /// <summary>The check's message: shown while it runs (unless it is the generic "Running..."), and as the result afterwards.</summary>
+    [Parameter] public string? Message { get; set; }
+    /// <summary>Whether the page treats the check as still working; defaults to Status == Running.</summary>
+    [Parameter] public bool? Busy { get; set; }
+    /// <summary>Shown while busy when the check has no message of its own yet.</summary>
+    [Parameter] public string RunningText { get; set; } = "Checking…";
+    /// <summary>Shown before the first run; without it the message is shown.</summary>
+    [Parameter] public string? NotRunText { get; set; }
+    /// <summary>Red text; defaults to Status == Error.</summary>
+    [Parameter] public bool? Error { get; set; }
+    /// <summary>The Running badge while Status == Running.</summary>
+    [Parameter] public bool RunningBadge { get; set; } = true;
+    /// <summary>Replaces the default text (busy text, not-run text or the message).</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    /// <summary>Test id of the run button; no button when null.</summary>
+    [Parameter] public string? ActionTestId { get; set; }
+    /// <summary>Button label; defaults to Run check before the first run and Check again after.</summary>
+    [Parameter] public string? ActionText { get; set; }
+    /// <summary>Whether the button shows; defaults to whenever the check isn't busy.</summary>
+    [Parameter] public bool? ShowAction { get; set; }
+    [Parameter] public bool ActionDisabled { get; set; }
+    [Parameter] public EventCallback OnAction { get; set; }
+
+    private bool IsBusy => Busy ?? Status == DiagnosticStatus.Running;
+    private string BusyText => Status == DiagnosticStatus.Running && !string.IsNullOrWhiteSpace(Message) && Message != "Running..." ? Message : RunningText;
+    private string LineClass => "status-line"
+        + (Status == DiagnosticStatus.Running ? " is-running" : "")
+        + ((Error ?? Status == DiagnosticStatus.Error) ? " error-text" : "");
+}

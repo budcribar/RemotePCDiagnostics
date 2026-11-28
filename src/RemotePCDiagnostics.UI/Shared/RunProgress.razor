@@ -1,0 +1,10 @@
+@* Step progress bar under a check's status line. It renders nothing until the check reports steps (more than one). *@
+@if (Progress is { HasProgress: true } p)
+{
+    <div class="progress run-progress" data-testid="@TestId"><div class="progress-bar" style="width:@($"{p.Percent}%")"></div></div>
+}
+@code {
+    [Parameter, EditorRequired] public string TestId { get; set; } = "";
+    /// <summary>The running check's progress (Diagnostics.GetProgress); pass null when the check isn't running.</summary>
+    [Parameter] public CheckProgress? Progress { get; set; }
+}

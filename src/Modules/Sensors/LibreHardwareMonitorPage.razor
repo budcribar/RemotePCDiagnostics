@@ -5,14 +5,10 @@
     var r = Shown();
     var report = r.Payload as SensorReport;
 }
-<div class="toolbar">
-    <span class="icon-badge page-icon"><Icon Name="temp" Size="20" /></span><h1 data-testid="lhm-title">Temperatures &amp; fans</h1>
-</div>
-<p data-testid="lhm-status" class="status-line">
-    <span class="@DotClass(r.Status)"></span>
-    <span class="status-text">@if (r.Status is DiagnosticStatus.NotRun or DiagnosticStatus.Running && report is null) { <span>Checking temperatures and fan speeds…</span> } else { <CardList Text="@r.Message" Strong="true" /> }</span>
-    @if (report is not null) { <button class="btn-small status-action" data-testid="lhm-requery" disabled="@_busy" @onclick="Refresh">Check again</button> }
-</p>
+<CheckToolbar IconName="temp" Title="@("Temperatures & fans")" TitleTestId="lhm-title" />
+<CheckStatusLine TestId="lhm-status" Status="r.Status" Message="@r.Message" Busy="@(r.Status is DiagnosticStatus.NotRun or DiagnosticStatus.Running && report is null)"
+                 RunningText="Checking temperatures and fan speeds…" ActionTestId="lhm-requery" ActionText="Check again"
+                 ShowAction="@(report is not null)" ActionDisabled="_busy" OnAction="Refresh" />
 
 @if (report is null && r.Status != DiagnosticStatus.Running)
 {
@@ -45,14 +41,9 @@
         @foreach (var g in report.VisibleGroups)
         {
             var isExpanded = _expandedCards.Contains(g.Id);
-            <div @key="g.Id" class="card card-expandable @(isExpanded ? "card-expanded" : "")" data-testid="lhm-card-@g.Id" data-sensor-group="@g.Id">
-                <div class="card-summary-toggle" role="button" tabindex="0" aria-expanded="@(isExpanded ? "true" : "false")"
-                     @onclick="() => Toggle(g.Id)" @onkeydown='e => { if (e.Key is "Enter" or " ") Toggle(g.Id); }'>
-                    <div class="card-head">
-                        <span class="@LevelClass(g.Level)"></span>
-                        <strong>@g.Title</strong>
-                        <span class="chevron-icon @(isExpanded ? "is-open" : "")" aria-hidden="true">▾</span>
-                    </div>
+            <SummaryCard @key="g.Id" Id="@g.Id" Title="@g.Title" Expanded="@isExpanded" OnOpen="Toggle" Dot="@SensorDot(g.Level)"
+                         TestId="@($"lhm-card-{g.Id}")" DetailsTestId="@($"lhm-drawer-{g.Id}")" data-sensor-group="@g.Id">
+                <ChildContent>
                     @if (g.Readings.Count == 0) { <div class="headline">No sensors</div> }
                     else if (g.Id == "fans")
                     {
@@ -69,35 +60,32 @@
                         @if (g.Readings.Any(x => x.Reading.IsFromWindows)) { <div class="lhm-source-note" data-testid="lhm-from-windows">From Windows (GPU driver)</div> }
                         <CardList Items="@([ $"{g.Readings.Count} {(g.Readings.Count == 1 ? "sensor" : "sensors")}", .. g.Readings.Select(x => x.Reading.HardwareName).Distinct().Take(2) ])" />
                     }
-                </div>
-                @if (isExpanded)
-                {
-                    <div class="card-details" data-testid="lhm-drawer-@g.Id">
-                        @if (g.Readings.Count == 0) { <p class="meta">Nothing to show here.</p> }
-                        else
-                        {
-                            <div class="card-details-scroll">
-                                <table class="detail grid sticky-head">
-                                    <tr><th>Device</th><th>Reading</th><th>Value</th><th>Min</th><th>Max</th><th>Warning / critical</th></tr>
-                                    @foreach (var e in g.Readings)
-                                    {
-                                        <tr @key="(e.Reading.HardwareName, e.Reading.SensorName)">
-                                            <td>@e.Reading.FriendlyDevice</td>
-                                            <td><span class="@LevelClass(e.Level)"></span>@e.Reading.FriendlyName
-                                                @if (e.Reading.FriendlyName != e.Reading.SensorName) { <div class="meta">@e.Reading.SensorName</div> }</td>
-                                            <td data-field="sensor-value" data-unit="@e.Reading.Unit"
-                                                data-value="@e.Reading.Value?.ToString(System.Globalization.CultureInfo.InvariantCulture)">@Fmt(e.Reading.Value, e.Reading.Unit)</td>
-                                            <td>@Fmt(e.Reading.Min, e.Reading.Unit)</td>
-                                            <td>@Fmt(e.Reading.Max, e.Reading.Unit)</td>
-                                            <td title="@e.Threshold?.Basis">@(e.Reading.IsLimit ? "Reported by the drive" : e.Threshold is { } t ? $"{t.Warning:0} / {t.Critical:0} °C" : "No limit set")</td>
-                                        </tr>
-                                    }
-                                </table>
-                            </div>
-                        }
-                    </div>
-                }
-            </div>
+                </ChildContent>
+                <Details>
+                    @if (g.Readings.Count == 0) { <p class="meta" data-testid="detail-empty">Nothing to show here.</p> }
+                    else
+                    {
+                        <div class="card-details-scroll">
+                            <table class="detail grid sticky-head">
+                                <tr><th>Device</th><th>Reading</th><th>Value</th><th>Min</th><th>Max</th><th>Warning / critical</th></tr>
+                                @foreach (var e in g.Readings)
+                                {
+                                    <tr @key="(e.Reading.HardwareName, e.Reading.SensorName)">
+                                        <td>@e.Reading.FriendlyDevice</td>
+                                        <td><span class="@LevelClass(e.Level)"></span>@e.Reading.FriendlyName
+                                            @if (e.Reading.FriendlyName != e.Reading.SensorName) { <div class="meta">@e.Reading.SensorName</div> }</td>
+                                        <td data-field="sensor-value" data-unit="@e.Reading.Unit"
+                                            data-value="@e.Reading.Value?.ToString(System.Globalization.CultureInfo.InvariantCulture)">@Fmt(e.Reading.Value, e.Reading.Unit)</td>
+                                        <td>@Fmt(e.Reading.Min, e.Reading.Unit)</td>
+                                        <td>@Fmt(e.Reading.Max, e.Reading.Unit)</td>
+                                        <td title="@e.Threshold?.Basis">@(e.Reading.IsLimit ? "Reported by the drive" : e.Threshold is { } t ? $"{t.Warning:0} / {t.Critical:0} °C" : "No limit set")</td>
+                                    </tr>
+                                }
+                            </table>
+                        </div>
+                    }
+                </Details>
+            </SummaryCard>
         }
     </div>
     @if (report.VisibleGroups.Count == 0)
@@ -221,10 +209,11 @@
 
     // ...
 
-    private static string LevelClass(SensorLevel l) => l switch
+    private static string SensorDot(SensorLevel l) => l switch
     {
-        SensorLevel.Ok => "dot dot-ok", SensorLevel.Warning => "dot dot-warning", SensorLevel.Critical => "dot dot-error", _ => "dot dot-neutral",
+        SensorLevel.Ok => "ok", SensorLevel.Warning => "warning", SensorLevel.Critical => "error", _ => "neutral",
     };
+    private static string LevelClass(SensorLevel l) => "dot dot-" + SensorDot(l);
     // Sensors report whole degrees and whole RPM; a decimal would claim precision they do not have.
     private static string Fmt(double? v, string unit) => v is null ? "—" : unit == "RPM" ? $"{v:N0} RPM" : $"{v:0} {unit}";
 }

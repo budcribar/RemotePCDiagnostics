@@ -1,0 +1,15 @@
+@* Page header shared by the check pages: icon badge and title, then any buttons the page adds after the title.
+   It renders the toolbar div itself and nothing around it, so a page shown inside the Checks pane or a Dashboard card
+   still has its header hidden by app.css (.ct-detail-body > .toolbar, .dash-card-details > .toolbar). *@
+<div class="@(string.IsNullOrEmpty(Class) ? "toolbar" : "toolbar " + Class)"><span class="icon-badge page-icon"><Icon Name="@IconName" Size="20" /></span><h1 data-testid="@TitleTestId">@Title</h1>@ChildContent</div>
+@code {
+    /// <summary>Icon name, as <see cref="Icon"/> takes it (usually the module's slug).</summary>
+    [Parameter, EditorRequired] public string IconName { get; set; } = "";
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    /// <summary>Test id on the h1; left off when null.</summary>
+    [Parameter] public string? TitleTestId { get; set; }
+    /// <summary>Extra classes on the toolbar, such as toolbar-grouped.</summary>
+    [Parameter] public string? Class { get; set; }
+    /// <summary>Controls after the title (start, cancel, choices).</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}
