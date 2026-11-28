@@ -1893,3 +1893,24 @@ body:has(.ptr-overlay) [class*="rbwv-"] { display: none !important; }
 /* "You don't have control" note, shown when a tap lands on RemoteBlazorWebView's read-only overlay (dialogs.js). Above that overlay (z 10000). */
 .rpd-no-control-note { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 10001; max-width: min(92vw, 420px); box-sizing: border-box; padding: 10px 14px; border-radius: 10px; background: var(--text-strong, #111); color: var(--surface, #fff); box-shadow: var(--shadow-lg); font-size: 14px; line-height: 1.35; text-align: center; pointer-events: none; animation: fade .15s ease-out; }
 .rpd-no-control-note[hidden] { display: none; }
+
+/* Stress tests while a test runs (ChecksPage is-tucked): the test list slides away to the left into a slim "Show tests" rail, and
+   the running test's pane takes the width. Cancel is in the Running banner. The list slides back when the run ends. */
+.ct-list { transition: width .45s cubic-bezier(.4, 0, .2, 1), padding .45s cubic-bezier(.4, 0, .2, 1); }
+.ct-list-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; transition: opacity .25s ease .15s; }
+.ct-banner-cancel { flex: none; margin-left: auto; }
+.ct-list-toggle { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; width: auto; height: 30px; padding: 0 12px; font-size: 13px; }
+.ct-list-toggle-icon { font-size: 16px; line-height: 1; }
+.ct-workspace.is-tucked .ct-list { width: 40px; padding-right: 4px; overflow: hidden; }
+.ct-workspace.is-tucked .ct-list-body { opacity: 0; visibility: hidden; transition: opacity .15s ease, visibility 0s linear .45s; }
+.ct-workspace.is-tucked .ct-splitter { visibility: hidden; }
+.ct-workspace.is-tucked .ct-list-toggle { align-self: stretch; flex-direction: column; justify-content: flex-start; height: auto; min-height: 150px; padding: 10px 0; }
+.ct-workspace.is-tucked .ct-list-toggle-text { writing-mode: vertical-rl; }
+/* Stacked layout (phone, narrow window): the list folds away upwards instead, leaving a full-width "Show tests" bar. */
+@media (max-width: 900px) {
+  .ct-workspace.is-tucked .ct-list { width: auto; overflow: visible; padding-right: 2px; }
+  .ct-workspace.is-tucked .ct-list-body { display: none; }
+  .ct-workspace.is-tucked .ct-list-toggle { align-self: stretch; flex-direction: row; justify-content: center; min-height: 0; height: 34px; padding: 0 12px; }
+  .ct-workspace.is-tucked .ct-list-toggle-text { writing-mode: horizontal-tb; }
+  .ct-workspace.is-tucked .ct-list-toggle-icon { transform: rotate(90deg); }
+}

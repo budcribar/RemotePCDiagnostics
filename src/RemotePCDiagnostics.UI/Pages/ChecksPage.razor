@@ -25,6 +25,12 @@
     var availableChecks = checkChoices.Where(c => c.Available).ToList();
     var enabledChecks = availableChecks.Count(c => c.Enabled);
     var checksRunning = Screen.RunningGroup == CheckGroup.Checks || Screen.Modules(CheckGroup.Checks).Any(m => Store.Get(m.Name).Status == DiagnosticStatus.Running);
+    // Stress tests page while a test runs: the list tucks away to the left (a slim "Show tests" rail) so the running test gets the
+    // width, and Cancel sits in the Running banner. The list comes back by itself when the run ends or is cancelled.
+    var stressRunning = _group == CheckGroup.Stress && StressRunning(pageModules);
+    if (!stressRunning) _listPeek = false;
+    var listTucked = stressRunning && !_listPeek;
+    if (stressRunning && Screen.Progress is null) banner = ("run", "Running " + string.Join(", ", pageModules.Where(m => Store.Get(m.Name).Status == DiagnosticStatus.Running).Select(m => m.DisplayName).DefaultIfEmpty("a stress test")));
 }
 <div class="ct-page">
     <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="dash" Size="20" /></span><h1 data-rpcd-page="@(_group == CheckGroup.Stress ? "stress" : "checks")" data-rpcd-contract="@(_group == CheckGroup.Stress ? BrowserContract.Stress : BrowserContract.Checks)" data-testid="checks-title">@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")</h1>
@@ -46,7 +52,7 @@
             <button class="btn-small" data-testid="checks-collapse-all" @onclick="() => Screen.SetAllCollapsed(true)">Collapse all</button>
         </span>
     </div>
-    @if ((_group == CheckGroup.Stress && anyResult) || Screen.Progress is not null)
+    @if ((_group == CheckGroup.Stress && anyResult) || Screen.Progress is not null || stressRunning)
     {
     <section class="banner banner-@banner.Kind ct-banner" data-testid="checks-banner">
         <span class="banner-icon"><Icon Name="@(banner.Kind is "warn" or "err" ? "crash" : "sec")" Size="22" /></span>
@@ -54,8 +60,14 @@
             <div class="banner-title" data-testid="checks-banner-title">@banner.Title</div>
             @if (Screen.Progress is null && Screen.LastRunNote is { } runNote) { <div class="banner-note" data-testid="checks-run-note">@runNote</div> }
             @if (Screen.Progress is null && _group == CheckGroup.Stress && summary.StressNotRunNote is { } note) { <div class="banner-note">@note</div> }
-            else if (Screen.Progress is null) { <div class="banner-sub">Expand a group or click a test to see its full results on the right.</div> }
+            else if (Screen.Progress is null && !stressRunning) { <div class="banner-sub">Expand a group or click a test to see its full results on the right.</div> }
         </div>
+        @if (stressRunning)
+        {
+            @* Same test id as the Run selected button it replaces, so Admin's stop_stress_tests keeps clicking checks-run-stress. *@
+            <button type="button" class="btn btn-stop ct-banner-cancel" data-testid="checks-run-stress" data-action="cancel-run" data-check-group="stress"
+                    @onclick="Screen.Stop">Cancel</button>
+        }
     </section>
     }
     else if (Screen.LastRunNote is { } lastRunNote)
@@ -126,14 +138,23 @@
             </div>
         </details>
     }
-    <div class="ct-workspace" data-testid="checks-workspace">
+    <div class="ct-workspace @(stressRunning ? "is-running" : "") @(listTucked ? "is-tucked" : "")" data-testid="checks-workspace" data-list-state="@(listTucked ? "tucked" : "open")">
         <section class="ct-list" aria-label="@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")">
+            @if (stressRunning)
+            {
+                <button type="button" class="ct-list-toggle" data-testid="checks-list-toggle" aria-expanded="@(listTucked ? "false" : "true")"
+                        aria-controls="ct-list-body" title="@(listTucked ? "Show the test list" : "Hide the test list")" @onclick="() => _listPeek = !_listPeek">
+                    <span class="ct-list-toggle-icon" aria-hidden="true">@(listTucked ? "›" : "‹")</span><span class="ct-list-toggle-text">@(listTucked ? "Show tests" : "Hide tests")</span>
+                </button>
+            }
+            <div class="ct-list-body" id="ct-list-body" inert="@listTucked">
             @if (_group == CheckGroup.Checks)
             {
                 <AgentData TestId="checks-list-data" Json="@AgentExports.Checks(CheckList())" />
             }
             @if (_group == CheckGroup.Checks) { @Group(CheckGroup.Checks, "System checks", "Quick, read-only checks of Windows logs, drives, services, programs and hardware.") }
             else { @Group(CheckGroup.Stress, "Hardware stress & deep scans", "Run one at a time · stop automatically if the PC gets too hot.") }
+            </div>
         </section>
         <div class="ct-splitter" role="separator" aria-orientation="vertical" aria-label="Resize panes" tabindex="0" data-testid="checks-splitter"
              aria-valuemin="28" aria-valuemax="75"><span class="ct-grip"></span></div>
@@ -246,6 +267,13 @@
     }
 
     private bool _checksOpen;
+
+    /// <summary>The tucked test list was opened again during a run ("Show tests"); cleared when the run ends.</summary>
+    private bool _listPeek;
+
+    /// <summary>A stress test runs: a Run selected, a test started from its own card, or one an agent started.</summary>
+    private bool StressRunning(IReadOnlyList<IDiagnosticModule> mods) =>
+        Screen.RunningGroup == CheckGroup.Stress || Diagnostics.IsAnyStressRunning || mods.Any(m => Store.Get(m.Name).Status == DiagnosticStatus.Running);
     /// <summary>The enablement checkboxes stay on the saved set while a check, a group run or a stress test is going.</summary>
     private bool ChecksLocked => Screen.IsBusy || Diagnostics.IsAnyRunning;
 
@@ -458,7 +486,11 @@
                                     data-testid="checks-mode-extended" @onclick="() => Screen.Mode = StressSuiteMode.Extended">Extended (~5&nbsp;min&nbsp;each)</button>
                         </div>
                     }
-                    @if (running) { <button class="btn btn-stop" data-testid="checks-run-@id" @onclick="Screen.Stop">Stop</button> }
+                    @* Stress tests: Cancel is in the Running banner while a test runs (its own checks-run-stress), not here. *@
+                    @if (running)
+                    {
+                        if (g != CheckGroup.Stress) { <button class="btn btn-stop" data-testid="checks-run-@id" @onclick="Screen.Stop">Stop</button> }
+                    }
                     else
                     {
                         <button class="btn btn-primary" data-testid="checks-run-@id" data-action="run-selected" data-check-group="@id"
