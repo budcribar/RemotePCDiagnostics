@@ -1,5 +1,6 @@
 @using Microsoft.JSInterop
 @using RemotePCDiagnostics.Core.Workflow
+@using RemotePCDiagnostics.Core.Display
 @implements IDisposable
 @inject AppServices App
 @inject IJSRuntime JS
@@ -118,7 +119,9 @@
             </div>
 
             <p class="meta" style="margin-top: 0">
-                Inspect pure black, white, RGB subpixels, and 50% gray uniformity full-screen for stuck/dead pixels, pressure spots, or backlight bleed. Touchscreens record multi-finger contact count automatically.
+                Inspect pure black, white, RGB subpixels, and 50% gray uniformity full-screen for stuck/dead pixels, pressure spots, or backlight bleed,
+                then type the three numbers drawn only in red, only in green and only in blue: a number that can't be seen fails that color channel.
+                The test runs on every connected screen in turn. Touchscreens record multi-finger contact count automatically.
             </p>
 
             <div class="display-swatches" aria-hidden="true">
@@ -138,13 +141,63 @@
                 <span><strong data-testid="display-touch-count">@snap.MaxTouchPoints</strong> max touch points</span>
             </div>
 
+            <div class="display-screens" data-testid="display-screens">
+                @foreach (var screen in ScreensForTest)
+                {
+                    var result = ResultFor(snap, screen);
+                    <div class="display-screen-row" data-testid="display-screen-row" data-screen-id="@screen.Id">
+                        <span class="display-screen-name">
+                            <strong>@screen.Name</strong>
+                            @if (screen.Primary && ScreensForTest.Count > 1)
+                            {
+                                <span class="meta"> (main)</span>
+                            }
+                            @if (screen.Width > 0 && screen.Height > 0)
+                            {
+                                <span class="meta"> · @screen.Width × @screen.Height</span>
+                            }
+                        </span>
+                        <span class="chip chip-@ColorChip(result)" data-testid="display-screen-color">@ColorLabel(result)</span>
+                        <button type="button" class="btn-small" data-testid="display-screen-test"
+                                disabled="@IsRemoteDisplay"
+                                title="@(IsRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                                @onclick="() => LaunchDisplayOverlay(screen)">
+                            Test this screen
+                        </button>
+                    </div>
+                }
+            </div>
+
+            <div class="display-blank" data-testid="display-blank">
+                @if (_askBlank)
+                {
+                    <span><strong>Did every screen come back with a normal picture?</strong></span>
+                    <button type="button" class="btn-small btn-primary" data-testid="display-blank-yes" @onclick="() => AnswerBlank(true)">Yes</button>
+                    <button type="button" class="btn-small" data-testid="display-blank-no" @onclick="() => AnswerBlank(false)">No, a screen stayed dark</button>
+                }
+                else
+                {
+                    <button type="button" class="btn-small" data-testid="display-blank-run"
+                            disabled="@(IsRemoteDisplay || _blanking)"
+                            title="@(IsRemoteDisplay ? "Interactive tests must run locally on the physical machine" : "Turns every screen off for 2 seconds, then back on")"
+                            @onclick="RunBlankAsync">
+                        @(_blanking ? "Screens off…" : "Screen off and on (2 s)")
+                    </button>
+                    <span class="chip chip-@BlankChip(snap.BlankScreen)" data-testid="display-blank-status">@BlankLabel(snap.BlankScreen)</span>
+                    @if (snap.BlankScreen == BlankScreenOutcome.NotSupported && !string.IsNullOrEmpty(snap.BlankScreenReason))
+                    {
+                        <span class="meta">@snap.BlankScreenReason</span>
+                    }
+                }
+            </div>
+
             <div style="margin-bottom: 8px">
                 <button type="button" class="btn btn-outline" style="width:auto"
                         data-testid="display-test-launch"
                         disabled="@IsRemoteDisplay"
                         title="@(IsRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
-                        @onclick="LaunchDisplayOverlay">
-                    <Icon Name="eye" Size="14" /> Launch full-screen color check
+                        @onclick="() => LaunchDisplayOverlay(null)">
+                    <Icon Name="eye" Size="14" /> Launch full-screen color check@(ScreensForTest.Count > 1 ? $" on all {ScreensForTest.Count} screens" : "")
                 </button>
             </div>
 
@@ -189,38 +242,93 @@ else
 
 @if (_displayOverlayOpen)
 {
-    <div class="display-qa-overlay"
-         style="background:@activePattern.Hex;color:@activePattern.ForegroundHex"
+    var overlayBg = _numbersStep ? "#000000" : activePattern.Hex;
+    var overlayFg = _numbersStep ? "#9ca3af" : activePattern.ForegroundHex;
+    var current = CurrentScreen;
+    <div class="display-qa-overlay @(_numbersStep ? "display-qa-overlay-numbers" : "")"
+         style="background:@overlayBg;color:@overlayFg"
          tabindex="0"
          role="dialog"
          aria-modal="true"
          aria-label="Full-screen display dead-pixel and touch inspection"
          data-testid="display-test-overlay"
+         data-step="@(_numbersStep ? "numbers" : "patterns")"
+         data-screen-id="@current?.Id"
          @ref="_overlayRef"
          @onclick="OnOverlayClick"
          @onkeydown="OnOverlayKeyDown"
-         @onkeydown:preventDefault="true"
+         @onkeydown:preventDefault="!_numbersStep"
          @ontouchstart="OnTouchEvent"
          @ontouchmove="OnTouchEvent">
-        <div class="display-qa-hud @(_hudVisible ? "display-qa-hud-visible" : "display-qa-hud-hidden")"
-             @onclick:stopPropagation="true"
-             @onmousemove:stopPropagation="true"
-             @onkeydown:stopPropagation="true">
-            <div class="display-qa-hud-title">
-                <strong>Pattern @(_patternIndex + 1) of @Patterns.Length: @activePattern.Name (@activePattern.Hex)</strong>
-                @if (snap.MaxTouchPoints > 0)
-                {
-                    <span> · @snap.MaxTouchPoints-pt touch verified</span>
-                }
+        @if (_numbersStep)
+        {
+            <div class="display-qa-numbers" data-testid="display-numbers"
+                 @onclick:stopPropagation="true">
+                <div class="display-qa-number-row" aria-hidden="true">
+                    @for (var pos = 0; pos < 3; pos++)
+                    {
+                        var channel = DisplayColorCheck.Channels[_order[pos]];
+                        <span class="display-qa-number" style="color:@DisplayColorCheck.Hex(channel)"
+                              data-testid="display-number-@DisplayColorCheck.Name(channel)">@_shown[_order[pos]]</span>
+                    }
+                </div>
+                <div class="display-qa-number-form">
+                    <div>
+                        <strong>@(current?.Name)@(_runQueue.Count > 1 ? $" (screen {_runIndex + 1} of {_runQueue.Count})" : "")</strong>
+                        · Type the numbers you see, left to right. Leave a box empty if you can't see a number there.
+                    </div>
+                    <div class="display-qa-answers">
+                        @for (var pos = 0; pos < 3; pos++)
+                        {
+                            var at = pos;
+                            <label>
+                                @PositionName(at)
+                                @if (at == 0)
+                                {
+                                    <input inputmode="numeric" maxlength="3" autocomplete="off" data-testid="display-answer-@at"
+                                           @ref="_firstAnswerRef" value="@_typed[at]" @oninput="e => _typed[at] = e.Value?.ToString()" />
+                                }
+                                else
+                                {
+                                    <input inputmode="numeric" maxlength="3" autocomplete="off" data-testid="display-answer-@at"
+                                           value="@_typed[at]" @oninput="e => _typed[at] = e.Value?.ToString()" />
+                                }
+                            </label>
+                        }
+                    </div>
+                    <div class="display-qa-hud-actions">
+                        <button type="button" class="btn-small btn-primary" data-testid="display-numbers-submit" @onclick="SubmitNumbers">Check numbers</button>
+                        <button type="button" class="btn-small" data-testid="display-overlay-exit" @onclick="CloseDisplayOverlay">Exit</button>
+                    </div>
+                </div>
             </div>
-            <div class="display-qa-hud-sub">Click anywhere, Space, or → for next pattern · ← previous · Touch with multiple fingers · Esc to exit</div>
-            <div class="display-qa-hud-actions">
-                <button type="button" class="btn-small" data-testid="display-overlay-prev" @onclick="PrevPattern">Prev</button>
-                <button type="button" class="btn-small" data-testid="display-overlay-next" @onclick="NextPattern">Next</button>
-                <button type="button" class="btn-small btn-primary" data-testid="display-overlay-pass" @onclick="PassDisplayFromOverlay">Pass &amp; exit</button>
-                <button type="button" class="btn-small" data-testid="display-overlay-exit" @onclick="CloseDisplayOverlay">Exit</button>
+        }
+        else
+        {
+            <div class="display-qa-hud @(_hudVisible ? "display-qa-hud-visible" : "display-qa-hud-hidden")"
+                 @onclick:stopPropagation="true"
+                 @onmousemove:stopPropagation="true"
+                 @onkeydown:stopPropagation="true">
+                <div class="display-qa-hud-title">
+                    <strong>Pattern @(_patternIndex + 1) of @Patterns.Length: @activePattern.Name (@activePattern.Hex)</strong>
+                    @if (_runQueue.Count > 1)
+                    {
+                        <span> · @(current?.Name) (screen @(_runIndex + 1) of @_runQueue.Count)</span>
+                    }
+                    @if (snap.MaxTouchPoints > 0)
+                    {
+                        <span> · @snap.MaxTouchPoints-pt touch verified</span>
+                    }
+                </div>
+                <div class="display-qa-hud-sub">Click anywhere, Space, or → for next pattern · ← previous · Touch with multiple fingers · Esc to exit · After the last pattern, type the three color numbers</div>
+                <div class="display-qa-hud-actions">
+                    <button type="button" class="btn-small" data-testid="display-overlay-prev" @onclick="PrevPattern">Prev</button>
+                    <button type="button" class="btn-small" data-testid="display-overlay-next" @onclick="NextPattern">Next</button>
+                    <button type="button" class="btn-small btn-primary" data-testid="display-overlay-numbers" @onclick="ShowNumbers">Color numbers</button>
+                    <button type="button" class="btn-small" data-testid="display-overlay-exit" @onclick="CloseDisplayOverlay">Exit</button>
+                </div>
             </div>
-        </div>
+        }
     </div>
 }
 
@@ -254,6 +362,40 @@ else
     private readonly HashSet<int> _inspectedPatterns = [];
     private string _displayNotes = "";
     private bool _hudVisible;
+
+    // The screens the full-screen test moves through in this run, and where it is.
+    private static readonly ScreenInfo ThisScreen = new("this-screen", "This screen", true, 0, 0, 0, 0);
+    private IReadOnlyList<ScreenInfo>? _screenList;
+    private List<ScreenInfo> _runQueue = [];
+    private int _runIndex;
+    private bool _runHadFailure;
+    private readonly HashSet<int> _screenPatterns = [];
+    // The color number step: numbers by channel (red, green, blue), which channel sits at each position, and what was typed per position.
+    private bool _numbersStep;
+    private IReadOnlyList<int> _shown = [0, 0, 0];
+    private int[] _order = [0, 1, 2];
+    private readonly string?[] _typed = new string?[3];
+    private ElementReference _firstAnswerRef;
+    private bool _shouldFocusAnswer;
+    private bool _blanking;
+    private bool _askBlank;
+
+    private IReadOnlyList<ScreenInfo> ScreensForTest => _screenList ??= LoadScreens();
+
+    private ScreenInfo? CurrentScreen => _runIndex >= 0 && _runIndex < _runQueue.Count ? _runQueue[_runIndex] : null;
+
+    /// <summary>The connected screens, primary first; just "This screen" when the host can't list them.</summary>
+    private IReadOnlyList<ScreenInfo> LoadScreens()
+    {
+        IReadOnlyList<ScreenInfo> list = [];
+        try { list = App.Screens?.ListScreens() ?? []; } catch { }
+        return list.Count > 0 ? list : [ThisScreen];
+    }
+
+    private static DisplayScreenResult? ResultFor(PhysicalBenchQaSnapshot snap, ScreenInfo screen) =>
+        snap.DisplayScreens?.FirstOrDefault(r => string.Equals(r.ScreenId, screen.Id, StringComparison.OrdinalIgnoreCase));
+
+    private static string PositionName(int pos) => pos switch { 0 => "Left", 1 => "Middle", _ => "Right" };
     private CancellationTokenSource? _hudTimerCts;
 
     private void StartHudTimer()
@@ -280,7 +422,7 @@ else
 
     private void OnOverlayClick()
     {
-        if (_hudVisible)
+        if (_hudVisible && !_numbersStep)
         {
             NextPattern();
         }
@@ -338,6 +480,12 @@ else
             _shouldFocusKeyZone = false;
             try { await _keyZoneRef.FocusAsync(); } catch { }
         }
+        if (_shouldFocusAnswer && _displayOverlayOpen && _numbersStep)
+        {
+            _shouldFocusAnswer = false;
+            _shouldFocusOverlay = false;
+            try { await _firstAnswerRef.FocusAsync(); } catch { }
+        }
         if (_shouldFocusOverlay && _displayOverlayOpen)
         {
             _shouldFocusOverlay = false;
@@ -346,7 +494,7 @@ else
         if (AutoLaunchDisplay && FilterSection == "display" && !_hasAutoLaunchedDisplay && !_displayOverlayOpen && !IsRemoteDisplay)
         {
             _hasAutoLaunchedDisplay = true;
-            LaunchDisplayOverlay();
+            LaunchDisplayOverlay(null);
             StateHasChanged();
         }
     }
@@ -473,40 +621,56 @@ else
         });
     }
 
-    private void LaunchDisplayOverlay()
+    /// <summary>Opens the full-screen test on <paramref name="only"/>, or on every connected screen in turn when null.</summary>
+    private void LaunchDisplayOverlay(ScreenInfo? only)
     {
-        _patternIndex = 0;
+        _screenList = LoadScreens();
+        _runQueue = only is null ? [.. _screenList] : [only];
+        _runIndex = 0;
+        _runHadFailure = false;
         _displayOverlayOpen = true;
         _shouldFocusOverlay = true;
+        StartScreen();
+        try { _ = JS.InvokeVoidAsync("eval", "if (document.documentElement.requestFullscreen && !document.fullscreenElement) document.documentElement.requestFullscreen();"); } catch { }
+    }
+
+    /// <summary>Moves the full-screen window to the run's current screen and starts its patterns from the first one.</summary>
+    private void StartScreen()
+    {
+        var screen = _runQueue[_runIndex];
+        _patternIndex = 0;
+        _numbersStep = false;
+        _screenPatterns.Clear();
         _hudVisible = false;
         StartHudTimer();
-        App.Fullscreen?.RequestFullscreen(true);
-        try { _ = JS.InvokeVoidAsync("eval", "if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();"); } catch { }
+        App.Fullscreen?.RequestFullscreen(true, ReferenceEquals(screen, ThisScreen) ? null : screen.Id);
+        ActiveService.Update(s => s.WithScreen(new DisplayScreenResult(screen.Id, screen.Name, screen.Primary,
+            screen.Width > 0 ? screen.Width : null, screen.Height > 0 ? screen.Height : null)));
         RecordPatternInspected(0);
     }
 
+    /// <summary>Exit: leaves full screen without a verdict. A number step left unanswered goes back to not checked.</summary>
     private void CloseDisplayOverlay()
     {
-        _displayOverlayOpen = false;
-        _hudTimerCts?.Cancel();
-        App.Fullscreen?.RequestFullscreen(false);
-        try { _ = JS.InvokeVoidAsync("eval", "if (document.exitFullscreen && document.fullscreenElement) document.exitFullscreen();"); } catch { }
+        if (_numbersStep && CurrentScreen is { } screen)
+            ActiveService.Update(s => ResultFor(s, screen) is { Answers: null } r ? s.WithScreen(r with { ShownNumbers = null }) : s);
+        LeaveOverlay();
     }
 
-    private void PassDisplayFromOverlay()
+    private void LeaveOverlay()
     {
         _displayOverlayOpen = false;
+        _numbersStep = false;
         _hudTimerCts?.Cancel();
         App.Fullscreen?.RequestFullscreen(false);
         try { _ = JS.InvokeVoidAsync("eval", "if (document.exitFullscreen && document.fullscreenElement) document.exitFullscreen();"); } catch { }
-        SetDisplayOutcome(PhysicalCheckOutcome.Passed);
     }
 
     private void NextPattern()
     {
         if (_patternIndex >= Patterns.Length - 1)
         {
-            PassDisplayFromOverlay();
+            ShowNumbers();
             return;
         }
         _patternIndex++;
@@ -523,15 +687,67 @@ else
         RecordPatternInspected(_patternIndex);
     }
 
+    /// <summary>The color number step: three new numbers, one per channel, in shuffled positions on black.</summary>
+    private void ShowNumbers()
+    {
+        if (CurrentScreen is not { } screen) return;
+        _hudTimerCts?.Cancel();
+        _numbersStep = true;
+        _shown = DisplayColorCheck.NewNumbers();
+        _order = [0, 1, 2];
+        Random.Shared.Shuffle(_order);
+        Array.Clear(_typed);
+        _shouldFocusAnswer = true;
+        var shown = _shown;
+        ActiveService.Update(s => s.WithScreen((ResultFor(s, screen) ?? new DisplayScreenResult(screen.Id, screen.Name, screen.Primary))
+            with { ShownNumbers = shown, Answers = null, CheckedUtc = null }));
+    }
+
+    /// <summary>Grades the typed numbers for this screen, then moves to the next screen or ends the run.</summary>
+    private void SubmitNumbers()
+    {
+        if (!_numbersStep || CurrentScreen is not { } screen) return;
+        var byChannel = new string?[3];
+        for (var pos = 0; pos < 3; pos++) byChannel[_order[pos]] = _typed[pos];
+        var answers = DisplayColorCheck.Grade(_shown, byChannel);
+        if (answers.Any(a => !a.Passed)) _runHadFailure = true;
+        var shown = _shown;
+        ActiveService.Update(s => s.WithScreen((ResultFor(s, screen) ?? new DisplayScreenResult(screen.Id, screen.Name, screen.Primary))
+            with { ShownNumbers = shown, Answers = answers, CheckedUtc = DateTimeOffset.UtcNow }));
+        _numbersStep = false;
+        _runIndex++;
+        if (_runIndex < _runQueue.Count)
+        {
+            _shouldFocusOverlay = true;
+            StartScreen();
+            return;
+        }
+        LeaveOverlay();
+        SetDisplayOutcome(_runHadFailure ? PhysicalCheckOutcome.Failed : PhysicalCheckOutcome.Passed);
+    }
+
     private void RecordPatternInspected(int index)
     {
         _inspectedPatterns.Add(index);
+        _screenPatterns.Add(index);
         var count = Math.Max(_inspectedPatterns.Count, ActiveService.Current.SolidColorsInspected);
-        ActiveService.Update(s => s with { SolidColorsInspected = Math.Min(Patterns.Length, count) });
+        var screen = CurrentScreen;
+        var onScreen = _screenPatterns.Count;
+        ActiveService.Update(s =>
+        {
+            var next = s with { SolidColorsInspected = Math.Min(Patterns.Length, count) };
+            return screen is not null && ResultFor(next, screen) is { } r ? next.WithScreen(r with { PatternsInspected = onScreen }) : next;
+        });
     }
 
     private void OnOverlayKeyDown(KeyboardEventArgs e)
     {
+        if (_numbersStep)
+        {
+            if (e.Key == "Escape") CloseDisplayOverlay();
+            else if (e.Key == "Enter") SubmitNumbers();
+            return;
+        }
         switch (e.Key)
         {
             case "Escape":
@@ -548,6 +764,35 @@ else
                 if (_hudVisible) NextPattern();
                 break;
         }
+    }
+
+    /// <summary>Screen off and on: every display goes dark for 2 seconds, then the person says whether each came back.</summary>
+    private async Task RunBlankAsync()
+    {
+        if (_blanking) return;
+        if (App.Screens is not { } screens)
+        {
+            ActiveService.Update(s => s with { BlankScreen = BlankScreenOutcome.NotSupported, BlankScreenReason = "This app can't turn the screens off here." });
+            return;
+        }
+        _blanking = true;
+        StateHasChanged();
+        string? reason;
+        try { reason = await screens.BlankScreensAsync(DisplayColorCheck.BlankDuration); }
+        catch (Exception ex) { reason = "The screens couldn't be turned off: " + ex.Message; }
+        _blanking = false;
+        if (reason is not null)
+            ActiveService.Update(s => s with { BlankScreen = BlankScreenOutcome.NotSupported, BlankScreenReason = reason });
+        else
+            _askBlank = true;
+    }
+
+    private void AnswerBlank(bool cameBack)
+    {
+        _askBlank = false;
+        ActiveService.Update(s => s with { BlankScreen = cameBack ? BlankScreenOutcome.Returned : BlankScreenOutcome.DidNotReturn, BlankScreenReason = null });
+        var chosen = ActiveService.Current.DisplayOutcome;
+        if (!cameBack && chosen != PhysicalCheckOutcome.NotRun) SetDisplayOutcome(chosen);
     }
 
     private void OnTouchEvent(TouchEventArgs e)
@@ -567,32 +812,76 @@ else
         ActiveService.Update(s => s with { DisplayNotes = trimmed });
     }
 
+    /// <summary>
+    /// The person's verdict. A failed color channel on any screen, or a screen that stayed dark after Screen off and on, fails the test
+    /// whichever button was pressed (<see cref="DisplayColorCheck.Effective"/>).
+    /// </summary>
     private void SetDisplayOutcome(PhysicalCheckOutcome outcome)
     {
         var trimmed = string.IsNullOrWhiteSpace(_displayNotes) ? null : _displayNotes.Trim();
-        ActiveService.Update(s => s with
+        var next = ActiveService.Update(s => s with
         {
-            DisplayOutcome = outcome,
+            DisplayOutcome = DisplayColorCheck.Effective(outcome, s.DisplayScreens, s.BlankScreen),
             DisplayNotes = trimmed,
             SolidColorsInspected = Math.Max(s.SolidColorsInspected, _inspectedPatterns.Count),
         });
-        OnOutcomeChanged?.Invoke("display", outcome);
+        OnOutcomeChanged?.Invoke("display", next.DisplayOutcome);
     }
 
     private void ResetDisplay()
     {
-        _displayOverlayOpen = false;
+        if (_displayOverlayOpen) LeaveOverlay();
         _patternIndex = 0;
         _inspectedPatterns.Clear();
+        _screenPatterns.Clear();
+        _runQueue = [];
+        _runIndex = 0;
+        _askBlank = false;
         _displayNotes = "";
+        _screenList = null;
         ActiveService.Update(s => s with
         {
             DisplayOutcome = PhysicalCheckOutcome.NotRun,
             SolidColorsInspected = 0,
             MaxTouchPoints = 0,
             DisplayNotes = null,
+            DisplayScreens = null,
+            BlankScreen = BlankScreenOutcome.NotRun,
+            BlankScreenReason = null,
         });
     }
+
+    private static string ColorChip(DisplayScreenResult? r) => r?.ColorCheck switch
+    {
+        ColorCheckState.Passed => "ok",
+        ColorCheckState.Failed => "err",
+        ColorCheckState.WaitingForAnswers => "warn",
+        _ => "na",
+    };
+
+    private static string ColorLabel(DisplayScreenResult? r) => r?.ColorCheck switch
+    {
+        ColorCheckState.Passed => "Colors OK",
+        ColorCheckState.Failed => $"{char.ToUpperInvariant(DisplayColorCheck.Names(r.FailedChannels)[0])}{DisplayColorCheck.Names(r.FailedChannels)[1..]} failed",
+        ColorCheckState.WaitingForAnswers => "Typing numbers",
+        _ when r is { PatternsInspected: > 0 } => $"{r.PatternsInspected} / {Patterns.Length} patterns",
+        _ => "Not tested",
+    };
+
+    private static string BlankChip(BlankScreenOutcome o) => o switch
+    {
+        BlankScreenOutcome.Returned => "ok",
+        BlankScreenOutcome.DidNotReturn => "err",
+        _ => "na",
+    };
+
+    private static string BlankLabel(BlankScreenOutcome o) => o switch
+    {
+        BlankScreenOutcome.Returned => "Came back",
+        BlankScreenOutcome.DidNotReturn => "Stayed dark",
+        BlankScreenOutcome.NotSupported => "Not supported",
+        _ => "Not run",
+    };
 
     private static string OutcomeChip(PhysicalCheckOutcome outcome) => outcome switch
     {

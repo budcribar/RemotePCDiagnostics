@@ -100,13 +100,66 @@ public static class InteractiveExport
         name = "Display and touch",
         @checked = page.CheckedTestIds.Contains("display"),
         open = page.SelectedTestId == "display",
-        state = b.DisplayOutcome != PhysicalCheckOutcome.NotRun ? "done" : b.SolidColorsInspected > 0 ? "in-progress" : "waiting-for-person",
-        measured = new { solidColorsInspected = b.SolidColorsInspected, maxTouchPoints = b.MaxTouchPoints },
+        state = b.DisplayOutcome != PhysicalCheckOutcome.NotRun ? "done"
+            : b.DisplayScreens?.Any(s => s.ColorCheck == Display.ColorCheckState.WaitingForAnswers) == true ? "waiting-for-person"
+            : b.SolidColorsInspected > 0 || b.DisplayScreens is { Count: > 0 } ? "in-progress" : "waiting-for-person",
+        measured = new
+        {
+            solidColorsInspected = b.SolidColorsInspected,
+            maxTouchPoints = b.MaxTouchPoints,
+            screens = b.DisplayScreens?.Select(Screen).ToArray() ?? [],
+            colorChannels = ColorChannelsVerdict(b.DisplayScreens),
+            blankScreen = Blank(b.BlankScreen),
+            blankScreenReason = T(b.BlankScreenReason),
+        },
         personOutcome = b.DisplayOutcome == PhysicalCheckOutcome.NotRun ? null : Physical(b.DisplayOutcome),
         notes = T(b.DisplayNotes),
-        instructions = "Launch the full-screen test, step through each solid colour looking for dead or stuck pixels, bleed and blemishes, "
-            + "and touch the screen with several fingers if it is a touch screen. Then Pass & exit, or choose Note blemish or Fail display.",
+        instructions = "Launch the full-screen test. On each screen, step through the solid colours looking for dead or stuck pixels, bleed "
+            + "and blemishes, then type the three numbers drawn in red, green and blue on black (a number that can't be seen is left empty: "
+            + "that colour channel fails). Touch the screen with several fingers if it is a touch screen. Optionally run Screen off and on "
+            + "and say whether every screen came back. A failed colour channel or a screen that didn't come back fails the test; otherwise "
+            + "Pass, Note blemish or Fail display.",
         reportIf = ReportIf.Display,
+    };
+
+    /// <summary>
+    /// One screen's display result. The numbers shown are left out until the person has answered, so a reader can't pass them on.
+    /// </summary>
+    private static object Screen(Display.DisplayScreenResult s) => new
+    {
+        id = V(s.ScreenId),
+        name = V(s.Name),
+        primary = s.Primary,
+        width = s.Width,
+        height = s.Height,
+        patternsInspected = s.PatternsInspected,
+        colorCheck = s.ColorCheck switch
+        {
+            Display.ColorCheckState.Passed => "passed",
+            Display.ColorCheckState.Failed => "failed",
+            Display.ColorCheckState.WaitingForAnswers => "waiting-for-answers",
+            _ => "notrun",
+        },
+        failedChannels = s.FailedChannels.Select(Display.DisplayColorCheck.Name).ToArray(),
+        answers = s.Answers?.Select(a => new { channel = Display.DisplayColorCheck.Name(a.Channel), shown = a.Shown, entered = a.Entered, passed = a.Passed })
+            .ToArray(),
+        checkedUtc = s.CheckedUtc,
+    };
+
+    /// <summary>"passed" when every screen checked passed, "failed" when any failed, else "notrun".</summary>
+    private static string ColorChannelsVerdict(IReadOnlyList<Display.DisplayScreenResult>? screens)
+    {
+        var done = screens?.Where(s => s.ColorCheck is Display.ColorCheckState.Passed or Display.ColorCheckState.Failed).ToList() ?? [];
+        if (done.Count == 0) return "notrun";
+        return done.Any(s => s.ColorCheck == Display.ColorCheckState.Failed) ? "failed" : "passed";
+    }
+
+    private static string Blank(Display.BlankScreenOutcome o) => o switch
+    {
+        Display.BlankScreenOutcome.Returned => "returned",
+        Display.BlankScreenOutcome.DidNotReturn => "did-not-return",
+        Display.BlankScreenOutcome.NotSupported => "not-supported",
+        _ => "notrun",
     };
 
     private static object WebcamTest(PageState page, ModuleState m)
@@ -265,7 +318,8 @@ public static class InteractiveExport
         public const string Keyboard = "The person's keyboard does not match any layout offered (for example AZERTY, Japanese, a compact "
             + "laptop or a keyboard with extra keys), keys they press do not light up, or they cannot find a key the test asks for.";
         public const string Display = "The full-screen test does not open on the screen the person is using, does not cover it, cannot be "
-            + "exited, or touch does not register on a touch screen.";
+            + "exited, or touch does not register on a touch screen; a screen the person has is not listed or the test never moves to it; "
+            + "the person can't read a colour number on a screen that otherwise looks right; or Screen off and on leaves a screen dark.";
         public const string Webcam = "The camera the person uses is not listed, the preview never appears, or the measured result disagrees "
             + "with what the person sees.";
         public const string SpeakerToMic = "The person's speaker or microphone is not listed, they hear the tone but it is not detected, or "
