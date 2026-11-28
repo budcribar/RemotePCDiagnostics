@@ -26,6 +26,11 @@ public sealed class PointerTestService : IDisposable
     private int _screenContacts;
     private DateTimeOffset _lastInput;
     private bool _stopGate;
+    /// <summary>When the current step passed, while it stays on screen for <see cref="HoldAfterPass"/> so the person sees it done.</summary>
+    private DateTimeOffset? _passedAt;
+
+    /// <summary>How long a finished Drag step stays on screen (both targets green) before the next step.</summary>
+    public static readonly TimeSpan HoldAfterPass = TimeSpan.FromSeconds(1.5);
 
     public PointerTestService(IPhysicalInputMonitor? monitor = null, TimeProvider? clock = null, TimeSpan? grace = null)
     {
@@ -78,7 +83,7 @@ public sealed class PointerTestService : IDisposable
     public static string Instructions(PointerStep step) => step switch
     {
         PointerStep.Move => "Move the pointer onto each of the four corner targets.",
-        PointerStep.Buttons => "Double-click the left, right and middle buttons inside the box. No middle button? Tick \"My device has no middle button\".",
+        PointerStep.Buttons => "Double-click the left, middle and right buttons inside the box. No middle button? Tick \"My device has no middle button\".",
         PointerStep.Scroll => $"Scroll up and down at least {ScrollsNeeded} times each, with the wheel or two fingers. Sideways scrolling is optional.",
         PointerStep.Drag => "Hold the left button and drag the Left box onto its target, then hold the right button and drag the Right box onto its target.",
         PointerStep.TouchpadGestures => "Tap the touchpad once without pressing it down, tap or click with two fingers for a right click, then rest three or four fingers on it.",
@@ -98,6 +103,7 @@ public sealed class PointerTestService : IDisposable
             _cells.Clear();
             _lastDown.Clear();
             _dragButton = null;
+            _passedAt = null;
             _screenContacts = 0;
             var now = _clock.GetUtcNow();
             var steps = StepsFor(device).Select(s =>
@@ -116,6 +122,7 @@ public sealed class PointerTestService : IDisposable
         lock (_lock)
         {
             if (_current.Verdict != PointerTestVerdict.Running) return;
+            _passedAt = null;
             _current = Counted(_current) with { Verdict = PointerTestVerdict.Cancelled, Current = null, FinishedUtc = _clock.GetUtcNow(), SecondsLeft = 0 };
         }
         _gate.Stop();
@@ -125,7 +132,7 @@ public sealed class PointerTestService : IDisposable
     public void Reset()
     {
         _gate.Stop();
-        lock (_lock) _current = Fresh();
+        lock (_lock) { _passedAt = null; _current = Fresh(); }
         Raise();
     }
 
@@ -158,8 +165,13 @@ public sealed class PointerTestService : IDisposable
         lock (_lock)
         {
             if (_current.Current is null) return;
-            var left = TimeoutSeconds - (int)Math.Floor((_clock.GetUtcNow() - _lastInput).TotalSeconds);
-            if (left <= 0)
+            if (_passedAt is { } passed)
+            {
+                if (_clock.GetUtcNow() - passed < HoldAfterPass) return;
+                AdvanceLocked(_clock.GetUtcNow());
+                changed = true;
+            }
+            else if (TimeoutSeconds - (int)Math.Floor((_clock.GetUtcNow() - _lastInput).TotalSeconds) is var left && left <= 0)
             {
                 EndStepLocked(PointerStepState.Failed, $"No input for {TimeoutSeconds} seconds.");
                 changed = true;
@@ -310,7 +322,7 @@ public sealed class PointerTestService : IDisposable
 
     private bool IsStep(PointerStep step)
     {
-        lock (_lock) return _current.Current == step;
+        lock (_lock) return _current.Current == step && _passedAt is null;
     }
 
     private void Touched()
@@ -344,7 +356,20 @@ public sealed class PointerTestService : IDisposable
                 && (s.Device?.Kind != PointerDeviceKind.Touchscreen || s.MaxTouchPoints >= 2),
             _ => false,
         };
-        if (done) EndStepLocked(PointerStepState.Passed, null);
+        if (!done) return;
+        // The last box disappears into its target as the step ends, so the step stays up a moment with both targets green.
+        if (s.Current == PointerStep.Drag)
+        {
+            MarkLocked(PointerStepState.Passed, null);
+            _passedAt = _clock.GetUtcNow();
+        }
+        else EndStepLocked(PointerStepState.Passed, null);
+    }
+
+    private void MarkLocked(PointerStepState state, string? reason)
+    {
+        if (_current.Current is not { } step) return;
+        _current = _current with { Steps = _current.Steps.Select(s => s.Step == step ? s with { State = state, Reason = reason } : s).ToList() };
     }
 
     private void EndStep(PointerStepState state, string reason)
@@ -355,14 +380,15 @@ public sealed class PointerTestService : IDisposable
 
     private void EndStepLocked(PointerStepState state, string? reason)
     {
-        if (_current.Current is not { } step) return;
-        var steps = _current.Steps.Select(s => s.Step == step ? s with { State = state, Reason = reason } : s).ToList();
-        _current = _current with { Steps = steps };
+        if (_current.Current is null) return;
+        // A step that already passed (and is only being shown) keeps its result: Skip or Stop then just moves on.
+        if (_passedAt is null) MarkLocked(state, reason);
         AdvanceLocked(_clock.GetUtcNow());
     }
 
     private void AdvanceLocked(DateTimeOffset now)
     {
+        _passedAt = null;
         var next = _current.Steps.FirstOrDefault(s => s.State == PointerStepState.Pending);
         if (next is not null)
         {
