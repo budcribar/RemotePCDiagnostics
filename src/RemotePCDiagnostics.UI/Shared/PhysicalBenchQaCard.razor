@@ -296,7 +296,7 @@ else
                             </label>
                         }
                     </div>
-                    <div class="display-qa-hud-actions">
+                    <div class="display-qa-hud-actions" @onkeydown="OnNumbersActionKeyDown" @onkeydown:stopPropagation="true">
                         <button type="button" class="btn-small btn-primary" data-testid="display-numbers-submit" @onclick="SubmitNumbers">Check numbers</button>
                         <button type="button" class="btn-small" data-testid="display-overlay-exit" @onclick="CloseDisplayOverlay">Exit</button>
                     </div>
@@ -379,6 +379,8 @@ else
     private bool _shouldFocusAnswer;
     private bool _blanking;
     private bool _askBlank;
+    private CancellationTokenSource? _blankCts;
+    private bool _disposed;
 
     private IReadOnlyList<ScreenInfo> ScreensForTest => _screenList ??= LoadScreens();
 
@@ -499,22 +501,34 @@ else
         }
     }
 
-    private void OnServiceChanged() => _ = InvokeAsync(StateHasChanged);
+    private void OnServiceChanged()
+    {
+        if (!_disposed) _ = InvokeAsync(StateHasChanged);
+    }
 
     public void Dispose()
     {
+        _disposed = true;
         _hudTimerCts?.Cancel();
         _hudTimerCts?.Dispose();
         _hudTimerCts = null;
-        if (_displayOverlayOpen)
-        {
-            _displayOverlayOpen = false;
-            App.Fullscreen?.RequestFullscreen(false);
-        }
+        _blankCts?.Cancel();
+        _blankCts?.Dispose();
+        _blankCts = null;
         if (_subscribedService is not null)
         {
             _subscribedService.Changed -= OnServiceChanged;
             _subscribedService = null;
+        }
+        if (_numbersStep && CurrentScreen is { } screen)
+        {
+            _numbersStep = false;
+            ActiveService.Update(s => ResultFor(s, screen) is { Answers: null } r ? s.WithScreen(r with { ShownNumbers = null }) : s);
+        }
+        if (_displayOverlayOpen)
+        {
+            _displayOverlayOpen = false;
+            App.Fullscreen?.RequestFullscreen(false);
         }
     }
 
@@ -625,7 +639,16 @@ else
     private void LaunchDisplayOverlay(ScreenInfo? only)
     {
         _screenList = LoadScreens();
-        _runQueue = only is null ? [.. _screenList] : [only];
+        if (only is null)
+        {
+            _runQueue = [.. _screenList];
+        }
+        else
+        {
+            var resolved = _screenList.FirstOrDefault(s => string.Equals(s.Id, only.Id, StringComparison.OrdinalIgnoreCase));
+            if (resolved is null) return;
+            _runQueue = [resolved];
+        }
         _runIndex = 0;
         _runHadFailure = false;
         _displayOverlayOpen = true;
@@ -644,8 +667,21 @@ else
         _hudVisible = false;
         StartHudTimer();
         App.Fullscreen?.RequestFullscreen(true, ReferenceEquals(screen, ThisScreen) ? null : screen.Id);
-        ActiveService.Update(s => s.WithScreen(new DisplayScreenResult(screen.Id, screen.Name, screen.Primary,
-            screen.Width > 0 ? screen.Width : null, screen.Height > 0 ? screen.Height : null)));
+        ActiveService.Update(s =>
+        {
+            var existing = ResultFor(s, screen);
+            var updated = existing is not null
+                ? existing with
+                {
+                    Name = screen.Name,
+                    Primary = screen.Primary,
+                    Width = screen.Width > 0 ? screen.Width : existing.Width,
+                    Height = screen.Height > 0 ? screen.Height : existing.Height,
+                }
+                : new DisplayScreenResult(screen.Id, screen.Name, screen.Primary,
+                    screen.Width > 0 ? screen.Width : null, screen.Height > 0 ? screen.Height : null);
+            return s.WithScreen(updated);
+        });
         RecordPatternInspected(0);
     }
 
@@ -723,7 +759,16 @@ else
             return;
         }
         LeaveOverlay();
-        SetDisplayOutcome(_runHadFailure ? PhysicalCheckOutcome.Failed : PhysicalCheckOutcome.Passed);
+        if (_runHadFailure)
+        {
+            SetDisplayOutcome(PhysicalCheckOutcome.Failed);
+        }
+        else
+        {
+            var snap = ActiveService.Current;
+            if (ScreensForTest.All(s => ResultFor(snap, s)?.ColorCheck == ColorCheckState.Passed))
+                SetDisplayOutcome(PhysicalCheckOutcome.Passed);
+        }
     }
 
     private void RecordPatternInspected(int index)
@@ -736,8 +781,15 @@ else
         ActiveService.Update(s =>
         {
             var next = s with { SolidColorsInspected = Math.Min(Patterns.Length, count) };
-            return screen is not null && ResultFor(next, screen) is { } r ? next.WithScreen(r with { PatternsInspected = onScreen }) : next;
+            return screen is not null && ResultFor(next, screen) is { } r
+                ? next.WithScreen(r with { PatternsInspected = Math.Max(r.PatternsInspected, onScreen) })
+                : next;
         });
+    }
+
+    private void OnNumbersActionKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") CloseDisplayOverlay();
     }
 
     private void OnOverlayKeyDown(KeyboardEventArgs e)
@@ -769,18 +821,27 @@ else
     /// <summary>Screen off and on: every display goes dark for 2 seconds, then the person says whether each came back.</summary>
     private async Task RunBlankAsync()
     {
-        if (_blanking) return;
+        if (_blanking || _disposed) return;
         if (App.Screens is not { } screens)
         {
             ActiveService.Update(s => s with { BlankScreen = BlankScreenOutcome.NotSupported, BlankScreenReason = "This app can't turn the screens off here." });
             return;
         }
+        _blankCts?.Cancel();
+        _blankCts?.Dispose();
+        _blankCts = new CancellationTokenSource();
+        var token = _blankCts.Token;
         _blanking = true;
         StateHasChanged();
         string? reason;
-        try { reason = await screens.BlankScreensAsync(DisplayColorCheck.BlankDuration); }
+        try { reason = await screens.BlankScreensAsync(DisplayColorCheck.BlankDuration, token); }
+        catch (OperationCanceledException) { return; }
         catch (Exception ex) { reason = "The screens couldn't be turned off: " + ex.Message; }
-        _blanking = false;
+        finally
+        {
+            _blanking = false;
+        }
+        if (_disposed || token.IsCancellationRequested) return;
         if (reason is not null)
             ActiveService.Update(s => s with { BlankScreen = BlankScreenOutcome.NotSupported, BlankScreenReason = reason });
         else

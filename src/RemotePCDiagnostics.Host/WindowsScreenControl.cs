@@ -55,11 +55,28 @@ public sealed class WindowsScreenControl(ILogger? log = null) : IScreenControl
             // the mouse by one pixel and back (input turns the display on).
             SetThreadExecutionState(ES_DISPLAY_REQUIRED);
             PostMessageW(hwnd, WM_SYSCOMMAND, SC_MONITORPOWER, MonitorOn);
-            mouse_event(MOUSEEVENTF_MOVE, 1, 0, 0, UIntPtr.Zero);
-            mouse_event(MOUSEEVENTF_MOVE, -1, 0, 0, UIntPtr.Zero);
+            SendMouseMove(1, 0);
+            await Task.Delay(50).ConfigureAwait(false);
+            SendMouseMove(-1, 0);
             log.Info("Display test: screens asked to turn back on.");
         }
         return null;
+    }
+
+    private static void SendMouseMove(int dx, int dy)
+    {
+        var inputs = new INPUT[]
+        {
+            new()
+            {
+                type = INPUT_MOUSE,
+                u = new InputUnion
+                {
+                    mi = new MOUSEINPUT { dx = dx, dy = dy, dwFlags = MOUSEEVENTF_MOVE },
+                },
+            },
+        };
+        _ = SendInput(1, inputs, Marshal.SizeOf<INPUT>());
     }
 
     private static Task<IntPtr> MainWindowHandleAsync()
@@ -93,6 +110,7 @@ public sealed class WindowsScreenControl(ILogger? log = null) : IScreenControl
     private static readonly IntPtr MonitorOff = 2;
     private static readonly IntPtr MonitorOn = -1;
     private const uint ES_DISPLAY_REQUIRED = 0x00000002;
+    private const uint INPUT_MOUSE = 0;
     private const uint MOUSEEVENTF_MOVE = 0x0001;
 
     private delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdc, IntPtr lprcMonitor, IntPtr dwData);
@@ -121,6 +139,50 @@ public sealed class WindowsScreenControl(ILogger? log = null) : IScreenControl
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public uint type;
+        public InputUnion u;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        [FieldOffset(0)] public MOUSEINPUT mi;
+        [FieldOffset(0)] public KEYBDINPUT ki;
+        [FieldOffset(0)] public HARDWAREINPUT hi;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct HARDWAREINPUT
+    {
+        public uint uMsg;
+        public ushort wParamL;
+        public ushort wParamH;
+    }
+
     [DllImport("user32.dll")]
     private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
 
@@ -136,6 +198,6 @@ public sealed class WindowsScreenControl(ILogger? log = null) : IScreenControl
     [DllImport("kernel32.dll")]
     private static extern uint SetThreadExecutionState(uint esFlags);
 
-    [DllImport("user32.dll")]
-    private static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, UIntPtr dwExtraInfo);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 }

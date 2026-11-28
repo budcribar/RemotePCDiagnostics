@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Bunit;
+using Microsoft.AspNetCore.Components.Web;
 using Microsoft.Extensions.DependencyInjection;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
@@ -118,8 +119,13 @@ public class DisplayColorCheckTests : BunitContext
     {
         public string? BlankResult { get; set; }
         public int Blanks { get; private set; }
+        public Func<TimeSpan, CancellationToken, Task<string?>>? OnBlankAsync { get; set; }
         public IReadOnlyList<ScreenInfo> ListScreens() => screens;
-        public Task<string?> BlankScreensAsync(TimeSpan off, CancellationToken ct = default) { Blanks++; return Task.FromResult(BlankResult); }
+        public Task<string?> BlankScreensAsync(TimeSpan off, CancellationToken ct = default)
+        {
+            Blanks++;
+            return OnBlankAsync is not null ? OnBlankAsync(off, ct) : Task.FromResult(BlankResult);
+        }
     }
 
     private sealed class RecordingFullscreen : IFullscreenService
@@ -256,5 +262,86 @@ public class DisplayColorCheckTests : BunitContext
         Assert.Equal(BlankScreenOutcome.NotSupported, qa.Current.BlankScreen);
         Assert.Contains("error 5", card.Find("[data-testid='display-blank']").TextContent);
         Assert.Empty(card.FindAll("[data-testid='display-blank-yes']"));
+    }
+
+    [Fact]
+    public void Dispose_during_numbers_clears_waiting_for_answers()
+    {
+        var (card, qa, full) = RenderCard(new FakeScreens(Laptop));
+        card.Find("[data-testid='display-test-launch']").Click();
+        card.Find("[data-testid='display-overlay-numbers']").Click();
+        Assert.Equal(ColorCheckState.WaitingForAnswers, qa.Current.DisplayScreens![0].ColorCheck);
+
+        card.Instance.Dispose();
+
+        Assert.Equal(ColorCheckState.NotRun, qa.Current.DisplayScreens![0].ColorCheck);
+        Assert.Equal((false, null), full.Calls[^1]);
+    }
+
+    [Fact]
+    public async Task Dispose_cancels_in_flight_blank_screens()
+    {
+        var blankStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var blankCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var screens = new FakeScreens(Laptop)
+        {
+            OnBlankAsync = async (_, ct) =>
+            {
+                blankStarted.TrySetResult();
+                try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+                catch (OperationCanceledException)
+                {
+                    blankCancelled.TrySetResult();
+                    throw;
+                }
+                return null;
+            },
+        };
+        var (card, qa, _) = RenderCard(screens);
+
+        var clickTask = card.Find("[data-testid='display-blank-run']").ClickAsync(new MouseEventArgs());
+        await blankStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        card.Instance.Dispose();
+
+        await blankCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await clickTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(BlankScreenOutcome.NotRun, qa.Current.BlankScreen);
+    }
+
+    [Fact]
+    public void Escape_during_patterns_preserves_prior_failed_verdict()
+    {
+        var (card, qa, _) = RenderCard(new FakeScreens(Laptop));
+        card.Find("[data-testid='display-test-launch']").Click();
+        PassScreen(card, wrong: "red");
+        Assert.Equal(ColorCheckState.Failed, qa.Current.DisplayScreens![0].ColorCheck);
+        Assert.Equal(PhysicalCheckOutcome.Failed, qa.Current.DisplayOutcome);
+
+        card.Find("[data-testid='display-screen-test']").Click();
+        Assert.Equal("patterns", card.Find("[data-testid='display-test-overlay']").GetAttribute("data-step"));
+        card.Find("[data-testid='display-test-overlay']").KeyDown(new KeyboardEventArgs { Key = "Escape" });
+
+        Assert.Empty(card.FindAll("[data-testid='display-test-overlay']"));
+        Assert.Equal(ColorCheckState.Failed, qa.Current.DisplayScreens![0].ColorCheck);
+        Assert.Equal([ColorChannel.Red], qa.Current.DisplayScreens![0].FailedChannels);
+        Assert.Equal(PhysicalCheckOutcome.Failed, qa.Current.DisplayOutcome);
+    }
+
+    [Fact]
+    public void Single_screen_pass_on_one_of_two_monitors_does_not_auto_pass_display()
+    {
+        var (card, qa, _) = RenderCard(new FakeScreens(Laptop, Dell));
+        card.FindAll("[data-testid='display-screen-test']")[0].Click();
+        PassScreen(card);
+
+        Assert.Equal(ColorCheckState.Passed, qa.Current.DisplayScreens!.Single(s => s.ScreenId == Laptop.Id).ColorCheck);
+        Assert.Equal(PhysicalCheckOutcome.NotRun, qa.Current.DisplayOutcome);
+
+        card.FindAll("[data-testid='display-screen-test']")[1].Click();
+        PassScreen(card);
+
+        Assert.Equal(PhysicalCheckOutcome.Passed, qa.Current.DisplayOutcome);
+        Assert.All(qa.Current.DisplayScreens!, s => Assert.Equal(ColorCheckState.Passed, s.ColorCheck));
     }
 }

@@ -146,7 +146,11 @@ public partial class MainWindow : Window
         if (fullscreenService is not null)
         {
             _screens = provider.GetService<RemotePCDiagnostics.Core.Display.IScreenControl>() as WindowsScreenControl;
-            fullscreenService.FullscreenChanged += enable => Dispatcher.BeginInvoke(() => SetFullscreen(enable, fullscreenService.ScreenId));
+            fullscreenService.FullscreenChanged += enable =>
+            {
+                var target = fullscreenService.ScreenId;
+                Dispatcher.BeginInvoke(() => SetFullscreen(enable, target));
+            };
         }
         Closed += (_, _) => { try { provider.GetService<IEcFanSource>()?.Dispose(); } catch { } }; // release the PawnIO EC module handle
         provider.GetRequiredService<ChecksScreenState>(); // start tracking results (run mode labels, last completed) from launch
@@ -918,6 +922,16 @@ public partial class MainWindow : Window
         if (enable == _isFullscreen && (!enable || string.Equals(screenId, _fullscreenScreen, StringComparison.OrdinalIgnoreCase))) return;
         if (enable)
         {
+            RemotePCDiagnostics.Core.Display.ScreenInfo? screen = null;
+            if (screenId is not null)
+            {
+                screen = _screens?.Find(screenId);
+                if (screen is null)
+                {
+                    Logger.Warn($"Fullscreen requested for screen '{screenId}', but that monitor is no longer connected.");
+                    return;
+                }
+            }
             if (!_isFullscreen)
             {
                 _savedStyle = WindowStyle;
@@ -932,12 +946,12 @@ public partial class MainWindow : Window
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.NoResize;
             WindowState = WindowState.Normal;
-            if (_screens?.Find(screenId) is { } screen)
+            if (screen is not null)
             {
                 // Physical pixels: place the (normal) window on that monitor, then maximize it there.
                 var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
                 if (hwnd != IntPtr.Zero && SetWindowPos(hwnd, IntPtr.Zero, screen.X, screen.Y, Math.Max(1, screen.Width), Math.Max(1, screen.Height),
-                        SWP_NOZORDER | SWP_NOACTIVATE))
+                        SWP_NOZORDER))
                     _movedForFullscreen = true;
             }
             WindowState = WindowState.Maximized;
@@ -962,7 +976,6 @@ public partial class MainWindow : Window
     }
 
     private const uint SWP_NOZORDER = 0x0004;
-    private const uint SWP_NOACTIVATE = 0x0010;
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);

@@ -100,7 +100,7 @@ public static class DisplayColorCheck
             if (++digits > 6) return null;
             value = value * 10 + (c - '0');
         }
-        return digits == 0 ? null : value;
+        return value;
     }
 
     /// <summary>Grades the typed answers against the numbers shown, in channel order.</summary>
