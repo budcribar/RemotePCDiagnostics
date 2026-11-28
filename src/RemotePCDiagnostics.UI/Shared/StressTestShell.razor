@@ -34,11 +34,11 @@
     }
     @if (Page.ShowStop)
     {
-        <button data-testid="@Id(StopId)" @attributes="Marker("cancel-check")" @onclick="Page.Stop">Stop</button>
+        <button data-testid="@Id(StopId)" @attributes="CancelMarker" @onclick="Page.Stop">Stop</button>
     }
     else
     {
-        <button data-testid="@Id("start")" @attributes="Marker("run-check")" @onclick="Page.Start" disabled="@(locked || !Page.CanStart)">Start</button>
+        <button data-testid="@Id("start")" @attributes="RunMarker" @onclick="Page.Start" disabled="@(locked || !Page.CanStart)">Start</button>
     }
 </div>
 <p class="meta" data-testid="@Id("intro")">@Description @DescriptionExtra</p>
@@ -150,6 +150,9 @@ else if (report is not null)
     [Parameter] public string? CheckId { get; set; }
 
     private string Id(string end) => $"{Prefix}-{end}";
+
+    private IReadOnlyDictionary<string, object> RunMarker => Marker("run-check");
+    private IReadOnlyDictionary<string, object> CancelMarker => Marker("cancel-check");
 
     private IReadOnlyDictionary<string, object> Marker(string action) => CheckId is null
         ? NoAttributes
