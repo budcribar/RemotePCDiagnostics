@@ -242,8 +242,8 @@ public static class WebcamVerdicts
             WebcamVerdict.AllBlack when r.Kind == WebcamKind.Infrared => "The IR camera sent only black frames: its IR light may not be working, or the lens is covered.",
             WebcamVerdict.FewerFormats when r.Capability is { } c =>
                 $"The camera works, but its best format is {c.MaxWidth}×{c.MaxHeight} although its name says {c.ClassName}. It is likely using the generic Windows driver: install the camera driver from the PC maker.",
-            WebcamVerdict.ControlsUnreadable =>
-                $"The camera works, but its driver didn't report {string.Join(", ", WebcamControls.Unreadable(r.Controls).Select(c => WebcamControls.Display(c.Name).ToLowerInvariant()))}. Update the camera driver if those settings misbehave.",
+            WebcamVerdict.ControlsUnreadable when WebcamControls.Unreadable(r.Controls) is { Count: > 0 } bad =>
+                $"The camera works, but its driver didn't report {string.Join(", ", bad.Select(c => WebcamControls.Display(c.Name).ToLowerInvariant()))}. Update the camera driver if those settings misbehave.",
             WebcamVerdict.Busy when r.Holders.Count > 0 =>
                 $"The camera is in use by {string.Join(", ", r.Holders.Select(h => h.App))}. Close that app and run the test again.",
             _ => MessageOf(r.Verdict, r.Stats),
@@ -251,7 +251,7 @@ public static class WebcamVerdicts
         return r.PersonSawPicture switch
         {
             false => "The person at the PC said they don't see themselves in the preview. Measured: " + text,
-            true when StatusOf(r.Verdict) == DiagnosticStatus.Ok => text[..^1] + ", and the person at the PC sees themselves.",
+            true when StatusOf(r.Verdict) == DiagnosticStatus.Ok => text.TrimEnd('.') + ", and the person at the PC sees themselves.",
             _ => text,
         };
     }
@@ -273,5 +273,35 @@ public static class WebcamVerdicts
             InstanceKey = r.InstanceKey,
             InstanceLabel = r.InstanceLabel,
         };
+    }
+
+    /// <summary>
+    /// Stores <paramref name="updated"/> and, when it is an instance result, refreshes the module-level <see cref="InstanceResults"/>
+    /// summary (or touches the module) so <see cref="ResultStore.Changed"/> fires and all views stay in sync.
+    /// </summary>
+    public static void SaveAnswer(ResultStore store, DiagnosticResult updated)
+    {
+        store.Set(updated);
+        if (updated.InstanceKey is not { } key) return;
+        var module = store.Get(updated.ModuleName);
+        if (module.Payload is not InstanceResults all)
+        {
+            store.Touch(updated.ModuleName);
+            return;
+        }
+        var results = all.Results.Select(r => string.Equals(r.InstanceKey, key, StringComparison.OrdinalIgnoreCase) ? updated : r).ToList();
+        if (!results.Any(r => string.Equals(r.InstanceKey, key, StringComparison.OrdinalIgnoreCase))) results.Add(updated);
+        var worst = results.OrderByDescending(r => r.Status switch
+        {
+            DiagnosticStatus.Error => 3,
+            DiagnosticStatus.Warning => 2,
+            DiagnosticStatus.Ok => 1,
+            _ => 0,
+        }).First();
+        var message = results.Count == 1 ? worst.Message
+            : results.All(r => r.Status == DiagnosticStatus.Ok) ? $"All {results.Count} passed"
+            : $"{results.Count(r => r.Status != DiagnosticStatus.Ok)} of {results.Count} need attention: {worst.InstanceLabel}: {worst.Message}";
+        store.Set(new DiagnosticResult(updated.ModuleName, worst.Status, message, DateTimeOffset.Now, all with { Results = results })
+            { Cancelled = module.Cancelled });
     }
 }

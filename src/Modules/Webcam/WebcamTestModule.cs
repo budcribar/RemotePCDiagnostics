@@ -101,7 +101,7 @@ public sealed class WebcamTestModule(IWebcamIo io, ILogger? log = null, IRegistr
     private async Task<IReadOnlyList<WebcamHolder>> HoldersAsync(CancellationToken ct)
     {
         if (registry is null) return [];
-        try { return await WebcamHolders.ReadAsync(registry, Process.GetCurrentProcess().ProcessName, ct).ConfigureAwait(false); }
+        try { return await WebcamHolders.ReadAsync(registry, Path.GetFileNameWithoutExtension(Environment.ProcessPath), ct).ConfigureAwait(false); }
         catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"{Name}: holders: {ex.Message}"); return []; }
     }
 

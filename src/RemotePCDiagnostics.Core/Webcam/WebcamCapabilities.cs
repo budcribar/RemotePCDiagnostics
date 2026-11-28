@@ -103,6 +103,7 @@ public static class WebcamHolders
             var key = r.Str(RegistryRead.KeyColumn);
             if (key.Length == 0 || !InUse(r, out var start)) continue;
             var file = key[(key.LastIndexOf('#') + 1)..];
+            if (file.Length == 0) continue;
             var process = Path.GetFileNameWithoutExtension(file);
             if (ownProcessName is { Length: > 0 } own && string.Equals(process, own, StringComparison.OrdinalIgnoreCase)) continue;
             list.Add((new WebcamHolder(file, Session.AgentScripts.IsProcessName(process) ? process : null, false), start));

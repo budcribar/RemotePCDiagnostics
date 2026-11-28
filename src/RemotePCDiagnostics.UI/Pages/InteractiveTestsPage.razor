@@ -1126,7 +1126,7 @@
         // After Pass/Fail camera the person's verdict stays; the answer is added to the report beside the measured one.
         var personEntered = _personResults.TryGetValue(ModuleSlugs.Webcam, out var entered) && ReferenceEquals(entered, shown);
         var updated = personEntered ? shown with { Payload = rep with { PersonSawPicture = seen } } : WebcamVerdicts.WithPersonAnswer(shown, seen);
-        Store.Set(updated);
+        WebcamVerdicts.SaveAnswer(Store, updated);
         if (personEntered) _personResults[ModuleSlugs.Webcam] = updated;
     }
 

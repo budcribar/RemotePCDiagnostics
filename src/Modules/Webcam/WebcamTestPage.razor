@@ -99,6 +99,6 @@ else
     private void Answer(DiagnosticResult shown, bool seen)
     {
         var updated = WebcamVerdicts.WithPersonAnswer(shown, seen);
-        if (!ReferenceEquals(updated, shown)) Store.Set(updated);
+        if (!ReferenceEquals(updated, shown)) WebcamVerdicts.SaveAnswer(Store, updated);
     }
 }

@@ -70,7 +70,8 @@ public class WebcamPaneTests : BunitContext
     private static JsonElement CamExport(IRenderedComponent<InteractiveTestsPage> page)
     {
         var json = page.Find("[data-testid='interactive-data']").GetAttribute("data-report")!;
-        return JsonDocument.Parse(json).RootElement.GetProperty("tests").EnumerateArray().Single(t => t.GetProperty("id").GetString() == "webcam");
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.GetProperty("tests").EnumerateArray().Single(t => t.GetProperty("id").GetString() == "webcam").Clone();
     }
 
     [Fact]
@@ -101,7 +102,31 @@ public class WebcamPaneTests : BunitContext
         page.WaitForAssertion(() => Assert.True(CamExport(page).GetProperty("personSawPicture").GetBoolean()));
         Assert.Equal("passed", CamExport(page).GetProperty("personOutcome").GetString());
         Assert.Equal(DiagnosticStatus.Ok, store.Get(ModuleSlugs.Webcam).Status);
-        File.WriteAllText(Path.Combine(Path.GetTempPath(), "webcam-pane.html"), page.Markup);
+    }
+
+    [Fact]
+    public void Answering_no_on_an_instance_result_updates_the_module_summary_and_raises_Changed()
+    {
+        var (store, page) = Render(new Io(Vga));
+        page.Find("[data-testid='webcam-start-btn']").Click();
+        page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-testid='webcam-table']")));
+        Assert.Equal(DiagnosticStatus.Warning, store.Get(ModuleSlugs.Webcam).Status);
+
+        DiagnosticResult? changed = null;
+        store.Changed += (_, r) => changed = r;
+
+        page.Find("[data-testid='webcam-sees-no']").Click();
+        page.WaitForAssertion(() => Assert.Equal("true", page.Find("[data-testid='webcam-sees-no']").GetAttribute("data-selected")));
+
+        Assert.NotNull(changed);
+        Assert.Equal(ModuleSlugs.Webcam, changed.ModuleName);
+        Assert.Equal(DiagnosticStatus.Error, changed.Status);
+        var module = store.Get(ModuleSlugs.Webcam);
+        Assert.Equal(DiagnosticStatus.Error, module.Status);
+        var instances = Assert.IsType<InstanceResults>(module.Payload);
+        var own = Assert.Single(instances.Results);
+        Assert.Equal(DiagnosticStatus.Error, own.Status);
+        Assert.False(Assert.IsType<WebcamReport>(own.Payload).PersonSawPicture);
     }
 
     [Fact]
@@ -119,7 +144,6 @@ public class WebcamPaneTests : BunitContext
         page.Find("[data-testid='webcam-close-holder']").Click();
         page.WaitForAssertion(() => Assert.Equal("EndProcessGroup", page.Find("[data-testid='remediation-confirm']").GetAttribute("data-action-kind")));
         Assert.Equal("Zoom", page.Find("[data-testid='remediation-confirm']").GetAttribute("data-action-target"));
-        File.WriteAllText(Path.Combine(Path.GetTempPath(), "webcam-busy.html"), page.Markup);
     }
 
     [Fact]
@@ -137,5 +161,18 @@ public class WebcamPaneTests : BunitContext
         var (_, page) = Render(new Io(Vga));
         var options = page.FindAll("[data-testid='webcam-device-select'] option").Select(o => o.TextContent.Trim()).ToList();
         Assert.Equal(["HP Wide Vision FHD Camera (built-in)", "HP IR Camera (IR, built-in)"], options);
+    }
+
+    [Fact]
+    public void An_IR_camera_hides_the_Do_you_see_yourself_question()
+    {
+        var (store, page) = Render(new Io(Vga));
+        page.Find("[data-testid='webcam-device-select']").Change(WebcamDevice.InfraredPrefix + "g1");
+        page.Find("[data-testid='webcam-start-btn']").Click();
+        page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-testid='webcam-table']")));
+
+        var own = store.InstancesOf(ModuleSlugs.Webcam).Single();
+        Assert.Equal(WebcamKind.Infrared, Assert.IsType<WebcamReport>(own.Payload).Kind);
+        Assert.Empty(page.FindAll("[data-testid='webcam-question']"));
     }
 }

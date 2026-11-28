@@ -31,9 +31,11 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
             foreach (var g in MediaFrameSourceGroup.FindAllAsync().AsTask().GetAwaiter().GetResult())
             {
                 var ir = g.SourceInfos.FirstOrDefault(i => i.SourceKind == MediaFrameSourceKind.Infrared);
-                if (ir is null) continue;
-                var hasColor = g.SourceInfos.Any(i => i.SourceKind == MediaFrameSourceKind.Color);
-                if (!hasColor && ir.DeviceInformation?.Id is { } devId) irDeviceIds.Add(devId);
+                if (ir is null || ir.DeviceInformation?.IsEnabled == false) continue;
+                if (ir.DeviceInformation?.Id is { } devId
+                    && !g.SourceInfos.Any(i => i.SourceKind == MediaFrameSourceKind.Color
+                        && string.Equals(i.DeviceInformation?.Id, devId, StringComparison.OrdinalIgnoreCase)))
+                    irDeviceIds.Add(devId);
                 var panel = ir.DeviceInformation?.EnclosureLocation is { } e && e.Panel != Panel.Unknown;
                 list.Add(new WebcamDevice(WebcamDevice.InfraredPrefix + g.Id, g.DisplayName, WebcamDevice.GuessBus(ir.DeviceInformation?.Id ?? g.Id, panel),
                     WebcamKind.Infrared));
@@ -99,6 +101,7 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
                 reader = await CreateReaderAsync(capture, source, infrared, ct).ConfigureAwait(false);
                 status = reader is null ? MediaFrameReaderStartStatus.UnknownFailure : await reader.StartAsync().AsTask(ct).ConfigureAwait(false);
                 if (status != MediaFrameReaderStartStatus.Success) throw new WebcamBusyException($"Frame reader start: {status}");
+                controls = [];
                 note = "Another app was using the camera, so it was read in shared mode at that app's resolution.";
             }
             else if (status != MediaFrameReaderStartStatus.Success && infrared) throw new WebcamNotSupportedException($"IR frame reader start: {status}");
@@ -231,6 +234,7 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
         catch (Exception ex) { Log($"controls: {ex.Message}"); return list; }
         foreach (var name in WebcamControls.Names)
         {
+            var supported = false;
             try
             {
                 var c = name switch
@@ -246,6 +250,7 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
                 };
                 var caps = c.Capabilities;
                 if (!caps.Supported) { list.Add(new WebcamControl(name, false, 0, 0, 0, null, false, null)); continue; }
+                supported = true;
                 var hasValue = c.TryGetValue(out var value);
                 bool? auto = null;
                 if (caps.AutoModeSupported && c.TryGetAuto(out var a)) auto = a;
@@ -254,7 +259,9 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
             catch (Exception ex)
             {
                 Log($"control {name}: {ex.Message}");
-                list.Add(new WebcamControl(name, true, 0, 0, 0, null, false, null, ReadFailed: true));
+                list.Add(supported
+                    ? new WebcamControl(name, true, 0, 0, 0, null, false, null, ReadFailed: true)
+                    : new WebcamControl(name, false, 0, 0, 0, null, false, null));
             }
         }
         return list;
