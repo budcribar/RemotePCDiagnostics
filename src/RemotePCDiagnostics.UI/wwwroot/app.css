@@ -297,7 +297,7 @@ table.sortable td:first-child { white-space: nowrap; }
 .app { zoom: var(--ui-zoom); height: calc(100vh / var(--ui-zoom)); }
 body { font-size: 15px; }
 .app { grid-template-columns: 240px 1fr; }
-.content { padding: 22px 28px 36px; }
+.content { --content-pad-top: 22px; padding: var(--content-pad-top) 28px 36px; }
 .content > * { max-width: 1680px; }
 h1 { font-size: 26px; }
 
@@ -544,6 +544,9 @@ tr.row-detail td { white-space: pre-wrap; font-size: 13px; color: var(--text); b
   .ct-workspace { align-items: flex-start; }
   .ct-list { overflow: visible; }
   .ct-detail { overflow: visible; position: sticky; top: 0; }
+  /* The page scrolls here, and sticky stops at the page's padding: pull the head up over that band so nothing scrolls past above it. */
+  .ct-detail { top: calc(-1 * var(--content-pad-top, 0px)); }
+  .ct-detail-head { top: calc(-1 * var(--content-pad-top, 0px)); }
 }
 /* Visible focus ring on clickable cards and rows. */
 .card-click:focus-visible, .ct-row:focus-visible, tr.clickable:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
