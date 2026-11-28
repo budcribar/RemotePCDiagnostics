@@ -24,6 +24,7 @@
         var pts = Points;
         var total = Math.Max(1, pts[^1].At);
         var top = Math.Max(100, pts.Where(p => p.CpuC is not null).Select(p => p.CpuC!.Value).DefaultIfEmpty(0).Max() + 5);
+        var hasFan = pts.Any(p => p.FanRpm is not null);
         var fanTop = Math.Max(1, pts.Where(p => p.FanRpm is not null).Select(p => p.FanRpm!.Value).DefaultIfEmpty(0).Max() * 1.1);
         double X(double at) => Pad + (W - 2 * Pad) * Math.Clamp(at / total, 0, 1);
         double Y(double v, double max) => H - Pad - (H - 2 * Pad) * Math.Clamp(v / max, 0, 1);
@@ -38,11 +39,14 @@
             }
             <line x1="@Pad" y1="@Y(50, 100)" x2="@(W - Pad)" y2="@Y(50, 100)" style="stroke:var(--chart-grid)" />
             <polyline points="@Line(p => p.LoadPercent, 100)" fill="none" style="stroke:var(--chart-router)" stroke-width="1" />
-            <polyline points="@Line(p => p.FanRpm, fanTop)" fill="none" style="stroke:var(--chart-label)" stroke-width="1" stroke-dasharray="3 2" />
+            @if (hasFan)
+            {
+                <polyline points="@Line(p => p.FanRpm, fanTop)" fill="none" style="stroke:var(--chart-label)" stroke-width="1" stroke-dasharray="3 2" />
+            }
             <polyline points="@Line(p => p.CpuC, top)" fill="none" style="stroke:var(--chart-lost)" stroke-width="1.8" />
         </svg>
         <div class="meta"><span style="color:var(--chart-lost)">■</span> CPU °C (0 to @top.ToString("0", CultureInfo.InvariantCulture)) · <span style="color:var(--chart-router)">■</span> CPU load % ·
-            <span style="color:var(--chart-label)">┅</span> fastest fan (0 to @fanTop.ToString("N0", CultureInfo.InvariantCulture) RPM) · shaded: full load</div>
+            @if (hasFan) { <span><span style="color:var(--chart-label)">┅</span> fastest fan (0 to @fanTop.ToString("N0", CultureInfo.InvariantCulture) RPM) · </span> } else { <span>no fan readings · </span> }shaded: full load</div>
     }
 </div>
 

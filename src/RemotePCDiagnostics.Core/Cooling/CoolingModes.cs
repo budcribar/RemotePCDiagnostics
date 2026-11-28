@@ -102,8 +102,12 @@ public static class CoolingModes
 /// (<see cref="ProtectedState"/>); restore sets each one back and removes the journal, and the Agent restores at start when one is left.
 /// A set is only to a mode the setting itself lists.
 /// </summary>
-public sealed class AgentCoolingModes(IReadOnlyList<IThermalModeSetting> settings, string journalPath, ILogger? log = null)
+/// <param name="settle">How long a set may take to show when read back (firmware and maker services can apply it a moment later);
+/// the setting is read again every <see cref="SettleStep"/> until it shows or this runs out. Null is 2 seconds.</param>
+public sealed class AgentCoolingModes(IReadOnlyList<IThermalModeSetting> settings, string journalPath, ILogger? log = null, TimeSpan? settle = null)
 {
+    public static readonly TimeSpan SettleStep = TimeSpan.FromMilliseconds(250);
+    private readonly TimeSpan _settle = settle ?? TimeSpan.FromSeconds(2);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly object Gate = new();
 
@@ -168,8 +172,22 @@ public sealed class AgentCoolingModes(IReadOnlyList<IThermalModeSetting> setting
         if (option is null) return new(1, "", $"\"{id}\" isn't a mode this setting lists.");
         if (!Journal()) return new(1, "", "The current thermal modes couldn't be saved first, so nothing was changed.");
         var why = string.Equals(now.Current, option.Id, StringComparison.OrdinalIgnoreCase) ? null : setting.Set(option.Id);
+        if (why is null) WaitToShow(setting, option.Id);
         log.Info($"[cooling] set {kind} to {option.Name} ({option.Id}): {why ?? "done"}");
         return Answer(new(ReadAll(), SetError: why));
+    }
+
+    /// <summary>Reads <paramref name="setting"/> again until it shows <paramref name="id"/> or the settle time runs out.</summary>
+    private void WaitToShow(IThermalModeSetting setting, string id)
+    {
+        for (var waited = TimeSpan.Zero; waited < _settle; waited += SettleStep)
+        {
+            string? current;
+            try { current = setting.Read()?.Current; }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { return; }
+            if (string.Equals(current, id, StringComparison.OrdinalIgnoreCase)) return;
+            Thread.Sleep(SettleStep);
+        }
     }
 
     /// <summary>Writes the journal once (the first switch of a run); true when it exists afterwards.</summary>
