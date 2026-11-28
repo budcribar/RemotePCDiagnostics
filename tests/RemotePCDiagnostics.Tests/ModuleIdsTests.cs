@@ -49,6 +49,7 @@ public class ModuleIdsTests
         ["WifiConnect"] = "3f0c2b8e-5d71-4a9e-b6c4-2e8d9a7f1c35",
         ["EthernetPort"] = "6f2cda7d-0f7b-456c-a0dc-dedd9582c069",
         ["ChargerReplug"] = "6e740559-6220-4ea6-b09b-303928f1982f",
+        ["DiskSurfaceScan"] = "46272fdc-6e61-4e3b-bf6f-bec95e0be7eb",
     };
 
     [Fact]

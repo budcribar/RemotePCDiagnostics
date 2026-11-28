@@ -94,6 +94,11 @@ public sealed record RecordedCall
     public const string FileKind = "file";
     /// <summary>What the Agent's alerts read (<see cref="Alerts.IAlertReadings"/>): events and levels, kept as rows like WMI.</summary>
     public const string AlertsKind = "alerts";
+    /// <summary>
+    /// The Agent's answers to the disk surface scan (<see cref="Storage.IDiskScanSource"/>): <see cref="Query"/> is the request
+    /// ("start 0 quick 0", "status 0"), <see cref="StdOut"/> the status JSON, <see cref="ExitCode"/> 2 when the Agent was missing.
+    /// </summary>
+    public const string DiskScanKind = "diskscan";
 
     public string Kind { get; init; } = "";
 
@@ -141,6 +146,14 @@ public sealed record RecordedCall
 
     public static RecordedCall FromAlerts(WmiQueryResult r) => FromWmi(r) with { Kind = AlertsKind };
 
+    public static RecordedCall FromDiskScan(Storage.DiskScanRequest request, Storage.DiskScanAnswer a) => new()
+    {
+        Kind = DiskScanKind, Query = request.Key, StdOut = a.Status?.ToJson(), Error = a.Error, ExitCode = a.NeedsAgent ? 2 : a.Status is null ? 1 : 0,
+    };
+
+    public Storage.DiskScanAnswer ToDiskScanAnswer() =>
+        new(Storage.DiskScanStatus.Parse(StdOut), Error, NeedsAgent: ExitCode == 2);
+
     public static RecordedCall FromAudio(Audio.AudioState s) => new() { Kind = AudioKind, StdOut = s.ToJson(), Error = s.Error };
 
     public static RecordedCall FromWifi(Areas.WifiRadioReading r) => new() { Kind = WifiKind, StdOut = r.Scrubbed().ToJson(), Error = r.Error };
@@ -149,5 +162,5 @@ public sealed record RecordedCall
     public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind or AntivirusKind;
 
     /// <summary>Short text naming the call, for test messages.</summary>
-    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind is AudioKind or WifiKind ? Kind : $"{File} {string.Join(' ', Args ?? [])}";
+    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind is AudioKind or WifiKind ? Kind : Kind == DiskScanKind ? $"diskscan {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
 }

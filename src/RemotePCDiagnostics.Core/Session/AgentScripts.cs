@@ -54,6 +54,11 @@ public static class AgentScripts
     public const string HpBatteryRead = "hp_battery_read";
     /// <summary>Args: the setting's name and the value to set (the Agent checks the setting lists it).</summary>
     public const string HpBatterySet = "hp_battery_set";
+    /// <summary>
+    /// Args: "start", disk number, "quick" or "full", time limit in minutes (0 for none); or "status"/"stop" and the disk number. The
+    /// read-only surface scan of one physical disk (<see cref="Storage.AgentDiskScans"/>). Prints the scan's status as JSON.
+    /// </summary>
+    public const string DiskReadScan = "disk_read_scan";
 
     public const string RebootTask = "reboot";
     public const string WorkflowTask = "workflow";
@@ -167,6 +172,9 @@ public static class AgentScripts
             case HpBatterySet:
                 return a.Count == 2 && Battery.HpBatteryCharge.IsSetting(Arg(0)) && Battery.HpBatteryCharge.IsValue(Arg(1))
                     ? Native(new Battery.HpBatterySetAction(Arg(0)!, Arg(1)!)) : Refuse("That isn't an HP battery setting this app changes.");
+
+            case DiskReadScan:
+                return Storage.DiskReadScanAction.Parse(a) is { } scan ? Native(scan) : Refuse("That isn't a disk surface scan this app runs.");
 
             default:
                 return Refuse($"Unknown script '{request.Name}'.");

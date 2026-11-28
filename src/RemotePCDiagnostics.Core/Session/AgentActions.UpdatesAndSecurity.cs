@@ -28,6 +28,9 @@ public sealed partial class WindowsAgentNativeOps
             case Battery.HpBatteryReadAction or Battery.HpBatterySetAction:
                 result = Battery.AgentHpBatteryCharge.Run(new Battery.WindowsHpBiosSettings(), action);
                 break;
+            case Storage.DiskReadScanAction scan:
+                result = Storage.AgentDiskScans.Windows.Run(scan);
+                break;
         }
     }
 }
