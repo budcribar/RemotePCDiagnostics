@@ -19,7 +19,7 @@ public sealed record BatteryDrainLive(BatteryDrainMode Mode, string State, strin
 public sealed class BatteryDrainModule(
     IBatteryDrainReadings readings, IBatteryDrainAgent agent, IBatteryDrainLoad load, IBatteryDrainLogStore logs,
     ILogger? log = null, IStressClock? clock = null, Func<DateTimeOffset>? now = null, Func<DateTimeOffset>? bootTime = null,
-    Func<int>? processId = null) : AreaModuleBase(log), ICancellableScan
+    Func<int>? processId = null) : AreaModuleBase(log), IDiagnosticModule, ICancellableScan // relisted so IncludeInRunAll below reimplements it
 {
     public const string ModuleName = ModuleSlugs.BatteryDrain;
     public override string Name => ModuleName;

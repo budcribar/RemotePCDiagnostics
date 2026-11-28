@@ -53,9 +53,21 @@ public sealed class WindowsEventLog(SystemCommandRunner commands, Plugins.IHostQ
                 return null;
             }
         }
-        var pr = await commands.RunAsync(Wevtutil, Arguments(channel, xpath, max), ct).ConfigureAwait(false);
+        var args = Arguments(channel, xpath, max);
+        var pr = await commands.RunAsync(Wevtutil, args, ct).ConfigureAwait(false);
+        if (SystemCommandRunner.AgentFailure(pr) is { } why && ReadableWithoutAdmin(channel))
+        {
+            // The System and Application logs don't need administrator rights: when the Agent was asked and didn't answer (it was
+            // still starting, or stopped), the app reads them itself instead of reporting the log as unreadable.
+            try { commands.Log.Info($"wevtutil {channel}: the Agent didn't read it ({why}); reading it in the app."); } catch { }
+            pr = await commands.RunWithoutAgentAsync(Wevtutil, args, ct).ConfigureAwait(false);
+        }
         if (pr is null) return null;
-        if (pr.ExitCode != 0) return null;
+        if (pr.ExitCode != 0)
+        {
+            try { commands.Log.Warn($"wevtutil {channel}: exit code {pr.ExitCode}: {pr.StdErr.Trim()}"); } catch { }
+            return null;
+        }
         try { return Parse(pr.StdOut, channel); }
         catch (XmlException ex)
         {
@@ -64,6 +76,10 @@ public sealed class WindowsEventLog(SystemCommandRunner commands, Plugins.IHostQ
         }
     }
 
+
+    /// <summary>Logs Windows lets the signed-in user read (Event Log Readers aren't needed for these).</summary>
+    public static bool ReadableWithoutAdmin(string channel) =>
+        channel.Equals("System", StringComparison.OrdinalIgnoreCase) || channel.Equals("Application", StringComparison.OrdinalIgnoreCase);
 
     private static readonly XNamespace Ns = "http://schemas.microsoft.com/win/2004/08/events/event";
 

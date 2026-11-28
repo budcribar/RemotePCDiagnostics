@@ -98,6 +98,19 @@ public sealed class SystemCommandRunner(
             return bridged.TimedOut ? null : bridged;
         }
 
+        return await RunHereAsync(fileName, arguments, effectiveTimeout, sw, ct, outputLine).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Runs the tool in this process as the signed-in user, never through the Agent: for reads that don't need administrator rights,
+    /// as a fallback when the Agent was asked and didn't run it (<see cref="AgentFailure"/>).
+    /// </summary>
+    public Task<ProcessResult?> RunWithoutAgentAsync(string fileName, IReadOnlyList<string> arguments, CancellationToken ct) =>
+        RunHereAsync(fileName, arguments, Timeout, System.Diagnostics.Stopwatch.StartNew(), ct, null);
+
+    private async Task<ProcessResult?> RunHereAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan effectiveTimeout,
+        System.Diagnostics.Stopwatch sw, CancellationToken ct, Action<string>? outputLine)
+    {
         ProcessResult pr;
         try
         {
