@@ -25,6 +25,8 @@ public sealed class BatteryDrainPanelTests : BunitContext
         Assert.Contains("On battery at 100 %", cut.Find("[data-testid=batterydrain-battery]").TextContent);
 
         var data = Data(cut);
+        Assert.Equal(1, data.GetProperty("schema").GetInt32());
+        Assert.True(data.GetProperty("batteryRead").GetBoolean());
         Assert.Equal("max", data.GetProperty("mode").GetString());
         Assert.False(data.GetProperty("shutdownConfirmed").GetBoolean());
         Assert.True(data.GetProperty("battery").GetProperty("onBattery").GetBoolean());

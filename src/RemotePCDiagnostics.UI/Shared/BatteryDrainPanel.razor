@@ -108,6 +108,7 @@
         var m = BatteryDrainMeasure.From(samples);
         return JsonSerializer.Serialize(new
         {
+            schema = 1,
             mode = BatteryDrainReport.ModeArg(Module.Mode),
             shutdownConfirmed = Module.ShutdownConfirmed,
             state = State,
@@ -115,6 +116,8 @@
             message = Module.Live?.Message,
             stopAtPercent = BatteryDrainLimits.StopAtPercent,
             confirmByPercent = BatteryDrainLimits.ConfirmByPercent,
+            // False until the first battery reading came back: battery null then means "not read yet", not "no battery".
+            batteryRead = _read,
             battery = _reading is { } r ? new { onBattery = !r.OnAc, percent = r.PercentOrComputed, remainingMWh = r.RemainingMWh, fullChargeMWh = r.FullChargeMWh } : null,
             leftover = _leftover is { } left ? new { end = left.End.ToString(), percent = left.Log.Samples.LastOrDefault()?.Percent, startedUtc = left.Log.StartedUtc } : null,
             measured = samples.Count == 0 ? null : new
