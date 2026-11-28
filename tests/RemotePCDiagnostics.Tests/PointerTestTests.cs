@@ -105,6 +105,16 @@ public class PointerTestTests
             await t.DropAsync(b, b);
         }
 
+        // The finished Drag step stays up a moment (both targets green) before the test ends; Skip then doesn't undo the pass.
+        Assert.Equal(PointerStep.Drag, t.Current.Current);
+        Assert.Equal(PointerStepState.Passed, t.Current.StateOf(PointerStep.Drag));
+        Assert.Equal(PointerTestVerdict.Running, t.Current.Verdict);
+        c.Advance(TimeSpan.FromSeconds(1));
+        t.Tick();
+        Assert.Equal(PointerStep.Drag, t.Current.Current);
+        c.Advance(PointerTestService.HoldAfterPass);
+        t.Tick();
+
         var done = t.Current;
         Assert.Equal(PointerTestVerdict.Passed, done.Verdict);
         Assert.All(done.Steps, s => Assert.Equal(PointerStepState.Passed, s.State));

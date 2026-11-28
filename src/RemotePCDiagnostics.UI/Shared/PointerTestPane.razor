@@ -124,13 +124,20 @@
         <div class="ptr-hud">
             <div class="ptr-hud-title"><strong>Step @index of @snap.Steps.Count: @PointerTestService.Title(current)</strong></div>
             <div class="ptr-hud-sub" data-testid="pointer-instructions">@PointerTestService.Instructions(current)</div>
+            @if (snap.StateOf(current) == PointerStepState.Passed)
+            {
+                <div class="ptr-ok" data-testid="pointer-step-done"><strong>✓ Done</strong></div>
+            }
 
             @if (current == PointerStep.Buttons)
             {
                 <div class="ptr-pad" data-testid="pointer-button-pad" @onpointerdown="OnPadDown" @onmousedown:preventDefault="true">
                     <span class="@(snap.LeftDoubleClick ? "ptr-ok" : "")">Left @(snap.LeftDoubleClick ? "✓" : "")</span>
+                    @if (!snap.NoMiddleButton)
+                    {
+                        <span class="@(snap.MiddleDoubleClick ? "ptr-ok" : "")">Middle @(snap.MiddleDoubleClick ? "✓" : "")</span>
+                    }
                     <span class="@(snap.RightDoubleClick ? "ptr-ok" : "")">Right @(snap.RightDoubleClick ? "✓" : "")</span>
-                    <span class="@(snap.MiddleDoubleClick ? "ptr-ok" : "")">Middle @(snap.MiddleDoubleClick ? "✓" : snap.NoMiddleButton ? "(none)" : "")</span>
                 </div>
                 <label class="meta" style="display: flex; align-items: center; gap: 6px"><input type="checkbox" data-testid="pointer-no-middle" checked="@snap.NoMiddleButton" @onchange="OnNoMiddle" /> My device has no middle button</label>
             }
