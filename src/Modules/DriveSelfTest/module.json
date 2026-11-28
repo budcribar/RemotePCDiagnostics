@@ -1,0 +1,10 @@
+{
+  "id": "84f91bee-422b-4ffb-baba-1665b5c2cab7",
+  "slug": "DriveSelfTest",
+  "displayName": "Drive self-test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.DriveSelfTest.DriveSelfTestPlugin",
+  // The module itself runs as the signed-in user; the drives' commands go to the Agent (drive_selftest), which has the rights they need.
+  "needsAdmin": false,
+  "outOfProcess": false
+}

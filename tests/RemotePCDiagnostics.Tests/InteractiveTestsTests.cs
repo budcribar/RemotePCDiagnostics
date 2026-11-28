@@ -170,8 +170,9 @@ public class InteractiveTestsTests
         Assert.Contains(HardwareQaCertificate.Groups.SelectMany(g => g.Items), i => i.Id == "keyboard" && i.Label.Contains("keyboard", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(HardwareQaCertificate.Groups.SelectMany(g => g.Items), i => i.Id == "display" && i.Label.Contains("display", StringComparison.OrdinalIgnoreCase));
 
-        // PhysicalBenchQaCard should only render when benchRunning and activeInteractiveSection is present
-        Assert.Contains("@if (benchRunning && _activeInteractiveSection is { Length: > 0 })", content);
+        // PhysicalBenchQaCard renders only while the run waits on a person check (the run owns that wait, so it survives leaving the page)
+        Assert.Contains("@if (waitingFor is { Length: > 0 })", content);
+        Assert.Contains("FilterSection=\"@waitingFor\"", content);
         Assert.DoesNotContain("\n<PhysicalBenchQaCard Service=\"ActivePhysicalQa\" />", content);
 
         // Local branding override form and manual relay inputs are removed (branding & publishing live on Admin)

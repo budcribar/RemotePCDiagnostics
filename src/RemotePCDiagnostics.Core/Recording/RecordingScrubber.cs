@@ -43,6 +43,9 @@ public sealed class RecordingScrubber
     /// <c>parentInstanceId</c> is the USB tree's link to a node's parent (<see cref="Usb.UsbNode"/>).</summary>
     public static readonly IReadOnlySet<string> DeviceIdNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "DeviceID", "InstanceId", "ParentInstanceId" };
 
+    private static readonly IReadOnlySet<string> MacNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "MACAddress", "mac", "PermanentAddress" };
+    private static readonly IReadOnlySet<string> ReferenceNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Antecedent", "Dependent" };
+
     private static bool IsPersonalDeviceId(string s) =>
         s.StartsWith("BTH", StringComparison.OrdinalIgnoreCase)
         || s.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase)
@@ -50,7 +53,12 @@ public sealed class RecordingScrubber
 
     /// <summary>One string value under property <paramref name="name"/>, scrubbed.</summary>
     private string Scalar(string name, string s) =>
-        SensitiveNames.Contains(name) ? Placeholder("serial", s)
+        // A blank or placeholder hardware address (a corrupt card's EEPROM) names no one and is what the adapter hardware card judges.
+        MacNames.Contains(name) && Areas.NicAddress.Check(s) is Areas.MacProblem.AllZero or Areas.MacProblem.AllOnes or Areas.MacProblem.Placeholder ? s
+        : SensitiveNames.Contains(name) ? Placeholder("serial", s)
+        // Win32_PnPAllocatedResource links a device by its instance path, which for a USB or Bluetooth device holds its serial.
+        : ReferenceNames.Contains(name) && (s.Contains(@"DeviceID=""USB", StringComparison.OrdinalIgnoreCase) || s.Contains(@"DeviceID=""BTH", StringComparison.OrdinalIgnoreCase))
+            ? Placeholder("device", s)
         : AddressNames.Contains(name) ? Address(s)
         : DeviceIdNames.Contains(name) && IsPersonalDeviceId(s) ? Placeholder("device", s)
         : Text(s);

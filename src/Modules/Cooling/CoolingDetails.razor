@@ -1,0 +1,83 @@
+@using System.Globalization
+@using RemotePCDiagnostics.Core.Areas
+@using RemotePCDiagnostics.Core.Cooling
+@using RemotePCDiagnostics.Core.Plugins
+@* Above the generic report: the next run's choices, then the temperature-and-load chart (live while it runs, else the last run's).
+   After a run the chart draws the "samples" card's rows, so Admin's report data carries the same numbers this draws. *@
+<div class="cooling" data-testid="cooling-options" data-mode="@(Module?.Mode == CoolingTestMode.Full ? "full" : "quick")" data-switch-modes="@(Module?.SwitchModes != false ? "true" : "false")">
+    <div class="toolbar">
+        <label class="meta">Watch low load for
+            <select data-testid="cooling-mode" disabled="@Running" @onchange="SetMode">
+                <option value="quick" selected="@(Module?.Mode != CoolingTestMode.Full)">2 minutes (Quick, about 4 minutes in all)</option>
+                <option value="full" selected="@(Module?.Mode == CoolingTestMode.Full)">5 minutes (Full, about 7 minutes in all)</option>
+            </select>
+        </label>
+        <label class="meta"><input type="checkbox" data-testid="cooling-switch-modes" disabled="@Running" checked="@(Module?.SwitchModes != false)" @onchange="SetSwitch" />
+            Switch thermal modes and put them back (Agent)</label>
+    </div>
+    <p class="meta">Watches the CPU's temperature and load, then runs 90 seconds of full CPU load and checks that the fans speed up and the
+        temperature levels off, then lets it cool for 30 seconds. It fails when the CPU stays within 10 °C of its Tj max for a minute while
+        under 30 % busy, or when the fans don't speed up while it heats. The load stops early near Tj max. Close other apps first.</p>
+    @if (Points.Count > 1)
+    {
+        const double W = 600, H = 150, Pad = 4;
+        var pts = Points;
+        var total = Math.Max(1, pts[^1].At);
+        var top = Math.Max(100, pts.Where(p => p.CpuC is not null).Select(p => p.CpuC!.Value).DefaultIfEmpty(0).Max() + 5);
+        var fanTop = Math.Max(1, pts.Where(p => p.FanRpm is not null).Select(p => p.FanRpm!.Value).DefaultIfEmpty(0).Max() * 1.1);
+        double X(double at) => Pad + (W - 2 * Pad) * Math.Clamp(at / total, 0, 1);
+        double Y(double v, double max) => H - Pad - (H - 2 * Pad) * Math.Clamp(v / max, 0, 1);
+        string Line(Func<CoolingSample, double?> f, double max) => string.Join(" ", pts.Where(p => f(p).HasValue).Select(p => $"{X(p.At).ToString("0.#", CultureInfo.InvariantCulture)},{Y(f(p)!.Value, max).ToString("0.#", CultureInfo.InvariantCulture)}"));
+        var loadStart = pts.FirstOrDefault(p => p.Phase == CoolingRules.Load)?.At;
+        var coolStart = pts.FirstOrDefault(p => p.Phase == CoolingRules.Cool)?.At;
+        <svg data-testid="cooling-chart" viewBox="0 0 @W @H" class="chart" style="width:100%;max-width:600px;height:auto" role="img"
+             aria-label="@Describe(pts)" data-points="@pts.Count">
+            @if (loadStart is { } ls)
+            {
+                <rect x="@X(ls).ToString("0.#", CultureInfo.InvariantCulture)" y="@Pad" width="@((X(coolStart ?? total) - X(ls)).ToString("0.#", CultureInfo.InvariantCulture))" height="@(H - 2 * Pad)" style="fill:var(--chart-grid)" opacity="0.6" />
+            }
+            <line x1="@Pad" y1="@Y(50, 100)" x2="@(W - Pad)" y2="@Y(50, 100)" style="stroke:var(--chart-grid)" />
+            <polyline points="@Line(p => p.LoadPercent, 100)" fill="none" style="stroke:var(--chart-router)" stroke-width="1" />
+            <polyline points="@Line(p => p.FanRpm, fanTop)" fill="none" style="stroke:var(--chart-label)" stroke-width="1" stroke-dasharray="3 2" />
+            <polyline points="@Line(p => p.CpuC, top)" fill="none" style="stroke:var(--chart-lost)" stroke-width="1.8" />
+        </svg>
+        <div class="meta"><span style="color:var(--chart-lost)">■</span> CPU °C (0 to @top.ToString("0", CultureInfo.InvariantCulture)) · <span style="color:var(--chart-router)">■</span> CPU load % ·
+            <span style="color:var(--chart-label)">┅</span> fastest fan (0 to @fanTop.ToString("N0", CultureInfo.InvariantCulture) RPM) · shaded: full load</div>
+    }
+</div>
+
+@code {
+    [Parameter] public IDiagnosticModule? DiagnosticModule { get; set; }
+    [CascadingParameter(Name = ModuleDetails.LastResult)] public DiagnosticResult? LastResult { get; set; }
+
+    private CoolingTestModule? Module => DiagnosticModule as CoolingTestModule;
+    private bool Running => LastResult is { Status: DiagnosticStatus.Running };
+
+    /// <summary>While running, the live samples; after a run, the samples card's rows.</summary>
+    private IReadOnlyList<CoolingSample> Points =>
+        Running && Module is { } m ? m.LiveSamples
+        : LastResult is { Status: not DiagnosticStatus.NotRun } r && r.Report() is AreaReport report && report.Cards.FirstOrDefault(c => c.Id == CoolingJudge.SamplesCard) is { } card
+            ? FromRows(card.Rows) : [];
+
+    public static IReadOnlyList<CoolingSample> FromRows(IReadOnlyList<AreaRow> rows) =>
+        rows.Select(r => new CoolingSample(Num(r.Values.ElementAtOrDefault(0)) ?? 0, r.Key ?? "", Num(r.Values.ElementAtOrDefault(2)), Num(r.Values.ElementAtOrDefault(3)), Num(r.Values.ElementAtOrDefault(4)))).ToList();
+
+    private static double? Num(string? s) => double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : null;
+
+    private void SetMode(ChangeEventArgs e)
+    {
+        if (Module is not null) Module.Mode = e.Value as string == "full" ? CoolingTestMode.Full : CoolingTestMode.Quick;
+    }
+
+    private void SetSwitch(ChangeEventArgs e)
+    {
+        if (Module is not null) Module.SwitchModes = e.Value is true || (e.Value as string) is "true" or "on";
+    }
+
+    private static string Describe(IReadOnlyList<CoolingSample> pts)
+    {
+        var temps = pts.Where(p => p.CpuC is not null).Select(p => p.CpuC!.Value).ToList();
+        return temps.Count == 0 ? "Temperature and load over time: no CPU temperature" :
+            $"Temperature and load over time: CPU from {temps[0]:0}°C, hottest {temps.Max():0}°C, now {temps[^1]:0}°C";
+    }
+}

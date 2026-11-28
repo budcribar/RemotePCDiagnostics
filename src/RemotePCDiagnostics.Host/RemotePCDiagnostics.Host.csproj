@@ -35,6 +35,8 @@
     <!-- GPU stress test: Direct3D 11 compute via Vortice (MIT, managed only; uses the d3d11/dxgi/d3dcompiler_47 DLLs that ship with Windows, so no native binaries to copy). -->
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+    <!-- Video playback test: Media Foundation source readers (MIT, managed only; mfplat/mfreadwrite ship with Windows). -->
+    <PackageReference Include="Vortice.MediaFoundation" Version="3.8.3" />
     <!-- NPU test: Direct3D 12 on the DXCore NPU adapter (MIT, managed only; d3d12.dll/dxcore.dll ship with Windows). -->
     <PackageReference Include="Vortice.Direct3D12" Version="3.8.3" />
     <!-- Windows ML (ONNX Runtime + dynamic NPU execution providers: Qualcomm QNN, AMD VitisAI, Intel OpenVINO). -->
@@ -82,6 +84,8 @@
     <!-- Bundled Speedometer 3.1 (third_party/speedometer, 2-clause BSD). Lands at <output>\benchmarks\speedometer-3.1.zip = SpeedometerPackage.DefaultBundledZipPath(). -->
     <None Include="..\..\third_party\speedometer\speedometer-3.1.zip" Link="benchmarks\speedometer-3.1.zip" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="..\..\third_party\speedometer\LICENSE" Link="benchmarks\SPEEDOMETER-LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- Video playback test clip: 8 s of 1080p30 H.264 + AAC made with ffmpeg from its own test pattern (docs/video-playback-clip.md). Lands at <output>\media\ = MediaFoundationVideoSource.RelativeClipPath. -->
+    <None Include="Media\playback-test-1080p30.mp4" Link="media\playback-test-1080p30.mp4" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <!-- Logging: ILogger plus the plain-line helpers (LoggerLines), without importing Microsoft.Extensions.Logging, whose LogLevel

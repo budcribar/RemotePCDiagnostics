@@ -1,0 +1,10 @@
+{
+  "id": "fe79a8ac-1fca-4933-9ae8-f8016d4ba216",
+  "slug": "GpuMemory",
+  "displayName": "Graphics memory (VRAM) test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.GpuMemory.GpuMemoryPlugin",
+  // Runs as the signed-in user: Direct3D compute needs no administrator rights.
+  "needsAdmin": false,
+  "outOfProcess": false
+}
