@@ -48,7 +48,9 @@ public class CheckPageComponentsTests : BunitContext
         var line = cut.Find("p[data-testid='area-status']");
         Assert.Equal("status-line", line.ClassName);
         Assert.NotNull(line.QuerySelector(".dot.dot-ok"));
-        Assert.Equal(2, line.QuerySelectorAll(".status-text .card-list-strong li").Length);
+        // bUnit parses the markup as HTML, where a <ul> closes the <p> it sits in, so look for the list on the whole render
+        // (Blazor itself builds the DOM directly and keeps it inside the status line).
+        Assert.Equal(2, cut.FindAll(".card-list.card-list-strong li").Count);
         Assert.Equal("Check again", cut.Find("[data-testid='area-requery']").TextContent);
         Assert.Empty(cut.FindAll("[data-testid='running-badge']"));
     }
@@ -136,6 +138,16 @@ public class CheckPageComponentsTests : BunitContext
         var cut = Render<RunProgress>(p => p.Add(c => c.TestId, "area-progress").Add(c => c.Progress, new CheckProgress(1, 4, "Drive 1")));
         var bar = cut.Find(".progress.run-progress[data-testid='area-progress'] > .progress-bar");
         Assert.Equal("width:25%", bar.GetAttribute("style"));
+    }
+
+    [Fact]
+    public void RunProgress_Indeterminate_ShowsTheMovingBarWithoutAPercent()
+    {
+        var cut = Render<RunProgress>(p => p.Add(c => c.TestId, "audit-run-progress").Add(c => c.Indeterminate, true));
+        var bar = cut.Find(".run-progress.run-progress-indeterminate[data-testid='audit-run-progress']");
+        Assert.Equal("true", bar.GetAttribute("aria-hidden"));
+        Assert.Single(bar.Children);
+        Assert.Empty(cut.FindAll(".progress-bar"));
     }
 
     [Fact]

@@ -1,5 +1,10 @@
-@* Step progress bar under a check's status line. It renders nothing until the check reports steps (more than one). *@
-@if (Progress is { HasProgress: true } p)
+@* Progress bar under a check's status line: the step bar once the check reports steps (more than one), or the moving bar
+   for a run that has no steps to count. It renders nothing otherwise. *@
+@if (Indeterminate)
+{
+    <div class="run-progress run-progress-indeterminate" data-testid="@TestId" aria-hidden="true"><div></div></div>
+}
+else if (Progress is { HasProgress: true } p)
 {
     <div class="progress run-progress" data-testid="@TestId"><div class="progress-bar" style="width:@($"{p.Percent}%")"></div></div>
 }
@@ -7,4 +12,6 @@
     [Parameter, EditorRequired] public string TestId { get; set; } = "";
     /// <summary>The running check's progress (Diagnostics.GetProgress); pass null when the check isn't running.</summary>
     [Parameter] public CheckProgress? Progress { get; set; }
+    /// <summary>The moving bar, for a run with no steps; the page shows it only while the run is going.</summary>
+    [Parameter] public bool Indeterminate { get; set; }
 }
