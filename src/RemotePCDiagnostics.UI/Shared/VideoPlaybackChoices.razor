@@ -24,7 +24,7 @@
         {
             <div class="vplay-row">
                 <span>Streams</span>
-                <StreamStepper Module="Module" Disabled="Disabled" />
+                <StreamStepper Module="Module" Disabled="Disabled" Changed="StateHasChanged" />
                 <label>Run for
                     <select data-testid="videoplayback-minutes" disabled="@Disabled" @onchange="SetMinutes">
                         @foreach (var m in VideoPlaybackOptions.MinuteChoices)
@@ -46,7 +46,7 @@
         var p = Module.LastProgress;
         <div class="vplay-row">
             <span>Streams</span>
-            <StreamStepper Module="Module" Disabled="false" />
+            <StreamStepper Module="Module" Disabled="false" Changed="StateHasChanged" />
             <span class="meta">@(p is null ? "Starting…" : $"{p.Running} playing · {VideoPlaybackModule.Clock(p.Elapsed)} of {VideoPlaybackModule.Clock(p.Duration)}"
                 + (p.DecodeEnginePercent is { } d ? $" · video decode engine {d:0}%" : "") + (p.GpuTemperatureC is { } t ? $" · GPU {t:0}°C" : ""))</span>
         </div>
@@ -94,6 +94,7 @@
         var a = Module.LastMediaApps;
         return JsonSerializer.Serialize(new
         {
+            schema = 1,
             mode = VideoPlaybackModule.ModeArg(Module.Mode),
             streams = Module.Streams,
             minStreams = VideoPlaybackOptions.MinStreams,

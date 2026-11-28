@@ -139,7 +139,7 @@ public sealed class VideoPlaybackTest(
             : result.SoftwareDecode ? VideoPlaybackOutcome.SoftwareDecode
             : result.Frames == 0 ? VideoPlaybackOutcome.CouldNotRun
             : VideoPlaybackOutcome.Passed);
-        if (outcome == VideoPlaybackOutcome.CouldNotRun && result.Frames == 0) result = result with { Reason = reason ?? "No video frames were decoded." };
+        if (outcome == VideoPlaybackOutcome.CouldNotRun) result = result with { Reason = reason ?? "No video frames were decoded." };
         log.Info($"Video playback: done outcome={outcome} streams={ordered.Count} most={most} frames={result.Frames} dropped={result.DroppedFrames} late={result.LateFrames} "
             + $"audioGlitches={result.AudioGlitches} decode={result.DecodeEngineAveragePercent}/{result.DecodeEnginePeakPercent}% maxTemp={maxTemp}");
         return result with { Outcome = outcome };

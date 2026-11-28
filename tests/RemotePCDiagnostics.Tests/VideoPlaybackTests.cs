@@ -3,6 +3,7 @@ using Bunit;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Recording;
+using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Core.Stress;
 using RemotePCDiagnostics.Core.VideoPlayback;
 using RemotePCDiagnostics.UI.Shared;
@@ -17,7 +18,7 @@ public sealed class VideoPlaybackTests : BunitContext
     internal static readonly VideoClipInfo TestClip = new("clip.mp4", "H.264", 1920, 1080, 30, TimeSpan.FromSeconds(8), HasAudio: true);
 
     /// <summary>How a simulated stream behaves: decode time per frame, on the graphics chip or not, and what goes wrong after how many frames.</summary>
-    internal sealed record StreamPlan(TimeSpan DecodeTime, bool OnChip = true, int? LostAfter = null, int? CrashAfter = null, int? SlowAfter = null, TimeSpan? SlowDecode = null);
+    internal sealed record StreamPlan(TimeSpan DecodeTime, bool OnChip = true, int? LostAfter = null, int? CrashAfter = null, int? SlowAfter = null, TimeSpan? SlowDecode = null, int? HangAfter = null, Task? HangUntil = null);
 
     /// <summary>Decoders whose decode time advances their stream's own fake clock, so lateness is exact.</summary>
     internal sealed class SimulatedVideo(Func<int, StreamPlan> plan, VideoClipInfo? clip = null, Exception? openError = null, int? openFailsFrom = null) : IVideoPlaybackSource
@@ -65,6 +66,7 @@ public sealed class VideoPlaybackTests : BunitContext
                 // Every third sample is audio (about as often as AAC frames come with 30 fps video).
                 if (n % 3 == 2) return new DecodedSample(DecodedSampleKind.Audio, TimeSpan.FromSeconds(_frames / 30.0), false);
                 var f = _frames++;
+                if (p.HangAfter is { } h && f >= h && p.HangUntil is not null) p.HangUntil.Wait(TimeSpan.FromSeconds(5));
                 if (p.LostAfter is { } l && f >= l) throw new GpuDeviceLostException("device removed");
                 if (p.CrashAfter is { } c && f >= c) throw new InvalidOperationException("decoder error 0xC00D36B2");
                 clock.Advance(p.SlowAfter is { } s && f >= s ? p.SlowDecode ?? p.DecodeTime : p.DecodeTime);
@@ -75,8 +77,8 @@ public sealed class VideoPlaybackTests : BunitContext
         }
     }
 
-    internal static VideoPlaybackModule Module(SimulatedVideo v, FakeStressClock? runClock = null, VideoPlaybackOptions? o = null) =>
-        new(v, null, null, () => runClock ?? new FakeStressClock(), i => v.ClockFor(i), o ?? new VideoPlaybackOptions { StopTimeout = TimeSpan.FromSeconds(5) });
+    internal static VideoPlaybackModule Module(SimulatedVideo v, FakeStressClock? runClock = null, VideoPlaybackOptions? o = null, ISensorProvider? sensors = null) =>
+        new(v, sensors, null, () => runClock ?? new FakeStressClock(), i => v.ClockFor(i), o ?? new VideoPlaybackOptions { StopTimeout = TimeSpan.FromSeconds(5) });
 
     private static async Task<(AreaReport Report, VideoPlaybackModule Module)> RunStress(SimulatedVideo v, int streams = 1, int minutes = 1, FakeStressClock? runClock = null)
     {
@@ -234,6 +236,53 @@ public sealed class VideoPlaybackTests : BunitContext
         Assert.True(r.Cancelled);
         Assert.Equal(v.Opened, v.Disposed);
         Assert.False(module.IsRunning);
+    }
+
+    [Fact]
+    public async Task Critical_temperature_stops_the_run_as_overheated()
+    {
+        var sensors = new SequenceSensorProvider(n => new SensorSnapshot(
+        [
+            new("AMD Radeon(TM) Graphics", HardwareKind.Gpu, "GPU Hot Spot", SensorKind.Temperature, n >= 3 ? 110 : 65, n >= 3 ? 110 : 65, n >= 3 ? 110 : 65, "°C"),
+        ], IsElevated: true));
+        var v = new SimulatedVideo(_ => new StreamPlan(TimeSpan.FromMilliseconds(4)), TestClip);
+        var m = Module(v, sensors: sensors);
+        m.Streams = 1;
+        m.Duration = TimeSpan.FromMinutes(1);
+        var r = await m.RefreshAsync(null, Xunit.TestContext.Current.CancellationToken);
+
+        var report = (AreaReport)r.Payload!;
+        Assert.Equal(DiagnosticStatus.Warning, report.Status);
+        Assert.Equal(VideoPlaybackOutcome.Overheated, m.LastStress!.Outcome);
+        Assert.Equal(65, m.LastStress.StartTemperatureC);
+        Assert.Equal(110, m.LastStress.MaxTemperatureC);
+        Assert.StartsWith("Stopped early: the PC got too hot", report.Cards[0].Headline);
+        Assert.Equal(v.Opened, v.Disposed);
+    }
+
+    [Fact]
+    public async Task A_hung_decoder_fails_the_run_as_decoder_crashed()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            var v = new SimulatedVideo(_ => new StreamPlan(TimeSpan.FromMilliseconds(4), HangAfter: 2, HangUntil: release.Task), TestClip);
+            var m = Module(v, o: new VideoPlaybackOptions { StopTimeout = TimeSpan.FromMilliseconds(50) });
+            m.Streams = 1;
+            m.Duration = TimeSpan.FromMinutes(1);
+            var r = await m.RefreshAsync(null, Xunit.TestContext.Current.CancellationToken);
+
+            var report = (AreaReport)r.Payload!;
+            Assert.Equal(DiagnosticStatus.Error, report.Status);
+            Assert.Equal(VideoPlaybackOutcome.DecoderCrashed, m.LastStress!.Outcome);
+            Assert.Equal(VideoStreamEnd.Hung, m.LastStress.Streams[0].End);
+            Assert.Equal("Stopped responding", report.Cards[0].Rows[0].Values[^1]);
+            Assert.Contains("stopped responding", m.LastStress.Reason);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
     }
 
     [Fact]
@@ -408,6 +457,7 @@ public sealed class VideoPlaybackTests : BunitContext
         Assert.Equal(TimeSpan.FromMinutes(5), m.Duration);
 
         var data = Data(cut);
+        Assert.Equal(1, data.GetProperty("schema").GetInt32());
         Assert.Equal(6, data.GetProperty("streams").GetInt32());
         Assert.Equal(5, data.GetProperty("minutes").GetDouble());
         Assert.Equal("1080p H.264, 30 fps", data.GetProperty("clip").GetString());
@@ -417,6 +467,25 @@ public sealed class VideoPlaybackTests : BunitContext
         Assert.Equal(VideoPlaybackMode.MediaApps, m.Mode);
         Assert.Empty(cut.FindAll("[data-testid=videoplayback-add-stream]"));
         Assert.Equal("media-apps", Data(cut).GetProperty("mode").GetString());
+    }
+
+    [Fact]
+    public void Plus_and_minus_update_data_streams_and_videoplayback_data_immediately()
+    {
+        var m = Module(new SimulatedVideo(_ => new StreamPlan(TimeSpan.Zero), TestClip));
+        var cut = Render<VideoPlaybackChoices>(p => p.Add(x => x.Module, m));
+
+        Assert.Equal("4", cut.Find("[data-testid=videoplayback-options]").GetAttribute("data-streams"));
+        Assert.Equal(1, Data(cut).GetProperty("schema").GetInt32());
+        Assert.Equal(4, Data(cut).GetProperty("streams").GetInt32());
+
+        cut.Find("[data-testid=videoplayback-add-stream]").Click();
+        Assert.Equal("5", cut.Find("[data-testid=videoplayback-options]").GetAttribute("data-streams"));
+        Assert.Equal(5, Data(cut).GetProperty("streams").GetInt32());
+
+        cut.Find("[data-testid=videoplayback-remove-stream]").Click();
+        Assert.Equal("4", cut.Find("[data-testid=videoplayback-options]").GetAttribute("data-streams"));
+        Assert.Equal(4, Data(cut).GetProperty("streams").GetInt32());
     }
 
     [Fact]

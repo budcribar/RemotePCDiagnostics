@@ -66,15 +66,34 @@ public sealed class MediaFoundationVideoSource(ILogger? log = null, string? clip
     {
         lock (_gate)
         {
-            if (_manager is not null) return _manager;
+            if (_manager is not null)
+            {
+                if (_device is null || !_device.DeviceRemovedReason.Failure) return _manager;
+                log.Info("Video playback: D3D11 device was removed; recreating");
+                _manager.Dispose(); _manager = null;
+                _device.Dispose(); _device = null;
+            }
             if (!_started) { MediaFactory.MFStartup(useLightVersion: false).CheckError(); _started = true; }
             var hr = D3D11.D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.VideoSupport | DeviceCreationFlags.BgraSupport,
                 [FeatureLevel.Level_11_1, FeatureLevel.Level_11_0, FeatureLevel.Level_10_1, FeatureLevel.Level_10_0], out ID3D11Device? device);
             if (hr.Failure || device is null)
+            {
+                device?.Dispose();
                 throw new VideoPlaybackUnavailableException("No graphics chip with video support is available to this app (Remote Desktop, or only the basic display driver).");
-            using (var mt = device.QueryInterfaceOrNull<ID3D11Multithread>()) mt?.SetMultithreadProtected(true);
-            var manager = MediaFactory.MFCreateDXGIDeviceManager();
-            manager.ResetDevice(device).CheckError();
+            }
+            IMFDXGIDeviceManager? manager = null;
+            try
+            {
+                using (var mt = device.QueryInterfaceOrNull<ID3D11Multithread>()) mt?.SetMultithreadProtected(true);
+                manager = MediaFactory.MFCreateDXGIDeviceManager();
+                manager.ResetDevice(device).CheckError();
+            }
+            catch
+            {
+                manager?.Dispose();
+                device.Dispose();
+                throw;
+            }
             _device = device;
             _manager = manager;
             log.Info($"Video playback: D3D11 device level={device.FeatureLevel}");
@@ -145,34 +164,42 @@ public sealed class MediaFoundationVideoSource(ILogger? log = null, string? clip
             attrs.Set(ReaderD3DManager, manager);
             attrs.Set(EnableHardwareTransforms, 1u);
             _reader = MediaFactory.MFCreateSourceReaderFromURL(clip.Path, attrs);
-            _reader.SetStreamSelection(SourceReaderIndex.AllStreams, false);
-            _reader.SetStreamSelection(SourceReaderIndex.FirstVideoStream, true);
-            using (var video = MediaFactory.MFCreateMediaType())
+            try
             {
-                video.Set(MajorType, MediaTypeVideo);
-                video.Set(Subtype, FormatNv12);
-                _reader.SetCurrentMediaType(SourceReaderIndex.FirstVideoStream, video);
+                _reader.SetStreamSelection(SourceReaderIndex.AllStreams, false);
+                _reader.SetStreamSelection(SourceReaderIndex.FirstVideoStream, true);
+                using (var video = MediaFactory.MFCreateMediaType())
+                {
+                    video.Set(MajorType, MediaTypeVideo);
+                    video.Set(Subtype, FormatNv12);
+                    _reader.SetCurrentMediaType(SourceReaderIndex.FirstVideoStream, video);
+                }
+                if (clip.HasAudio)
+                {
+                    try
+                    {
+                        using var audio = MediaFactory.MFCreateMediaType();
+                        audio.Set(MajorType, MediaTypeAudio);
+                        audio.Set(Subtype, FormatFloat);
+                        _reader.SetStreamSelection(SourceReaderIndex.FirstAudioStream, true);
+                        _reader.SetCurrentMediaType(SourceReaderIndex.FirstAudioStream, audio);
+                        _audio = true;
+                    }
+                    catch (SharpGenException ex)
+                    {
+                        log.Info($"Video playback: stream {index}: no audio decoder ({ex.Message}); video only");
+                        _reader.SetStreamSelection(SourceReaderIndex.FirstAudioStream, false);
+                    }
+                }
+                var (name, hardware) = DecoderOf(_reader, log);
+                Info = new VideoStreamInfo(name, hardware, clip.FramesPerSecond);
+                log.Info($"Video playback: stream {index} opened decoder='{name}' hardwareMft={hardware} audio={_audio}");
             }
-            if (clip.HasAudio)
+            catch
             {
-                try
-                {
-                    using var audio = MediaFactory.MFCreateMediaType();
-                    audio.Set(MajorType, MediaTypeAudio);
-                    audio.Set(Subtype, FormatFloat);
-                    _reader.SetStreamSelection(SourceReaderIndex.FirstAudioStream, true);
-                    _reader.SetCurrentMediaType(SourceReaderIndex.FirstAudioStream, audio);
-                    _audio = true;
-                }
-                catch (SharpGenException ex)
-                {
-                    log.Info($"Video playback: stream {index}: no audio decoder ({ex.Message}); video only");
-                    _reader.SetStreamSelection(SourceReaderIndex.FirstAudioStream, false);
-                }
+                _reader.Dispose();
+                throw;
             }
-            var (name, hardware) = DecoderOf(_reader, log);
-            Info = new VideoStreamInfo(name, hardware, clip.FramesPerSecond);
-            log.Info($"Video playback: stream {index} opened decoder='{name}' hardwareMft={hardware} audio={_audio}");
         }
 
         /// <summary>The video decoder the reader loaded: its friendly name and whether it is a hardware MFT (the DXVA-accelerated Microsoft
@@ -201,17 +228,9 @@ public sealed class MediaFoundationVideoSource(ILogger? log = null, string? clip
         {
             for (var guard = 0; guard < 64; guard++)
             {
-                IMFSample? sample;
-                int stream;
-                SourceReaderFlag flags;
-                long time;
-                try { sample = _reader.ReadSample(SourceReaderIndex.AnyStream, SourceReaderControlFlag.None, out stream, out flags, out time); }
-                catch (SharpGenException ex) when (IsDeviceLost(ex.HResult) || DeviceRemoved() is not null)
+                try
                 {
-                    throw new GpuDeviceLostException(DeviceRemoved() ?? DeviceLostText(ex.HResult), ex);
-                }
-                using (sample)
-                {
+                    using var sample = _reader.ReadSample(SourceReaderIndex.AnyStream, SourceReaderControlFlag.None, out var stream, out var flags, out var time);
                     if ((flags & SourceReaderFlag.Error) != 0) throw new InvalidOperationException("The video decoder reported an error.");
                     if ((flags & SourceReaderFlag.EndOfStream) != 0)
                     {
@@ -226,13 +245,17 @@ public sealed class MediaFoundationVideoSource(ILogger? log = null, string? clip
                     if (ts > _lastTimestamp) _lastTimestamp = ts;
                     var isVideo = stream == VideoStreamIndex();
                     var onChip = false;
-                    if (isVideo)
+                    if (isVideo && sample.BufferCount > 0)
                     {
                         using var buffer = sample.GetBufferByIndex(0);
                         using var dxgi = buffer.QueryInterfaceOrNull<IMFDXGIBuffer>();
                         onChip = dxgi is not null;
                     }
                     return new DecodedSample(isVideo ? DecodedSampleKind.Video : DecodedSampleKind.Audio, _offset + ts, onChip);
+                }
+                catch (SharpGenException ex) when (IsDeviceLost(ex.HResult) || DeviceRemoved() is not null)
+                {
+                    throw new GpuDeviceLostException(DeviceRemoved() ?? DeviceLostText(ex.HResult), ex);
                 }
             }
             throw new InvalidOperationException("The video decoder returned no samples.");
@@ -268,7 +291,8 @@ public sealed class MediaFoundationVideoSource(ILogger? log = null, string? clip
     /// <summary>"\GPU Engine(*)\Utilization Percentage": one instance per process and engine ("pid_1234_luid_…_engtype_VideoDecode").</summary>
     private sealed class PdhEngineMeter : IGpuEngineMeter
     {
-        private readonly IntPtr _query, _counter;
+        private IntPtr _query;
+        private readonly IntPtr _counter;
 
         public PdhEngineMeter()
         {
@@ -276,13 +300,15 @@ public sealed class MediaFoundationVideoSource(ILogger? log = null, string? clip
             if (PdhAddEnglishCounter(_query, @"\GPU Engine(*)\Utilization Percentage", IntPtr.Zero, out _counter) != 0)
             {
                 PdhCloseQuery(_query);
+                _query = IntPtr.Zero;
                 throw new InvalidOperationException("This PC has no GPU Engine counters.");
             }
         }
 
         public IReadOnlyList<GpuEngineLoad> Sample()
         {
-            if (PdhCollectQueryData(_query) != 0) return [];
+            var query = Volatile.Read(ref _query);
+            if (query == IntPtr.Zero || PdhCollectQueryData(query) != 0) return [];
             uint size = 0;
             var status = PdhGetFormattedCounterArray(_counter, PdhFmtDouble | PdhFmtNoCap100, ref size, out var count, IntPtr.Zero);
             if (status != PdhMoreData || size == 0) return [];
@@ -304,7 +330,11 @@ public sealed class MediaFoundationVideoSource(ILogger? log = null, string? clip
             finally { Marshal.FreeHGlobal(buffer); }
         }
 
-        public void Dispose() => PdhCloseQuery(_query);
+        public void Dispose()
+        {
+            var query = Interlocked.Exchange(ref _query, IntPtr.Zero);
+            if (query != IntPtr.Zero) PdhCloseQuery(query);
+        }
 
         private const uint PdhFmtDouble = 0x00000200, PdhFmtNoCap100 = 0x00008000, PdhMoreData = 0x800007D2;
 
