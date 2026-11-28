@@ -73,8 +73,32 @@ public static class ModuleIds
     public static readonly Guid Sound = new("56dea360-0bd7-4230-b072-0d54d91e90e4");
     /// <summary>Slug <c>SoundCheck</c>.</summary>
     public static readonly Guid SoundCheck = new("b81b0a57-43d2-4ad4-8572-1480fbe6cf0f");
+    /// <summary>Slug <c>WifiConnect</c>.</summary>
+    public static readonly Guid WifiConnect = new("3f0c2b8e-5d71-4a9e-b6c4-2e8d9a7f1c35");
+    /// <summary>Slug <c>EthernetPort</c>.</summary>
+    public static readonly Guid EthernetPort = new("6f2cda7d-0f7b-456c-a0dc-dedd9582c069");
+    /// <summary>Slug <c>ChargerReplug</c>.</summary>
+    public static readonly Guid ChargerReplug = new("6e740559-6220-4ea6-b09b-303928f1982f");
+    /// <summary>Slug <c>AudioDevices</c>.</summary>
+    public static readonly Guid AudioDevices = new("0541d464-e4d7-4efe-8d0a-3b8357e4110e");
     /// <summary>Slug <c>WindowsMaintenance</c>.</summary>
     public static readonly Guid WindowsMaintenance = new("f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41");
+    /// <summary>Slug <c>DiskSurfaceScan</c>.</summary>
+    public static readonly Guid DiskSurfaceScan = new("46272fdc-6e61-4e3b-bf6f-bec95e0be7eb");
+    /// <summary>Slug <c>DriveSelfTest</c>.</summary>
+    public static readonly Guid DriveSelfTest = new("84f91bee-422b-4ffb-baba-1665b5c2cab7");
+    /// <summary>Slug <c>GpuMemory</c>.</summary>
+    public static readonly Guid GpuMemory = new("fe79a8ac-1fca-4933-9ae8-f8016d4ba216");
+    /// <summary>Slug <c>Cooling</c>.</summary>
+    public static readonly Guid Cooling = new("adda2b29-4378-44da-b7ef-64376b0da30f");
+    /// <summary>Slug <c>BatteryDrain</c>.</summary>
+    public static readonly Guid BatteryDrain = new("32ea07c3-6c63-4453-a03e-7d778b74b308");
+    /// <summary>Slug <c>VideoPlayback</c>.</summary>
+    public static readonly Guid VideoPlayback = new("d0392e61-8686-4da4-aaa9-fb2808ed72a6");
+    /// <summary>Slug <c>UsbPorts</c>.</summary>
+    public static readonly Guid UsbPorts = new("b6237a7b-102a-4a68-8553-0fed276ef946");
+    /// <summary>Slug <c>UsbPortCheck</c>.</summary>
+    public static readonly Guid UsbPortCheck = new("1b68970d-8ec7-45ee-bc39-bc88bca9de77");
     /// <summary>Slug <c>Displays</c>.</summary>
     public static readonly Guid Displays = new("5d0f3b6e-8a41-4c2e-9f7d-2b6a1e9c4d83");
     /// <summary>Slug <c>DisplayOutputCheck</c>.</summary>
@@ -117,6 +141,18 @@ public static class ModuleIds
         [Sound] = ModuleSlugs.Sound,
         [WindowsMaintenance] = ModuleSlugs.WindowsMaintenance,
         [SoundCheck] = ModuleSlugs.SoundCheck,
+        [WifiConnect] = ModuleSlugs.WifiConnect,
+        [EthernetPort] = ModuleSlugs.EthernetPort,
+        [ChargerReplug] = ModuleSlugs.ChargerReplug,
+        [DiskSurfaceScan] = ModuleSlugs.DiskSurfaceScan,
+        [DriveSelfTest] = ModuleSlugs.DriveSelfTest,
+        [GpuMemory] = ModuleSlugs.GpuMemory,
+        [Cooling] = ModuleSlugs.Cooling,
+        [BatteryDrain] = ModuleSlugs.BatteryDrain,
+        [VideoPlayback] = ModuleSlugs.VideoPlayback,
+        [UsbPorts] = ModuleSlugs.UsbPorts,
+        [UsbPortCheck] = ModuleSlugs.UsbPortCheck,
+        [AudioDevices] = ModuleSlugs.AudioDevices,
         [Displays] = ModuleSlugs.Displays,
         [DisplayOutputCheck] = ModuleSlugs.DisplayOutputCheck,
     };
@@ -169,6 +205,29 @@ public static class ModuleSlugs
     public const string WindowsMaintenance = "WindowsMaintenance";
     /// <summary>The interactive left/right test sound and the "Can't hear sound" helper (Interactive tests page).</summary>
     public const string SoundCheck = "SoundCheck";
+    /// <summary>The interactive Wi-Fi connect, ping and restore test (Interactive tests page).</summary>
+    public const string WifiConnect = "WifiConnect";
+    /// <summary>The interactive wired port test: cable to the network, or a loopback plug (Interactive tests page).</summary>
+    public const string EthernetPort = "EthernetPort";
+    /// <summary>The interactive charger unplug and replug test (Interactive tests page).</summary>
+    public const string ChargerReplug = "ChargerReplug";
+    /// <summary>The read-only raw disk surface scan (one run per physical disk, through the Agent).</summary>
+    public const string DiskSurfaceScan = "DiskSurfaceScan";
+    /// <summary>The drive's own short or extended self-test (ATA SMART, NVMe Device Self-test), through the Agent.</summary>
+    public const string DriveSelfTest = "DriveSelfTest";
+    /// <summary>The graphics memory (VRAM) test: patterns written and checked in each graphics chip's memory.</summary>
+    public const string GpuMemory = "GpuMemory";
+    /// <summary>The cooling test: heat at low load, fan response under CPU load, and thermal mode switching (Agent).</summary>
+    public const string Cooling = "Cooling";
+    /// <summary>The guided battery drain and runtime measurement (on battery only, through the Agent's power settings).</summary>
+    public const string BatteryDrain = "BatteryDrain";
+    /// <summary>The video playback test: copies of a test clip played at once (dropped frames, hardware decode), and the media apps check.</summary>
+    public const string VideoPlayback = "VideoPlayback";
+    public const string UsbPorts = "UsbPorts";
+    /// <summary>The interactive USB port check: plug a device into each port in turn (Interactive tests page).</summary>
+    public const string UsbPortCheck = "UsbPortCheck";
+    /// <summary>The interactive per-device test: play every speaker, record every microphone (Interactive tests page).</summary>
+    public const string AudioDevices = "AudioDevices";
     /// <summary>Displays &amp; video outputs: monitors, connectors, modes, EDID, scaling, HDR, driver resets, BIOS-disabled outputs.</summary>
     public const string Displays = "Displays";
     /// <summary>The interactive video output check: plug a monitor into each video port in turn (Interactive tests page).</summary>

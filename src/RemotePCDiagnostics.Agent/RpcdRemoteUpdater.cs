@@ -333,6 +333,10 @@ internal sealed class RpcdRemoteUpdater : IDisposable
 
     private async Task<int> RunInstallerAsync(RpcdPreparedInstall install, IReadOnlyList<string>? relaunch, CancellationToken ct)
     {
+        // Checked again right before Setup starts: the files sat in the staging folder since the download.
+        await UpdatePublisher.VerifyAsync(install.InstallerPath, ct).ConfigureAwait(false);
+        if (install.AgentMsiPath is { } agentMsiPath)
+            await UpdatePublisher.VerifyAsync(agentMsiPath, ct).ConfigureAwait(false);
         // Save only when Setup is about to start so a refused update does not restart the app.
         if (relaunch is not null)
             PendingAppRelaunch.Save(_stagingDirectory, relaunch);

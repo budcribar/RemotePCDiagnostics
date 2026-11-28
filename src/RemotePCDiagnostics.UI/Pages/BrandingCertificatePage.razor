@@ -24,6 +24,10 @@
     };
     var benchRunning = ActiveBenchQa.IsRunning;
     var benchBusyElsewhere = !benchRunning && Diagnostics.IsAnyStressRunning;
+    // Waiting on the person (keyboard, display): every automated check is done, so what failed can be fixed and re-checked now.
+    var waitingFor = benchRunning ? ActiveBenchQa.WaitingFor : null;
+    var automatedRunning = benchRunning && waitingFor is null;
+    var canRecheck = !automatedRunning && !benchBusyElsewhere && !ActiveBenchQa.IsRecheckRunning;
 }
 
 <div class="toolbar">
@@ -128,9 +132,10 @@
     }
 </section>
 
-@if (benchRunning && _activeInteractiveSection is { Length: > 0 })
+@if (waitingFor is { Length: > 0 })
 {
-    <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="@_activeInteractiveSection" OnOutcomeChanged="OnBenchInteractiveOutcomeChanged" />
+    @* The run waits on this check, not the page: leaving the page and coming back shows it again, and the run carries on. *@
+    <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="@waitingFor" RemoteSessionActive="@(Session.Mode == SessionMode.Remote || _isRemoteDisplay)" />
 }
 
 @{
@@ -142,12 +147,12 @@
 {
     <RemediationActions @ref="_qaFixUi" Actions="qaFixes" ShowRecent="false" Origin="@ModuleSlugs.SecurityAudit" OnCompleted="() => RerunItems([SecurityItemId])" />
 }
-@if (problems.Count > 0 && !benchRunning)
+@if (problems.Count > 0 && !automatedRunning)
 {
     <section class="card wf-section qa-attention" data-testid="qa-attention" data-count="@problems.Count">
         <div class="qa-attention-top">
             <strong>@(problems.Count == 1 ? "1 item needs attention" : $"{problems.Count} items need attention")</strong>
-            <button type="button" class="btn btn-outline" data-testid="qa-rerun-failed" disabled="@(benchRunning || benchBusyElsewhere || rerunnable.Count == 0)"
+            <button type="button" class="btn btn-outline" data-testid="qa-rerun-failed" disabled="@(!canRecheck || rerunnable.Count == 0)"
                     @onclick="() => RerunItems(rerunnable.Select(i => i.Id))">
                 <Icon Name="refresh" Size="14" /> Re-run @(rerunnable.Count == 1 ? "it" : $"failed ({rerunnable.Count})")
             </button>
@@ -169,7 +174,7 @@
                             }
                             @if (BenchQaRunner.CanRerun(item.Id))
                             {
-                                <button type="button" class="btn-small" data-testid="qa-rerun-@item.Id" disabled="@(benchRunning || benchBusyElsewhere)"
+                                <button type="button" class="btn-small" data-testid="qa-rerun-@item.Id" disabled="@(!canRecheck)"
                                         @onclick="() => RerunItems([item.Id])">Re-run</button>
                             }
                         </span>
@@ -187,7 +192,7 @@
                                     @if (fix is not null)
                                     {
                                         <button type="button" class="btn-small" data-testid="qa-security-fix-@finding.Id" data-action="remediate" data-action-kind="@fix.Kind" data-action-target="@fix.Target"
-                                                disabled="@(benchRunning || App.Remediation?.Running is not null)" @onclick="() => _qaFixUi?.Ask(fix)">@fix.ButtonText</button>
+                                                disabled="@(automatedRunning || App.Remediation?.Running is not null)" @onclick="() => _qaFixUi?.Ask(fix)">@fix.ButtonText</button>
                                     }
                                     else
                                     {
@@ -203,16 +208,21 @@
     </section>
 }
 
-<section class="card wf-section @(benchRunning ? "qa-cert-updating" : "")" data-testid="qa-cert-card" data-running="@(benchRunning ? "true" : "false")">
+<section class="card wf-section @(automatedRunning ? "qa-cert-updating" : "")" data-testid="qa-cert-card" data-running="@(benchRunning ? "true" : "false")">
     <div class="toolbar" style="margin-bottom: 8px">
         <div>
             <strong data-testid="qa-live-id">@snap.CertificateId</strong>
             <span> · </span>
-            @if (benchRunning)
+            @if (automatedRunning)
             {
-                @* Mid-run the store still holds the last check's results for items not reached yet, so no verdict until it finishes. *@
+                @* The preview holds still while the checks run (it showed the store's results changing one by one); it updates when they finish. *@
                 <span class="chip chip-na" data-testid="qa-live-verdict">QA running</span>
-                <span class="meta" data-testid="qa-live-note"> · not final: items show the last results until this run reaches them</span>
+                <span class="meta" data-testid="qa-live-note"> · this is the last certificate; it updates when the automated checks finish</span>
+            }
+            else if (waitingFor is not null)
+            {
+                <span class="chip chip-na" data-testid="qa-live-verdict">Waiting on the @waitingFor check</span>
+                <span class="meta" data-testid="qa-live-note"> · automated checks done; finish the @waitingFor check to complete the certificate</span>
             }
             else
             {
@@ -350,8 +360,6 @@
     // The certificate preview starts collapsed; the header above it already shows the live ID and verdict.
     private bool _previewOpen;
 
-    private string? _activeInteractiveSection;
-    private TaskCompletionSource<bool>? _benchInteractiveTcs;
 
     private bool _isRemoteDisplay;
     private bool _publishingCert;
@@ -366,9 +374,7 @@
     private DateTimeOffset _certGeneratedAt = DateTimeOffset.Now;
     private HardwareQaSnapshot? _cachedSnap;
     private string _cachedCertHtml = "";
-    private int _lastBenchCompletedSteps = -1;
     private bool _wasBenchRunning;
-    private long _lastPreviewUpdateTicks;
 
     private Uri? EffectiveRelayUri =>
         Session.ServerUri
@@ -381,22 +387,10 @@
 
     private HardwareQaSnapshot EnsureCertificateSnapshot(bool force = false)
     {
-        var benchRunning = ActiveBenchQa.IsRunning;
-        var nowTicks = Environment.TickCount64;
-
-        if (!force && _cachedSnap is not null)
-        {
-            if (benchRunning)
-            {
-                var stepChanged = ActiveBenchQa.CompletedSteps + ActiveBenchQa.CompletedItems != _lastBenchCompletedSteps;
-                var debounceElapsed = nowTicks - _lastPreviewUpdateTicks >= 1000;
-                if (!stepChanged && !debounceElapsed)
-                    return _cachedSnap;
-            }
-        }
-
-        _lastPreviewUpdateTicks = nowTicks;
-        _lastBenchCompletedSteps = ActiveBenchQa.CompletedSteps + ActiveBenchQa.CompletedItems;
+        // While the automated checks run, keep the certificate as it was: rebuilding it from the store after every result made it (and its
+        // ID and hash) change all through the run. It is built again when they finish and once more when the run ends.
+        if (!force && _cachedSnap is not null && ActiveBenchQa.IsRunning && ActiveBenchQa.WaitingFor is null)
+            return _cachedSnap;
         _cachedSnap = HardwareQaCertificate.Capture(Store, Session.MachineName, _certGeneratedAt, _sessionBranding, physicalQa: ActivePhysicalQa.Current);
         _cachedCertHtml = HardwareQaCertificate.BuildHtml(_cachedSnap);
         return _cachedSnap;
@@ -471,14 +465,6 @@
             _certGeneratedAt = DateTimeOffset.Now;
             EnsureCertificateSnapshot(force: true);
         }
-        else if (!_wasBenchRunning && isRunning)
-        {
-            EnsureCertificateSnapshot(force: true);
-        }
-        else if (isRunning && ActiveBenchQa.CompletedSteps + ActiveBenchQa.CompletedItems != _lastBenchCompletedSteps)
-        {
-            EnsureCertificateSnapshot(force: true);
-        }
         _wasBenchRunning = isRunning;
         _ = InvokeAsync(StateHasChanged);
     }
@@ -487,8 +473,7 @@
     {
         ActivePhysicalQa.Changed -= OnBenchStateChanged;
         ActiveBenchQa.Changed -= OnBenchStateChanged;
-        _benchInteractiveTcs?.TrySetCanceled();
-        _activeInteractiveSection = null;
+        // The run keeps going after the page closes (it waits on the keyboard and display checks itself).
         base.Dispose();
     }
 
@@ -500,67 +485,11 @@
         _publishedCertUrl = null;
         _publishedCertShortHash = null;
         _certGeneratedAt = DateTimeOffset.Now;
-        _activeInteractiveSection = null;
-        EnsureCertificateSnapshot(force: true);
-        _ = ActiveBenchQa.StartBenchQaAsync(
-            _selectedItems.ToList(),
-            WaitForInteractiveBenchQaAsync);
+        _ = ActiveBenchQa.StartBenchQaAsync(_selectedItems.ToList());
         return Task.CompletedTask;
     }
 
-    private void StopBenchQa()
-    {
-        _benchInteractiveTcs?.TrySetCanceled();
-        _activeInteractiveSection = null;
-        ActiveBenchQa.Cancel();
-    }
-
-    private async Task WaitForInteractiveBenchQaAsync(string section, CancellationToken ct)
-    {
-        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _benchInteractiveTcs = tcs;
-        _activeInteractiveSection = section;
-        await InvokeAsync(StateHasChanged);
-
-        var startUtc = DateTimeOffset.UtcNow;
-        var initialOutcome = section == "keyboard"
-            ? ActivePhysicalQa.Current.KeyboardOutcome
-            : ActivePhysicalQa.Current.DisplayOutcome;
-
-        void OnQaChanged()
-        {
-            var snap = ActivePhysicalQa.Current;
-            var currentOutcome = section == "keyboard" ? snap.KeyboardOutcome : snap.DisplayOutcome;
-            if (currentOutcome != PhysicalCheckOutcome.NotRun && (snap.UpdatedUtc >= startUtc || currentOutcome != initialOutcome))
-            {
-                tcs.TrySetResult(true);
-            }
-        }
-
-        using var reg = ct.Register(() => tcs.TrySetCanceled(ct));
-        ActivePhysicalQa.Changed += OnQaChanged;
-
-        try
-        {
-            await tcs.Task;
-        }
-        finally
-        {
-            ActivePhysicalQa.Changed -= OnQaChanged;
-            if (ReferenceEquals(_benchInteractiveTcs, tcs))
-                _benchInteractiveTcs = null;
-            _activeInteractiveSection = null;
-            await InvokeAsync(StateHasChanged);
-        }
-    }
-
-    private void OnBenchInteractiveOutcomeChanged(string section, PhysicalCheckOutcome outcome)
-    {
-        if (outcome != PhysicalCheckOutcome.NotRun)
-        {
-            _benchInteractiveTcs?.TrySetResult(true);
-        }
-    }
+    private void StopBenchQa() => ActiveBenchQa.Cancel();
 
     private sealed record PublishQaResult(bool Ok, int Status, string? Id, string? Url, string? ShortHash, string? Error);
 
@@ -652,12 +581,19 @@
 
     private static string Blank(string v) => string.IsNullOrWhiteSpace(v) ? "—" : v;
 
-    /// <summary>Runs the checks behind these items again and refreshes the certificate when they finish.</summary>
+    /// <summary>
+    /// Runs the checks behind these items again and refreshes the certificate when they finish. While the QA check waits on the keyboard or
+    /// display check, they re-check beside it (after a fix here, or on the item's own page) and the run carries on.
+    /// </summary>
     private void RerunItems(IEnumerable<string> itemIds)
     {
-        if (ActiveBenchQa.IsRunning || Diagnostics.IsAnyStressRunning) return;
-        _savedCertPath = null;
-        _certGeneratedAt = DateTimeOffset.Now;
+        if (Diagnostics.IsAnyStressRunning || ActiveBenchQa.IsRecheckRunning) return;
+        if (ActiveBenchQa.IsRunning && ActiveBenchQa.WaitingFor is null) return;
+        if (!ActiveBenchQa.IsRunning)
+        {
+            _savedCertPath = null;
+            _certGeneratedAt = DateTimeOffset.Now;
+        }
         _ = ActiveBenchQa.RerunAsync(itemIds.ToList());
     }
 }

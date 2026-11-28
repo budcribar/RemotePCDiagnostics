@@ -35,6 +35,7 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
     public IPackageSource Packages => _faults?.Packages(Replay.Packages) ?? Replay.Packages;
     public Core.Security.IAntivirusProductSource AntivirusProducts => _faults?.Antivirus(Replay.AntivirusProducts) ?? Replay.AntivirusProducts;
     public Core.Audio.IAudioStateSource Audio => _faults?.Audio(Replay.Audio) ?? Replay.Audio;
+    public Core.Usb.IUsbTreeSource Usb => _faults?.Usb(Replay.Usb) ?? Replay.Usb;
     public Core.Display.IDisplaySource Display => _faults?.Display(Replay.Display) ?? Replay.Display;
     /// <summary>What the Agent's alerts read: the recorded events and levels (recorder v10 on).</summary>
     public Core.Alerts.IAlertReadings Alerts => _faults?.Alerts(Replay.Alerts) ?? Replay.Alerts;
@@ -75,9 +76,12 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
         _faults?.FileAsync(name, () => Replay.FileText(name), ct) ?? Task.FromResult(Replay.FileText(name));
 
     /// <summary>The check as the app runs it (WMI, through the Agent).</summary>
-    public BatteryPowerModule BatteryPower() => new(new WmiBatteryPowerSource(Wmi, readPowerPolicy: () => null, isHp: () => false));
+    public BatteryPowerModule BatteryPower() => new(new WmiBatteryPowerSource(Wmi, readPowerPolicy: () => null, isHp: () => false, isLenovo: () => false),
+        delay: NoWait);
     /// <summary>The Store edition without an Agent (osquery and powercfg).</summary>
-    public BatteryPowerModule BatteryPowerOld() => new(new OsqueryBatteryPowerSource(Osquery, Commands));
+    public BatteryPowerModule BatteryPowerOld() => new(new OsqueryBatteryPowerSource(Osquery, Commands), delay: NoWait);
+    /// <summary>A recording answers the same every time, so waiting between readings only slows the test.</summary>
+    private static Task NoWait(TimeSpan _, CancellationToken __) => Task.CompletedTask;
 
     /// <summary>DriveHealth on WMI (in the app, the Agent's). The clock is the recording's, and nothing is saved.</summary>
     public DriveHealthModule DriveHealth() => Drives(new WmiDriveSource(Wmi));
@@ -99,6 +103,9 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
         new(Audio, new WmiServiceSource(Wmi), new WmiDeviceDriverSource(Wmi), Wmi, Registry, pendingRecheck: TimeSpan.Zero);
     public bool HasAudio => Has(c => c.Kind == RecordedCall.AudioKind);
 
+    /// <summary>USB ports &amp; devices: the USB tree from the recording (recorder v11 on), the System log, and the BIOS settings from WMI.</summary>
+    public Modules.UsbPorts.UsbPortsModule UsbPorts() => new(Usb, Commands, Wmi, Registry, dropWatch: TimeSpan.Zero);
+    public bool HasUsb => Has(c => c.Kind == RecordedCall.UsbKind);
     /// <summary>Displays &amp; video outputs: the display configuration from the recording, the System log, and the BIOS settings from WMI.</summary>
     public Modules.Displays.DisplaysModule Displays() => new(Display, Commands, Wmi, Registry);
     public bool HasDisplays => Has(c => c.Kind == RecordedCall.DisplayKind);
@@ -135,8 +142,14 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
     public EventLogModule EventLog() => new(Commands, excludeCrashEvents: true, clock: Clock);
     public SleepWakeModule SleepWake() => new(Commands, batteryReport: new ReplayedBatteryReport(this), clock: Clock);
 
-    /// <summary>Network adapters and IP configuration on WMI and the registry, offline (the live probes aren't replayed).</summary>
-    public NetworkModule Network() => new(new WmiNetworkSource(Wmi, Registry), includeWifiAndIpConfig: true, offline: true);
+    /// <summary>
+    /// Network adapters and IP configuration on WMI and the registry, offline (the live probes aren't replayed). The Wi-Fi radio and scan
+    /// come from the recording when it holds them (recorder v11 on); the adapter hardware card comes from the recording when it holds its
+    /// answers (recorded after #291).
+    /// </summary>
+    public NetworkModule Network() => new(new WmiNetworkSource(Wmi, Registry), includeWifiAndIpConfig: true, offline: true,
+        radio: Has(c => c.Kind == RecordedCall.WifiKind) ? Replay.Wifi : null,
+        hardware: HasWmi(WmiNicHardwareSource.AdaptersSql) ? new WmiNicHardwareSource(Wmi) : null);
     /// <summary>The Store edition without an Agent: osquery interface_details and the NetAdapterStatistics and IpConfig scripts.</summary>
     public NetworkModule NetworkOld() => new(new OsqueryNetworkSource(Osquery, Commands), includeWifiAndIpConfig: true, offline: true);
 

@@ -1,0 +1,11 @@
+{
+  "id": "32ea07c3-6c63-4453-a03e-7d778b74b308",
+  "slug": "BatteryDrain",
+  "displayName": "Battery drain & runtime test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.BatteryDrain.BatteryDrainPlugin",
+  // The app reads the batteries and runs the load as the signed-in user; the power plan changes and the shutdown are the Agent's
+  // (battery_drain_power).
+  "needsAdmin": false,
+  "outOfProcess": false
+}

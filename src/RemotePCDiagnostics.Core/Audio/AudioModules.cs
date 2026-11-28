@@ -35,6 +35,7 @@ public sealed record MicToSpeakerReport(string Output, string Input, double MicP
 public abstract class AudioModuleBase(IAudioIo io, ILogger? log, IAudioStateSource? state = null) : OnDemandModuleBase(log), IAudioTestModule
 {
     protected readonly IAudioIo Io = io;
+    protected IAudioStateSource? StateSource => state;
     protected ILogger? LogSink => Logger;
 
     public AudioTestSettings Settings { get; } = new();
