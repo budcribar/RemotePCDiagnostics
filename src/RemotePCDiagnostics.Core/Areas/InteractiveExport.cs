@@ -15,6 +15,8 @@ namespace RemotePCDiagnostics.Core.Areas;
 public static class InteractiveExport
 {
     public const int SchemaVersion = 1;
+    /// <summary>Formats listed per camera in the export (the best ones; the count is in capability.formatCount).</summary>
+    public const int MaxWebcamFormats = 16;
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -135,11 +137,42 @@ public static class InteractiveExport
                 frozenFraction = Math.Round(rep.Stats.FrozenFraction, 3),
                 stalls = rep.Stats.Stalls,
                 notice = T(rep.Notice),
+                kind = rep.Kind == WebcamKind.Infrared ? "infrared" : "color",
+                // What the camera offers: the best format against the class its name claims (belowClass = wrong driver likely).
+                capability = rep.Capability is not { } c ? null : new
+                {
+                    formatCount = c.FormatCount,
+                    maxWidth = c.MaxWidth,
+                    maxHeight = c.MaxHeight,
+                    maxFps = c.MaxFps,
+                    nameClass = c.ClassName,
+                    expectedWidth = c.ExpectedWidth,
+                    belowClass = c.BelowClass,
+                },
+                formats = rep.Formats.Take(MaxWebcamFormats).Select(f => new { width = f.Width, height = f.Height, fps = f.Fps, subtype = V(f.Subtype) }).ToList(),
+                controls = rep.Controls.Select(x => new
+                {
+                    name = x.Name,
+                    supported = x.Supported,
+                    readFailed = x.ReadFailed,
+                    min = x.Supported ? x.Min : (double?)null,
+                    max = x.Supported ? x.Max : (double?)null,
+                    step = x.Supported ? x.Step : (double?)null,
+                    value = x.Value,
+                    auto = x.Auto,
+                }).ToList(),
+                // Apps Windows lists as using a camera now (when it was busy or only shared). canClose = the pane's Close button closes it.
+                holders = rep.Holders.Select(h => new { app = V(h.App), process = V(h.ProcessName), packaged = h.Packaged, canClose = WebcamHolders.CanClose(h) }).ToList(),
             },
+            // The person's "Do you see yourself in the preview?" answer, kept beside the measured verdict (null = not answered).
+            personSawPicture = rep?.PersonSawPicture,
             personOutcome = m.PersonEntered ? Person(r.Status) : null,
             message = T(r.Message),
-            instructions = "Choose the camera and length, then Start camera test. Look at the live preview on the PC: is the picture clear, "
-                + "correctly exposed and smooth? RPCD measures frames and brightness; the person decides. Then Pass camera, Pass with note or Fail camera.",
+            instructions = "Choose the camera and length, then Start test. Look at the live preview on the PC: is the picture clear, "
+                + "correctly exposed and smooth? RPCD measures frames and brightness and lists the formats and controls the camera offers; the person "
+                + "answers Do you see yourself in the preview? (Yes / No) and decides: Pass camera, Pass with note or Fail camera. A camera listed with "
+                + "(IR) is the Windows Hello sensor: it is tested on its own and has no preview question. When another app holds the camera, the pane "
+                + "names it and offers Close.",
             reportIf = ReportIf.Webcam,
         };
     }

@@ -10,7 +10,7 @@
 @inject AppServices App
 
 @{
-    var camResult = Store.Get(ModuleSlugs.Webcam);
+    var camResult = CamShown(Store.Get(ModuleSlugs.Webcam));
     var camRep = camResult.Payload as WebcamReport;
     var camRunning = camResult.Status == DiagnosticStatus.Running;
 
@@ -363,6 +363,11 @@
                             <tr><th>Brightness / contrast</th><td>@camRep.Stats.MeanBrightness.ToString("0") / @camRep.Stats.MeanContrast.ToString("0.0") (0–255)</td></tr>
                             <tr><th>Sharpness</th><td>@camRep.Stats.Sharpness.ToString("0.0")</td></tr>
                         </table>
+                    }
+                    @if (!camRunning && camRep is not null)
+                    {
+                        <WebcamReportDetails Report="camRep" Prefix="webcam" Fixes="App.Remediation" AgentFixes="App.AgentFixes" IsRemote="_isRemoteDisplay"
+                                             OnAnswer="seen => AnswerWebcam(camResult, seen)" OnHolderClosed="StartWebcamAsync" />
                     }
 
                     <label class="phys-qa-note">
@@ -1103,9 +1108,31 @@
 
     private void CancelWebcam() => GetWebcamModule()?.Cancel();
 
+    /// <summary>
+    /// The webcam result to show: the module's own when it holds a report (a person's verdict, or a run without instances), else the
+    /// selected camera's result (each camera runs as its own instance, so the module's result only lists them).
+    /// </summary>
+    private DiagnosticResult CamShown(DiagnosticResult module)
+    {
+        if (module.Status == DiagnosticStatus.Running || module.Payload is not InstanceResults all) return module;
+        var key = _selectedCamId is { } id ? InstanceKeys.From(id) : null;
+        return (key is null ? null : Store.GetInstance(ModuleSlugs.Webcam, key)) ?? all.Results.LastOrDefault() ?? module;
+    }
+
+    /// <summary>"Do you see yourself?": saved with the measured verdict, on the result shown.</summary>
+    private void AnswerWebcam(DiagnosticResult shown, bool seen)
+    {
+        if (shown.Payload is not WebcamReport rep) return;
+        // After Pass/Fail camera the person's verdict stays; the answer is added to the report beside the measured one.
+        var personEntered = _personResults.TryGetValue(ModuleSlugs.Webcam, out var entered) && ReferenceEquals(entered, shown);
+        var updated = personEntered ? shown with { Payload = rep with { PersonSawPicture = seen } } : WebcamVerdicts.WithPersonAnswer(shown, seen);
+        Store.Set(updated);
+        if (personEntered) _personResults[ModuleSlugs.Webcam] = updated;
+    }
+
     private void SetWebcamOutcome(DiagnosticStatus status)
     {
-        var r = Store.Get(ModuleSlugs.Webcam);
+        var r = CamShown(Store.Get(ModuleSlugs.Webcam));
         var note = string.IsNullOrWhiteSpace(_webcamNotes) ? null : _webcamNotes.Trim();
         var msg = note ?? (status switch
         {

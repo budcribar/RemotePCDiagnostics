@@ -1780,3 +1780,8 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
 .sc-step-text { flex: 1; min-width: 0; }
 .sc-step-text b { color: var(--text-strong); }
 .sc-step-text .meta { margin: 2px 0 0; }
+
+/* Webcam test: formats and controls lists */
+.cam-details { margin: 8px 0; }
+.cam-details > summary { cursor: pointer; padding: 4px 0; }
+.cam-details > table.detail { margin-top: 4px; }

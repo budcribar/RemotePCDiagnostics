@@ -24,19 +24,35 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
     public IReadOnlyList<WebcamDevice> ListDevices()
     {
         var list = new List<WebcamDevice>();
+        // IR cameras (Windows Hello) live in frame source groups, not always in the video capture class: each one is its own entry.
+        var irDeviceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var g in MediaFrameSourceGroup.FindAllAsync().AsTask().GetAwaiter().GetResult())
+            {
+                var ir = g.SourceInfos.FirstOrDefault(i => i.SourceKind == MediaFrameSourceKind.Infrared);
+                if (ir is null) continue;
+                var hasColor = g.SourceInfos.Any(i => i.SourceKind == MediaFrameSourceKind.Color);
+                if (!hasColor && ir.DeviceInformation?.Id is { } devId) irDeviceIds.Add(devId);
+                var panel = ir.DeviceInformation?.EnclosureLocation is { } e && e.Panel != Panel.Unknown;
+                list.Add(new WebcamDevice(WebcamDevice.InfraredPrefix + g.Id, g.DisplayName, WebcamDevice.GuessBus(ir.DeviceInformation?.Id ?? g.Id, panel),
+                    WebcamKind.Infrared));
+            }
+        }
+        catch (Exception ex) { Log($"IR source groups: {ex.Message}"); }
         try
         {
             var all = DeviceInformation.FindAllAsync(DeviceClass.VideoCapture).AsTask().GetAwaiter().GetResult();
             foreach (var d in all)
             {
-                if (!d.IsEnabled) continue;
+                if (!d.IsEnabled || irDeviceIds.Contains(d.Id)) continue; // an IR-only camera is tested as the IR entry above
                 var panel = d.EnclosureLocation is { } e && e.Panel != Panel.Unknown;
                 list.Add(new WebcamDevice(d.Id, d.Name, WebcamDevice.GuessBus(d.Id, panel)));
             }
         }
         catch (Exception ex) { Log($"device list: {ex.Message}"); }
-        // Built-in camera first so it is the default.
-        return list.OrderBy(d => d.Bus == WebcamBus.BuiltIn ? 0 : 1).ToList();
+        // Built-in color camera first so it is the default; IR cameras last.
+        return list.OrderBy(d => d.Kind == WebcamKind.Infrared ? 2 : d.Bus == WebcamBus.BuiltIn ? 0 : 1).ToList();
     }
 
     public bool IsCameraBlockedByPrivacy()
@@ -57,17 +73,22 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
         MediaCapture? capture = null;
         MediaFrameReader? reader = null;
         WebcamPreview? preview = null;
+        var infrared = WebcamDevice.IsInfraredId(request.DeviceId);
         try
         {
             MediaFrameSource? source;
             (capture, source) = await OpenAsync(request.DeviceId, MediaCaptureSharingMode.ExclusiveControl, ct).ConfigureAwait(false);
+            if (source is null && infrared) throw new WebcamNotSupportedException("The IR camera has no IR stream this app can read.");
+            // What the camera offers, read before a format is picked: every format of the stream, and its controls (color cameras).
+            List<WebcamFormat> formats = source is null ? [] : ReadFormats(source);
+            List<WebcamControl> controls = infrared ? [] : ReadControls(capture);
             var format = source is null ? null : PickFormat(source, request);
             if (source is not null && format is not null)
             {
                 try { await source.SetFormatAsync(format).AsTask(ct).ConfigureAwait(false); }
                 catch (Exception ex) when (ex is not OperationCanceledException) { Log($"set format: {ex.Message}"); }
             }
-            reader = source is null ? null : await capture.CreateFrameReaderAsync(source, MediaEncodingSubtypes.Bgra8).AsTask(ct).ConfigureAwait(false);
+            reader = await CreateReaderAsync(capture, source, infrared, ct).ConfigureAwait(false);
             var status = reader is null ? MediaFrameReaderStartStatus.UnknownFailure : await reader.StartAsync().AsTask(ct).ConfigureAwait(false);
             if (status is MediaFrameReaderStartStatus.ExclusiveControlNotAvailable or MediaFrameReaderStartStatus.DeviceNotAvailable)
             {
@@ -75,11 +96,12 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
                 Log($"start {status}, retrying shared read-only");
                 DisposeCapture(ref reader, ref capture);
                 (capture, source) = await OpenAsync(request.DeviceId, MediaCaptureSharingMode.SharedReadOnly, ct).ConfigureAwait(false);
-                reader = source is null ? null : await capture.CreateFrameReaderAsync(source, MediaEncodingSubtypes.Bgra8).AsTask(ct).ConfigureAwait(false);
+                reader = await CreateReaderAsync(capture, source, infrared, ct).ConfigureAwait(false);
                 status = reader is null ? MediaFrameReaderStartStatus.UnknownFailure : await reader.StartAsync().AsTask(ct).ConfigureAwait(false);
                 if (status != MediaFrameReaderStartStatus.Success) throw new WebcamBusyException($"Frame reader start: {status}");
                 note = "Another app was using the camera, so it was read in shared mode at that app's resolution.";
             }
+            else if (status != MediaFrameReaderStartStatus.Success && infrared) throw new WebcamNotSupportedException($"IR frame reader start: {status}");
             else if (status != MediaFrameReaderStartStatus.Success) throw new WebcamDeviceException($"Frame reader start: {status}");
 
             var cur = source!.CurrentFormat;
@@ -137,10 +159,11 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
                 try { await reader.StopAsync().AsTask(CancellationToken.None).ConfigureAwait(false); } catch { }
             }
             if (failure is not null) throw failure;
-            return new WebcamCaptureResult(w, h, fps, cur?.Subtype, note);
+            return new WebcamCaptureResult(w, h, fps, cur?.Subtype, note) { Formats = formats, Controls = controls };
         }
         catch (UnauthorizedAccessException ex) { throw new WebcamAccessDeniedException(ex.Message, ex); }
-        catch (Exception ex) when (ex is not OperationCanceledException and not WebcamBusyException and not WebcamDeviceException and not WebcamAccessDeniedException)
+        catch (Exception ex) when (ex is not OperationCanceledException and not WebcamBusyException and not WebcamDeviceException and not WebcamAccessDeniedException
+            and not WebcamNotSupportedException)
         {
             if (ex.HResult == unchecked((int)0x80070005)) throw new WebcamAccessDeniedException(ex.Message, ex);
             if (WebcamVerdicts.IsBusyHResult(ex.HResult)) throw new WebcamBusyException(ex.Message, ex);
@@ -155,21 +178,86 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
 
     private static async Task<(MediaCapture, MediaFrameSource?)> OpenAsync(string deviceId, MediaCaptureSharingMode mode, CancellationToken ct)
     {
+        var settings = new MediaCaptureInitializationSettings
+        {
+            StreamingCaptureMode = StreamingCaptureMode.Video,
+            SharingMode = mode,
+            MemoryPreference = MediaCaptureMemoryPreference.Cpu,
+        };
+        var kind = MediaFrameSourceKind.Color;
+        if (WebcamDevice.IsInfraredId(deviceId))
+        {
+            var groupId = deviceId[WebcamDevice.InfraredPrefix.Length..];
+            var groups = await MediaFrameSourceGroup.FindAllAsync().AsTask(ct).ConfigureAwait(false);
+            settings.SourceGroup = groups.FirstOrDefault(g => g.Id == groupId) ?? throw new WebcamDeviceException("The IR camera is no longer connected.");
+            kind = MediaFrameSourceKind.Infrared;
+        }
+        else settings.VideoDeviceId = deviceId;
         var capture = new MediaCapture();
         try
         {
-            await capture.InitializeAsync(new MediaCaptureInitializationSettings
-            {
-                VideoDeviceId = deviceId,
-                StreamingCaptureMode = StreamingCaptureMode.Video,
-                SharingMode = mode,
-                MemoryPreference = MediaCaptureMemoryPreference.Cpu,
-            }).AsTask(ct).ConfigureAwait(false);
-            var source = capture.FrameSources.Values.FirstOrDefault(s => s.Info.SourceKind == MediaFrameSourceKind.Color && s.Info.MediaStreamType == Windows.Media.Capture.MediaStreamType.VideoRecord)
-                ?? capture.FrameSources.Values.FirstOrDefault(s => s.Info.SourceKind == MediaFrameSourceKind.Color);
+            await capture.InitializeAsync(settings).AsTask(ct).ConfigureAwait(false);
+            var source = capture.FrameSources.Values.FirstOrDefault(s => s.Info.SourceKind == kind && s.Info.MediaStreamType == Windows.Media.Capture.MediaStreamType.VideoRecord)
+                ?? capture.FrameSources.Values.FirstOrDefault(s => s.Info.SourceKind == kind);
             return (capture, source);
         }
         catch { capture.Dispose(); throw; }
+    }
+
+    /// <summary>Color frames are asked for as BGRA. IR frames come as the camera sends them (L8/L16) and are converted per frame.</summary>
+    private static async Task<MediaFrameReader?> CreateReaderAsync(MediaCapture capture, MediaFrameSource? source, bool infrared, CancellationToken ct) =>
+        source is null ? null
+        : infrared ? await capture.CreateFrameReaderAsync(source).AsTask(ct).ConfigureAwait(false)
+        : await capture.CreateFrameReaderAsync(source, MediaEncodingSubtypes.Bgra8).AsTask(ct).ConfigureAwait(false);
+
+    private List<WebcamFormat> ReadFormats(MediaFrameSource source)
+    {
+        try
+        {
+            return source.SupportedFormats.Where(f => f.VideoFormat is not null)
+                .Select(f => new WebcamFormat((int)f.VideoFormat.Width, (int)f.VideoFormat.Height,
+                    f.FrameRate is { Denominator: > 0 } r ? (double)r.Numerator / r.Denominator : 0, f.Subtype))
+                .ToList();
+        }
+        catch (Exception ex) { Log($"formats: {ex.Message}"); return []; }
+    }
+
+    /// <summary>Each control's range and current value. A control the driver lists but can't read is kept with ReadFailed set.</summary>
+    private List<WebcamControl> ReadControls(MediaCapture capture)
+    {
+        var list = new List<WebcamControl>();
+        Windows.Media.Devices.VideoDeviceController vdc;
+        try { vdc = capture.VideoDeviceController; }
+        catch (Exception ex) { Log($"controls: {ex.Message}"); return list; }
+        foreach (var name in WebcamControls.Names)
+        {
+            try
+            {
+                var c = name switch
+                {
+                    "Pan" => vdc.Pan,
+                    "Tilt" => vdc.Tilt,
+                    "Zoom" => vdc.Zoom,
+                    "Focus" => vdc.Focus,
+                    "Exposure" => vdc.Exposure,
+                    "Brightness" => vdc.Brightness,
+                    "Contrast" => vdc.Contrast,
+                    _ => vdc.WhiteBalance,
+                };
+                var caps = c.Capabilities;
+                if (!caps.Supported) { list.Add(new WebcamControl(name, false, 0, 0, 0, null, false, null)); continue; }
+                var hasValue = c.TryGetValue(out var value);
+                bool? auto = null;
+                if (caps.AutoModeSupported && c.TryGetAuto(out var a)) auto = a;
+                list.Add(new WebcamControl(name, true, caps.Min, caps.Max, caps.Step, hasValue ? value : null, caps.AutoModeSupported, auto, ReadFailed: !hasValue));
+            }
+            catch (Exception ex)
+            {
+                Log($"control {name}: {ex.Message}");
+                list.Add(new WebcamControl(name, true, 0, 0, 0, null, false, null, ReadFailed: true));
+            }
+        }
+        return list;
     }
 
     /// <summary>Largest format at or below the resolution and frame-rate caps; null = keep the current one.</summary>

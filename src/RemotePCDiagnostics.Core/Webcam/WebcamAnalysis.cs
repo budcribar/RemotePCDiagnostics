@@ -141,6 +141,12 @@ public enum WebcamVerdict
     Busy,
     DeviceError,
     NoDevice,
+    /// <summary>The picture is fine, but the camera offers far less than its name says (640×480 on a 1080p camera): wrong driver likely.</summary>
+    FewerFormats,
+    /// <summary>The picture is fine, but the driver failed to report one or more of the controls it says it has.</summary>
+    ControlsUnreadable,
+    /// <summary>The camera can't be tested this way (an IR camera Windows doesn't share with desktop apps).</summary>
+    NotSupported,
 }
 
 public static class WebcamVerdicts
@@ -161,21 +167,33 @@ public static class WebcamVerdicts
     public const double OverexposedFractionLimit = 0.5;
 
     /// <summary>The decision table for a capture that ran. Order matters: the first match wins.</summary>
-    public static WebcamVerdict Decide(WebcamStats s)
+    /// <param name="kind">An IR picture is grey and lit by the camera's own emitter (often every other frame), so brightness isn't judged.</param>
+    public static WebcamVerdict Decide(WebcamStats s, WebcamKind kind = WebcamKind.Color)
     {
         if (s.Frames == 0) return WebcamVerdict.NoFrames;
         if (s.BlackFraction >= BlackFractionLimit) return WebcamVerdict.AllBlack;
         if (s.Frames >= MinFramesForFrozen && s.FrozenFraction >= FrozenFractionLimit) return WebcamVerdict.Frozen;
         if (s.Fps < MinFps) return WebcamVerdict.LowFps;
         if (s.Stalls > 0) return WebcamVerdict.Stalled;
+        if (kind == WebcamKind.Infrared) return WebcamVerdict.Pass;
         if (s.OverexposedFraction >= OverexposedFractionLimit) return WebcamVerdict.Overexposed;
         if (s.MeanBrightness < DarkMean) return WebcamVerdict.Dark;
         return WebcamVerdict.Pass;
     }
 
+    /// <summary>A picture that passed can still warn about what the camera offers: fewer formats than its class first, then unreadable controls.</summary>
+    public static WebcamVerdict WithCapabilities(WebcamVerdict stream, WebcamCapabilityCheck? caps, IReadOnlyList<WebcamControl> controls)
+    {
+        if (stream != WebcamVerdict.Pass) return stream;
+        if (caps?.BelowClass == true) return WebcamVerdict.FewerFormats;
+        if (WebcamControls.Unreadable(controls).Count > 0) return WebcamVerdict.ControlsUnreadable;
+        return stream;
+    }
+
     /// <summary>Maps a capture exception (or a privacy Deny seen beforehand) to a verdict.</summary>
     public static WebcamVerdict FromException(Exception ex, bool privacyDeny)
     {
+        if (ex is WebcamNotSupportedException) return WebcamVerdict.NotSupported;
         if (ex is WebcamAccessDeniedException or UnauthorizedAccessException || ex.HResult == unchecked((int)0x80070005)) return WebcamVerdict.AccessDenied;
         if (ex is WebcamBusyException || IsBusyHResult(ex.HResult)) return WebcamVerdict.Busy;
         return privacyDeny ? WebcamVerdict.AccessDenied : WebcamVerdict.DeviceError;
@@ -189,7 +207,8 @@ public static class WebcamVerdicts
     public static DiagnosticStatus StatusOf(WebcamVerdict v) => v switch
     {
         WebcamVerdict.Pass => DiagnosticStatus.Ok,
-        WebcamVerdict.LowFps or WebcamVerdict.Stalled or WebcamVerdict.Dark or WebcamVerdict.Overexposed or WebcamVerdict.AllBlack or WebcamVerdict.NoDevice => DiagnosticStatus.Warning,
+        WebcamVerdict.LowFps or WebcamVerdict.Stalled or WebcamVerdict.Dark or WebcamVerdict.Overexposed or WebcamVerdict.AllBlack or WebcamVerdict.NoDevice
+            or WebcamVerdict.FewerFormats or WebcamVerdict.ControlsUnreadable or WebcamVerdict.NotSupported => DiagnosticStatus.Warning,
         _ => DiagnosticStatus.Error,
     };
 
@@ -207,6 +226,52 @@ public static class WebcamVerdicts
         WebcamVerdict.Busy => BusyMessage,
         WebcamVerdict.DeviceError => "Couldn't open the camera. It may have been unplugged, or its driver has a problem.",
         WebcamVerdict.NoDevice => "Skipped: no camera was found on this PC.",
+        WebcamVerdict.FewerFormats => "The camera works, but it offers a lower resolution than its name says. It is likely using the generic Windows driver: install the camera driver from the PC maker.",
+        WebcamVerdict.ControlsUnreadable => "The camera works, but its driver didn't report some of its controls (focus, exposure…). Update the camera driver if those settings misbehave.",
+        WebcamVerdict.NotSupported => "Not supported: Windows doesn't let desktop apps read this IR camera. Windows Hello can still use it: test it with Settings > Accounts > Sign-in options > Facial recognition.",
         _ => v.ToString(),
     };
+
+    /// <summary>The message for a finished report: <see cref="MessageOf(WebcamVerdict, WebcamStats?)"/> with the details only the report has
+    /// (which resolution, which controls, which app holds the camera, the person's answer).</summary>
+    public static string MessageOf(WebcamReport r)
+    {
+        var text = r.Verdict switch
+        {
+            WebcamVerdict.Pass when r.Kind == WebcamKind.Infrared => $"Passed: the IR camera delivered a live picture ({r.Stats.Fps:0.#} frames per second).",
+            WebcamVerdict.AllBlack when r.Kind == WebcamKind.Infrared => "The IR camera sent only black frames: its IR light may not be working, or the lens is covered.",
+            WebcamVerdict.FewerFormats when r.Capability is { } c =>
+                $"The camera works, but its best format is {c.MaxWidth}×{c.MaxHeight} although its name says {c.ClassName}. It is likely using the generic Windows driver: install the camera driver from the PC maker.",
+            WebcamVerdict.ControlsUnreadable =>
+                $"The camera works, but its driver didn't report {string.Join(", ", WebcamControls.Unreadable(r.Controls).Select(c => WebcamControls.Display(c.Name).ToLowerInvariant()))}. Update the camera driver if those settings misbehave.",
+            WebcamVerdict.Busy when r.Holders.Count > 0 =>
+                $"The camera is in use by {string.Join(", ", r.Holders.Select(h => h.App))}. Close that app and run the test again.",
+            _ => MessageOf(r.Verdict, r.Stats),
+        };
+        return r.PersonSawPicture switch
+        {
+            false => "The person at the PC said they don't see themselves in the preview. Measured: " + text,
+            true when StatusOf(r.Verdict) == DiagnosticStatus.Ok => text[..^1] + ", and the person at the PC sees themselves.",
+            _ => text,
+        };
+    }
+
+    /// <summary>The status of a finished report: the verdict's, or Failed when the person at the PC said they don't see themselves.</summary>
+    public static DiagnosticStatus StatusOf(WebcamReport r) => r.PersonSawPicture == false ? DiagnosticStatus.Error : StatusOf(r.Verdict);
+
+    /// <summary>
+    /// Saves the person's "Do you see yourself?" answer with the measured verdict (the report keeps both). <paramref name="r"/> must hold a
+    /// WebcamReport; anything else comes back unchanged.
+    /// </summary>
+    public static DiagnosticResult WithPersonAnswer(DiagnosticResult r, bool seesThemselves)
+    {
+        if (r.Payload is not WebcamReport rep) return r;
+        var updated = rep with { PersonSawPicture = seesThemselves };
+        return new DiagnosticResult<WebcamReport>(r.ModuleName, StatusOf(updated), MessageOf(updated), DateTimeOffset.Now, updated)
+        {
+            RunId = r.RunId,
+            InstanceKey = r.InstanceKey,
+            InstanceLabel = r.InstanceLabel,
+        };
+    }
 }
