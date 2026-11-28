@@ -47,6 +47,7 @@ public sealed class BundledModulesTests : IDisposable
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Audio.IAudioIo>());
         services.AddSingleton<RemotePCDiagnostics.Core.Usb.IUsbTreeSource>(new RemotePCDiagnostics.Core.Usb.NullUsbTreeSource());
         services.AddSingleton<RemotePCDiagnostics.Core.Display.IDisplaySource>(new RemotePCDiagnostics.Core.Display.NullDisplaySource());
+        services.AddSingleton<RemotePCDiagnostics.Core.DeviceSensors.IDeviceSensorSource>(new RemotePCDiagnostics.Core.DeviceSensors.NullDeviceSensorSource());
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Webcam.IWebcamIo>());
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Npu.INpuIo>());
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Areas.IWifiConnector>());

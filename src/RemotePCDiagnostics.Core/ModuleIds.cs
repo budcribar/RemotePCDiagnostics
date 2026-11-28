@@ -103,6 +103,8 @@ public static class ModuleIds
     public static readonly Guid Displays = new("5d0f3b6e-8a41-4c2e-9f7d-2b6a1e9c4d83");
     /// <summary>Slug <c>DisplayOutputCheck</c>.</summary>
     public static readonly Guid DisplayOutputCheck = new("a3e7c912-4f6b-4d58-b0a1-7e2d9c5f8b64");
+    /// <summary>Slug <c>DeviceSensors</c>.</summary>
+    public static readonly Guid DeviceSensors = new("07dc23a6-391f-4404-8151-a59781088800");
 
     /// <summary>Every built-in id with its slug (the module's Name). Includes modules that are not registered on every build.</summary>
     public static IReadOnlyDictionary<Guid, string> BuiltIn { get; } = new Dictionary<Guid, string>
@@ -141,6 +143,7 @@ public static class ModuleIds
         [Sound] = ModuleSlugs.Sound,
         [WindowsMaintenance] = ModuleSlugs.WindowsMaintenance,
         [SoundCheck] = ModuleSlugs.SoundCheck,
+        [DeviceSensors] = ModuleSlugs.DeviceSensors,
         [WifiConnect] = ModuleSlugs.WifiConnect,
         [EthernetPort] = ModuleSlugs.EthernetPort,
         [ChargerReplug] = ModuleSlugs.ChargerReplug,
@@ -205,6 +208,8 @@ public static class ModuleSlugs
     public const string WindowsMaintenance = "WindowsMaintenance";
     /// <summary>The interactive left/right test sound and the "Can't hear sound" helper (Interactive tests page).</summary>
     public const string SoundCheck = "SoundCheck";
+    /// <summary>Motion, light &amp; presence sensors: accelerometer, gyroscope, compass, light, proximity/presence, hinge; states and drivers.</summary>
+    public const string DeviceSensors = "DeviceSensors";
     /// <summary>The interactive Wi-Fi connect, ping and restore test (Interactive tests page).</summary>
     public const string WifiConnect = "WifiConnect";
     /// <summary>The interactive wired port test: cable to the network, or a loopback plug (Interactive tests page).</summary>

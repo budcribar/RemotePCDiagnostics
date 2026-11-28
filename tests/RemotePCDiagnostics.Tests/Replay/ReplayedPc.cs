@@ -37,6 +37,7 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
     public Core.Audio.IAudioStateSource Audio => _faults?.Audio(Replay.Audio) ?? Replay.Audio;
     public Core.Usb.IUsbTreeSource Usb => _faults?.Usb(Replay.Usb) ?? Replay.Usb;
     public Core.Display.IDisplaySource Display => _faults?.Display(Replay.Display) ?? Replay.Display;
+    public Core.DeviceSensors.IDeviceSensorSource DeviceSensors => _faults?.DeviceSensors(Replay.DeviceSensors) ?? Replay.DeviceSensors;
     /// <summary>What the Agent's alerts read: the recorded events and levels (recorder v10 on).</summary>
     public Core.Alerts.IAlertReadings Alerts => _faults?.Alerts(Replay.Alerts) ?? Replay.Alerts;
     public bool HasAlerts => Has(c => c.Kind == RecordedCall.AlertsKind);
@@ -109,6 +110,9 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
     /// <summary>Displays &amp; video outputs: the display configuration from the recording, the System log, and the BIOS settings from WMI.</summary>
     public Modules.Displays.DisplaysModule Displays() => new(Display, Commands, Wmi, Registry);
     public bool HasDisplays => Has(c => c.Kind == RecordedCall.DisplayKind);
+    /// <summary>Motion, light &amp; presence sensors: the Sensor API answer from the recording, Device Manager from WMI.</summary>
+    public Modules.DeviceSensors.DeviceSensorsModule DeviceSensorsCheck() => new(DeviceSensors, Wmi);
+    public bool HasDeviceSensors => Has(c => c.Kind == RecordedCall.DeviceSensorsKind);
     public ServicesModule ServicesOld() => new(new OsqueryServiceSource(Osquery));
 
     /// <summary>Device Manager and drivers on WMI. Pending driver updates aren't recorded, so they aren't asked.</summary>

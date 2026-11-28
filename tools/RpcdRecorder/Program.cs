@@ -8,6 +8,7 @@
 // security audit run (HardeningKitty, as the Agent runs it), for the Agent's replay tests. The audit takes a few minutes.
 // v11 (Nov 27): also records the USB tree (configuration manager and the hub driver's port reads) for USB ports & devices.
 // Nov 27: also records the display configuration (video outputs, monitors and their EDID) for Displays & video outputs.
+// Nov 27: also records the motion, light and presence sensors (Sensor API) for Motion, light & presence sensors.
 //
 // Each check runs twice: once on the new WMI path and once on the old osquery / powercfg / PowerShell path, so the tests can check the two agree.
 
@@ -52,6 +53,8 @@ var audio = new RecordingAudioStateSource(new RemotePCDiagnostics.Host.WasapiAud
 var usb = new RecordingUsbTreeSource(new RemotePCDiagnostics.Core.Usb.WindowsUsbTreeSource(), recorder);
 // The display configuration (QueryDisplayConfig and each monitor's EDID), read as the app does.
 var displays = new RecordingDisplaySource(new RemotePCDiagnostics.Core.Display.WindowsDisplaySource(), recorder);
+// The motion, light and presence sensors (the Windows Sensor API), read as the app does.
+var deviceSensors = new RecordingDeviceSensorSource(new RemotePCDiagnostics.Core.DeviceSensors.WindowsDeviceSensorSource(), recorder);
 // Security Center's antivirus list (third-party antivirus and Defender), as the app's Security essentials reads it.
 // The Wi-Fi radio switches and a fresh scan (WLAN API), with network names replaced by "Network 1"… before they are kept.
 var wifi = new RecordingWifiRadioSource(new WlanRadioSource(), recorder);
@@ -103,6 +106,7 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     ("USB ports & devices (configuration manager + wevtutil + WMI)", new RemotePCDiagnostics.Modules.UsbPorts.UsbPortsModule(usb, commands, wmi, registry,
         dropWatch: TimeSpan.Zero)),
     ("Displays & video outputs (display configuration + wevtutil + WMI)", new RemotePCDiagnostics.Modules.Displays.DisplaysModule(displays, commands, wmi, registry)),
+    ("Motion, light & presence sensors (Sensor API + WMI)", new RemotePCDiagnostics.Modules.DeviceSensors.DeviceSensorsModule(deviceSensors, wmi)),
 };
 foreach (var (label, module) in checks)
 {

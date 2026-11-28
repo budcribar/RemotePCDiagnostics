@@ -38,7 +38,8 @@ public sealed record AppServices(
     RemotePCDiagnostics.Agent.Core.AgentModeMonitor? AgentLink = null,
     RemotePCDiagnostics.Core.Input.IPhysicalInputMonitor? PhysicalInput = null,
     RemotePCDiagnostics.Core.Input.PointerTestService? PointerTest = null,
-    RemotePCDiagnostics.Core.Display.IScreenControl? Screens = null)
+    RemotePCDiagnostics.Core.Display.IScreenControl? Screens = null,
+    RemotePCDiagnostics.Core.DeviceSensors.DeviceSensorTestService? SensorTest = null)
 {
     /// <summary>
     /// No Agent on this PC: none is installed and none does admin work for the app (the Microsoft Store app on its own). The app then just

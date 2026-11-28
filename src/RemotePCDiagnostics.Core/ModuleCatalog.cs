@@ -10,6 +10,7 @@ public static class BuiltInModules
         new(ModuleIds.Osquery, ModuleSlugs.Osquery, "Hardware inventory", ModuleKind.Check, ModuleGroups.Hardware, 100),
         new(ModuleIds.Sensors, ModuleSlugs.Sensors, "Temperatures & fans", ModuleKind.Check, ModuleGroups.Hardware, 200),
         new(ModuleIds.Cooling, ModuleSlugs.Cooling, "Cooling test", ModuleKind.OnDemand, ModuleGroups.Hardware, 250),
+        new(ModuleIds.DeviceSensors, ModuleSlugs.DeviceSensors, "Motion, light & presence sensors", ModuleKind.Check, ModuleGroups.Hardware, 250),
         new(ModuleIds.DeviceDrivers, ModuleSlugs.DeviceDrivers, "Device Manager & drivers", ModuleKind.Check, ModuleGroups.Hardware, 300),
         new(ModuleIds.UsbPorts, ModuleSlugs.UsbPorts, "USB ports & devices", ModuleKind.Check, ModuleGroups.Hardware, 350),
         new(ModuleIds.Displays, ModuleSlugs.Displays, "Displays & video outputs", ModuleKind.Check, ModuleGroups.Hardware, 360),

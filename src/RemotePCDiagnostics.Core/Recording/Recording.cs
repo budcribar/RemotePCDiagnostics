@@ -89,6 +89,8 @@ public sealed record RecordedCall
     public const string AntivirusKind = "antivirus";
     /// <summary>Core Audio's endpoints and sessions (<see cref="Audio.AudioState"/>), kept as JSON in <see cref="StdOut"/>.</summary>
     public const string AudioKind = "audio";
+    /// <summary>The motion, light and presence sensors (<see cref="DeviceSensors.DeviceSensorSnapshot"/>), kept as JSON in <see cref="StdOut"/>.</summary>
+    public const string DeviceSensorsKind = "devicesensors";
     /// <summary>The Wi-Fi radio and scan (<see cref="Areas.WifiRadioReading"/>, network names scrubbed), kept as JSON in <see cref="StdOut"/>.</summary>
     public const string WifiKind = "wifi";
     /// <summary>The USB tree (<see cref="Usb.UsbSnapshot"/>), kept as JSON in <see cref="StdOut"/>.</summary>
@@ -208,6 +210,7 @@ public sealed record RecordedCall
     public Stress.MemoryDiagnosticReply ToMemoryDiagnosticReply() =>
         Error is null && Stress.MemoryDiagnosticAnswer.Parse(StdOut) is { } answer ? new(answer, null)
             : Stress.MemoryDiagnosticReply.Failed(Error ?? "The answer couldn't be read.", noAgent: TimedOut == true);
+    public static RecordedCall FromDeviceSensors(DeviceSensors.DeviceSensorSnapshot s) => new() { Kind = DeviceSensorsKind, StdOut = s.ToJson(), Error = s.Error };
     public static RecordedCall FromWifi(Areas.WifiRadioReading r) => new() { Kind = WifiKind, StdOut = r.Scrubbed().ToJson(), Error = r.Error };
     public static RecordedCall FromGpuMemory(string query, string? json, string? error = null) => new() { Kind = GpuMemoryKind, Query = query, StdOut = json, Error = error };
     public static RecordedCall FromVideo(string query, string? json, string? error = null) => new() { Kind = VideoKind, Query = query, StdOut = json, Error = error };
@@ -218,5 +221,5 @@ public sealed record RecordedCall
     public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind or AntivirusKind;
 
     /// <summary>Short text naming the call, for test messages.</summary>
-    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind is AudioKind or WifiKind or UsbKind or DisplayKind ? Kind : Kind == DiskScanKind ? $"diskscan {Query}" : Kind == SelfTestKind ? $"selftest {Query}" : Kind == MemoryDiagnosticKind ? $"memdiag {Query}" : Kind == CoolingKind ? $"cooling {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
+    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind is AudioKind or WifiKind or UsbKind or DisplayKind or DeviceSensorsKind ? Kind : Kind == DiskScanKind ? $"diskscan {Query}" : Kind == SelfTestKind ? $"selftest {Query}" : Kind == MemoryDiagnosticKind ? $"memdiag {Query}" : Kind == CoolingKind ? $"cooling {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
 }

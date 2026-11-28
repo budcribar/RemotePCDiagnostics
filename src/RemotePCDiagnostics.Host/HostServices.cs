@@ -140,6 +140,10 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.Usb.IUsbTreeSource>(_ => new RemotePCDiagnostics.Core.Usb.WindowsUsbTreeSource(L<RemotePCDiagnostics.Core.Usb.WindowsUsbTreeSource>()));
         // The display configuration (QueryDisplayConfig, the monitors' EDID), read in the app: no administrator rights needed.
         services.AddSingleton<RemotePCDiagnostics.Core.Display.IDisplaySource>(_ => new RemotePCDiagnostics.Core.Display.WindowsDisplaySource(L<RemotePCDiagnostics.Core.Display.WindowsDisplaySource>()));
+        // Motion, light and presence sensors (the Windows Sensor API), read in the app: no administrator rights needed. The Sensor test on
+        // the Interactive tests page polls them only while it runs.
+        services.AddSingleton<RemotePCDiagnostics.Core.DeviceSensors.IDeviceSensorSource>(_ => new RemotePCDiagnostics.Core.DeviceSensors.WindowsDeviceSensorSource(L<RemotePCDiagnostics.Core.DeviceSensors.WindowsDeviceSensorSource>()));
+        services.AddSingleton(sp => new RemotePCDiagnostics.Core.DeviceSensors.DeviceSensorTestService(sp.GetService<RemotePCDiagnostics.Core.DeviceSensors.IDeviceSensorSource>()));
         // NPU test: on-demand only, own page, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(L<WindowsNpuIo>()));
         // GPU stress test: Direct3D 11 compute devices.
@@ -311,7 +315,8 @@ public static class HostServices
             sp.GetService<RemotePCDiagnostics.Agent.Core.AgentModeMonitor>(),
             sp.GetService<RemotePCDiagnostics.Core.Input.IPhysicalInputMonitor>(),
             sp.GetService<RemotePCDiagnostics.Core.Input.PointerTestService>(),
-            sp.GetService<RemotePCDiagnostics.Core.Display.IScreenControl>()));
+            sp.GetService<RemotePCDiagnostics.Core.Display.IScreenControl>(),
+            SensorTest: sp.GetService<RemotePCDiagnostics.Core.DeviceSensors.DeviceSensorTestService>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
         // RPCD_REPLAY (Debug builds): the checks read a recording instead of this PC. RPCD_LOG: they also record what they read.
@@ -440,6 +445,7 @@ public sealed class HostQueryBackendSlot
             Audio = sp.GetService<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(),
             Usb = sp.GetService<RemotePCDiagnostics.Core.Usb.IUsbTreeSource>(),
             Display = sp.GetService<RemotePCDiagnostics.Core.Display.IDisplaySource>(),
+            DeviceSensors = sp.GetService<RemotePCDiagnostics.Core.DeviceSensors.IDeviceSensorSource>(),
         };
     }
 }

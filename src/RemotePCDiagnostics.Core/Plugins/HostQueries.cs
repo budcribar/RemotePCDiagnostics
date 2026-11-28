@@ -46,6 +46,10 @@ public interface IHostQueries
     /// rights needed).</summary>
     Task<Display.DisplaySnapshot> ReadDisplayStateAsync(CancellationToken ct = default) =>
         Task.FromResult(Display.DisplaySnapshot.Unavailable("This host can't read displays."));
+    /// <summary><c>devicesensors.state</c>: the motion, light and presence sensors, read in the app with the Windows Sensor API (no
+    /// administrator rights needed).</summary>
+    Task<DeviceSensors.DeviceSensorSnapshot> ReadDeviceSensorsAsync(CancellationToken ct = default) =>
+        Task.FromResult(DeviceSensors.DeviceSensorSnapshot.Unavailable("This host can't read sensors."));
 }
 
 /// <summary>The capability names a module lists in module.json, and the limits the app holds every query to.</summary>
@@ -61,9 +65,10 @@ public static class HostCapabilities
     public const string AudioState = "audio.state";
     public const string UsbTree = "usb.tree";
     public const string DisplayState = "display.state";
+    public const string DeviceSensorsState = "devicesensors.state";
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
-        { SensorsRead, StorageDrives, StorageRetrims, EventLogQuery, EventReviews, WmiQuery, PackagesList, AudioState, UsbTree, DisplayState };
+        { SensorsRead, StorageDrives, StorageRetrims, EventLogQuery, EventReviews, WmiQuery, PackagesList, AudioState, UsbTree, DisplayState, DeviceSensorsState };
 
     /// <summary>The logs <c>eventlog.query</c> reads (never Security).</summary>
     public static readonly IReadOnlySet<string> AllowedLogs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "System", "Application" };
@@ -101,6 +106,8 @@ public sealed record HostQueryBackend
     public Usb.IUsbTreeSource? Usb { get; init; }
     /// <summary>The display configuration, read in the app.</summary>
     public Display.IDisplaySource? Display { get; init; }
+    /// <summary>The motion, light and presence sensors, read in the app.</summary>
+    public DeviceSensors.IDeviceSensorSource? DeviceSensors { get; init; }
     public Func<IReadOnlyCollection<string>> EventReviews { get; init; } = Areas.EventReviews.Read;
 }
 
@@ -202,6 +209,9 @@ public sealed class HostQueryServer(Func<HostQueryBackend?> backend, ILogger? lo
                 break;
             case HostCapabilities.DisplayState:
                 value = await Need(backend.Display).ReadAsync(ct).ConfigureAwait(false);
+                break;
+            case HostCapabilities.DeviceSensorsState:
+                value = await Need(backend.DeviceSensors).ReadAsync(ct).ConfigureAwait(false);
                 break;
             default:
                 throw new HostQueryException("badRequest", $"unknown capability {capability}");
@@ -313,6 +323,9 @@ public sealed class HostQueriesClient(Action<ModuleHostMessage> send) : IHostQue
     public async Task<Display.DisplaySnapshot> ReadDisplayStateAsync(CancellationToken ct = default) =>
         await QueryAsync<Display.DisplaySnapshot?>(HostCapabilities.DisplayState, null, ct).ConfigureAwait(false)
         ?? Display.DisplaySnapshot.Unavailable("The app didn't return the displays.");
+    public async Task<DeviceSensors.DeviceSensorSnapshot> ReadDeviceSensorsAsync(CancellationToken ct = default) =>
+        await QueryAsync<DeviceSensors.DeviceSensorSnapshot?>(HostCapabilities.DeviceSensorsState, null, ct).ConfigureAwait(false)
+        ?? DeviceSensors.DeviceSensorSnapshot.Unavailable("The app didn't return the sensors.");
 }
 
 /// <summary>Sensors through the app (<c>sensors.read</c>), for the Temperatures &amp; fans module in user mode.</summary>

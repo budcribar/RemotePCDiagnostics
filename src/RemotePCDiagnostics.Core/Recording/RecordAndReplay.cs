@@ -98,6 +98,16 @@ public sealed class RecordingAudioStateSource(Audio.IAudioStateSource inner, Cal
     }
 }
 
+/// <summary>Passes each sensor read to the real source and records the answer.</summary>
+public sealed class RecordingDeviceSensorSource(DeviceSensors.IDeviceSensorSource inner, CallRecorder recorder) : DeviceSensors.IDeviceSensorSource
+{
+    public async Task<DeviceSensors.DeviceSensorSnapshot> ReadAsync(CancellationToken ct = default)
+    {
+        var r = await inner.ReadAsync(ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromDeviceSensors(r));
+        return r;
+    }
+}
 /// <summary>Passes each Wi-Fi radio read to the real source and records the answer with network names scrubbed.</summary>
 public sealed class RecordingWifiRadioSource(Areas.IWifiRadioSource inner, CallRecorder recorder) : Areas.IWifiRadioSource
 {
@@ -275,6 +285,7 @@ public sealed class RecordingReplay
     public IPackageSource Packages => new ReplayPackages(this);
     public Security.IAntivirusProductSource AntivirusProducts => new ReplayAntivirusProducts(this);
     public Audio.IAudioStateSource Audio => new ReplayAudio(this);
+    public DeviceSensors.IDeviceSensorSource DeviceSensors => new ReplayDeviceSensors(this);
     public Areas.IWifiRadioSource Wifi => new ReplayWifi(this);
     public Usb.IUsbTreeSource Usb => new ReplayUsb(this);
     public Display.IDisplaySource Display => new ReplayDisplay(this);
@@ -331,6 +342,7 @@ public sealed class RecordingReplay
         RecordedCall.PackagesKind => PackagesKey,
         RecordedCall.AntivirusKind => AntivirusKey,
         RecordedCall.AudioKind => AudioKey,
+        RecordedCall.DeviceSensorsKind => DeviceSensorsKey,
         RecordedCall.WifiKind => WifiKey,
         RecordedCall.UsbKind => UsbKey,
         RecordedCall.DisplayKind => DisplayKey,
@@ -348,6 +360,7 @@ public sealed class RecordingReplay
     public const string PackagesKey = "packages";
     public const string AntivirusKey = "antivirus";
     public const string AudioKey = "audio";
+    public const string DeviceSensorsKey = "devicesensors";
     public const string WifiKey = "wifi";
     public const string UsbKey = "usb";
     public const string DisplayKey = "display";
@@ -403,6 +416,14 @@ public sealed class RecordingReplay
             Task.FromResult(replay.Answer(DisplayKey, "display") is { } c
                 ? c.Error is { } e && c.StdOut is null ? RemotePCDiagnostics.Core.Display.DisplaySnapshot.Unavailable(e) : RemotePCDiagnostics.Core.Display.DisplaySnapshot.FromJson(c.StdOut)
                 : RemotePCDiagnostics.Core.Display.DisplaySnapshot.Unavailable("Not in the recording."));
+    }
+
+    private sealed class ReplayDeviceSensors(RecordingReplay replay) : RemotePCDiagnostics.Core.DeviceSensors.IDeviceSensorSource
+    {
+        public Task<RemotePCDiagnostics.Core.DeviceSensors.DeviceSensorSnapshot> ReadAsync(CancellationToken ct = default) =>
+            Task.FromResult(replay.Answer(DeviceSensorsKey, "devicesensors") is { } c
+                ? c.Error is { } e && c.StdOut is null ? RemotePCDiagnostics.Core.DeviceSensors.DeviceSensorSnapshot.Unavailable(e) : RemotePCDiagnostics.Core.DeviceSensors.DeviceSensorSnapshot.FromJson(c.StdOut)
+                : RemotePCDiagnostics.Core.DeviceSensors.DeviceSensorSnapshot.Unavailable("Not in the recording."));
     }
 
     private sealed class ReplayAudio(RecordingReplay replay) : RemotePCDiagnostics.Core.Audio.IAudioStateSource

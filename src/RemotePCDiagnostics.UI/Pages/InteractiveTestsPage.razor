@@ -7,6 +7,7 @@
 @using RemotePCDiagnostics.Core.Usb
 @using RemotePCDiagnostics.Core.Input
 @using RemotePCDiagnostics.Core.Display
+@using RemotePCDiagnostics.Core.DeviceSensors
 @inherits StoreAwareComponent
 @inject ISessionContext Session
 @inject IJSRuntime JS
@@ -68,14 +69,15 @@
 
     var kbSnap = ActivePhysicalQa.Current;
     var ptrSnap = ActivePointerTest.Current;
-    var anyRunning = _isBatchRunning || ptrSnap.Verdict == PointerTestVerdict.Running || camRunning || s2mRunning || m2sRunning || scRunning || wfRunning || ethRunning || chRunning || usbRunning || adRunning || dvRunning;
+    var senSnap = ActiveSensorTest.Current;
+    var anyRunning = _isBatchRunning || ptrSnap.Verdict == PointerTestVerdict.Running || senSnap.Verdict == SensorTestVerdict.Running || camRunning || s2mRunning || m2sRunning || scRunning || wfRunning || ethRunning || chRunning || usbRunning || adRunning || dvRunning;
 
     var allSelected = _selected.Count == AllTestIds.Length;
     var mixedSelected = _selected.Count > 0 && _selected.Count < AllTestIds.Length;
 }
 
 <div class="ct-page">
-    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), wfResult, ethResult, chResult, usbResult, usbModule?.Live, adResult, adBusyId, dvResult, dvModule?.Live)" />
+    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), wfResult, ethResult, chResult, usbResult, usbModule?.Live, adResult, adBusyId, dvResult, dvModule?.Live, senSnap)" />
     <div class="toolbar">
         <span class="icon-badge page-icon"><Icon Name="eye" Size="20" /></span>
         <h1 data-rpcd-page="interactive" data-rpcd-contract="@BrowserContract.Interactive" data-testid="interactive-title">Interactive tests</h1>
@@ -86,7 +88,7 @@
         <div class="banner-text">
             <div class="banner-title" data-testid="interactive-banner-title">Hands-on physical hardware verification</div>
             <div class="banner-sub" data-testid="interactive-banner-desc">
-                Select and run interactive hardware tests (keyboard matrix, LCD uniformity &amp; touch digitizer, mouse, touchpad &amp; touchscreen, live webcam feed, and microphone/speaker loopback).
+                Select and run interactive hardware tests (keyboard matrix, LCD uniformity &amp; touch digitizer, mouse, touchpad &amp; touchscreen, live webcam feed, microphone/speaker loopback, and the motion, light &amp; presence sensors).
             </div>
             @if (Session.Mode == SessionMode.Remote || _hasRemoteSession)
             {
@@ -354,6 +356,30 @@
                         </div>
                     </div>
 
+                    @* 7. Sensor test: tilt, cover the light sensor, presence *@
+                    @{
+                        var senIsSel = _selectedTestId == "devicesensors";
+                        var senRunning = senSnap.Verdict == SensorTestVerdict.Running;
+                        var senChip = SensorChip(senSnap.Verdict);
+                        var senSummary = DeviceSensorTestService.Summary(senSnap);
+                    }
+                    <div class="ct-row @(senIsSel ? "selected" : "") @(senRunning ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(senIsSel ? "true" : "false")"
+                         data-testid="interactive-row-devicesensors" @onclick='() => SelectTest("devicesensors")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("devicesensors") ? "true" : "false")"
+                                aria-label="Include Sensor test"
+                                data-testid="interactive-check-devicesensors"
+                                @onclick='() => ToggleItem("devicesensors")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("devicesensors") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@(senChip == "ok" ? "ok" : senChip == "err" ? "critical" : senChip == "run" ? "running" : "na")"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">Sensors (tilt, light &amp; presence)</div>
+                            <div class="ct-row-summary meta" title="@senSummary">@senSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@senChip" data-testid="interactive-status-devicesensors">@SensorLabel(senSnap.Verdict)</span>
+                        </div>
+                    </div>
                     @* 8. Wi-Fi connect: join a network, ping, go back *@
                     @{
                         var wfIsSel = _selectedTestId == "wifi";
@@ -500,6 +526,10 @@
             else if (_selectedTestId == "pointer")
             {
                 <PointerTestPane Service="ActivePointerTest" IsRemoteDisplay="_isRemoteDisplay" RemoteSessionActive="RemoteSessionActive" AutoStart="_isBatchRunning" />
+            }
+            else if (_selectedTestId == "devicesensors")
+            {
+                <DeviceSensorTestPane Service="ActiveSensorTest" IsRemoteDisplay="_isRemoteDisplay" AutoStart="_isBatchRunning" />
             }
             else if (_selectedTestId == "display")
             {
@@ -1428,11 +1458,14 @@
     private readonly PhysicalBenchQaService _fallbackPhysicalQa = new();
     private PhysicalBenchQaService ActivePhysicalQa => App.PhysicalQa ?? _fallbackPhysicalQa;
 
+    private DeviceSensorTestService? _fallbackSensorTest;
+    private DeviceSensorTestService ActiveSensorTest => App.SensorTest ?? (_fallbackSensorTest ??= new DeviceSensorTestService());
+
     private PointerTestService? _fallbackPointerTest;
     private PointerTestService ActivePointerTest => App.PointerTest ?? (_fallbackPointerTest ??= new PointerTestService(App.PhysicalInput));
     private bool RemoteSessionActive => Session.Mode == SessionMode.Remote || _hasRemoteSession;
 
-    private static readonly string[] AllTestIds = ["keyboard", "display", "pointer", "webcam", "speakertomic", "mictospeaker", "soundcheck", "charger", "wifi", "ethernet", "usbports", "audiodevices", "displayoutputs"];
+    private static readonly string[] AllTestIds = ["keyboard", "display", "pointer", "webcam", "speakertomic", "mictospeaker", "soundcheck", "charger", "wifi", "ethernet", "usbports", "audiodevices", "displayoutputs", "devicesensors"];
     private readonly HashSet<string> _selected = new(AllTestIds, StringComparer.OrdinalIgnoreCase);
 
     // The Wi-Fi connect pane: the last scan's networks, the one picked (null = the network the PC is on), and the typed password.
@@ -1493,14 +1526,14 @@
 
     /// <summary>The page's state for browser agents (interactive-data): measured evidence and person-entered verdicts kept apart.</summary>
     private string InteractiveJson(RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaSnapshot kb, DiagnosticResult cam, DiagnosticResult s2m, DiagnosticResult m2s,
-        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, DiagnosticResult wifi, DiagnosticResult ethernet, DiagnosticResult charger, DiagnosticResult usb, UsbPortCheckReport? usbLive, DiagnosticResult ad, string? adBusyId, DiagnosticResult dv, DisplayOutputCheckReport? dvLive) =>
+        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, DiagnosticResult wifi, DiagnosticResult ethernet, DiagnosticResult charger, DiagnosticResult usb, UsbPortCheckReport? usbLive, DiagnosticResult ad, string? adBusyId, DiagnosticResult dv, DisplayOutputCheckReport? dvLive, SensorTestSnapshot sensors) =>
         InteractiveExport.ToJson(
             new InteractiveExport.PageState(_selectedTestId, _selected, _isBatchRunning, _isRemoteDisplay, Session.Mode == SessionMode.Remote || _hasRemoteSession, _technicianHasControl),
             kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help, wifi,
             new InteractiveExport.WifiPane(_wifiNetworks, WifiPicked?.Ssid, _wifiPassword.Length > 0, _wifiDropsSession, _wifiScanning),
             ethernet, new InteractiveExport.EthernetPane(_ethPorts, EthernetPicked?.Name, _ethMode, _ethDropsSession, _ethLoading), charger,
             new InteractiveExport.UsbPortCheckState(PersonState(usb), usbLive ?? UsbPortCheckReport.Empty), PersonState(ad), adBusyId, ActivePointerTest.Current,
-            new InteractiveExport.DisplayOutputCheckState(PersonState(dv), dvLive ?? DisplayOutputCheckReport.Empty));
+            new InteractiveExport.DisplayOutputCheckState(PersonState(dv), dvLive ?? DisplayOutputCheckReport.Empty), sensors);
 
     private IReadOnlyList<AudioDevice> _outputs = [];
     private IReadOnlyList<AudioDevice> _inputs = [];
@@ -1535,6 +1568,8 @@
         // The row's chip and interactive-data follow the pointer test as it runs.
         ActivePointerTest.Changed += OnPointerTestChanged;
         if (GetDisplayOutputCheckModule() is { } dvCheck) dvCheck.Changed += OnDisplayOutputCheckChanged;
+        // The row's chip and interactive-data follow the Sensor test as it runs.
+        ActiveSensorTest.Changed += OnSensorTestChanged;
         if (TestQuery is { Length: > 0 } t && AllTestIds.Contains(t, StringComparer.OrdinalIgnoreCase)) _selectedTestId = t.ToLowerInvariant();
         if (_selectedTestId == "ethernet") _ = LoadEthernetPortsAsync();
         if (_selectedTestId == "soundcheck" && HelpQuery == "cant-hear") _ = OpenCantHearAsync();
@@ -1582,6 +1617,7 @@
     }
 
     private void OnPointerTestChanged() => _ = InvokeAsync(StateHasChanged);
+    private void OnSensorTestChanged() => _ = InvokeAsync(StateHasChanged);
 
     public override void Dispose()
     {
@@ -1598,6 +1634,18 @@
         _fallbackPointerTest?.Dispose();
         _fallbackPointerTest = null;
         if (GetDisplayOutputCheckModule() is { } dvCheck) dvCheck.Changed -= OnDisplayOutputCheckChanged;
+        if (App.SensorTest is { } sensorTest)
+        {
+            sensorTest.Changed -= OnSensorTestChanged;
+            if (sensorTest.IsRunning) sensorTest.Cancel();
+        }
+        else if (_fallbackSensorTest is { } fallbackSensorTest)
+        {
+            fallbackSensorTest.Changed -= OnSensorTestChanged;
+            if (fallbackSensorTest.IsRunning) fallbackSensorTest.Cancel();
+            fallbackSensorTest.Dispose();
+            _fallbackSensorTest = null;
+        }
         _batchCts?.Cancel();
         _interactiveWaitTcs?.TrySetCanceled();
         _batchCts?.Dispose();
@@ -1832,6 +1880,50 @@
         _ => "Not tested",
     };
 
+    /// <summary>Run selected: the pane starts the Sensor test when it opens; waits until it ends (passed, failed, skipped or stopped).</summary>
+    private async Task WaitForSensorTestAsync(CancellationToken ct)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var before = ActiveSensorTest.Current.StartedUtc;
+        void Check()
+        {
+            var snap = ActiveSensorTest.Current;
+            if (snap.StartedUtc != before && snap.Verdict != SensorTestVerdict.Running)
+                tcs.TrySetResult();
+        }
+        using var reg = ct.Register(() => tcs.TrySetCanceled(ct));
+        ActiveSensorTest.Changed += Check;
+        try
+        {
+            Check();
+            await InvokeAsync(StateHasChanged);
+            Check();
+            await tcs.Task;
+        }
+        finally
+        {
+            ActiveSensorTest.Changed -= Check;
+        }
+    }
+
+    private static string SensorChip(SensorTestVerdict v) => v switch
+    {
+        SensorTestVerdict.Passed => "ok",
+        SensorTestVerdict.Failed => "err",
+        SensorTestVerdict.Running => "run",
+        _ => "na",
+    };
+
+    private static string SensorLabel(SensorTestVerdict v) => v switch
+    {
+        SensorTestVerdict.Passed => "Passed",
+        SensorTestVerdict.Failed => "Failed",
+        SensorTestVerdict.Running => "Running",
+        SensorTestVerdict.Skipped => "Skipped",
+        SensorTestVerdict.Cancelled => "Stopped",
+        _ => "Not tested",
+    };
+
     private async Task RunSelectedAsync()
     {
         if (Diagnostics.IsStressSuiteRunning || _isBatchRunning || _isRemoteDisplay) return;
@@ -1874,6 +1966,9 @@
                     case "charger":
                         await StartChargerAsync();
                         break;
+                    case "devicesensors":
+                        await WaitForSensorTestAsync(ct);
+                        break;
                     case "wifi":
                         await StartWifiAsync();
                         break;
@@ -1913,6 +2008,7 @@
         CancelMicToSpeaker();
         CancelSoundCheck();
         CancelCharger();
+        ActiveSensorTest.Cancel();
         CancelWifi();
         CancelEthernet();
         CancelUsbPortCheck();

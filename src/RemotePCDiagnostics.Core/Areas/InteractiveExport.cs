@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using RemotePCDiagnostics.Core.Audio;
 using RemotePCDiagnostics.Core.Input;
+using RemotePCDiagnostics.Core.DeviceSensors;
 using RemotePCDiagnostics.Core.Webcam;
 using RemotePCDiagnostics.Core.Workflow;
 
@@ -38,8 +39,9 @@ public static class InteractiveExport
     public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
         DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null,
-        ModuleState? audioDevices = null, string? audioDevicesBusyId = null, PointerTestSnapshot? pointer = null, DisplayOutputCheckState? displayOutputs = null) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane, charger, usbPortCheck, audioDevices, audioDevicesBusyId, pointer, displayOutputs), Json);
+        ModuleState? audioDevices = null, string? audioDevicesBusyId = null, PointerTestSnapshot? pointer = null, DisplayOutputCheckState? displayOutputs = null,
+        SensorTestSnapshot? sensors = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane, charger, usbPortCheck, audioDevices, audioDevicesBusyId, pointer, displayOutputs, sensors), Json);
 
     /// <summary>The display output check's result and what it has seen so far in the watch that is running (the result is Running meanwhile).</summary>
     public sealed record DisplayOutputCheckState(ModuleState Module, Display.DisplayOutputCheckReport Live);
@@ -62,7 +64,8 @@ public static class InteractiveExport
     public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
         DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null,
-        ModuleState? audioDevices = null, string? audioDevicesBusyId = null, PointerTestSnapshot? pointer = null, DisplayOutputCheckState? displayOutputs = null) => new
+        ModuleState? audioDevices = null, string? audioDevicesBusyId = null, PointerTestSnapshot? pointer = null, DisplayOutputCheckState? displayOutputs = null,
+        SensorTestSnapshot? sensors = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -81,6 +84,7 @@ public static class InteractiveExport
             SpeakerToMicTest(page, speakerToMic),
             MicToSpeakerTest(page, micToSpeaker),
             SoundCheckTest(page, soundCheck ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.SoundCheck), false), help),
+            DeviceSensorTest(page, sensors ?? new SensorTestSnapshot()),
             WifiTest(page, wifi ?? DiagnosticResult.NotRun(ModuleSlugs.WifiConnect), wifiPane),
             EthernetTest(page, ethernet ?? DiagnosticResult.NotRun(ModuleSlugs.EthernetPort), ethernetPane),
             ChargerTest(page, charger ?? DiagnosticResult.NotRun(ModuleSlugs.ChargerReplug)),
@@ -651,6 +655,65 @@ public static class InteractiveExport
         };
     }
 
+    private static string StepId(SensorTestStep s) => s.ToString().ToLowerInvariant();
+
+    private static string StepState(SensorStepState s) => s == SensorStepState.NotSupported ? "not-supported" : s.ToString().ToLowerInvariant();
+
+    private static double? R(double? v, int digits) => v is { } x ? Math.Round(x, digits) : null;
+
+    private static object DeviceSensorTest(PageState page, SensorTestSnapshot s) => new
+    {
+        id = "devicesensors",
+        name = "Sensor test (tilt, light, presence)",
+        @checked = page.CheckedTestIds.Contains("devicesensors"),
+        open = page.SelectedTestId == "devicesensors",
+        state = s.Verdict switch
+        {
+            SensorTestVerdict.Running => s.Current == SensorTestStep.Presence ? "waiting-for-person-verdict" : "running",
+            SensorTestVerdict.NotRun => "waiting-for-person",
+            _ => "done",
+        },
+        // Measured by RPCD from the sensors, except presence, which the person confirms (presenceConfirmed).
+        verdict = s.Verdict switch
+        {
+            SensorTestVerdict.Passed => "passed",
+            SensorTestVerdict.Failed => "failed",
+            SensorTestVerdict.Skipped => "skipped",
+            SensorTestVerdict.Cancelled => "stopped",
+            SensorTestVerdict.Running => "running",
+            _ => "notrun",
+        },
+        currentStep = s.Current is { } c ? StepId(c) : null,
+        secondsLeft = s.Current is null ? (int?)null : s.SecondsLeft,
+        steps = s.Steps.Select(x => new { id = StepId(x.Step), title = DeviceSensorTestService.Title(x.Step), state = StepState(x.State), sensor = V(x.Sensor), reason = V(x.Reason) }).ToList(),
+        measured = new
+        {
+            accelerationG = s.X is null ? null : new { x = R(s.X, 3), y = R(s.Y, 3), z = R(s.Z, 3) },
+            // How far each axis has moved in this tilt step; each must reach tiltAxisG.
+            tiltRangeG = s.RangeX is null ? null : new { x = R(s.RangeX.Span, 3), y = R(s.RangeY?.Span, 3), z = R(s.RangeZ?.Span, 3) },
+            tiltAxisG = DeviceSensorTestService.TiltAxisG,
+            stillAxes = s.RangeX is null ? null : DeviceSensorTestService.StillAxes(s),
+            lux = R(s.Lux, 1),
+            luxHigh = R(s.LuxHigh, 1),
+            luxLow = R(s.LuxLow, 1),
+            lightDropRatio = DeviceSensorTestService.LightDropRatio,
+            present = s.Present,
+            distanceMm = R(s.DistanceMm, 0),
+            hingeDegrees = R(s.HingeDegrees, 0),
+            orientation = s.Orientation is { } o ? DeviceSensorTypes.OrientationText(o) : null,
+            headingDegrees = R(s.HeadingDegrees, 0),
+        },
+        presenceConfirmed = s.PresenceConfirmed,
+        readError = V(s.ReadError),
+        notes = T(s.Notes),
+        message = T(DeviceSensorTestService.Summary(s)),
+        instructions = s.Current is { } now ? DeviceSensorTestService.Instructions(now)
+            : "Press Start test. Tilt the PC until the ball has moved on all three axes (within 20 s), cover the light sensor next to the "
+            + "camera until the level halves, then sit in front of the PC and lean away and say whether the presence reading follows. Each "
+            + "step has Skip and Doesn't work; a sensor the PC doesn't have is Not supported. A remote viewer cannot do these steps.",
+        reportIf = ReportIf.DeviceSensors,
+    };
+
     /// <summary>
     /// When an agent coaching a test should report a learning (Admin's report_learning tool): the test's instructions or screen did not
     /// match what the person has. One line each, written for the agent, not the person.
@@ -784,6 +847,8 @@ public static class InteractiveExport
             + "disagrees with the device or the port (for example a USB 3 stick in a blue port shown at USB 2 speed when it works fast).";
         public const string AudioDevices = "A speaker or microphone the person has is not listed, the chime plays on a different device than "
             + "the one pressed, a microphone the person hears in Play back is judged no signal, or a fix button doesn't change the device.";
+        public const string DeviceSensors = "The ball doesn't move although the person tilts the PC, the light level doesn't change when they "
+            + "cover the sensor (or they can't find it), the presence reading doesn't follow them, or a sensor the PC has is shown as Not supported.";
         public const string MicToSpeaker = "The person's microphone or speaker is not listed, there is no playback, or feedback makes the test "
             + "unusable.";
     }

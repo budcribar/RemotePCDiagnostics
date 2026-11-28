@@ -35,5 +35,6 @@
     <ProjectReference Include="..\..\src\Modules\Sound\RemotePCDiagnostics.Modules.Sound.csproj" />
     <ProjectReference Include="..\..\src\Modules\UsbPorts\RemotePCDiagnostics.Modules.UsbPorts.csproj" />
     <ProjectReference Include="..\..\src\Modules\Displays\RemotePCDiagnostics.Modules.Displays.csproj" />
+    <ProjectReference Include="..\..\src\Modules\DeviceSensors\RemotePCDiagnostics.Modules.DeviceSensors.csproj" />
   </ItemGroup>
 </Project>

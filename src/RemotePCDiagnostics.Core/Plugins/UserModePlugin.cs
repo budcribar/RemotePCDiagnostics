@@ -47,6 +47,9 @@ public static class UserModePlugin
         // The display configuration is read in the app too (the module host has no desktop of its own), and recorded there.
         if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.DisplayState, StringComparer.Ordinal))
             services.AddSingleton<Display.IDisplaySource>(new Display.HostDisplaySource(hostQueries, log));
+        // The sensors are read in the app too (the Sensor API in the signed-in user's session), and recorded there.
+        if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.DeviceSensorsState, StringComparer.Ordinal))
+            services.AddSingleton<DeviceSensors.IDeviceSensorSource>(new DeviceSensors.HostDeviceSensorSource(hostQueries, log));
         plugin.Register(services, context);
         var sp = services.BuildServiceProvider();
         var modules = sp.GetServices<IDiagnosticModule>().ToList();

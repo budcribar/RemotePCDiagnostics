@@ -57,6 +57,7 @@ public static class RecordReplaySwitches
         Replace(services, _ => replay.VideoPlayback);
         Replace(services, _ => replay.Usb);
         Replace(services, _ => replay.Display);
+        Replace(services, _ => replay.DeviceSensors);
         Decorate<SystemCommandRunner>(services, (_, c) =>
             new SystemCommandRunner(replay.Launcher, c.Log, c.Timeout, c.ElevatedBridge, c.IsProcessElevatedCheck, c.NativeOps));
     }
@@ -79,6 +80,7 @@ public static class RecordReplaySwitches
         Decorate<VideoPlayback.IVideoPlaybackSource>(services, (_, v) => new RecordingVideoPlaybackSource(v, calls));
         Decorate<Usb.IUsbTreeSource>(services, (_, u) => new RecordingUsbTreeSource(u, calls));
         Decorate<Display.IDisplaySource>(services, (_, d) => new RecordingDisplaySource(d, calls));
+        Decorate<DeviceSensors.IDeviceSensorSource>(services, (_, d) => new RecordingDeviceSensorSource(d, calls));
         // The checks behave as they do without the recorder (scripted: false): it only notes what the real tools answer.
         Decorate<SystemCommandRunner>(services, (_, c) => new SystemCommandRunner(new RecordingProcessLauncher(c.Launcher, calls), c.Log, c.Timeout,
             c.ElevatedBridge, c.IsProcessElevatedCheck, c.NativeOps, scripted: c.IsScripted));

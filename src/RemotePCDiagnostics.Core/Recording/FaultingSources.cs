@@ -18,6 +18,7 @@ public sealed class FaultingSources(FaultPlan plan)
     public Core.Audio.IAudioStateSource Audio(Core.Audio.IAudioStateSource inner) => new FaultingAudio(inner, plan);
     public Core.Usb.IUsbTreeSource Usb(Core.Usb.IUsbTreeSource inner) => new FaultingUsb(inner, plan);
     public Core.Display.IDisplaySource Display(Core.Display.IDisplaySource inner) => new FaultingDisplay(inner, plan);
+    public Core.DeviceSensors.IDeviceSensorSource DeviceSensors(Core.DeviceSensors.IDeviceSensorSource inner) => new FaultingDeviceSensors(inner, plan);
     public IProcessLauncher Launcher(IProcessLauncher inner) => new FaultingLauncher(inner, plan);
     public Alerts.IAlertReadings Alerts(Alerts.IAlertReadings inner) => new FaultingAlerts(inner, plan);
 
@@ -99,6 +100,24 @@ public sealed class FaultingSources(FaultPlan plan)
             {
                 Faults.Empty => answer with { Outputs = [] },
                 Faults.Garbage => Core.Display.DisplaySnapshot.FromJson(Faults.GarbageText),
+                _ => answer,
+            };
+        }
+    }
+
+    private sealed class FaultingDeviceSensors(Core.DeviceSensors.IDeviceSensorSource inner, FaultPlan plan) : Core.DeviceSensors.IDeviceSensorSource
+    {
+        public async Task<Core.DeviceSensors.DeviceSensorSnapshot> ReadAsync(CancellationToken ct = default)
+        {
+            if (plan.For(RecordedCall.DeviceSensorsKind, RecordingReplay.DeviceSensorsKey) is not { } rule)
+                return await inner.ReadAsync(ct).ConfigureAwait(false);
+            await FaultPlan.WaitAsync(rule, ct).ConfigureAwait(false);
+            var answer = await inner.ReadAsync(ct).ConfigureAwait(false);
+            if (plan.ErrorFor(rule) is { } error) return Core.DeviceSensors.DeviceSensorSnapshot.Unavailable(error);
+            return rule.Fault switch
+            {
+                Faults.Empty => answer with { Sensors = [] },
+                Faults.Garbage => Core.DeviceSensors.DeviceSensorSnapshot.FromJson(Faults.GarbageText),
                 _ => answer,
             };
         }
