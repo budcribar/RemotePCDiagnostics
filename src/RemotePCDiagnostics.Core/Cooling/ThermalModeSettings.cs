@@ -173,6 +173,35 @@ public sealed class HpThermalProfileSetting(IHpBiosCalls bios) : IThermalModeSet
     };
 }
 
+/// <summary>
+/// HP's "fans at max" switch on Omen and Victus laptops (what OMEN Gaming Hub's max fan button sets), through the same BIOS WMI call as
+/// the thermal profile with HP's gaming command: query 0x26 reads it, 0x27 sets it. Other HPs answer the read with an error, so
+/// <see cref="Read"/> is null there and the setting isn't offered.
+/// </summary>
+public sealed class HpFanMaxSetting(IHpBiosCalls bios) : IThermalModeSetting
+{
+    public const int GamingCommand = 0x20008, GetQuery = 0x26, SetQuery = 0x27;
+    public const string Auto = "0", Max = "1";
+
+    public static readonly IReadOnlyList<CoolingModeOption> Options = [new(Auto, "Automatic"), new(Max, "Fans at max")];
+
+    public string Kind => CoolingModes.FanMaxKind;
+
+    public CoolingModeGroup? Read()
+    {
+        var (code, data) = bios.Call(GamingCommand, GetQuery, [0, 0, 0, 0]);
+        if (code != 0 || data is not { Length: > 0 }) return null;
+        return new(Kind, "HP fans at max", data[0] == 0 ? Auto : Max, Options);
+    }
+
+    public string? Set(string id)
+    {
+        if (id is not (Auto or Max)) return "That isn't a fan setting.";
+        var (code, _) = bios.Call(GamingCommand, SetQuery, [id == Max ? (byte)1 : (byte)0, 0, 0, 0]);
+        return code == 0 ? null : $"HP's BIOS refused the fan setting ({HpThermalProfileSetting.Describe(code)}).";
+    }
+}
+
 /// <summary>HP's BIOS WMI call (<c>hpqBIntM.hpqBIOSInt128</c>), behind an interface so the profile logic can be tested.</summary>
 public interface IHpBiosCalls
 {
@@ -311,8 +340,14 @@ public static class AgentCoolingModesHost
     public static AgentCoolingModes Instance(ILogger? log = null)
     {
         lock (Gate)
-            return _instance ??= new AgentCoolingModes([new WindowsPowerModeSetting(), PcMaker.For(PcMaker.Read())],
-                ProtectedState.PathFor(CoolingModes.JournalFile), log);
+        {
+            if (_instance is not null) return _instance;
+            var maker = PcMaker.Read();
+            IThermalModeSetting[] settings = maker == PcMaker.Hp
+                ? [new WindowsPowerModeSetting(), PcMaker.For(maker), new HpFanMaxSetting(new WindowsHpBiosCalls())]
+                : [new WindowsPowerModeSetting(), PcMaker.For(maker)];
+            return _instance = new AgentCoolingModes(settings, ProtectedState.PathFor(CoolingModes.JournalFile), log);
+        }
     }
 
     public static Osquery.ProcessResult Run(CoolingModesAction action) => Instance().Run(action);

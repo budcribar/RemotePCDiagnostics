@@ -9,7 +9,7 @@ public sealed record CoolingSample(double At, string Phase, double? CpuC, double
 /// <summary>The cooling test's thresholds and phase lengths (from the DiagnosticTest spec, issue #284).</summary>
 public sealed record CoolingRules
 {
-    public const string Idle = "idle", Load = "load", Cool = "cool";
+    public const string Idle = "idle", Load = "load", Cool = "cool", FanMax = "fanmax";
 
     /// <summary>Tj max when the CPU reports none.</summary>
     public double DefaultTjMaxC { get; init; } = 100;
@@ -37,6 +37,8 @@ public sealed record CoolingRules
     public TimeSpan IdleFull { get; init; } = TimeSpan.FromMinutes(5);
     public TimeSpan LoadFor { get; init; } = TimeSpan.FromSeconds(90);
     public TimeSpan CoolFor { get; init; } = TimeSpan.FromSeconds(30);
+    /// <summary>How long the fans run at max (HP Omen and Victus) while their speed is watched.</summary>
+    public TimeSpan FanMaxFor { get; init; } = TimeSpan.FromSeconds(20);
     public TimeSpan SampleEvery { get; init; } = TimeSpan.FromSeconds(1);
     /// <summary>The temperature-and-load card keeps one sample in this many seconds (the chart and Admin read it).</summary>
     public int ChartEverySeconds { get; init; } = 5;
@@ -211,6 +213,39 @@ public static class CoolingJudge
             $"Not supported: {(maker is { Length: > 0 } ? maker + " doesn't" : "this PC's maker doesn't")} let Windows apps set the fan speed, so the 20% to 100% steps weren't run",
             "Fan steps need the maker's fan control", ["Measure", "Value"], [], EmptyText: "Fan response under load shows how the fans follow the heat on their own.");
 
+    /// <summary>
+    /// The maker's "fans at max" switch (HP Omen and Victus), run with the CPU idle after the cool-down: the fans should speed up well past
+    /// where they were. <paramref name="before"/> is the cool-down's end, <paramref name="atMax"/> the samples while at max.
+    /// </summary>
+    public static AreaCard FanMaxVerdict(string setting, string? setError, bool readBack, IReadOnlyList<CoolingSample> before, IReadOnlyList<CoolingSample> atMax,
+        double? loadPeakFan, CoolingRules r)
+    {
+        const string title = "Fan speed control";
+        var columns = new[] { "Measure", "Value" };
+        var meta = $"{setting} for {Secs(r.FanMaxFor.TotalSeconds)}, then back to automatic · fans must rise {Pct((r.FanRiseRatio - 1) * 100)}";
+        if (setError is not null)
+            return new(FanControlCard, title, AreaLevel.Warning, $"Couldn't set the fans to max: {setError}", meta, columns, [Row(AreaLevel.Warning, setting, setError)],
+                Note: "Update the BIOS and OMEN Gaming Hub, then run the test again.");
+        var baseline = Median(before.TakeLast(5).Where(s => s.FanRpm is not null).Select(s => s.FanRpm!.Value));
+        var maxFans = atMax.Where(s => s.FanRpm is not null).Select(s => s.FanRpm!.Value).ToList();
+        double? peak = maxFans.Count == 0 ? null : maxFans.Max();
+        var rows = new List<AreaRow>
+        {
+            Row(readBack ? AreaLevel.Ok : AreaLevel.Warning, setting, readBack ? "Set and read back" : "Didn't read back as set"),
+            Row(AreaLevel.Neutral, "Fan speed before", baseline is { } b ? Rpm(b) : "Not reported"),
+            Row(AreaLevel.Neutral, "Fastest fan speed at max", peak is { } p ? Rpm(p) : "Not reported"),
+        };
+        if (loadPeakFan is { } lp) rows.Add(Row(AreaLevel.Neutral, "Fastest under full CPU load", Rpm(lp)));
+        if (!readBack)
+            return new(FanControlCard, title, AreaLevel.Warning, "Fans at max didn't stay set: HP's BIOS took the request but reads automatic", meta, columns, rows);
+        if (peak is not { } top)
+            return new(FanControlCard, title, AreaLevel.Ok, "Passed: the fans were set to max and back (this PC reports no fan speed, so listen for them getting louder)", meta, columns, rows);
+        if (baseline is { } b0 && b0 > 0 ? top >= b0 * r.FanRiseRatio : top > 0)
+            return new(FanControlCard, title, AreaLevel.Ok, baseline is { } b1 ? $"Passed: fans went from {Rpm(b1)} to {Rpm(top)} at max" : $"Passed: fans reached {Rpm(top)} at max", meta, columns, rows);
+        return new(FanControlCard, title, AreaLevel.Warning, $"Fans didn't speed up at max: about {Rpm(top)}{(baseline is { } b2 ? $", from {Rpm(b2)}" : "")}", meta, columns, rows,
+            Note: "Set to full speed, the fans should get much faster and louder. Check the fans aren't blocked or failing, and that OMEN Gaming Hub isn't overriding them.");
+    }
+
     /// <summary>The temperature-and-load chart's points, one per <see cref="CoolingRules.ChartEverySeconds"/> (widened when needed to fit <see cref="AreaReportExport.MaxRowsPerCard"/>).</summary>
     public static AreaCard Samples(IReadOnlyList<CoolingSample> samples, CoolingRules r)
     {
@@ -240,7 +275,7 @@ public static class CoolingJudge
 
     public static string PhaseName(string phase) => phase switch
     {
-        CoolingRules.Idle => "Low load", CoolingRules.Load => "Full load", CoolingRules.Cool => "Cooling down", _ => phase,
+        CoolingRules.Idle => "Low load", CoolingRules.Load => "Full load", CoolingRules.Cool => "Cooling down", CoolingRules.FanMax => "Fans at max", _ => phase,
     };
 
     private static string N(double? v) => v is { } x ? x.ToString("0.#", CultureInfo.InvariantCulture) : "";
