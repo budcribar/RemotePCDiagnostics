@@ -303,7 +303,7 @@
         label(':scope > .rbwv-control-confirm', 'Confirm');
     }
 
-    // Restart comes first, then the Remote | Local toggle, then the voice call parts.
+    // Restart comes first, then the control toggle (Technician or PC | You), then the voice call parts.
     function placeToggle(bar, toggle) {
         const restartParts = bar.querySelectorAll(':scope > .rbwv-control-restart, :scope > .rbwv-control-confirm, :scope > .rbwv-control-cancel');
         const after = restartParts.length ? restartParts[restartParts.length - 1] : null;
@@ -364,6 +364,15 @@
             toggle.append(makeBtn('remote', 'Remote'), makeBtn('local', 'Local'));
         }
         placeToggle(bar, toggle);
+
+        // The sides are this page's: "You" is whoever looks at it, the other side is the technician (on the PC's window) or the
+        // PC (on the technician's page). Plain Remote | Local read backwards on the technician's page.
+        const setLabel = (side, text) => {
+            const span = toggle.querySelector(`[data-side="${side}"] > span:last-child`);
+            if (span && span.textContent !== text) span.textContent = text;
+        };
+        setLabel('remote', isOwner ? 'Technician' : 'PC');
+        setLabel('local', 'You');
 
         toggle.hidden = false;
         bar.classList.add('rpd-has-toggle');
@@ -509,6 +518,66 @@
         return false;
     }
 
+    // A technician in control pressed Start on a hands-on test: control moves to the window at the PC for the test. Runs in
+    // every page (the app's JS calls reach them all); only the page in control asks the relay, and the relay only lets the
+    // controller pass control. Returns the technician's connection id (the controller's), so control can go back to them.
+    function handControlToLocal() {
+        const state = window.RemoteControl && typeof window.RemoteControl.getState === 'function' ? window.RemoteControl.getState() : null;
+        if (!state || !Array.isArray(state.participants)) return null;
+        const controller = state.participants.find(p => p.primary);
+        const owner = state.participants.find(p => p.owner);
+        if (!controller || controller.owner || !owner) return null;
+        if (state.myClientId === controller.id && typeof window.RemoteControl.requestPrimary === 'function') {
+            window.RemoteControl.requestPrimary(owner.id);
+        }
+        if (state.isOwner) watchForNobodyAtThePc(controller.id);
+        return controller.id;
+    }
+
+    // Nobody at the PC: with no mouse, touch or key input in the PC's window for a minute after a hand-off, control goes back to the
+    // technician by itself. (They can also take it back from the session bar: the relay lets the remote user who handed control over
+    // reclaim it.)
+    const HAND_OFF_IDLE_MS = 60000;
+    let handOffIdle = null;
+    function watchForNobodyAtThePc(technicianId) {
+        stopWatchingForNobody();
+        const watch = { technicianId, lastInput: Date.now(), started: Date.now(), hadControl: false, timer: 0 };
+        const onInput = e => { if (e.isTrusted) watch.lastInput = Date.now(); };
+        const kinds = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'];
+        for (const k of kinds) document.addEventListener(k, onInput, { capture: true, passive: true });
+        watch.stop = () => { for (const k of kinds) document.removeEventListener(k, onInput, { capture: true }); clearInterval(watch.timer); };
+        watch.timer = setInterval(() => {
+            const state = window.RemoteControl && window.RemoteControl.getState ? window.RemoteControl.getState() : null;
+            if (!state || !state.iHaveControl) {
+                // Control left this window after it got here (the technician took it back, or it was handed on): stop watching.
+                // Before it got here the hand-off is still on its way, so keep waiting (for at most the idle time).
+                if (watch.hadControl || Date.now() - watch.started > HAND_OFF_IDLE_MS) stopWatchingForNobody();
+                return;
+            }
+            watch.hadControl = true;
+            if (Date.now() - watch.lastInput >= HAND_OFF_IDLE_MS) {
+                stopWatchingForNobody();
+                giveControlTo(technicianId);
+            }
+        }, 1000);
+        handOffIdle = watch;
+    }
+    function stopWatchingForNobody() {
+        if (handOffIdle) { handOffIdle.stop(); handOffIdle = null; }
+    }
+
+    // The test is over: the window at the PC (in control now) gives control back to the technician. If their page joined
+    // again since, it goes to the remote user who is there now.
+    function giveControlTo(clientId) {
+        const state = window.RemoteControl && typeof window.RemoteControl.getState === 'function' ? window.RemoteControl.getState() : null;
+        if (state && state.isOwner) stopWatchingForNobody();
+        if (!state || !state.iHaveControl || !Array.isArray(state.participants)) return false;
+        const target = state.participants.find(p => p.id === clientId) || state.participants.find(p => !p.owner);
+        if (!target || target.id === state.myClientId || typeof window.RemoteControl.requestPrimary !== 'function') return false;
+        window.RemoteControl.requestPrimary(target.id);
+        return true;
+    }
+
     const controlSubscribers = new Set();
     function notifyControlSubscribers() {
         if (controlSubscribers.size === 0) return;
@@ -608,6 +677,8 @@
         uploadBenchmark,
         getControlInfo,
         releaseControlToLocal,
+        handControlToLocal,
+        giveControlTo,
         subscribeControl: (dotNetRef) => {
             controlSubscribers.add(dotNetRef);
             try {

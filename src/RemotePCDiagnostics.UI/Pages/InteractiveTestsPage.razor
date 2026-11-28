@@ -97,9 +97,16 @@
             @if (Session.Mode == SessionMode.Remote || _hasRemoteSession)
             {
                 <div class="banner-note" data-testid="interactive-remote-note">
-                    @if (_technicianHasControl)
+                    @if (_handOffTechId is not null && !_isRemoteDisplay)
                     {
-                        <span>Remote technician has control. Release control to the local user so they can interact with the physical hardware.</span>
+                        <span data-testid="interactive-handoff-note">The technician handed control to this PC for the test. It goes back to them when the test ends, or after a minute with no mouse or keyboard input here. The technician can also take it back.</span>
+                        <button type="button" class="btn btn-small" style="margin-left: 8px" data-testid="interactive-give-back" @onclick="() => ReturnControlAsync(null)">
+                            Give control back now
+                        </button>
+                    }
+                    else if (_technicianHasControl)
+                    {
+                        <span>The technician has control. Pressing Start on a test hands control to the person at the PC while it runs, and gives it back to the technician when it ends.</span>
                         @if (_isRemoteDisplay)
                         {
                             <button type="button" class="btn btn-small btn-primary" style="margin-left: 8px" data-testid="interactive-release-control" @onclick="ReleaseControlAsync">
@@ -141,8 +148,8 @@
                         else
                         {
                             <button class="btn btn-primary" data-testid="interactive-run-selected"
-                                    disabled="@(_selected.Count == 0 || _isRemoteDisplay || anyRunning)"
-                                    title="@(_isRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                                    disabled="@(_selected.Count == 0 || anyRunning)"
+                                    title="@(_isRemoteDisplay ? HandOffTitle : null)"
                                     @onclick="RunSelectedAsync">
                                 <Icon Name="play" Size="12" /> Run selected (@_selected.Count)
                             </button>
@@ -549,19 +556,19 @@
         <section class="ct-detail" aria-label="Interactive test details" data-testid="interactive-detail">
             @if (_selectedTestId == "keyboard")
             {
-                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="keyboard" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" RemoteSessionActive="RemoteSessionActive" OnOutcomeChanged="OnPhysicalQaOutcomeCompleted" />
+                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="keyboard" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" HandToPerson="HandToPersonForKeyboardAsync" RemoteSessionActive="RemoteSessionActive" OnOutcomeChanged="OnPhysicalQaOutcomeCompleted" />
             }
             else if (_selectedTestId == "pointer")
             {
-                <PointerTestPane Service="ActivePointerTest" IsRemoteDisplay="_isRemoteDisplay" RemoteSessionActive="RemoteSessionActive" AutoStart="_isBatchRunning" />
+                <PointerTestPane Service="ActivePointerTest" IsRemoteDisplay="_isRemoteDisplay" HandToPerson="HandToPersonForPointerAsync" RemoteSessionActive="RemoteSessionActive" AutoStart="_isBatchRunning" />
             }
             else if (_selectedTestId == "devicesensors")
             {
-                <DeviceSensorTestPane Service="ActiveSensorTest" IsRemoteDisplay="_isRemoteDisplay" AutoStart="_isBatchRunning" />
+                <DeviceSensorTestPane Service="ActiveSensorTest" IsRemoteDisplay="_isRemoteDisplay" HandToPerson="HandToPersonForSensorsAsync" AutoStart="_isBatchRunning" />
             }
             else if (_selectedTestId == "display")
             {
-                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="display" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" AutoLaunchDisplay="_isBatchRunning" OnOutcomeChanged="OnPhysicalQaOutcomeCompleted" />
+                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="display" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" HandToPerson="HandToPersonForDisplayAsync" AutoLaunchDisplay="_isBatchRunning" OnOutcomeChanged="OnPhysicalQaOutcomeCompleted" />
             }
             else if (_selectedTestId == "webcam")
             {
@@ -578,8 +585,8 @@
                             <button type="button"
                                     class="btn-small btn-primary"
                                     data-testid="webcam-start-btn"
-                                    disabled="@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)"
-                                    title="@(_isRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                                    disabled="@(Diagnostics.IsStressSuiteRunning)"
+                                    title="@(_isRemoteDisplay ? HandOffTitle : null)"
                                     @onclick="StartWebcamAsync">
                                 @(camResult.Status == DiagnosticStatus.NotRun ? "Start test" : "Run again")
                             </button>
@@ -684,8 +691,8 @@
                             <button type="button"
                                     class="btn-small btn-primary"
                                     data-testid="speakertomic-start-btn"
-                                    disabled="@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)"
-                                    title="@(_isRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                                    disabled="@(Diagnostics.IsStressSuiteRunning)"
+                                    title="@(_isRemoteDisplay ? HandOffTitle : null)"
                                     @onclick="StartSpeakerToMicAsync">
                                 @(s2mResult.Status == DiagnosticStatus.NotRun ? "Start test" : "Run again")
                             </button>
@@ -776,8 +783,8 @@
                             <button type="button"
                                     class="btn-small btn-primary"
                                     data-testid="mictospeaker-start-btn"
-                                    disabled="@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)"
-                                    title="@(_isRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                                    disabled="@(Diagnostics.IsStressSuiteRunning)"
+                                    title="@(_isRemoteDisplay ? HandOffTitle : null)"
                                     @onclick="StartMicToSpeakerAsync">
                                 @(m2sResult.Status == DiagnosticStatus.NotRun ? "Start monitor" : "Run again")
                             </button>
@@ -973,7 +980,7 @@
                                     <button type="button" class="btn-small" data-testid="soundcheck-help-play" disabled="@(scRunning || Diagnostics.IsStressSuiteRunning)" @onclick="StartSoundCheckAsync">▶ Play test sound</button>
                                     @if (_soundHelp == "cant-hear")
                                     {
-                                        <button type="button" class="btn-small" data-testid="soundcheck-help-s2m" disabled="@(s2mRunning || Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)" @onclick="RunSpeakerToMicFromHelpAsync">Run Speaker to mic</button>
+                                        <button type="button" class="btn-small" data-testid="soundcheck-help-s2m" disabled="@(s2mRunning || Diagnostics.IsStressSuiteRunning)" @onclick="RunSpeakerToMicFromHelpAsync">Run Speaker to mic</button>
                                     }
                                     <button type="button" class="btn-small" data-testid="soundcheck-help-refresh" disabled="@soundReading" @onclick="() => Diagnostics.RunAsync(ModuleSlugs.Sound)">Check again</button>
                                 </div>
@@ -1023,8 +1030,8 @@
                     </p>
                     <div class="toolbar">
                         <button type="button" class="btn-small btn-primary" data-testid="charger-start-btn"
-                                disabled="@(chRunning || Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)"
-                                title="@(_isRemoteDisplay ? "The person at the PC has to unplug the charger" : null)" @onclick="StartChargerAsync">
+                                disabled="@(chRunning || Diagnostics.IsStressSuiteRunning)"
+                                title="@(_isRemoteDisplay ? HandOffTitle : null)" @onclick="StartChargerAsync">
                             ▶ @(chResult.Status == DiagnosticStatus.NotRun ? "Start replug test" : "Run again")
                         </button>
                     </div>
@@ -1063,12 +1070,12 @@
                     </p>
                     @if (bdModule is { } drain)
                     {
-                        <BatteryDrainPanel Module="drain" Running="@bdRunning" Disabled="@(!bdRunning && (Diagnostics.IsStressSuiteRunning || _isRemoteDisplay))" />
+                        <BatteryDrainPanel Module="drain" Running="@bdRunning" Disabled="@(!bdRunning && Diagnostics.IsStressSuiteRunning)" />
                     }
                     <div class="toolbar">
                         <button type="button" class="btn-small btn-primary" data-testid="batterydrain-start-btn"
-                                disabled="@(bdRunning || bdModule is null || Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)"
-                                title="@(_isRemoteDisplay ? "The person at the PC has to unplug the charger and save their work" : null)" @onclick="StartBatteryDrainAsync">
+                                disabled="@(bdRunning || bdModule is null || Diagnostics.IsStressSuiteRunning)"
+                                title="@(_isRemoteDisplay ? HandOffTitle : null)" @onclick="StartBatteryDrainAsync">
                             ▶ @(bdResult.Status == DiagnosticStatus.NotRun ? "Start drain test" : "Run again")
                         </button>
                     </div>
@@ -1250,7 +1257,7 @@
                         else
                         {
                             <button type="button" class="btn-small btn-primary" data-testid="usbports-start-btn"
-                                    disabled="@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay || usbModule is null)" @onclick="StartUsbPortCheckAsync">
+                                    disabled="@(Diagnostics.IsStressSuiteRunning || usbModule is null)" title="@(_isRemoteDisplay ? HandOffTitle : null)" @onclick="StartUsbPortCheckAsync">
                                 @(usbRep is null ? "Start watching" : "Start again")
                             </button>
                         }
@@ -1431,8 +1438,8 @@
                         else
                         {
                             <button type="button" class="btn-small btn-primary" data-testid="displayoutputs-start-btn"
-                                    disabled="@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay || dvModule is null)"
-                                    title="@(_isRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                                    disabled="@(Diagnostics.IsStressSuiteRunning || dvModule is null)"
+                                    title="@(_isRemoteDisplay ? HandOffTitle : null)"
                                     @onclick="StartDisplayOutputCheckAsync">
                                 @(dvRep is null ? "Start watching" : "Start again")
                             </button>
@@ -1672,6 +1679,12 @@
         _isRemoteDisplay = info.IsRemoteDisplay;
         _hasRemoteSession = info.HasRemoteSession;
         _technicianHasControl = info.TechnicianHasControl;
+        // A hand-off ends once the technician has control again: they took it back, or the PC's window gave it back (nobody there).
+        if (_handOffTechId is not null)
+        {
+            if (!info.TechnicianHasControl) _handOffConfirmed = true;
+            else if (_handOffConfirmed) { _handOffTechId = null; _handOffTest = null; _handOffConfirmed = false; }
+        }
         InvokeAsync(StateHasChanged);
     }
 
@@ -1680,11 +1693,73 @@
         try { await JS.InvokeVoidAsync("rpdSession.releaseControlToLocal"); } catch { }
     }
 
-    private void OnPointerTestChanged() => _ = InvokeAsync(StateHasChanged);
-    private void OnSensorTestChanged() => _ = InvokeAsync(StateHasChanged);
+    private void OnPointerTestChanged()
+    {
+        if (_handOffTest == "pointer" && ActivePointerTest.Current.Verdict is not (PointerTestVerdict.NotRun or PointerTestVerdict.Running))
+            _ = InvokeAsync(() => ReturnControlAsync("pointer"));
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnSensorTestChanged()
+    {
+        if (_handOffTest == "sensors" && ActiveSensorTest.Current.Verdict is not (SensorTestVerdict.NotRun or SensorTestVerdict.Running))
+            _ = InvokeAsync(() => ReturnControlAsync("sensors"));
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>Shown on Start buttons on the technician's page while they have control.</summary>
+    private const string HandOffTitle = "Control moves to the person at the PC while this test runs, and comes back to you when it ends";
+
+    /// <summary>The technician's connection while control is with the PC for a test they started (null: no hand-off).</summary>
+    private string? _handOffTechId;
+    /// <summary>Which test gives control back when it ends: pointer, sensors, batch, webcam… (keyboard and display: the PC's button).</summary>
+    private string? _handOffTest;
+    /// <summary>The PC's window was seen in control after the hand-off (so a later "technician has control" means it came back).</summary>
+    private bool _handOffConfirmed;
+
+    /// <summary>
+    /// The hands-on tests count only input from this PC's own hardware, and only the page in control reaches the app. So when the technician
+    /// (in control) presses Start, control moves to the window at the PC for the test. True when the test can start: no hand-off was needed,
+    /// or control is on its way to the PC. Nested starts (Run selected) keep the first hand-off.
+    /// </summary>
+    private async Task<bool> HandToPersonAsync(string test)
+    {
+        if (!_isRemoteDisplay) return true;
+        string? techId;
+        try { techId = await JS.InvokeAsync<string?>("rpdSession.handControlToLocal"); }
+        catch { return false; }
+        if (string.IsNullOrEmpty(techId)) return false;
+        _handOffTechId = techId;
+        _handOffTest = test;
+        _handOffConfirmed = false;
+        _isRemoteDisplay = false; // control is moving to this PC's window; the next control update confirms it
+        await InvokeAsync(StateHasChanged);
+        return true;
+    }
+
+    /// <summary>Gives control back to the technician once <paramref name="test"/> (the one that took it) ends; null: now, whatever took it.</summary>
+    private async Task ReturnControlAsync(string? test)
+    {
+        if (_handOffTechId is not { } techId || (test is not null && test != _handOffTest)) return;
+        _handOffTechId = null;
+        _handOffTest = null;
+        try { await JS.InvokeVoidAsync("rpdSession.giveControlTo", techId); } catch { }
+        if (!_disposed) await InvokeAsync(StateHasChanged);
+    }
+
+    private Task<bool> HandToPersonForPointerAsync() => HandToPersonAsync("pointer");
+    private Task<bool> HandToPersonForSensorsAsync() => HandToPersonAsync("sensors");
+    private Task<bool> HandToPersonForKeyboardAsync() => HandToPersonAsync("keyboard");
+    private Task<bool> HandToPersonForDisplayAsync() => HandToPersonAsync("display");
 
     public override void Dispose()
     {
+        // Leaving the page ends any test started with a hand-off: control goes back to the technician.
+        if (_handOffTechId is { } handOffTech)
+        {
+            _handOffTechId = null;
+            try { _ = JS.InvokeVoidAsync("rpdSession.giveControlTo", handOffTech); } catch { }
+        }
         _disposed = true;
         base.Dispose();
         if (_usbPortCheckModule is not null)
@@ -1990,7 +2065,8 @@
 
     private async Task RunSelectedAsync()
     {
-        if (Diagnostics.IsStressSuiteRunning || _isBatchRunning || _isRemoteDisplay) return;
+        if (Diagnostics.IsStressSuiteRunning || _isBatchRunning) return;
+        if (!await HandToPersonAsync("batch")) return;
 
         _isBatchRunning = true;
         _batchCts = new CancellationTokenSource();
@@ -2058,6 +2134,7 @@
             _isBatchRunning = false;
             _batchCts?.Dispose();
             _batchCts = null;
+            await ReturnControlAsync("batch");
             await InvokeAsync(StateHasChanged);
         }
     }
@@ -2138,9 +2215,11 @@
     /// <summary>Watches the USB tree until the person presses Finish; each device they plug in shows live with its port and speed.</summary>
     private async Task StartUsbPortCheckAsync()
     {
-        if (Diagnostics.IsStressSuiteRunning || _isRemoteDisplay) return;
+        if (Diagnostics.IsStressSuiteRunning) return;
+        if (!await HandToPersonAsync("usbports")) return;
         _personResults.Remove(ModuleSlugs.UsbPortCheck);
         await Diagnostics.RunAsync(ModuleSlugs.UsbPortCheck);
+        await ReturnControlAsync("usbports");
     }
 
     private void FinishUsbPortCheck() => GetUsbPortCheckModule()?.Finish();
@@ -2172,10 +2251,12 @@
     /// <summary>Watches the display configuration until the person presses Finish; each monitor they plug in shows live with its connector.</summary>
     private async Task StartDisplayOutputCheckAsync()
     {
-        if (Diagnostics.IsStressSuiteRunning || _isRemoteDisplay) return;
+        if (Diagnostics.IsStressSuiteRunning) return;
+        if (!await HandToPersonAsync("displayoutputs")) return;
         _personResults.Remove(ModuleSlugs.DisplayOutputCheck);
         _noSignalPort = "";
         await Diagnostics.RunAsync(ModuleSlugs.DisplayOutputCheck);
+        await ReturnControlAsync("displayoutputs");
     }
 
     private void FinishDisplayOutputCheck() => GetDisplayOutputCheckModule()?.Finish();
@@ -2227,8 +2308,10 @@
 
     private async Task StartChargerAsync()
     {
-        if (Diagnostics.IsStressSuiteRunning || _isRemoteDisplay) return;
+        if (Diagnostics.IsStressSuiteRunning) return;
+        if (!await HandToPersonAsync("charger")) return;
         await Diagnostics.RunAsync(ModuleSlugs.ChargerReplug);
+        await ReturnControlAsync("charger");
     }
 
     private void CancelCharger() => GetChargerModule()?.Cancel();
@@ -2240,8 +2323,10 @@
     /// <summary>Starts the drain test (hours long). Not awaited by anything else on the page, so the other tests stay usable meanwhile.</summary>
     private async Task StartBatteryDrainAsync()
     {
-        if (Diagnostics.IsStressSuiteRunning || _isRemoteDisplay || GetBatteryDrainModule() is null) return;
+        if (Diagnostics.IsStressSuiteRunning || GetBatteryDrainModule() is null) return;
+        if (!await HandToPersonAsync("batterydrain")) return;
         await Diagnostics.RunAsync(ModuleSlugs.BatteryDrain);
+        await ReturnControlAsync("batterydrain");
     }
 
     private void CancelBatteryDrain() => GetBatteryDrainModule()?.Cancel();
@@ -2362,6 +2447,13 @@
     private async Task StartWebcamAsync()
     {
         if (Diagnostics.IsStressSuiteRunning) return;
+        if (!await HandToPersonAsync("webcam")) return;
+        try { await RunWebcamAsync(); }
+        finally { await ReturnControlAsync("webcam"); }
+    }
+
+    private async Task RunWebcamAsync()
+    {
         var cam = GetWebcamModule();
         if (cam is not null)
         {
@@ -2456,6 +2548,13 @@
     private async Task StartSpeakerToMicAsync()
     {
         if (Diagnostics.IsStressSuiteRunning) return;
+        if (!await HandToPersonAsync("speakertomic")) return;
+        try { await RunSpeakerToMicAsync(); }
+        finally { await ReturnControlAsync("speakertomic"); }
+    }
+
+    private async Task RunSpeakerToMicAsync()
+    {
         var m = GetSpeakerToMicModule();
         if (m is not null)
         {
@@ -2475,6 +2574,13 @@
     private async Task StartMicToSpeakerAsync()
     {
         if (Diagnostics.IsStressSuiteRunning) return;
+        if (!await HandToPersonAsync("mictospeaker")) return;
+        try { await RunMicToSpeakerAsync(); }
+        finally { await ReturnControlAsync("mictospeaker"); }
+    }
+
+    private async Task RunMicToSpeakerAsync()
+    {
         var m = GetMicToSpeakerModule();
         if (m is not null)
         {

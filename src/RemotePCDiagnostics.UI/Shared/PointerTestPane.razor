@@ -21,8 +21,8 @@
         else
         {
             <button type="button" class="btn-small btn-primary" data-testid="pointer-start"
-                    disabled="@(IsRemoteDisplay || selected is null)"
-                    title="@(IsRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                    disabled="@(Blocked || selected is null)"
+                    title="@(IsRemoteDisplay ? HandOffHint : null)"
                     @onclick="Start">
                 @(snap.Verdict == PointerTestVerdict.NotRun ? "Start test" : "Run again")
             </button>
@@ -207,6 +207,11 @@
 @code {
     [Parameter, EditorRequired] public PointerTestService Service { get; set; } = default!;
     [Parameter] public bool IsRemoteDisplay { get; set; }
+    /// <summary>The technician (in control) pressed Start: hands control to the person at the PC first. Null: Start stays off on a remote page.</summary>
+    [Parameter] public Func<Task<bool>>? HandToPerson { get; set; }
+    private bool Blocked => IsRemoteDisplay && HandToPerson is null;
+    private string HandOffHint => HandToPerson is null ? "Interactive tests must run locally on the physical machine" : "Control moves to the person at the PC while this test runs";
+    private async Task<bool> ReadyToStartAsync() => !IsRemoteDisplay || (HandToPerson is not null && await HandToPerson());
     [Parameter] public bool RemoteSessionActive { get; set; }
     /// <summary>Start as soon as the pane opens (Run selected).</summary>
     [Parameter] public bool AutoStart { get; set; }
@@ -257,11 +262,10 @@
 
     private void OnNoMiddle(ChangeEventArgs e) => Service.SetNoMiddleButton(e.Value is true || string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase));
 
-    private Task Start()
+    private async Task Start()
     {
-        if (IsRemoteDisplay) return Task.CompletedTask;
         var device = _devices.FirstOrDefault(d => d.Id == _deviceId) ?? _devices.FirstOrDefault();
-        if (device is null) return Task.CompletedTask;
+        if (device is null || !await ReadyToStartAsync()) return;
         _dragBox = null;
         _touches.Clear();
         (_gridLeft, _gridTop, _gridW, _gridH) = (0, 0, 0, 0);
@@ -269,7 +273,6 @@
         StartTicker();
         _fullscreen = true;
         App.Fullscreen?.RequestFullscreen(true);
-        return Task.CompletedTask;
     }
 
     private Task SwitchTo(PointerDevice device)
