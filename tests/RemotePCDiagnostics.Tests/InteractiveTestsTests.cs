@@ -90,11 +90,13 @@ public class InteractiveTestsTests
         Assert.True(File.Exists(pagePath));
         var content = File.ReadAllText(pagePath);
 
-        const string expectedTooltip = "Interactive tests must run locally on the physical machine";
-        Assert.Contains(expectedTooltip, content);
-        Assert.Contains("disabled=\"@(_selected.Count == 0 || _isRemoteDisplay)\"", content);
-        Assert.Contains("disabled=\"@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)\"", content);
-        Assert.Contains("Remote technician has control. Release control to the local user", content);
+        // The technician in control can press Start: the tests hand control to the person at the PC (HandToPersonAsync) and give it back.
+        Assert.Contains("Interactive tests must run locally on the physical machine", content); // Ethernet still needs the person at the PC
+        Assert.Contains("disabled=\"@(_selected.Count == 0)\"", content);
+        Assert.Contains("title=\"@(_isRemoteDisplay ? HandOffTitle : null)\"", content);
+        Assert.Contains("HandToPersonAsync(\"batch\")", content);
+        Assert.Contains("ReturnControlAsync(\"batch\")", content);
+        Assert.Contains("Pressing Start on a test hands control to the person at the PC", content);
         Assert.Contains("Local user has control of the session", content);
     }
 
@@ -109,7 +111,8 @@ public class InteractiveTestsTests
         Assert.Contains(expectedTooltip, content);
         Assert.Contains("data-testid=\"keyboard-capture-toggle\"", content);
         Assert.Contains("data-testid=\"display-test-launch\"", content);
-        Assert.Contains("disabled=\"@IsRemoteDisplay\"", content);
+        Assert.Contains("disabled=\"@Blocked\"", content);
+        Assert.Contains("ReadyToStartAsync", content);
 
         // Overlay timing enforcement: mousemove must not prematurely show HUD
         Assert.DoesNotContain("@onmousemove=\"OnOverlayMouseMove\"", content);

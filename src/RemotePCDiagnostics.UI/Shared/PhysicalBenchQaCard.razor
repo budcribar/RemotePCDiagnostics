@@ -22,8 +22,8 @@
                 <button type="button"
                         class="btn-small @(_capturingKeys ? "btn-primary" : "")"
                         data-testid="keyboard-capture-toggle"
-                        disabled="@IsRemoteDisplay"
-                        title="@(IsRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                        disabled="@Blocked"
+                        title="@(IsRemoteDisplay ? HandOffHint : null)"
                         @onclick="ToggleKeyCapture">
                     @(_capturingKeys ? "Capturing keys (click to release)" : "Capture keys")
                 </button>
@@ -164,8 +164,8 @@
                         </span>
                         <span class="chip chip-@ColorChip(result)" data-testid="display-screen-color">@ColorLabel(result)</span>
                         <button type="button" class="btn-small" data-testid="display-screen-test"
-                                disabled="@IsRemoteDisplay"
-                                title="@(IsRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                                disabled="@Blocked"
+                                title="@(IsRemoteDisplay ? HandOffHint : null)"
                                 @onclick="() => LaunchDisplayOverlay(screen)">
                             Test this screen
                         </button>
@@ -183,8 +183,8 @@
                 else
                 {
                     <button type="button" class="btn-small" data-testid="display-blank-run"
-                            disabled="@(IsRemoteDisplay || _blanking)"
-                            title="@(IsRemoteDisplay ? "Interactive tests must run locally on the physical machine" : "Turns every screen off for 2 seconds, then back on")"
+                            disabled="@(Blocked || _blanking)"
+                            title="@(IsRemoteDisplay ? HandOffHint : "Turns every screen off for 2 seconds, then back on")"
                             @onclick="RunBlankAsync">
                         @(_blanking ? "Screens off…" : "Screen off and on (2 s)")
                     </button>
@@ -199,8 +199,8 @@
             <div style="margin-bottom: 8px">
                 <button type="button" class="btn btn-outline" style="width:auto"
                         data-testid="display-test-launch"
-                        disabled="@IsRemoteDisplay"
-                        title="@(IsRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                        disabled="@Blocked"
+                        title="@(IsRemoteDisplay ? HandOffHint : null)"
                         @onclick="() => LaunchDisplayOverlay(null)">
                     <Icon Name="eye" Size="14" /> Launch full-screen color check@(ScreensForTest.Count > 1 ? $" on all {ScreensForTest.Count} screens" : "")
                 </button>
@@ -341,6 +341,11 @@ else
     [Parameter] public string? FilterSection { get; set; }
     [Parameter] public bool CardShell { get; set; } = true;
     [Parameter] public bool IsRemoteDisplay { get; set; }
+    /// <summary>The technician (in control) pressed Start: hands control to the person at the PC first. Null: Start stays off on a remote page.</summary>
+    [Parameter] public Func<Task<bool>>? HandToPerson { get; set; }
+    private bool Blocked => IsRemoteDisplay && HandToPerson is null;
+    private string HandOffHint => HandToPerson is null ? "Interactive tests must run locally on the physical machine" : "Control moves to the person at the PC while this test runs";
+    private async Task<bool> ReadyToStartAsync() => !IsRemoteDisplay || (HandToPerson is not null && await HandToPerson());
     [Parameter] public bool AutoLaunchDisplay { get; set; }
     [Parameter] public Action<string, PhysicalCheckOutcome>? OnOutcomeChanged { get; set; }
     /// <summary>A remote session is connected: when keys can't be checked against the keyboard, none count.</summary>
@@ -523,7 +528,7 @@ else
         if (AutoLaunchDisplay && FilterSection == "display" && !_hasAutoLaunchedDisplay && !_displayOverlayOpen && !IsRemoteDisplay)
         {
             _hasAutoLaunchedDisplay = true;
-            LaunchDisplayOverlay(null);
+            _ = LaunchDisplayOverlay(null);
             StateHasChanged();
         }
     }
@@ -565,8 +570,9 @@ else
         }
     }
 
-    private void ToggleKeyCapture()
+    private async Task ToggleKeyCapture()
     {
+        if (!_capturingKeys && !await ReadyToStartAsync()) return;
         _capturingKeys = !_capturingKeys;
         if (_capturingKeys)
             _shouldFocusKeyZone = true;
@@ -691,8 +697,9 @@ else
     }
 
     /// <summary>Opens the full-screen test on <paramref name="only"/>, or on every connected screen in turn when null.</summary>
-    private void LaunchDisplayOverlay(ScreenInfo? only)
+    private async Task LaunchDisplayOverlay(ScreenInfo? only)
     {
+        if (!await ReadyToStartAsync()) return;
         _screenList = LoadScreens();
         if (only is null)
         {
@@ -886,7 +893,7 @@ else
     /// <summary>Screen off and on: every display goes dark for 2 seconds, then the person says whether each came back.</summary>
     private async Task RunBlankAsync()
     {
-        if (_blanking || _disposed) return;
+        if (_blanking || _disposed || !await ReadyToStartAsync()) return;
         if (App.Screens is not { } screens)
         {
             ActiveService.Update(s => s with { BlankScreen = BlankScreenOutcome.NotSupported, BlankScreenReason = "This app can't turn the screens off here." });

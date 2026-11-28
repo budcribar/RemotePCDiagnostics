@@ -89,7 +89,7 @@ public sealed class BatteryDrainPanelTests : BunitContext
     }
 
     [Fact]
-    public void The_Interactive_tests_pane_shows_the_panel_runs_the_drain_and_a_remote_viewer_cannot_start_it()
+    public void The_Interactive_tests_pane_shows_the_panel_runs_the_drain_and_a_remote_technician_hands_control_to_the_PC_to_start_it()
     {
         JSInterop.Mode = JSRuntimeMode.Loose;
         var store = new RemotePCDiagnostics.Core.ResultStore();
@@ -120,6 +120,13 @@ public sealed class BatteryDrainPanelTests : BunitContext
         {
             IsRemoteDisplay = true, HasRemoteSession = true, TechnicianHasControl = true,
         }));
-        page.WaitForAssertion(() => Assert.True(page.Find("[data-testid=batterydrain-start-btn]").HasAttribute("disabled")));
+        // The technician in control can press Start: control moves to the PC for the test and comes back to them when it ends.
+        page.WaitForAssertion(() => Assert.False(page.Find("[data-testid=batterydrain-start-btn]").HasAttribute("disabled")));
+        Assert.Contains("person at the PC", page.Find("[data-testid=batterydrain-start-btn]").GetAttribute("title"));
+        JSInterop.Setup<string?>("rpdSession.handControlToLocal").SetResult("tech-1");
+        page.Find("[data-testid=batterydrain-confirm]").Change(true);
+        page.Find("[data-testid=batterydrain-start-btn]").Click();
+        page.WaitForAssertion(() => Assert.Contains(JSInterop.Invocations, i => i.Identifier == "rpdSession.handControlToLocal"));
+        page.WaitForAssertion(() => Assert.Contains(JSInterop.Invocations, i => i.Identifier == "rpdSession.giveControlTo" && Equals(i.Arguments[0], "tech-1")));
     }
 }

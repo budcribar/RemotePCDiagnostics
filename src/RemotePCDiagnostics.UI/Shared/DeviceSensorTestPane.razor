@@ -18,8 +18,8 @@
         else
         {
             <button type="button" class="btn-small btn-primary" data-testid="devicesensors-start"
-                    disabled="@(IsRemoteDisplay || _starting)"
-                    title="@(IsRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                    disabled="@(Blocked || _starting)"
+                    title="@(IsRemoteDisplay ? HandOffHint : null)"
                     @onclick="StartAsync">
                 @(snap.Verdict == SensorTestVerdict.NotRun ? "Start test" : "Run again")
             </button>
@@ -137,6 +137,11 @@
 @code {
     [Parameter, EditorRequired] public DeviceSensorTestService Service { get; set; } = default!;
     [Parameter] public bool IsRemoteDisplay { get; set; }
+    /// <summary>The technician (in control) pressed Start: hands control to the person at the PC first. Null: Start stays off on a remote page.</summary>
+    [Parameter] public Func<Task<bool>>? HandToPerson { get; set; }
+    private bool Blocked => IsRemoteDisplay && HandToPerson is null;
+    private string HandOffHint => HandToPerson is null ? "Interactive tests must run locally on the physical machine" : "Control moves to the person at the PC while this test runs";
+    private async Task<bool> ReadyToStartAsync() => !IsRemoteDisplay || (HandToPerson is not null && await HandToPerson());
     /// <summary>Run selected: start the test as soon as the pane opens.</summary>
     [Parameter] public bool AutoStart { get; set; }
 
@@ -163,8 +168,9 @@
 
     private async Task StartAsync()
     {
-        if (IsRemoteDisplay || _starting || _disposed) return;
+        if (_starting || _disposed) return;
         _starting = true;
+        if (!await ReadyToStartAsync()) { _starting = false; return; }
         try { await Service.StartAsync(); }
         catch (OperationCanceledException) { }
         catch (ObjectDisposedException) { }
