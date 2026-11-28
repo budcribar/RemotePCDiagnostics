@@ -300,6 +300,70 @@ public sealed class VideoPlaybackTests : BunitContext
     private static MediaProcess P(int pid, string name, double cpuSeconds) => new(pid, name, TimeSpan.FromSeconds(cpuSeconds));
 
     [Fact]
+    public void Browser_on_a_chip_with_no_AV1_decoder_is_told_about_AV1_first()
+    {
+        // BUDSLAPTOP, Nov 28: Chrome on YouTube used 65% of a core with no decode engine use; the Radeon decodes H.264, HEVC and VP9 only.
+        List<MediaProcess> before = [P(10, "chrome", 10), P(20, "vlc", 100)];
+        List<MediaProcess> after = [P(10, "chrome", 13.25), P(20, "vlc", 103)];
+        List<MediaSessionInfo> sessions = [new("Chrome", true), new("vlc.exe", true)];
+        string[] formats = [VideoFormats.H264, VideoFormats.Hevc, VideoFormats.Vp9];
+
+        var r = MediaAppsCheck.Evaluate(before, after, 5, [new(SelfPid, "3D", 1)], sessions, SelfPid, enginesAvailable: true, formats);
+
+        Assert.True(r.NoAv1Decoder);
+        var chrome = r.Apps.Single(a => a.Name == "chrome");
+        Assert.Equal(MediaAppVerdict.ProcessorDecode, chrome.Verdict);
+        Assert.StartsWith("This graphics chip can't decode AV1 (it decodes H.264, HEVC and VP9)", chrome.Advice);
+        Assert.Contains("Use graphics acceleration when available", chrome.Advice); // the browser's own setting still follows
+        // Not a browser: VLC plays the file as it is, so its own setting is the advice.
+        Assert.StartsWith("In Tools > Preferences", r.Apps.Single(a => a.Name == "vlc").Advice);
+
+        var report = VideoPlaybackModule.MediaAppsReport(r);
+        Assert.Contains("most likely AV1, which this graphics chip can't decode", report.Summary);
+        Assert.Contains("graphics chip decodes H.264, HEVC and VP9 (no AV1)", report.Cards[0].Meta);
+    }
+
+    [Fact]
+    public void Browser_advice_is_unchanged_when_the_chip_decodes_AV1_or_its_formats_are_unknown()
+    {
+        var chrome = MediaAppCatalog.Find("chrome");
+        Assert.Equal(chrome!.Advice, MediaAppsCheck.Advice(chrome, noAv1Decoder: false, [.. VideoFormats.All]));
+        List<MediaProcess> before = [P(10, "chrome", 10)];
+        List<MediaProcess> after = [P(10, "chrome", 13)];
+        var unknown = MediaAppsCheck.Evaluate(before, after, 5, [new(SelfPid, "3D", 1)], [new("Chrome", true)], SelfPid, enginesAvailable: true);
+        Assert.False(unknown.NoAv1Decoder);
+        Assert.Equal(chrome.Advice, unknown.Apps.Single().Advice);
+        Assert.DoesNotContain("graphics chip decodes", VideoPlaybackModule.MediaAppsReport(unknown).Cards[0].Meta);
+    }
+
+    [Fact]
+    public void Stream_row_is_ok_on_a_passed_run_with_audio_glitches_or_a_few_dropped_frames()
+    {
+        var o = new VideoPlaybackOptions();
+        // BUDSLAPTOP, Nov 28: 1,807 frames, 1 late, 0 dropped, 3 audio glitches on the graphics chip; the card passed, the row said Warning.
+        var glitchy = new VideoStreamResult(1, TimeSpan.Zero, TimeSpan.FromMinutes(1), 1807, 1, 0, 1807, 1900, 3, TimeSpan.FromMilliseconds(13), "D3D11", VideoStreamEnd.Finished);
+        Assert.Equal(AreaLevel.Ok, VideoPlaybackModule.StreamLevel(glitchy, o));
+        Assert.Equal(AreaLevel.Warning, VideoPlaybackModule.StreamLevel(glitchy with { GraphicsChipFrames = 1000 }, o));
+    }
+
+    [Fact]
+    public void Stream_warns_above_the_stutter_threshold_and_fails_above_the_drop_limit()
+    {
+        var o = new VideoPlaybackOptions();
+        var s = new VideoStreamResult(1, TimeSpan.Zero, TimeSpan.FromMinutes(1), 1000, 0, 10, 1000, 1000, 10, TimeSpan.FromMilliseconds(20), "D3D11", VideoStreamEnd.Finished);
+        Assert.Equal(AreaLevel.Ok, VideoPlaybackModule.StreamLevel(s, o)); // exactly 1% is still fine
+        Assert.Equal(AreaLevel.Warning, VideoPlaybackModule.StreamLevel(s with { DroppedFrames = 20 }, o));
+        Assert.Equal(AreaLevel.Warning, VideoPlaybackModule.StreamLevel(s with { AudioGlitches = 20 }, o));
+        Assert.Equal(AreaLevel.Error, VideoPlaybackModule.StreamLevel(s with { DroppedFrames = 60 }, o));
+
+        var passed = new VideoPlaybackResult(VideoPlaybackOutcome.Passed, TimeSpan.FromMinutes(1), null, [s with { DroppedFrames = 20 }], 1, 10, 20, null, null, null);
+        var card = VideoPlaybackModule.StressReport(passed, o).Cards[0];
+        Assert.Equal(AreaLevel.Warning, card.Level);
+        Assert.StartsWith("Passed with some stutter", card.Headline);
+        Assert.Equal(AreaLevel.Ok, VideoPlaybackModule.StressReport(passed with { Streams = [s] }, o).Cards[0].Level);
+    }
+
+    [Fact]
     public void Media_apps_names_the_app_decoding_on_the_processor()
     {
         // Over 5 s: Chrome's GPU process uses the decode engine; VLC burns 3 s of CPU (60% of a core) with no decode engine use; Spotify is light.

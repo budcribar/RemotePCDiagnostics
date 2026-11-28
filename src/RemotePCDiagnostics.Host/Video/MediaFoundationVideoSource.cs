@@ -127,6 +127,40 @@ public sealed class MediaFoundationVideoSource(ILogger? log = null, string? clip
         return list;
     }
 
+    // D3D11 decoder profiles (d3d11.h / dxva.h): the main profile of each format, enough to say whether the chip decodes it at all.
+    private static readonly (Guid Profile, string Format)[] DecoderProfiles =
+    [
+        (new("1b81be68-a0c7-11d3-b984-00c04f2e73c5"), VideoFormats.H264), // D3D11_DECODER_PROFILE_H264_VLD_NOFGT
+        (new("5b11d51b-2f4c-4452-bcc3-09f2a1160cc0"), VideoFormats.Hevc), // D3D11_DECODER_PROFILE_HEVC_VLD_MAIN
+        (new("463707f8-a1d0-4585-876d-83aa6d60b89e"), VideoFormats.Vp9), // D3D11_DECODER_PROFILE_VP9_VLD_PROFILE0
+        (new("b8be4ccb-cf53-46ba-8d59-d6b8a6da5d2a"), VideoFormats.Av1), // D3D11_DECODER_PROFILE_AV1_VLD_PROFILE0
+    ];
+
+    /// <summary>The formats the default graphics chip lists as hardware decoder profiles. Null when there is no hardware D3D11 device
+    /// with video support (basic display driver, Remote Desktop) or the driver won't list profiles.</summary>
+    public IReadOnlyList<string>? ReadHardwareDecodeFormats()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        var hr = D3D11.D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.VideoSupport,
+            [FeatureLevel.Level_11_1, FeatureLevel.Level_11_0, FeatureLevel.Level_10_1, FeatureLevel.Level_10_0], out ID3D11Device? device);
+        if (hr.Failure || device is null) { device?.Dispose(); return null; }
+        using (device)
+        using (var video = device.QueryInterfaceOrNull<ID3D11VideoDevice>())
+        {
+            if (video is null) return null;
+            var listed = new HashSet<Guid>();
+            var count = video.VideoDecoderProfileCount;
+            for (var i = 0u; i < count; i++)
+            {
+                try { listed.Add(video.GetVideoDecoderProfile(i)); }
+                catch (SharpGenException) { /* a profile the driver won't name: skip it */ }
+            }
+            var formats = VideoFormats.All.Where(f => DecoderProfiles.Any(p => p.Format == f && listed.Contains(p.Profile))).ToList();
+            log.Info($"Video playback: {listed.Count} decoder profiles, formats={string.Join(",", formats)}");
+            return listed.Count == 0 ? null : formats;
+        }
+    }
+
     public IReadOnlyList<MediaSessionInfo> ReadMediaSessions()
     {
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763)) return [];

@@ -67,6 +67,10 @@ public sealed record VideoPlaybackOptions
 
     /// <summary>Failed when a stream drops more than this share of its frames.</summary>
     public double DropFailPercent { get; init; } = 5;
+    /// <summary>A stream that drops more than this share of its frames (but not more than <see cref="DropFailPercent"/>) gets a warning.</summary>
+    public double DropWarnPercent { get; init; } = 1;
+    /// <summary>A stream whose audio is late for more than this share of its audio chunks gets a warning. A few late chunks are normal.</summary>
+    public double AudioGlitchWarnPercent { get; init; } = 1;
     /// <summary>Like a player's queue, a stream may decode this far ahead of the frame being shown.</summary>
     public TimeSpan Lookahead { get; init; } = TimeSpan.FromMilliseconds(150);
     /// <summary>How often the run reads the engines and the temperature, and adds or removes streams to match the count asked for.</summary>
@@ -94,6 +98,7 @@ public sealed record VideoStreamResult(
 {
     [JsonIgnore] public double DroppedPercent => Frames == 0 ? 0 : DroppedFrames * 100.0 / Frames;
     [JsonIgnore] public double LatePercent => Frames == 0 ? 0 : LateFrames * 100.0 / Frames;
+    [JsonIgnore] public double AudioGlitchPercent => AudioBuffers == 0 ? 0 : AudioGlitches * 100.0 / AudioBuffers;
     /// <summary>Some frames came back from the processor, not the graphics chip.</summary>
     [JsonIgnore] public bool SoftwareDecode => Frames > 0 && GraphicsChipFrames < Frames;
 }
@@ -131,7 +136,18 @@ public sealed record MediaAppUsage(
 public enum MediaAppVerdict { GraphicsChip, LightLoad, ProcessorDecode, NotPlaying }
 
 /// <summary>The media apps check: every app that plays media or uses the video decode engine, over <see cref="Window"/>.</summary>
-public sealed record MediaAppsResult(TimeSpan Window, IReadOnlyList<MediaAppUsage> Apps, bool SessionsAvailable, bool EnginesAvailable, double OtherDecodePercent)
+public sealed record MediaAppsResult(TimeSpan Window, IReadOnlyList<MediaAppUsage> Apps, bool SessionsAvailable, bool EnginesAvailable, double OtherDecodePercent,
+    IReadOnlyList<string>? HardwareDecodeFormats = null)
 {
+    /// <summary>True when the graphics chip's decode formats are known and AV1 is not among them.</summary>
+    [JsonIgnore] public bool NoAv1Decoder => HardwareDecodeFormats is { Count: > 0 } f && !f.Contains(VideoFormats.Av1);
+
     [JsonIgnore] public IEnumerable<MediaAppUsage> Playing => Apps.Where(a => a.Verdict != MediaAppVerdict.NotPlaying);
+}
+
+/// <summary>Names of the video formats a graphics chip can decode in hardware, in the order the report lists them.</summary>
+public static class VideoFormats
+{
+    public const string H264 = "H.264", Hevc = "HEVC", Vp9 = "VP9", Av1 = "AV1";
+    public static readonly ImmutableArray<string> All = [H264, Hevc, Vp9, Av1];
 }
