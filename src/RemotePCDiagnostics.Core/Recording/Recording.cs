@@ -92,6 +92,9 @@ public sealed record RecordedCall
     public const string FileKind = "file";
     /// <summary>What the Agent's alerts read (<see cref="Alerts.IAlertReadings"/>): events and levels, kept as rows like WMI.</summary>
     public const string AlertsKind = "alerts";
+    /// <summary>The video playback test's clip, decoders, engine loads, processes and media sessions (<see cref="VideoPlayback.IVideoPlaybackSource"/>):
+    /// <see cref="Query"/> says which (<see cref="VideoPlaybackKeys"/>), <see cref="StdOut"/> holds the answer as JSON, <see cref="Error"/> why there was none.</summary>
+    public const string VideoKind = "video";
 
     public string Kind { get; init; } = "";
 
@@ -140,6 +143,8 @@ public sealed record RecordedCall
     public static RecordedCall FromAlerts(WmiQueryResult r) => FromWmi(r) with { Kind = AlertsKind };
 
     public static RecordedCall FromAudio(Audio.AudioState s) => new() { Kind = AudioKind, StdOut = s.ToJson(), Error = s.Error };
+
+    public static RecordedCall FromVideo(string query, string? json, string? error = null) => new() { Kind = VideoKind, Query = query, StdOut = json, Error = error };
 
     /// <summary>Kept as rows, like WMI (WMI, registry, the package list, antivirus products).</summary>
     public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind or AntivirusKind;

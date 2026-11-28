@@ -1,0 +1,156 @@
+@using System.Text.Json
+@using RemotePCDiagnostics.Core.VideoPlayback
+@* The video playback test's choices and live state. Before a run: Playback stress or Media apps, how many streams and for how long. During a
+   stress run: + and − change the number of streams, and each stream's frames, late and dropped frames so far. The run starts from the
+   card's Run button like any on-demand scan. Browser agents read the same state, and the last run's numbers, from videoplayback-data. *@
+<div class="card vplay-options" data-testid="videoplayback-options" data-mode="@VideoPlaybackModule.ModeArg(Module.Mode)" data-streams="@Module.Streams"
+     data-minutes="@Module.Duration.TotalMinutes" data-running="@(Running ? "true" : "false")">
+    @if (!Running)
+    {
+        <fieldset class="vplay-mode" disabled="@Disabled">
+            <legend>Which test</legend>
+            <label>
+                <input type="radio" name="videoplayback-mode" data-testid="videoplayback-mode-stress" checked="@(Module.Mode == VideoPlaybackMode.Stress)"
+                       @onchange="() => SetMode(VideoPlaybackMode.Stress)" />
+                Playback stress <span class="meta">(plays copies of a 1080p test video at once and counts dropped frames)</span>
+            </label>
+            <label>
+                <input type="radio" name="videoplayback-mode" data-testid="videoplayback-mode-media-apps" checked="@(Module.Mode == VideoPlaybackMode.MediaApps)"
+                       @onchange="() => SetMode(VideoPlaybackMode.MediaApps)" />
+                Media apps <span class="meta">(about 5 seconds: checks whether the video playing now is decoded on the graphics chip)</span>
+            </label>
+        </fieldset>
+        @if (Module.Mode == VideoPlaybackMode.Stress)
+        {
+            <div class="vplay-row">
+                <span>Streams</span>
+                <StreamStepper Module="Module" Disabled="Disabled" />
+                <label>Run for
+                    <select data-testid="videoplayback-minutes" disabled="@Disabled" @onchange="SetMinutes">
+                        @foreach (var m in VideoPlaybackOptions.MinuteChoices)
+                        {
+                            <option value="@m" selected="@(Module.Duration == TimeSpan.FromMinutes(m))">@m min</option>
+                        }
+                    </select>
+                </label>
+            </div>
+            <p class="meta">@(Module.Clip is { } c ? $"Test video: {c.Label}{(c.HasAudio ? " with audio" : "")}." : "The test video is missing from this install.") The videos play offscreen, so nothing covers the screen, and it works from a remote session. You can add or remove streams while it runs. Cancel stops every stream.</p>
+        }
+        else
+        {
+            <p class="meta">Start the video you want checked first (in a browser, VLC, Spotify, Media Player…), then press Run. Nothing on the PC is changed.</p>
+        }
+    }
+    else if (Module.RunningMode == VideoPlaybackMode.Stress)
+    {
+        var p = Module.LastProgress;
+        <div class="vplay-row">
+            <span>Streams</span>
+            <StreamStepper Module="Module" Disabled="false" />
+            <span class="meta">@(p is null ? "Starting…" : $"{p.Running} playing · {VideoPlaybackModule.Clock(p.Elapsed)} of {VideoPlaybackModule.Clock(p.Duration)}"
+                + (p.DecodeEnginePercent is { } d ? $" · video decode engine {d:0}%" : "") + (p.GpuTemperatureC is { } t ? $" · GPU {t:0}°C" : ""))</span>
+        </div>
+        @if (p is { Streams.Count: > 0 })
+        {
+            <table class="vplay-streams" data-testid="videoplayback-live">
+                <thead><tr><th>Stream</th><th>Frames</th><th>Late</th><th>Dropped</th><th>Decoded on</th><th>Audio glitches</th></tr></thead>
+                <tbody>
+                    @foreach (var s in p.Streams)
+                    {
+                        <tr data-testid="videoplayback-live-stream" data-stream="@s.Index" data-state="@s.End">
+                            <td>@s.Index@(s.End == VideoStreamEnd.Removed ? " (removed)" : "")</td>
+                            <td>@s.Frames.ToString("N0")</td>
+                            <td>@s.LateFrames.ToString("N0")</td>
+                            <td>@s.DroppedFrames.ToString("N0") (@s.DroppedPercent.ToString("0.#")%)</td>
+                            <td>@(s.Frames == 0 ? "—" : s.SoftwareDecode ? "Processor" : "Graphics chip")</td>
+                            <td>@s.AudioGlitches.ToString("N0")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    }
+    <AgentData TestId="videoplayback-data" CheckId="@Module.Name" Json="@DataJson()" />
+</div>
+
+@code {
+    [Parameter, EditorRequired] public VideoPlaybackModule Module { get; set; } = default!;
+    /// <summary>A run is going: the live view (and + / −) instead of the choices.</summary>
+    [Parameter] public bool Running { get; set; }
+    /// <summary>The choices can't change now (another test runs).</summary>
+    [Parameter] public bool Disabled { get; set; }
+
+    private void SetMode(VideoPlaybackMode mode) { if (!Disabled) Module.Mode = mode; }
+
+    private void SetMinutes(ChangeEventArgs e)
+    {
+        if (!Disabled && int.TryParse(e.Value?.ToString(), out var m)) Module.Duration = TimeSpan.FromMinutes(m);
+    }
+
+    private string DataJson()
+    {
+        var p = Module.LastProgress;
+        var s = Module.LastStress;
+        var a = Module.LastMediaApps;
+        return JsonSerializer.Serialize(new
+        {
+            mode = VideoPlaybackModule.ModeArg(Module.Mode),
+            streams = Module.Streams,
+            minStreams = VideoPlaybackOptions.MinStreams,
+            maxStreams = VideoPlaybackOptions.MaxStreams,
+            minutes = Module.Duration.TotalMinutes,
+            minuteChoices = VideoPlaybackOptions.MinuteChoices,
+            clip = Module.Clip?.Label,
+            running = Running,
+            live = p is null ? null : new
+            {
+                seconds = Math.Round(p.Elapsed.TotalSeconds),
+                durationSeconds = Math.Round(p.Duration.TotalSeconds),
+                playing = p.Running,
+                decodeEnginePercent = p.DecodeEnginePercent,
+                gpuTemperatureC = p.GpuTemperatureC,
+                streams = p.Streams.Select(Stream),
+            },
+            stress = s is null ? null : new
+            {
+                outcome = s.Outcome.ToString(),
+                level = VideoPlaybackModule.Level(s.Outcome).ToString(),
+                clip = s.Clip?.Label,
+                seconds = Math.Round(s.Ran.TotalSeconds),
+                mostStreams = s.MostStreams,
+                frames = s.Frames,
+                lateFrames = s.LateFrames,
+                droppedFrames = s.DroppedFrames,
+                droppedPercent = Math.Round(s.DroppedPercent, 2),
+                worstStreamDroppedPercent = Math.Round(s.WorstStreamDroppedPercent, 2),
+                softwareDecode = s.SoftwareDecode,
+                audioGlitches = s.AudioGlitches,
+                decodeEngineAveragePercent = s.DecodeEngineAveragePercent,
+                decodeEnginePeakPercent = s.DecodeEnginePeakPercent,
+                startTemperatureC = s.StartTemperatureC,
+                maxTemperatureC = s.MaxTemperatureC,
+                reason = s.Reason,
+                streams = s.Streams.Select(Stream),
+            },
+            mediaApps = a is null ? null : new
+            {
+                seconds = Math.Round(a.Window.TotalSeconds),
+                sessionsAvailable = a.SessionsAvailable,
+                enginesAvailable = a.EnginesAvailable,
+                apps = a.Apps.Select(x => new
+                {
+                    name = x.Name, displayName = x.DisplayName, processes = x.Processes, playing = x.Playing, videoApp = x.VideoApp,
+                    cpuPercentOfCore = x.CpuPercentOfCore, decodePercent = x.DecodePercent, verdict = x.Verdict.ToString(), advice = x.Advice,
+                }),
+            },
+        });
+    }
+
+    private static object Stream(VideoStreamResult x) => new
+    {
+        index = x.Index, startedAtSeconds = Math.Round(x.StartedAt.TotalSeconds), seconds = Math.Round(x.Ran.TotalSeconds), frames = x.Frames,
+        lateFrames = x.LateFrames, droppedFrames = x.DroppedFrames, droppedPercent = Math.Round(x.DroppedPercent, 2), graphicsChipFrames = x.GraphicsChipFrames,
+        audioBuffers = x.AudioBuffers, audioGlitches = x.AudioGlitches, worstDelayMs = Math.Round(x.WorstLag.TotalMilliseconds), decoder = x.DecoderName,
+        end = x.End.ToString(), error = x.Error,
+    };
+}

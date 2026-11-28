@@ -178,6 +178,7 @@ $RequiredFiles = @(
     'tools/HardeningKitty/HardeningKitty.psd1'
     'tools/HardeningKitty/HardeningKitty.psm1'
     'benchmarks/speedometer-3.1.zip'
+    'media/playback-test-1080p30.mp4'
     'wwwroot/index.html'
 )
 

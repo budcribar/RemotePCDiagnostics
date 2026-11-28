@@ -82,6 +82,7 @@ A check whose answers a recording doesn't hold (a recording made before the reco
 | Windows error log | The event logs (wevtutil) | The same |
 | Sleep, wake & standby drain | powercfg, the System log (wevtutil), the battery report (`powercfg /batteryreport`, kept by name) | The same |
 | Sound | Core Audio (`IAudioStateSource`, kept as one JSON answer, `RecordedCall.AudioKind`), WMI (`Win32_Service`, `Win32_PnPEntity`, `Win32_PnPSignedDriver` for MEDIA, `BatteryStaticData`), the registry (microphone privacy, mono audio) | None (no Store edition fallback; without Core Audio its device cards say they couldn't be read) |
+| Video playback test | The clip, each stream's decoder, its first 2000 samples with how long each took to decode and how the stream ended (driver reset, decoder failure), the GPU engine loads, the process CPU times and the media sessions (`RecordedCall.VideoKind`, `VideoPlaybackKeys`). Replay waits as long as each frame took, then loops the samples; a stream not in the recording plays stream 1's | None (it reads no WMI; without a decoder it is Not supported) |
 
 The event log checks are built at the time the PC was recorded, in UTC (`ReportClock`, `FixedClock`), so "in the last 7 days" and the
 times shown stay the same wherever and whenever the tests run. The battery report is a file powercfg writes under a new name each run, so it

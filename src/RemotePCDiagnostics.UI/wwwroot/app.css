@@ -1780,3 +1780,16 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
 .sc-step-text { flex: 1; min-width: 0; }
 .sc-step-text b { color: var(--text-strong); }
 .sc-step-text .meta { margin: 2px 0 0; }
+
+/* Video playback test: choices, the stream stepper and the live streams table (VideoPlaybackChoices). */
+.vplay-options { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.vplay-mode { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.vplay-mode legend { font-weight: 600; margin-bottom: 4px; }
+.vplay-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.vplay-stepper { display: inline-flex; align-items: center; gap: 8px; }
+.vplay-stepper button { min-width: 32px; padding: 2px 8px; font-size: 16px; line-height: 1.2; }
+.vplay-stepper strong { min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; }
+.vplay-streams { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+.vplay-streams th, .vplay-streams td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.vplay-streams th { color: var(--text-muted); font-weight: 600; }
+@media (max-width: 600px) { .vplay-streams th:nth-child(6), .vplay-streams td:nth-child(6) { display: none; } }
