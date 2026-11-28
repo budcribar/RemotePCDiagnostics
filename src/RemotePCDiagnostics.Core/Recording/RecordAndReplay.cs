@@ -68,6 +68,17 @@ public sealed class RecordingAudioStateSource(Audio.IAudioStateSource inner, Cal
     }
 }
 
+/// <summary>Passes each Wi-Fi radio read to the real source and records the answer with network names scrubbed.</summary>
+public sealed class RecordingWifiRadioSource(Areas.IWifiRadioSource inner, CallRecorder recorder) : Areas.IWifiRadioSource
+{
+    public async Task<Areas.WifiRadioReading> ReadAsync(bool scan, CancellationToken ct)
+    {
+        var r = await inner.ReadAsync(scan, ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromWifi(r));
+        return r;
+    }
+}
+
 public sealed class RecordingRegistrySource(IRegistrySource inner, CallRecorder recorder) : IRegistrySource
 {
     public async Task<WmiQueryResult> ReadAsync(RegistryRead read, CancellationToken ct = default)
@@ -134,6 +145,7 @@ public sealed class RecordingReplay
     public IPackageSource Packages => new ReplayPackages(this);
     public Security.IAntivirusProductSource AntivirusProducts => new ReplayAntivirusProducts(this);
     public Audio.IAudioStateSource Audio => new ReplayAudio(this);
+    public Areas.IWifiRadioSource Wifi => new ReplayWifi(this);
     public IProcessLauncher Launcher => new ReplayLauncher(this);
     public Alerts.IAlertReadings Alerts => new ReplayAlerts(this);
 
@@ -160,6 +172,7 @@ public sealed class RecordingReplay
         RecordedCall.PackagesKind => PackagesKey,
         RecordedCall.AntivirusKind => AntivirusKey,
         RecordedCall.AudioKind => AudioKey,
+        RecordedCall.WifiKind => WifiKey,
         RecordedCall.FileKind => FileKey(c.File ?? ""),
         RecordedCall.AlertsKind => AlertsKey(c.Query ?? ""),
         _ => ProcessKey(c.File ?? "", c.Args ?? []),
@@ -168,6 +181,7 @@ public sealed class RecordingReplay
     public const string PackagesKey = "packages";
     public const string AntivirusKey = "antivirus";
     public const string AudioKey = "audio";
+    public const string WifiKey = "wifi";
     public static string FileKey(string name) => "file\n" + name;
     public static string AlertsKey(string reading) => "alerts\n" + reading;
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
@@ -209,6 +223,14 @@ public sealed class RecordingReplay
             Task.FromResult(replay.Answer(AudioKey, "audio") is { } c
                 ? c.Error is { } e && c.StdOut is null ? RemotePCDiagnostics.Core.Audio.AudioState.Unavailable(e) : RemotePCDiagnostics.Core.Audio.AudioState.FromJson(c.StdOut)
                 : RemotePCDiagnostics.Core.Audio.AudioState.Unavailable("Not in the recording."));
+    }
+
+    private sealed class ReplayWifi(RecordingReplay replay) : Areas.IWifiRadioSource
+    {
+        public Task<Areas.WifiRadioReading> ReadAsync(bool scan, CancellationToken ct) =>
+            Task.FromResult(replay.Answer(WifiKey, "wifi") is { } c
+                ? c.Error is { } e && c.StdOut is null ? Areas.WifiRadioReading.Unavailable(e) : Areas.WifiRadioReading.FromJson(c.StdOut)
+                : Areas.WifiRadioReading.Unavailable("Not in the recording."));
     }
 
     /// <summary>The recorded events are replayed whatever the window asked for; the Agent drops the ones it has seen by record id.</summary>
