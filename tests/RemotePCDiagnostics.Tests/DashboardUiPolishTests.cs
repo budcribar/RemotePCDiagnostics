@@ -521,7 +521,9 @@ public class DashboardUiPolishTests : BunitContext
             Assert.Empty(cut.FindAll("[data-testid='area-drawer-crashes'] tr.row-expandable"));
 
             cut.Find("[data-testid='area-show-reviewed']").Click();
-            cut.Find("tr.row-expandable").Click();
+            // "Show reviewed" was already showing before the refresh's result rendered (the row moves at once), so the reviewed row
+            // appears only once that render lands: wait for it rather than look straight away.
+            cut.WaitForElement("tr.row-expandable", TimeSpan.FromSeconds(5)).Click();
             var undo = cut.WaitForElement("button[data-action='review-row']");
             Assert.Equal("Undo review", undo.TextContent.Trim());
             undo.Click();
