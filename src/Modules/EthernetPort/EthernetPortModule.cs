@@ -10,9 +10,10 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// its own sent and received counters. It changes nothing on the PC, so there is nothing to restore when it is cancelled.
 /// </summary>
 public sealed class EthernetPortModule(INicHardwareSource hardware, IEthernetPortIo io, INicLinkProbe probe, ILogger? log = null,
-    Func<TimeSpan, CancellationToken, Task>? delay = null) : OnDemandModuleBase(log), IEthernetPortModule
+    Func<TimeSpan, CancellationToken, Task>? delay = null, TimeSpan? linkWindow = null) : OnDemandModuleBase(log), IEthernetPortModule
 {
     private readonly Func<TimeSpan, CancellationToken, Task> _delay = delay ?? Task.Delay;
+    private readonly TimeSpan _linkWindow = linkWindow ?? LinkWindow;
 
     public override string Name => ModuleSlugs.EthernetPort;
     public override Guid Id => ModuleIds.EthernetPort;
@@ -43,8 +44,8 @@ public sealed class EthernetPortModule(INicHardwareSource hardware, IEthernetPor
         {
             link = io.Read(port.Name);
             if (link is { Up: true }) break;
-            if (waited >= LinkWindow) break;
-            var left = LinkWindow - waited;
+            if (waited >= _linkWindow) break;
+            var left = _linkWindow - waited;
             progress?.Report(mode == EthernetPortMode.Loopback
                 ? $"Plug the loopback plug into {port.Name}… ({left.TotalSeconds:0} s left)"
                 : $"Plug a network cable into {port.Name}… ({left.TotalSeconds:0} s left)");
@@ -61,6 +62,7 @@ public sealed class EthernetPortModule(INicHardwareSource hardware, IEthernetPor
         // 2. An address: a DHCP lease from the network, or the 169.254 one Windows picks on a plug when no DHCP server answers.
         for (var waited = TimeSpan.Zero; waited < AddressWindow; waited += Poll)
         {
+            if (link is not { Up: true }) break;
             if (link is { Up: true, Ipv4: not null } && (mode == EthernetPortMode.Loopback || !link.Autoconfig || waited >= AddressWindow / 2)) break;
             await _delay(Poll, ct).ConfigureAwait(false);
             link = io.Read(port.Name) ?? link;

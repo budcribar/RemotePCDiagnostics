@@ -41,8 +41,8 @@ public static class InteractiveExport
     /// <param name="PasswordTyped">Whether a password is typed (never the password itself).</param>
     public sealed record WifiPane(IReadOnlyList<WifiNetworkSeen> Networks, string? PickedSsid, bool PasswordTyped, bool DropsRemoteSession, bool Scanning);
 
-    /// <summary>The Ethernet port pane: the wired ports its picker lists, the one picked, the mode, and whether starting drops a remote session.</summary>
-    public sealed record EthernetPane(IReadOnlyList<EthernetPortChoice> Ports, string? PickedPort, EthernetPortMode Mode, bool DropsRemoteSession);
+    /// <summary>The Ethernet port pane: the wired ports its picker lists, the one picked, the mode, whether starting drops a remote session, and whether ports are still loading.</summary>
+    public sealed record EthernetPane(IReadOnlyList<EthernetPortChoice> Ports, string? PickedPort, EthernetPortMode Mode, bool DropsRemoteSession, bool Loading = false);
 
     /// <summary>The Sound check pane's helper lists: what it shows and why (Can't hear sound, or only one side heard).</summary>
     /// <param name="Mode">"cant-hear", "one-side" or null when no list shows.</param>
@@ -278,9 +278,10 @@ public static class InteractiveExport
             @checked = page.CheckedTestIds.Contains("ethernet"),
             open = page.SelectedTestId == "ethernet",
             // While running it waits for the person to plug the cable or the loopback plug in (step says which, and the seconds left).
-            state = r.Status == DiagnosticStatus.Running ? "running" : rep is not null ? "done" : "waiting-for-person",
+            state = r.Status == DiagnosticStatus.Running ? "running" : rep is not null || r.Status == DiagnosticStatus.Error ? "done" : "waiting-for-person",
             runId = r.RunId,
             step = r.Status == DiagnosticStatus.Running ? T(r.Message) : null,
+            loading = pane?.Loading,
             ports = pane?.Ports.Select(p => new { name = V(p.Name), adapter = V(p.Description), cablePluggedIn = p.Connected }).ToList(),
             pickedPort = V(pane?.PickedPort),
             mode = pane is null ? null : pane.Mode == EthernetPortMode.Loopback ? "loopback" : "network",
@@ -302,7 +303,8 @@ public static class InteractiveExport
                 framesCountedOut = rep.FramesCountedOut,
                 framesCountedIn = rep.FramesCountedIn,
             },
-            result = r.Status == DiagnosticStatus.Running || rep is null ? null
+            result = r.Status == DiagnosticStatus.Running ? null
+                : rep is null ? (r.Status == DiagnosticStatus.Error ? "failed" : null)
                 : rep.RunEnd == RunEnd.CouldNotRun ? "not-applicable"
                 : r.Status switch { DiagnosticStatus.Ok => "passed", DiagnosticStatus.Error => "failed", _ => "warning" },
             message = T(r.Message),

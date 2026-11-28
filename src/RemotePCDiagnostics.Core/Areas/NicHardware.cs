@@ -52,8 +52,8 @@ public interface INicHardwareSource
 public sealed class WmiNicHardwareSource(IWmiSource wmi) : INicHardwareSource
 {
     public const string AdaptersSql =
-        "SELECT Name, InterfaceDescription, PnPDeviceID, NdisPhysicalMedium, PermanentAddress, MacAddress, MediaConnectState, MediaDuplexState, " +
-        "ReceiveLinkSpeed, TransmitLinkSpeed FROM MSFT_NetAdapter WHERE HardwareInterface = TRUE";
+        "SELECT Name, InterfaceDescription, PnPDeviceID, NdisPhysicalMedium, InterfaceType, Hidden, Virtual, PermanentAddress, MacAddress, " +
+        "MediaConnectState, MediaDuplexState, ReceiveLinkSpeed, TransmitLinkSpeed FROM MSFT_NetAdapter WHERE HardwareInterface = TRUE AND Hidden != TRUE AND Virtual != TRUE";
     public const string SpeedDuplexSql =
         "SELECT Name, RegistryValue, DisplayValue, ValidRegistryValues, ValidDisplayValues FROM MSFT_NetAdapterAdvancedPropertySettingData " +
         "WHERE RegistryKeyword = '*SpeedDuplex'";
@@ -74,20 +74,38 @@ public sealed class WmiNicHardwareSource(IWmiSource wmi) : INicHardwareSource
 
         var irqs = resources.Success ? Interrupts(resources.Rows!) : null;
         return new NicHardwareSnapshot(
-            adapters.Rows!.Select(Adapter).ToList(),
+            adapters.Rows!.Where(IsPhysicalRow).Select(Adapter).ToList(),
             speed.Success ? speed.Rows!.Select(Speed).ToList() : null,
             devices.Success ? devices.Rows!.Select(d => new NicDevice(d.Str("DeviceID"), d.Str("Name"), (int)(d.Long("ConfigManagerErrorCode") ?? 0),
                 irqs is not null && irqs.TryGetValue(d.Str("DeviceID"), out var list) ? list : [])).ToList() : null,
             irqs is { Count: > 0 });
     }
 
-    public static NicAdapter Adapter(WmiRow r) => new(
-        r.Str("Name"), r.Str("InterfaceDescription"), r.Str("PnPDeviceID"),
-        r.Long("NdisPhysicalMedium") switch { 14 => NicMedium.Ethernet, 9 => NicMedium.WiFi, _ => NicMedium.Other },
-        r.Str("PermanentAddress"), r.Str("MacAddress"),
-        r.Long("MediaConnectState") switch { 1 => true, 2 => false, _ => null },
-        r.Long("MediaDuplexState") switch { 2 => true, 1 => false, _ => null },
-        NetworkAdapter.Positive(r.Long("ReceiveLinkSpeed")), NetworkAdapter.Positive(r.Long("TransmitLinkSpeed")));
+    private static bool IsPhysicalRow(WmiRow r) => r.Bool("Hidden") != true && r.Bool("Virtual") != true;
+
+    private static bool IsPhysicalBus(string pnpDeviceId) =>
+        pnpDeviceId.StartsWith(@"PCI\", StringComparison.OrdinalIgnoreCase)
+        || pnpDeviceId.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase)
+        || pnpDeviceId.StartsWith(@"USB4\", StringComparison.OrdinalIgnoreCase)
+        || pnpDeviceId.StartsWith(@"ACPI\", StringComparison.OrdinalIgnoreCase);
+
+    public static NicAdapter Adapter(WmiRow r)
+    {
+        var pnp = r.Str("PnPDeviceID");
+        var medium = r.Long("NdisPhysicalMedium") switch
+        {
+            14 => NicMedium.Ethernet,
+            9 => NicMedium.WiFi,
+            0 when r.Long("InterfaceType") == 6 && IsPhysicalBus(pnp) => NicMedium.Ethernet,
+            _ => NicMedium.Other,
+        };
+        return new(
+            r.Str("Name"), r.Str("InterfaceDescription"), pnp, medium,
+            r.Str("PermanentAddress"), r.Str("MacAddress"),
+            r.Long("MediaConnectState") switch { 1 => true, 2 => false, _ => null },
+            r.Long("MediaDuplexState") switch { 2 => true, 1 => false, _ => null },
+            NetworkAdapter.Positive(r.Long("ReceiveLinkSpeed")), NetworkAdapter.Positive(r.Long("TransmitLinkSpeed")));
+    }
 
     public static NicSpeedSetting Speed(WmiRow r) => new(r.Str("Name"), First(r, "RegistryValue"), r.Str("DisplayValue"), Strings(r, "ValidRegistryValues"),
         Strings(r, "ValidDisplayValues"));
@@ -322,8 +340,8 @@ public static class NicHardware
     public static AreaCard? Build(NicHardwareSnapshot? snapshot, IReadOnlyDictionary<string, IReadOnlyList<NicPing>>? pings = null)
     {
         if (snapshot is null) return null;
-        var adapters = snapshot.Adapters.Where(a => a.Medium is NicMedium.Ethernet or NicMedium.WiFi || a.PnpDeviceId.Length > 0)
-            .OrderBy(a => a.Medium == NicMedium.Ethernet ? 0 : a.Medium == NicMedium.WiFi ? 1 : 2).ThenBy(a => a.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        var adapters = snapshot.Adapters.Where(a => a.Medium is NicMedium.Ethernet or NicMedium.WiFi)
+            .OrderBy(a => a.Medium == NicMedium.Ethernet ? 0 : 1).ThenBy(a => a.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
         if (adapters.Count == 0)
             return new AreaCard(CardId, "Adapter hardware", AreaLevel.Neutral, "No network card found", "", ["Adapter", "Check", "Result"], [],
                 EmptyText: "Windows lists no physical network adapter.");
@@ -381,6 +399,7 @@ public static class NicHardware
                     "Plug a network cable into this port and run the check again, or use the Ethernet port test on the Interactive tests page.");
                 continue;
             }
+            if (a.Connected is not true) continue;
             var setting = snapshot.SpeedSettings?.FirstOrDefault(s => s.Adapter.Equals(a.Name, StringComparison.OrdinalIgnoreCase));
             var speed = Math.Max(a.ReceiveBps ?? 0, a.TransmitBps ?? 0);
             if (speed > 0)

@@ -10,11 +10,6 @@ namespace RemotePCDiagnostics.Tests.Network;
 /// <summary>The interactive Ethernet port test (#291): wait for a cable or a loopback plug, then pings or loopback frames.</summary>
 public sealed class EthernetPortTests
 {
-    static EthernetPortTests()
-    {
-        EthernetPort.Poll = TimeSpan.FromSeconds(1);
-    }
-
     private static readonly IPAddress Lan = IPAddress.Parse("192.168.1.20");
     private static readonly IPAddress Auto = IPAddress.Parse("169.254.10.20");
     private static readonly IPAddress Mask = IPAddress.Parse("255.255.0.0");
@@ -43,9 +38,11 @@ public sealed class EthernetPortTests
         new(true, 1_000_000_000, ip, Mask, auto, gateway, dhcp, 500, 300);
     private static readonly EthernetLink Down = new(false, 0, null, null, false, false, false, 0, 0);
 
-    private static EthernetPortModule Module(IEthernetPortIo io, EthernetPortMode mode, NicHardwareTests.FakeWmi? wmi = null, INicLinkProbe? probe = null)
+    private static EthernetPortModule Module(IEthernetPortIo io, EthernetPortMode mode, NicHardwareTests.FakeWmi? wmi = null, INicLinkProbe? probe = null,
+        TimeSpan? linkWindow = null)
     {
-        var m = new EthernetPortModule(new WmiNicHardwareSource(wmi ?? NicHardwareTests.Wmi()), io, probe ?? new StubProbe(), delay: (_, _) => Task.CompletedTask);
+        var m = new EthernetPortModule(new WmiNicHardwareSource(wmi ?? NicHardwareTests.Wmi()), io, probe ?? new StubProbe(),
+            delay: (_, _) => Task.CompletedTask, linkWindow: linkWindow);
         m.Settings.Mode = mode;
         return m;
     }
@@ -75,15 +72,10 @@ public sealed class EthernetPortTests
     [Fact]
     public async Task NothingPluggedInIsNotAVerdict()
     {
-        EthernetPort.LinkWindow = TimeSpan.FromSeconds(3);
-        try
-        {
-            var (r, rep) = await RunAsync(Module(new FakeIo(_ => Down), EthernetPortMode.Network));
-            Assert.Equal(EthernetPortOutcome.NoCable, rep.Outcome);
-            Assert.Equal(RunEnd.CouldNotRun, rep.RunEnd);
-            Assert.Equal(DiagnosticStatus.Warning, r.Status);
-        }
-        finally { EthernetPort.LinkWindow = TimeSpan.FromMinutes(2); }
+        var (r, rep) = await RunAsync(Module(new FakeIo(_ => Down), EthernetPortMode.Network, linkWindow: TimeSpan.FromSeconds(3)));
+        Assert.Equal(EthernetPortOutcome.NoCable, rep.Outcome);
+        Assert.Equal(RunEnd.CouldNotRun, rep.RunEnd);
+        Assert.Equal(DiagnosticStatus.Warning, r.Status);
     }
 
     [Fact]
@@ -182,6 +174,33 @@ public sealed class EthernetPortTests
         Assert.True(t.GetProperty("dropsRemoteSession").GetBoolean());
         Assert.Equal(101, t.GetProperty("measured").GetProperty("framesCountedIn").GetInt64());
         Assert.Equal(100, t.GetProperty("measured").GetProperty("speedMbps").GetInt64());
+        Assert.False(t.GetProperty("loading").GetBoolean());
+    }
+
+    [Fact]
+    public void ZeroSentLoopbackReportsDidNotSendInsteadOfDidNotComeBack()
+    {
+        var rep = new EthernetPortReport(EthernetPortOutcome.Failed, EthernetPortMode.Loopback, "Ethernet", "I219", 0, 100_000_000, true, true, null, [], 0, 0, 0);
+        var (status, msg) = EthernetPort.Outcome(rep);
+        Assert.Equal(DiagnosticStatus.Error, status);
+        Assert.Contains("didn't send", msg);
+        Assert.DoesNotContain("went out", msg);
+    }
+
+    [Fact]
+    public void InteractiveExportReportsLoadingAndPayloadlessError()
+    {
+        var page = new InteractiveExport.PageState("ethernet", ["ethernet"], false, false, false, false);
+        var err = new DiagnosticResult(ModuleSlugs.EthernetPort, DiagnosticStatus.Error, "Adapter read failed", DateTimeOffset.Now);
+        var json = InteractiveExport.ToJson(page, new PhysicalBenchQaService().Current,
+            new(DiagnosticResult.NotRun(ModuleSlugs.Webcam), false), new(DiagnosticResult.NotRun(ModuleSlugs.SpeakerToMic), false),
+            new(DiagnosticResult.NotRun(ModuleSlugs.MicToSpeaker), false), ethernet: err,
+            ethernetPane: new([], null, EthernetPortMode.Network, false, Loading: true));
+        using var doc = JsonDocument.Parse(json);
+        var t = doc.RootElement.GetProperty("tests").EnumerateArray().Single(x => x.GetProperty("id").GetString() == "ethernet");
+        Assert.True(t.GetProperty("loading").GetBoolean());
+        Assert.Equal("done", t.GetProperty("state").GetString());
+        Assert.Equal("failed", t.GetProperty("result").GetString());
     }
 
     private sealed class SyncProgress(Action<string> report) : IProgress<string>

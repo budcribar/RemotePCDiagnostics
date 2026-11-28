@@ -237,6 +237,38 @@ public sealed class NicHardwareTests
         Assert.Equal(AreaLevel.Ok, card.Rows.First(r => r.Values[0] == "Ethernet 2" && r.Values[1] == "Hardware address").Level);
     }
 
+    [Fact]
+    public async Task UsbEthernetIsRecognizedAndVirtualHiddenOrBluetoothAdaptersAreFiltered()
+    {
+        var usbEth = Nic(name: "Ethernet 2", desc: "Realtek USB GbE Family Controller", medium: 0, pnp: @"USB\VID_0BDA&PID_8153\000001");
+        usbEth["InterfaceType"] = 6L;
+        var bthPan = Nic(name: "Bluetooth Network Connection", desc: "Bluetooth Device (Personal Area Network)", medium: 10, pnp: @"BTH\MS_BTHPAN\6&1234&0&2");
+        var rootVirt = Nic(name: "vEthernet (WSL)", desc: "Hyper-V Virtual Ethernet Adapter", medium: 0, pnp: @"ROOT\VMS_MP\0001");
+        rootVirt["InterfaceType"] = 6L;
+        var hiddenNic = Nic(name: "Hidden Ethernet", desc: "Hidden NIC", medium: 14);
+        hiddenNic["Hidden"] = true;
+        var virtualNic = Nic(name: "Virtual Ethernet", desc: "Virtual NIC", medium: 14);
+        virtualNic["Virtual"] = true;
+
+        var card = await CardAsync(Wmi(
+            adapters: [usbEth, bthPan, rootVirt, hiddenNic, virtualNic],
+            devices: [Device(id: @"USB\VID_0BDA&PID_8153\000001", name: "Realtek USB GbE Family Controller")]));
+
+        Assert.Equal(["Ethernet 2"], card.Rows.Select(r => r.Values[0]).Distinct().ToList());
+        Assert.Equal("1 Gbps", RowFor(card, "Link speed").Values[2]);
+        Assert.Equal("Full duplex", RowFor(card, "Duplex").Values[2]);
+        Assert.Equal(NicHardware.EthernetTestPage, card.OpenPage?.Path);
+    }
+
+    [Fact]
+    public async Task UnknownConnectStateDoesNotEvaluateStaleSpeedOrDuplex()
+    {
+        var card = await CardAsync(Wmi(adapters: [Nic(connect: 0, speed: 100_000_000, duplex: 1)]));
+        Assert.DoesNotContain(card.Rows, r => r.Values[1] == "Link speed");
+        Assert.DoesNotContain(card.Rows, r => r.Values[1] == "Duplex");
+        Assert.DoesNotContain(card.Rows, r => r.Values[1] == "Cable");
+    }
+
     internal sealed class StubNetwork(IReadOnlyList<NetworkAdapter> adapters) : INetworkSource
     {
         public Task<IReadOnlyList<NetworkAdapter>?> ReadAdaptersAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<NetworkAdapter>?>(adapters);

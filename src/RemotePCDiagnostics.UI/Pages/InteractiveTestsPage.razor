@@ -900,7 +900,9 @@
                     </div>
                     <div class="toolbar">
                         <button type="button" class="btn-small btn-primary" data-testid="ethernet-start-btn"
-                                disabled="@(ethRunning || Diagnostics.IsStressSuiteRunning || EthernetPicked is null)" @onclick="StartEthernetAsync">
+                                disabled="@(ethRunning || Diagnostics.IsStressSuiteRunning || EthernetPicked is null || _isRemoteDisplay)"
+                                title="@(_isRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                                @onclick="StartEthernetAsync">
                             ▶ @(ethResult.Status == DiagnosticStatus.NotRun ? "Start port test" : "Run again")
                         </button>
                     </div>
@@ -996,7 +998,7 @@
             new InteractiveExport.PageState(_selectedTestId, _selected, _isBatchRunning, _isRemoteDisplay, Session.Mode == SessionMode.Remote || _hasRemoteSession, _technicianHasControl),
             kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help, wifi,
             new InteractiveExport.WifiPane(_wifiNetworks, WifiPicked?.Ssid, _wifiPassword.Length > 0, _wifiDropsSession, _wifiScanning),
-            ethernet, new InteractiveExport.EthernetPane(_ethPorts, EthernetPicked?.Name, _ethMode, _ethDropsSession));
+            ethernet, new InteractiveExport.EthernetPane(_ethPorts, EthernetPicked?.Name, _ethMode, _ethDropsSession, _ethLoading));
 
     private IReadOnlyList<AudioDevice> _outputs = [];
     private IReadOnlyList<AudioDevice> _inputs = [];
@@ -1018,6 +1020,7 @@
     private bool _hasRemoteSession;
     private bool _technicianHasControl;
     private bool _isBatchRunning;
+    private bool _disposed;
     private CancellationTokenSource? _batchCts;
 
     protected override void OnInitialized()
@@ -1059,6 +1062,7 @@
 
     public override void Dispose()
     {
+        _disposed = true;
         base.Dispose();
         _batchCts?.Cancel();
         _interactiveWaitTcs?.TrySetCanceled();
@@ -1112,10 +1116,10 @@
 
     private async Task LoadEthernetPortsAsync()
     {
-        if (_ethLoading || GetEthernetModule() is not { } m) return;
+        if (_disposed || _ethLoading || GetEthernetModule() is not { } m) return;
         _ethLoading = true;
         _ethLoaded = true;
-        await InvokeAsync(StateHasChanged);
+        if (!_disposed) await InvokeAsync(() => { if (!_disposed) StateHasChanged(); });
         try
         {
             _ethPorts = await m.ListPortsAsync(CancellationToken.None);
@@ -1125,7 +1129,7 @@
         finally
         {
             _ethLoading = false;
-            await InvokeAsync(StateHasChanged);
+            if (!_disposed) await InvokeAsync(() => { if (!_disposed) StateHasChanged(); });
         }
     }
 
@@ -1159,15 +1163,16 @@
 
     private async Task StartEthernetAsync()
     {
-        if (Diagnostics.IsStressSuiteRunning) return;
+        if (Diagnostics.IsStressSuiteRunning || _isRemoteDisplay || _disposed) return;
         if (!_ethLoaded) await LoadEthernetPortsAsync();
+        if (_disposed) return;
         if (GetEthernetModule() is { } m)
         {
             m.Settings.Adapter = EthernetPicked?.Name;
             m.Settings.Mode = _ethMode;
         }
         await Diagnostics.RunAsync(ModuleSlugs.EthernetPort);
-        if (_selectedTestId == "ethernet") await LoadEthernetPortsAsync();
+        if (!_disposed && _selectedTestId == "ethernet") await LoadEthernetPortsAsync();
     }
 
     private void OnEthernetModeChange(ChangeEventArgs e) =>

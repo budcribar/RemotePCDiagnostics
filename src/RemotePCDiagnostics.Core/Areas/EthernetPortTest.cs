@@ -65,12 +65,12 @@ public sealed record EthernetPortReport(EthernetPortOutcome Outcome, EthernetPor
 public static class EthernetPort
 {
     /// <summary>How long the test waits for a cable or plug to be plugged in.</summary>
-    public static TimeSpan LinkWindow { get; set; } = TimeSpan.FromMinutes(2);
+    public static readonly TimeSpan LinkWindow = TimeSpan.FromMinutes(2);
     /// <summary>How long it waits for an address after the link comes up (a DHCP lease, or Windows' own 169.254 one on a plug).</summary>
-    public static TimeSpan AddressWindow { get; set; } = TimeSpan.FromSeconds(60);
-    public static TimeSpan Poll { get; set; } = TimeSpan.FromSeconds(1);
+    public static readonly TimeSpan AddressWindow = TimeSpan.FromSeconds(60);
+    public static readonly TimeSpan Poll = TimeSpan.FromSeconds(1);
     /// <summary>How long to let the frames come back before reading the counters again.</summary>
-    public static TimeSpan SettleTime { get; set; } = TimeSpan.FromSeconds(2);
+    public static readonly TimeSpan SettleTime = TimeSpan.FromSeconds(2);
     public const int LoopbackFrames = 100;
 
     /// <summary>The loopback verdict from the counters: went out, came back, or lost on the way.</summary>
@@ -102,7 +102,7 @@ public static class EthernetPort
             {
                 EthernetPortOutcome.Passed => (DiagnosticStatus.Ok, $"Loopback passed on {port}{(speed is null ? "" : $" at {speed}")}: {counts}."),
                 EthernetPortOutcome.Warning => (DiagnosticStatus.Warning, $"Some test frames were lost on {port}: {counts}. Reseat the plug and run it again; if frames are still lost, the port is faulty."),
-                _ when r.FramesCountedOut < r.FramesSent / 2 => (DiagnosticStatus.Error, $"{port} didn't send the test frames ({counts}). The card or its driver is faulty."),
+                _ when r.FramesSent is null or 0 || r.FramesCountedOut < r.FramesSent / 2 => (DiagnosticStatus.Error, $"{port} didn't send the test frames ({counts}). The card or its driver is faulty."),
                 _ => (DiagnosticStatus.Error, $"The test frames went out of {port} but didn't come back ({counts}). The port's receive side or the plug is faulty: try another plug to be sure."),
             };
         }
@@ -150,10 +150,16 @@ public sealed class SystemEthernetPortIo : IEthernetPortIo
             var v4 = p.UnicastAddresses.FirstOrDefault(u => u.Address.AddressFamily == AddressFamily.InterNetwork);
             var stats = nic.GetIPStatistics();
             var auto = v4 is not null && v4.Address.GetAddressBytes() is [169, 254, ..];
+            var nonUnicastOut = 0L;
+            if (OperatingSystem.IsWindows())
+            {
+                try { nonUnicastOut = stats.NonUnicastPacketsSent; }
+                catch (PlatformNotSupportedException) { }
+            }
             return new EthernetLink(nic.OperationalStatus == OperationalStatus.Up, nic.Speed, v4?.Address, v4?.IPv4Mask, auto,
                 p.GatewayAddresses.Any(g => g.Address.AddressFamily == AddressFamily.InterNetwork && !g.Address.Equals(IPAddress.Any)),
                 OperatingSystem.IsWindows() && p.DhcpServerAddresses.Any(d => d.AddressFamily == AddressFamily.InterNetwork),
-                stats.NonUnicastPacketsReceived, stats.NonUnicastPacketsSent);
+                stats.NonUnicastPacketsReceived, nonUnicastOut);
         }
         catch (NetworkInformationException) { return null; }
     }
@@ -165,7 +171,8 @@ public sealed class SystemEthernetPortIo : IEthernetPortIo
         var m = mask.GetAddressBytes();
         var broadcast = new IPAddress(a.Select((b, i) => (byte)(b | ~m[i])).ToArray());
         using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp) { EnableBroadcast = true };
-        socket.Bind(new IPEndPoint(from, 0));
+        try { socket.Bind(new IPEndPoint(from, 0)); }
+        catch (SocketException) { return 0; }
         var payload = "RPCD loopback test frame"u8.ToArray();
         var sent = 0;
         for (var i = 0; i < count; i++)
