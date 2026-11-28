@@ -1862,3 +1862,7 @@ body:has(.ptr-overlay) [class*="rbwv-"] { display: none !important; }
 .display-qa-answers { display: flex; gap: 12px; flex-wrap: wrap; }
 .display-qa-answers label { display: flex; flex-direction: column; gap: 4px; }
 .display-qa-answers input { width: 6ch; font-size: 20px; padding: 4px 8px; background: #111; color: #e5e7eb; border: 1px solid #555; border-radius: 6px; }
+/* Webcam test: formats and controls lists */
+.cam-details { margin: 8px 0; }
+.cam-details > summary { cursor: pointer; padding: 4px 0; }
+.cam-details > table.detail { margin-top: 4px; }

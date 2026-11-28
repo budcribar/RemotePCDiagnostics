@@ -1,0 +1,124 @@
+@using RemotePCDiagnostics.Core.Areas
+@using RemotePCDiagnostics.Core.Webcam
+@* What the webcam test found beyond the picture: the formats the camera offers (against its class), its controls, the app holding a busy
+   camera (with Close), and the person's "Do you see yourself?" answer. Shared by the Webcam page and the Interactive tests pane. *@
+@if (Report is { } rep)
+{
+    var p = Prefix;
+    @if (rep.Holders.Count > 0)
+    {
+        <div class="notice" data-testid="@($"{p}-holders")">
+            <strong>Using the camera now</strong>
+            <ul style="margin: 4px 0 0">
+                @foreach (var h in rep.Holders)
+                {
+                    var holder = h;
+                    <li data-testid="@($"{p}-holder")" data-app="@holder.App">
+                        @holder.App@(holder.Packaged ? " (Store app)" : "")
+                        @if (WebcamHolders.CanClose(holder) && Fixes is not null)
+                        {
+                            @if (AgentFixes)
+                            {
+                                <button type="button" class="btn-small" data-testid="@($"{p}-close-holder")" data-process="@holder.ProcessName"
+                                        disabled="@(Fixes.Running is not null || IsRemote)" @onclick="() => _fixUi?.Ask(CloseAction(holder))">Close @holder.ProcessName</button>
+                            }
+                            else
+                            {
+                                <span class="meta" data-testid="@($"{p}-close-needs-agent")"> · Closing it from here needs the Agent: close it on the PC.</span>
+                            }
+                        }
+                        else
+                        {
+                            <span class="meta"> · close it on the PC</span>
+                        }
+                    </li>
+                }
+            </ul>
+        </div>
+        @if (Fixes is not null)
+        {
+            <RemediationActions @ref="_fixUi" Actions="Fixes" ShowRecent="false" Origin="@ModuleSlugs.Webcam" OnStateChanged="StateHasChanged" OnCompleted="OnHolderClosed" />
+        }
+    }
+
+    @if (rep.Stats.Frames > 0 && rep.Kind == WebcamKind.Color)
+    {
+        <div class="toolbar" style="margin: 8px 0 4px; flex-wrap: wrap" data-testid="@($"{p}-question")">
+            <strong>Do you see yourself in the preview?</strong>
+            <button type="button" class="btn-small @(rep.PersonSawPicture == true ? "btn-primary" : "")" data-testid="@($"{p}-sees-yes")"
+                    data-selected="@(rep.PersonSawPicture == true ? "true" : "false")" disabled="@IsRemote" @onclick="() => OnAnswer.InvokeAsync(true)">Yes</button>
+            <button type="button" class="btn-small @(rep.PersonSawPicture == false ? "btn-primary" : "")" data-testid="@($"{p}-sees-no")"
+                    data-selected="@(rep.PersonSawPicture == false ? "true" : "false")" disabled="@IsRemote" @onclick="() => OnAnswer.InvokeAsync(false)">No</button>
+            @if (IsRemote) { <span class="meta">The person at the PC answers this.</span> }
+        </div>
+    }
+
+    @if (rep.Capability is { } caps)
+    {
+        <details class="cam-details" data-testid="@($"{p}-formats")" open="@caps.BelowClass">
+            <summary>
+                Formats offered: @caps.FormatCount, best @caps.MaxWidth × @caps.MaxHeight at up to @caps.MaxFps.ToString("0.#") fps
+                @if (caps.ClassName is { } cls)
+                {
+                    <span class="@(caps.BelowClass ? "svc-warn" : "meta")" data-testid="@($"{p}-class")" data-below="@(caps.BelowClass ? "true" : "false")">
+                        · name says @cls@(caps.BelowClass ? ": it offers less (wrong driver likely)" : "")
+                    </span>
+                }
+            </summary>
+            <table class="detail">
+                <tr><th>Resolution</th><th>Frame rate</th><th>Format</th></tr>
+                @foreach (var f in rep.Formats)
+                {
+                    <tr><td>@f.Width × @f.Height</td><td>@f.Fps.ToString("0.#") fps</td><td>@(f.Subtype ?? "")</td></tr>
+                }
+            </table>
+        </details>
+    }
+
+    @if (rep.Controls.Count > 0)
+    {
+        var unreadable = WebcamControls.Unreadable(rep.Controls).Count;
+        <details class="cam-details" data-testid="@($"{p}-controls")" open="@(unreadable > 0)">
+            <summary>Controls: @rep.Controls.Count(c => c.Supported) of @rep.Controls.Count supported@(unreadable > 0 ? $", {unreadable} couldn't be read" : "")</summary>
+            <table class="detail">
+                <tr><th>Control</th><th>Range (step)</th><th>Now</th><th>Auto</th></tr>
+                @foreach (var c in rep.Controls)
+                {
+                    <tr data-testid="@($"{p}-control")" data-name="@c.Name" data-state="@(!c.Supported ? "unsupported" : c.ReadFailed ? "unreadable" : "ok")">
+                        <th>@WebcamControls.Display(c.Name)</th>
+                        @if (!c.Supported)
+                        {
+                            <td colspan="3" class="meta">Not on this camera</td>
+                        }
+                        else
+                        {
+                            <td>@Num(c.Min) to @Num(c.Max) (@Num(c.Step))</td>
+                            <td class="@(c.ReadFailed ? "svc-warn" : "")">@(c.ReadFailed ? "Couldn't be read" : Num(c.Value ?? 0))</td>
+                            <td>@(!c.AutoSupported ? "No" : c.Auto switch { true => "On", false => "Off", _ => "Yes" })</td>
+                        }
+                    </tr>
+                }
+            </table>
+        </details>
+    }
+}
+
+@code {
+    [Parameter] public WebcamReport? Report { get; set; }
+    /// <summary>Test id prefix: "cam" on the Webcam page, "webcam" on the Interactive tests pane.</summary>
+    [Parameter] public string Prefix { get; set; } = "cam";
+    [Parameter] public RemediationService? Fixes { get; set; }
+    [Parameter] public bool AgentFixes { get; set; }
+    /// <summary>A remote viewer: the person at the PC answers and closes apps there.</summary>
+    [Parameter] public bool IsRemote { get; set; }
+    [Parameter] public EventCallback<bool> OnAnswer { get; set; }
+    /// <summary>After an app was closed: run the test again.</summary>
+    [Parameter] public EventCallback OnHolderClosed { get; set; }
+
+    private RemediationActions? _fixUi;
+
+    /// <summary>The End task fix for the app holding the camera (the Agent checks the name again and refuses protected processes).</summary>
+    public static AreaAction CloseAction(WebcamHolder h) => new(RemediationKind.EndProcessGroup, $"Close {h.ProcessName}", h.ProcessName!, h.App);
+
+    private static string Num(double v) => v.ToString("0.##", System.Globalization.CultureInfo.CurrentCulture);
+}

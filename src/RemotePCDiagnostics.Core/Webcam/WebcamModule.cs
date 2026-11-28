@@ -19,5 +19,16 @@ public sealed record WebcamReport(WebcamVerdict Verdict, string Device, WebcamBu
     TimeSpan Duration, WebcamStats Stats, string? Notice) : IRunEnd
 {
     [System.Text.Json.Serialization.JsonIgnore]
-    public RunEnd RunEnd => Verdict == WebcamVerdict.Busy ? RunEnd.CouldNotRun : RunEnd.Finished;
+    public RunEnd RunEnd => Verdict is WebcamVerdict.Busy or WebcamVerdict.NotSupported ? RunEnd.CouldNotRun : RunEnd.Finished;
+
+    public WebcamKind Kind { get; init; }
+    /// <summary>Every format the camera offers, largest first (<see cref="WebcamCapabilities.Distinct"/>).</summary>
+    public IReadOnlyList<WebcamFormat> Formats { get; init; } = [];
+    /// <summary>The best format against the camera's class; null when the formats couldn't be read.</summary>
+    public WebcamCapabilityCheck? Capability { get; init; }
+    public IReadOnlyList<WebcamControl> Controls { get; init; } = [];
+    /// <summary>The apps Windows lists as using a camera now: read when the camera was busy or only shared.</summary>
+    public IReadOnlyList<WebcamHolder> Holders { get; init; } = [];
+    /// <summary>The person's answer to "Do you see yourself?" (null = not asked yet), kept beside the measured <see cref="Verdict"/>.</summary>
+    public bool? PersonSawPicture { get; init; }
 }
