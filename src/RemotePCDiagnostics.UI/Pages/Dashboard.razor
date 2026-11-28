@@ -241,7 +241,8 @@
                 else
                 {
                     @* dashboard-runall and dashboard-checks-stop are the ids Admin's run_checks and stop_checks click. *@
-                    <button type="button" class="btn btn-primary" data-testid="dashboard-runall" disabled="@(checking || enabledModules.Count == 0)" @onclick="RefreshAll" title="Refresh all enabled checks">
+                    var runAllBusy = RemotePCDiagnostics.Core.Workflow.RunGate.BusyReason(RemotePCDiagnostics.Core.Workflow.RunKind.Checks, Screen, Diagnostics, App.BenchQa, App.Workflow);
+                    <button type="button" class="btn btn-primary" data-testid="dashboard-runall" data-busy-reason="@runAllBusy" disabled="@(checking || enabledModules.Count == 0 || runAllBusy is not null)" @onclick="RefreshAll" title="@(runAllBusy ?? "Refresh all enabled checks")">
                         <span class="@(checking ? "dash-spin" : "")"><Icon Name="refresh" Size="14" /></span>
                         <span>Refresh</span>
                     </button>
@@ -520,6 +521,8 @@
         if (App.CheckSettings is { } cs) cs.Changed += OnScreenChanged;
         if (App.Elevation is { } elevation) elevation.Changed += OnScreenChanged;
         if (App.AgentLink is { } link) link.Changed += OnScreenChanged;
+        if (App.BenchQa is { } qa) qa.Changed += OnScreenChanged;
+        if (App.Workflow is { } flow) flow.Changed += OnScreenChanged;
     }
 
     /// <summary>Starts the Agent's on-demand helper (Windows asks for permission). Declining leaves the app as it was, without a message.</summary>
@@ -600,6 +603,8 @@
         if (App.CheckSettings is { } cs) cs.Changed -= OnScreenChanged;
         if (App.Elevation is { } elevation) elevation.Changed -= OnScreenChanged;
         if (App.AgentLink is { } link) link.Changed -= OnScreenChanged;
+        if (App.BenchQa is { } qa) qa.Changed -= OnScreenChanged;
+        if (App.Workflow is { } flow) flow.Changed -= OnScreenChanged;
         Dispose();
         return ValueTask.CompletedTask;
     }

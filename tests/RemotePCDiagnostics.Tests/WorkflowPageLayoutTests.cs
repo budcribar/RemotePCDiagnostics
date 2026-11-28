@@ -62,6 +62,7 @@ public class WorkflowPageLayoutTests : BunitContext
         };
         var flow = new WorkflowService(diag, results, rem, bench, new Sys(), new Store(st), session: new SessionContext(SessionMode.Remote));
         Services.AddSingleton(results); Services.AddSingleton(diag); Services.AddSingleton(bench); Services.AddSingleton(flow);
+        Services.AddSingleton(new ChecksScreenState(diag, results));
         Services.AddSingleton<ISessionContext>(new SessionContext(SessionMode.Remote));
         Services.AddSingleton(new AppServices());
         var cut = Render<WorkflowPage>();

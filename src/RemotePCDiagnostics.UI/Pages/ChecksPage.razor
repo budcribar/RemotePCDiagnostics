@@ -22,30 +22,56 @@
     // Only this page's tests count: the auto-run sensor and inventory checks alone don't make the Stress tests page say "healthy".
     var anyResult = pageModules.Any(m => { var r = Store.Get(m.Name); return r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running) && !CheckEnableRules.IsTurnedOff(r); });
     var banner = ChecksBanner.Build(summary, Screen.Progress, anyResult, _group == CheckGroup.Stress ? "No tests run in this session" : "Not checked yet");
+    // The pane follows the running test, whoever started it (this page, the QA check or the service workflow): each time a new test
+    // starts it is shown. Clicking another test mid-run shows that one until the next test starts.
+    var runningHere = pageModules.FirstOrDefault(m => Store.Get(m.Name).Status == DiagnosticStatus.Running);
+    if (runningHere is not null && !string.Equals(runningHere.Name, _followed, StringComparison.OrdinalIgnoreCase))
+    {
+        _followed = runningHere.Name;
+        Screen.SelectedModule = runningHere.Name;
+    }
     var selected = Screen.SelectedIn(_group);
     var checkChoices = _group == CheckGroup.Checks ? Diagnostics.CheckChoices() : [];
     var availableChecks = checkChoices.Where(c => c.Available).ToList();
     var enabledChecks = availableChecks.Count(c => c.Enabled);
     var checksRunning = Screen.RunningGroup == CheckGroup.Checks || Screen.Modules(CheckGroup.Checks).Any(m => Store.Get(m.Name).Status == DiagnosticStatus.Running);
-    // Stress tests page while a test runs: the list tucks away to the left (a slim "Show tests" rail) so the running test gets the
+    // Stress tests page while a test runs, Checks page while Run all / Run selected goes: the list tucks away to the left (a slim
+    // "Show tests" / "Show checks" rail) so the running test gets the
     // width, and Cancel sits in the Running banner. The list comes back by itself when the run ends or is cancelled.
     var stressRunning = _stressRunning = _group == CheckGroup.Stress && StressRunning(pageModules);
-    if (!stressRunning) _listPeek = false;
-    var listTucked = stressRunning && !_listPeek;
+    if (!stressRunning && runningHere is null) _followed = null;
+    // Stress tests run by the QA check or the service workflow: once one has run, the list stays tucked until that run ends (it goes
+    // on with other steps between and after the stress tests), so the list doesn't spring open between tests.
+    var ownerRun = OwnerRunStatus();
+    if (stressRunning && Screen.RunningGroup != CheckGroup.Stress && ownerRun is not null) _heldByOwner = true;
+    if (ownerRun is null) _heldByOwner = false;
+    var heldByOwner = _group == CheckGroup.Stress && _heldByOwner && !stressRunning;
+    var listRunning = stressRunning || heldByOwner || (_group == CheckGroup.Checks && Screen.RunningGroup == CheckGroup.Checks);
+    if (!listRunning) _listPeek = false;
+    var listTucked = listRunning && !_listPeek;
+    var listNoun = _group == CheckGroup.Stress ? "tests" : "checks";
     // One Cancel for each running operation: the banner's for a group run or a stress test, the scan card's own Cancel scan for a long
     // scan started on its own. The group's Run selected button is not drawn while the banner has Cancel (they share the test id).
     var groupRunHere = Screen.RunningGroup == _group;
+    // A QA check, the service workflow or the other page's run going: this page's Run waits for it (one long run at a time).
+    _busyReason = RemotePCDiagnostics.Core.Workflow.RunGate.BusyReason(_group == CheckGroup.Checks ? RemotePCDiagnostics.Core.Workflow.RunKind.Checks : RemotePCDiagnostics.Core.Workflow.RunKind.Stress,
+        Screen, Diagnostics, App.BenchQa, App.Workflow);
     _bannerCancel = groupRunHere || (stressRunning && !SoloScanRunning(pageModules));
     if (groupRunHere && Screen.Progress is null && !stressRunning) banner = ("run", "Starting…");
-    if (stressRunning && Screen.Progress is null) banner = ("run", "Running " + string.Join(", ", pageModules.Where(m => Store.Get(m.Name).Status == DiagnosticStatus.Running).Select(m => m.DisplayName).DefaultIfEmpty("a stress test")));
+    if (stressRunning && Screen.Progress is null)
+        banner = Diagnostics.IsStressSuiteRunning && Diagnostics.LastStressSuiteProgress is { Finished: false, Index: > 0 } sp
+            ? ("run", $"Running {sp.Index} of {sp.Total}: {sp.CurrentDisplayName}")
+            : ("run", "Running " + string.Join(", ", pageModules.Where(m => Store.Get(m.Name).Status == DiagnosticStatus.Running).Select(m => m.DisplayName).DefaultIfEmpty("a stress test")));
+    if (heldByOwner) banner = ("run", ownerRun!);
+    var ownerNote = (stressRunning || heldByOwner) && Screen.RunningGroup != CheckGroup.Stress ? OwnerRunName() : null;
 }
 <div class="ct-page">
     <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="dash" Size="20" /></span><h1 data-rpcd-page="@(_group == CheckGroup.Stress ? "stress" : "checks")" data-rpcd-contract="@(_group == CheckGroup.Stress ? BrowserContract.Stress : BrowserContract.Checks)" data-testid="checks-title">@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")</h1>
         @if (_group == CheckGroup.Checks)
         {
             @* While checks run it only spins: Cancel is in the Running banner. *@
-            <button type="button" class="icon-refresh-btn" data-testid="checks-refresh" disabled="@checksRunning"
-                    title="@(checksRunning ? "Checks are running" : "Refresh enabled checks")"
+            <button type="button" class="icon-refresh-btn" data-testid="checks-refresh" disabled="@(checksRunning || _busyReason is not null)" data-busy-reason="@_busyReason"
+                    title="@(checksRunning ? "Checks are running" : _busyReason ?? "Refresh enabled checks")"
                     aria-label="@(checksRunning ? "Checks are running" : "Refresh enabled checks")"
                     @onclick="() => { _ = Screen.RunAllChecksAsync(); }">
                 <span class="@(checksRunning ? "dash-spin" : "")"><Icon Name="refresh" Size="15" /></span>
@@ -56,14 +82,15 @@
             <button class="btn-small" data-testid="checks-collapse-all" @onclick="() => Screen.SetAllCollapsed(true)">Collapse all</button>
         </span>
     </div>
-    @if ((_group == CheckGroup.Stress && anyResult) || Screen.Progress is not null || stressRunning || groupRunHere)
+    @if ((_group == CheckGroup.Stress && anyResult) || Screen.Progress is not null || stressRunning || heldByOwner || groupRunHere)
     {
     <section class="banner banner-@banner.Kind ct-banner" data-testid="checks-banner">
         <span class="banner-icon"><Icon Name="@(banner.Kind is "warn" or "err" ? "crash" : "sec")" Size="22" /></span>
         <div class="banner-text">
             <div class="banner-title" data-testid="checks-banner-title">@banner.Title</div>
             @if (Screen.Progress is null && Screen.LastRunNote is { } runNote) { <div class="banner-note" data-testid="checks-run-note">@runNote</div> }
-            @if (Screen.Progress is null && _group == CheckGroup.Stress && summary.StressNotRunNote is { } note) { <div class="banner-note">@note</div> }
+            @if (ownerNote is not null) { <div class="banner-sub" data-testid="checks-run-owner">Started by @ownerNote.</div> }
+            else if (Screen.Progress is null && !stressRunning && _group == CheckGroup.Stress && summary.StressNotRunNote is { } note) { <div class="banner-note">@note</div> }
             else if (Screen.Progress is null && !stressRunning) { <div class="banner-sub">Expand a group or click a test to see its full results on the right.</div> }
         </div>
         @if (_bannerCancel)
@@ -144,13 +171,13 @@
             </div>
         </details>
     }
-    <div class="ct-workspace @(stressRunning ? "is-running" : "") @(listTucked ? "is-tucked" : "")" data-testid="checks-workspace" data-list-state="@(listTucked ? "tucked" : "open")">
+    <div class="ct-workspace @(listRunning ? "is-running" : "") @(listTucked ? "is-tucked" : "")" data-testid="checks-workspace" data-list-state="@(listTucked ? "tucked" : "open")">
         <section class="ct-list" aria-label="@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")">
-            @if (stressRunning)
+            @if (listRunning)
             {
                 <button type="button" class="ct-list-toggle" data-testid="checks-list-toggle" aria-expanded="@(listTucked ? "false" : "true")"
-                        aria-controls="ct-list-body" title="@(listTucked ? "Show the test list" : "Hide the test list")" @onclick="() => _listPeek = !_listPeek">
-                    <span class="ct-list-toggle-icon" aria-hidden="true">@(listTucked ? "›" : "‹")</span><span class="ct-list-toggle-text">@(listTucked ? "Show tests" : "Hide tests")</span>
+                        aria-controls="ct-list-body" title="@(listTucked ? $"Show the {listNoun} list" : $"Hide the {listNoun} list")" @onclick="() => _listPeek = !_listPeek">
+                    <span class="ct-list-toggle-icon" aria-hidden="true">@(listTucked ? "›" : "‹")</span><span class="ct-list-toggle-text">@(listTucked ? $"Show {listNoun}" : $"Hide {listNoun}")</span>
                 </button>
             }
             <div class="ct-list-body" id="ct-list-body" inert="@listTucked">
@@ -193,6 +220,8 @@
         Nav.LocationChanged += OnLocationChanged;
         if (App.CheckSettings is { } checks) checks.Changed += OnScreenChanged;
         foreach (var source in Diagnostics.Modules.OfType<ILiveProgressSource>()) { source.LiveProgressChanged += OnLiveProgress; _liveSources.Add(source); }
+        if (App.BenchQa is { } qa) qa.Changed += OnScreenChanged;
+        if (App.Workflow is { } flow) flow.Changed += OnScreenChanged;
         _ = LoadLastRunsAsync();
     }
 
@@ -271,6 +300,8 @@
         Nav.LocationChanged -= OnLocationChanged;
         if (App.CheckSettings is { } checks) checks.Changed -= OnScreenChanged;
         foreach (var source in _liveSources) source.LiveProgressChanged -= OnLiveProgress;
+        if (App.BenchQa is { } qa) qa.Changed -= OnScreenChanged;
+        if (App.Workflow is { } flow) flow.Changed -= OnScreenChanged;
         base.Dispose();
     }
 
@@ -278,8 +309,20 @@
 
     /// <summary>The banner has this page's Cancel (a group run, or a stress test that isn't a lone long scan). Set each render.</summary>
     private bool _bannerCancel;
+    /// <summary>Why this page's Run can't start (another long run is going), or null. Set each render.</summary>
+    private string? _busyReason;
     /// <summary>A stress test runs on this (Stress tests) page: the test pages' own Start/Stop toolbars are hidden, Cancel is in the banner.</summary>
     private bool _stressRunning;
+    /// <summary>The running test the pane last jumped to, so it jumps once per test and a click mid-run is kept.</summary>
+    private string? _followed;
+    /// <summary>A QA check or service workflow ran a stress test and is still going: the list stays tucked until it ends.</summary>
+    private bool _heldByOwner;
+    /// <summary>The status line of a running QA check or service workflow (the runs that start stress tests themselves), else null.</summary>
+    private string? OwnerRunStatus() =>
+        App.BenchQa is { IsRunning: true } qa ? (string.IsNullOrWhiteSpace(qa.Status) ? "QA check running" : qa.Status)
+        : App.Workflow is { } wf && (wf.Busy || wf.State.IsRunning) ? "Service workflow running" : null;
+    private string? OwnerRunName() =>
+        App.BenchQa is { IsRunning: true } ? "the QA check" : App.Workflow is { } wf && (wf.Busy || wf.State.IsRunning) ? "the service workflow" : null;
 
     /// <summary>The only thing running is a long scan started on its own (no group run, no stress suite): its card's Cancel scan stops it.</summary>
     private bool SoloScanRunning(IReadOnlyList<IDiagnosticModule> mods)
@@ -302,7 +345,7 @@
     private readonly List<ILiveProgressSource> _liveSources = [];
     private void OnLiveProgress(object? sender, EventArgs e) => OnScreenChanged();
 
-    /// <summary>The tucked test list was opened again during a run ("Show tests"); cleared when the run ends.</summary>
+    /// <summary>The tucked list was opened again during a run ("Show tests" / "Show checks"); cleared when the run ends.</summary>
     private bool _listPeek;
 
     /// <summary>A stress test runs: a Run selected, a test started from its own card, or one an agent started.</summary>
@@ -521,8 +564,10 @@
                     @if (!_bannerCancel)
                     {
                         <button class="btn btn-primary" data-testid="checks-run-@id" data-action="run-selected" data-check-group="@id"
-                                data-selected-check-ids="@string.Join(" ", mods.Where(m => Screen.IsSelected(m.Name)).Select(m => m.Name))" disabled="@(count == 0 || otherBusy || running)"
+                                data-selected-check-ids="@string.Join(" ", mods.Where(m => Screen.IsSelected(m.Name)).Select(m => m.Name))" disabled="@(count == 0 || otherBusy || running || _busyReason is not null)"
+                                data-busy-reason="@_busyReason" title="@_busyReason"
                                 @onclick="() => { _ = Screen.RunGroupAsync(g); }"><Icon Name="play" Size="12" /> Run selected (@count)</button>
+                        @if (_busyReason is { } why) { <span class="meta run-busy-note" role="status" data-testid="checks-busy-@id">@why</span> }
                     }
                 </div>
             </div>
@@ -668,7 +713,7 @@
                 var live = LiveFor(m, r);
                 <div class="ct-live" role="status" data-testid="checks-detail-progress" data-check-id="@m.Name">
                     <div class="ct-live-text">
-                        <div class="ct-live-headline" data-testid="checks-detail-progress-headline">@live.Headline</div>
+                        <div class="ct-live-headline @(live.Headline.Length > 0 && char.IsDigit(live.Headline[0]) ? "is-number" : "")" data-testid="checks-detail-progress-headline">@live.Headline</div>
                         @if (live.Facts is { Count: > 0 } facts) { <div class="meta ct-live-facts" data-testid="checks-detail-progress-facts">@string.Join(" · ", facts)</div> }
                         @if (live.Problem is { } problem) { <div class="meta error-text" data-testid="checks-detail-progress-problem">@problem</div> }
                         @if (live.Fraction is { } share)

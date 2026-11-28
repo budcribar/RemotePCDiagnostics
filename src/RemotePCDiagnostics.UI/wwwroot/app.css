@@ -1901,11 +1901,14 @@ body:has(.ptr-overlay) [class*="rbwv-"] { display: none !important; }
 .ct-workspace.is-tucked .ct-list { width: 40px; padding-right: 4px; overflow: hidden; }
 .ct-workspace.is-tucked .ct-list-body { opacity: 0; visibility: hidden; transition: opacity .15s ease, visibility 0s linear .45s; }
 .ct-workspace.is-tucked .ct-splitter { visibility: hidden; }
-.ct-workspace.is-tucked .ct-list-toggle { align-self: stretch; flex-direction: column; justify-content: flex-start; height: auto; min-height: 150px; padding: 10px 0; }
+/* The rail is only as tall as its label, never taller than the test's card next to it. */
+.ct-workspace.is-tucked .ct-list-toggle { align-self: stretch; flex-direction: column; justify-content: flex-start; height: auto; min-height: 0; padding: 10px 0; }
+.ct-workspace.is-tucked .ct-list { align-self: flex-start; }
+.ct-workspace.is-tucked .ct-list-body { height: 0; overflow: hidden; }
 .ct-workspace.is-tucked .ct-list-toggle-text { writing-mode: vertical-rl; }
 /* Stacked layout (phone, narrow window): the list folds away upwards instead, leaving a full-width "Show tests" bar. */
 @media (max-width: 900px) {
-  .ct-workspace.is-tucked .ct-list { width: auto; overflow: visible; padding-right: 2px; }
+  .ct-workspace.is-tucked .ct-list { width: auto; overflow: visible; padding-right: 2px; align-self: stretch; }
   .ct-workspace.is-tucked .ct-list-body { display: none; }
   .ct-workspace.is-tucked .ct-list-toggle { align-self: stretch; flex-direction: row; justify-content: center; min-height: 0; height: 34px; padding: 0 12px; }
   .ct-workspace.is-tucked .ct-list-toggle-text { writing-mode: horizontal-tb; }
@@ -1916,7 +1919,8 @@ body:has(.ptr-overlay) [class*="rbwv-"] { display: none !important; }
    test's page below drops its Progress card and bar, and on Stress tests its Start/Stop toolbar (Cancel is in the Running banner). */
 .ct-live { display: flex; align-items: center; gap: 14px; margin: 8px 0 0 46px; flex-wrap: wrap; }
 .ct-live-text { flex: 1 1 220px; min-width: 0; }
-.ct-live-headline { font-family: var(--font-num); font-size: 20px; font-weight: 700; color: var(--text-strong); line-height: 1.25; }
+.ct-live-headline.is-number { font-family: var(--font-num); }
+.ct-live-headline { font-size: 20px; font-weight: 700; color: var(--text-strong); line-height: 1.25; }
 .ct-live-facts, .ct-live .error-text { margin: 2px 0 0; }
 .ct-live .progress.ct-live-bar { height: 4px; margin: 8px 0 0; max-width: none; }
 .ct-live .progress.ct-live-bar > div { background: var(--accent); }
@@ -1924,3 +1928,6 @@ body:has(.ptr-overlay) [class*="rbwv-"] { display: none !important; }
 @media (max-width: 560px) { .ct-live { margin-left: 0; } .ct-live .running-visual { display: none; } }
 .ct-detail-body.is-running .card.is-running.card-with-visual, .ct-detail-body.is-running .progress.run-progress,
 .ct-detail-body.is-running .run-progress-indeterminate, .ct-detail-body.is-stress-run > .toolbar { display: none; }
+
+/* Why a Start button is greyed out: another long run (checks, stress tests, QA, service workflow) has to stop or finish first. */
+.run-busy-note { margin: 0; color: var(--warn-text, var(--chip-warn)); font-weight: 600; }

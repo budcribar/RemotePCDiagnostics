@@ -30,6 +30,7 @@ public class QaGuidedStepsPageTests : BunitContext
         var runner = new BenchQaRunner(diag, store);
         Services.AddSingleton(store);
         Services.AddSingleton(diag);
+        Services.AddSingleton(new ChecksScreenState(diag, store));
         Services.AddSingleton<ISessionContext>(new SessionContext(SessionMode.Local));
         Services.AddSingleton(new AppServices(BenchQa: runner));
 
