@@ -5,7 +5,7 @@
     var checkResults = Diagnostics.Modules
         .Where(m => m.IncludeInRunAll)
         .Select(m => Store.Get(m.Name))
-        .Where(r => !r.Cancelled && !CheckEnableRules.IsTurnedOff(r))
+        .Where(r => !r.Cancelled && !CheckEnableRules.IsTurnedOff(r) && !CheckRows.IsCouldNotRun(r))
         .ToList();
     var errorCount = checkResults.Count(r => r.Status == DiagnosticStatus.Error);
     var warningCount = checkResults.Count(r => r.Status == DiagnosticStatus.Warning);

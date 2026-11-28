@@ -28,6 +28,15 @@ public class ChecksScreenTests
         Assert.Equal(expected, CheckRows.KindOf(new DiagnosticResult("M", st, msg, DateTimeOffset.Now) { Cancelled = expected == RowKind.Cancelled }));
 
     [Fact]
+    public void CouldNotRun_FromAreaReportWithNoVerdict()
+    {
+        var report = new RemotePCDiagnostics.Core.Areas.AreaReport([], "The graphics chips couldn't be listed: overflow", DiagnosticStatus.Error) { CouldNotRunReason = "overflow" };
+        var r = new DiagnosticResult("GpuMemory", DiagnosticStatus.Error, report.Summary, DateTimeOffset.Now, report);
+        Assert.True(CheckRows.IsCouldNotRun(r));
+        Assert.False(CheckRows.IsCouldNotRun(new DiagnosticResult("GpuMemory", DiagnosticStatus.Error, "1 error", DateTimeOffset.Now)));
+    }
+
+    [Fact]
     public void CouldNotRun_FromAvailabilityPayload() =>
         Assert.Equal(RowKind.CouldNotRun, CheckRows.KindOf(new DiagnosticResult("M", DiagnosticStatus.Error, "no", DateTimeOffset.Now, ModuleAvailability.Unavailable("no"))));
 

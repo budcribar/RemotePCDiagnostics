@@ -21,6 +21,10 @@ public static class CheckRows
         },
     };
 
+    /// <summary>A finished check that reached no verdict ("Couldn't run", e.g. the chips couldn't be listed): not a hardware problem,
+    /// so the Dashboard and the nav badges don't count it as an error or a warning.</summary>
+    public static bool IsCouldNotRun(DiagnosticResult r) => KindOf(r) == RowKind.CouldNotRun;
+
     private static bool IsCancelled(DiagnosticResult r) => ResultEventLogger.IsCancelled(r) || Cancellation.IsCancelled(r);
 
     public static string Text(RowKind k) => k switch

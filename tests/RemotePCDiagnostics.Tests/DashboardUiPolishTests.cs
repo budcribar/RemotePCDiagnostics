@@ -79,6 +79,25 @@ public class DashboardUiPolishTests : BunitContext
         Assert.NotNull(cut.Find("[data-testid='dashboard-card-refresh-drivehealth']"));
     }
 
+    /// <summary>VH1: the graphics memory test couldn't list the chips (a software failure) and the card showed a red "Problem".</summary>
+    [Fact]
+    public void Dashboard_CouldNotRun_ShowsGreyPill_AndIsNotAnError()
+    {
+        var store = new ResultStore();
+        var drive = new FakeModule(ModuleSlugs.DriveHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DriveHealth)));
+        RegisterDashboardServices(store, drive);
+        var report = new RemotePCDiagnostics.Core.Areas.AreaReport([], "The test couldn't start", DiagnosticStatus.Error) { CouldNotRunReason = "The test couldn't start" };
+        store.Set(new DiagnosticResult(ModuleSlugs.DriveHealth, DiagnosticStatus.Error, report.Summary, DateTimeOffset.Now, report));
+
+        var dash = Render<Dashboard>();
+        var chip = dash.Find("[data-testid='dashboard-card-drivehealth'] .chip");
+        Assert.Equal("Couldn't run", chip.TextContent.Trim());
+        Assert.DoesNotContain("chip-err", chip.ClassName);
+
+        var nav = Render<NavRail>();
+        Assert.Empty(nav.FindAll("[data-testid='nav-checks-errors']"));
+    }
+
     [Fact]
     public void NavRail_ShowsSeparateRedErrorAndYellowWarningBadges()
     {

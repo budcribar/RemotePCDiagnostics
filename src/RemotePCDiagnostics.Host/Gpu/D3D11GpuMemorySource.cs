@@ -32,29 +32,9 @@ public sealed class D3D11GpuMemorySource(ILogger? log = null) : IGpuMemorySource
             {
                 using (adapter)
                 {
-                    var d = adapter.Description1;
-                    if ((d.Flags & AdapterFlags.Software) != 0 || d.VendorId == GpuAdapterInfo.MicrosoftVendorId) continue;
-                    long? budget = null, usage = null;
-                    try
-                    {
-                        using var a3 = adapter.QueryInterfaceOrNull<IDXGIAdapter3>();
-                        if (a3 is not null)
-                        {
-                            var info = a3.QueryVideoMemoryInfo(0, MemorySegmentGroup.Local);
-                            if (info.Budget > 0)
-                            {
-                                budget = (long)info.Budget;
-                                usage = (long)info.CurrentUsage;
-                            }
-                        }
-                    }
-                    catch (Exception ex) { log.Warn($"GPU memory: memory budget of '{d.Description}' unreadable: {ex.Message}"); }
-                    var dedicated = (long)d.DedicatedVideoMemory;
-                    var shared = (long)d.SharedSystemMemory;
-                    var integrated = dedicated < IntegratedBelow;
-                    var pci = GpuAdapterInfo.PciId((uint)d.VendorId, (uint)d.DeviceId, (uint)d.SubsystemId, (uint)d.Revision);
-                    log.Info($"GPU memory: adapter {i} '{d.Description}' {pci} dedicated={dedicated} shared={shared} budget={budget} usage={usage} integrated={integrated}");
-                    found.Add((new GpuMemoryAdapter(pci, d.Description, (uint)d.VendorId, dedicated, shared, integrated, budget, usage), i, pci));
+                    try { Describe(adapter, i, found); }
+                    // One adapter that can't be described (an odd driver value) is skipped; it must not hide the others.
+                    catch (Exception ex) { log.Warn($"GPU memory: adapter {i} skipped, its description couldn't be read: {ex.GetType().Name}: {ex.Message}"); }
                 }
             }
         }
@@ -65,6 +45,34 @@ public sealed class D3D11GpuMemorySource(ILogger? log = null) : IGpuMemorySource
             var n = seen[f.Item3] = seen.GetValueOrDefault(f.Item3) + 1;
             return (n == 1 ? f.Item1 : f.Item1 with { Id = $"{f.Item3}#{n}" }, f.Item2);
         }).ToList();
+    }
+
+    private void Describe(IDXGIAdapter1 adapter, uint i, List<(GpuMemoryAdapter, uint, string)> found)
+    {
+        var d = adapter.Description1;
+        if ((d.Flags & AdapterFlags.Software) != 0 || d.VendorId == GpuAdapterInfo.MicrosoftVendorId) return;
+        long? budget = null, usage = null;
+        try
+        {
+            using var a3 = adapter.QueryInterfaceOrNull<IDXGIAdapter3>();
+            if (a3 is not null)
+            {
+                var info = a3.QueryVideoMemoryInfo(0, MemorySegmentGroup.Local);
+                if (info.Budget > 0)
+                {
+                    budget = (long)info.Budget;
+                    usage = (long)info.CurrentUsage;
+                }
+            }
+        }
+        catch (Exception ex) { log.Warn($"GPU memory: memory budget of '{d.Description}' unreadable: {ex.Message}"); }
+        // DXGI sizes are PointerUSize: (long) alone picks its uint conversion, which throws over 4 GB (an integrated GPU's shared memory is usually half the RAM).
+        var dedicated = (long)(ulong)d.DedicatedVideoMemory;
+        var shared = (long)(ulong)d.SharedSystemMemory;
+        var integrated = dedicated < IntegratedBelow;
+        var pci = GpuAdapterInfo.PciId((uint)d.VendorId, (uint)d.DeviceId, (uint)d.SubsystemId, (uint)d.Revision);
+        log.Info($"GPU memory: adapter {i} '{d.Description}' {pci} dedicated={dedicated} shared={shared} budget={budget} usage={usage} integrated={integrated}");
+        found.Add((new GpuMemoryAdapter(pci, d.Description, (uint)d.VendorId, dedicated, shared, integrated, budget, usage), i, pci));
     }
 
     public IGpuMemoryDevice Open(string adapterId)
