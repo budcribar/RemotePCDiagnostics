@@ -169,6 +169,9 @@ public sealed class PointerTestService : IDisposable
                 _current = _current with { SecondsLeft = left };
                 changed = true;
             }
+            // The input counts shown while the test runs (which device Windows hears from) refresh once a second.
+            changed |= _gate.DeviceEvents != _current.DeviceInputs || _gate.OtherDevice.Events != _current.OtherDeviceInputs
+                || _gate.InjectedSeen != _current.InjectedInputs;
         }
         if (changed) Raise();
     }
@@ -388,7 +391,26 @@ public sealed class PointerTestService : IDisposable
         UnverifiedReason = _gate.Verified ? null : _gate.UnverifiedReason,
         IgnoredInputs = _gate.Ignored,
         InjectedInputs = _gate.InjectedSeen,
+        DeviceInputs = _gate.DeviceEvents,
+        OtherDevice = OtherDeviceLocked(),
+        OtherDeviceInputs = _gate.OtherDevice.Events,
     };
+
+    private IReadOnlyList<PointerDevice>? _knownDevices;
+
+    private PointerDevice? OtherDeviceLocked()
+    {
+        if (_gate.OtherDevice.Id is not { } id) return null;
+        _knownDevices ??= Devices();
+        var known = _knownDevices.FirstOrDefault(d => d.Id == id);
+        if (known is null)
+        {
+            // A device plugged in after the list was read.
+            _knownDevices = Devices();
+            known = _knownDevices.FirstOrDefault(d => d.Id == id);
+        }
+        return known;
+    }
 
     private PointerTestSnapshot Fresh() => new() { InputVerified = _gate.Verified, UnverifiedReason = _gate.Verified ? null : _gate.UnverifiedReason };
 

@@ -81,6 +81,11 @@ public sealed record PointerTestSnapshot
     /// <summary>Page input that did not count because no hardware input backed it (a remote viewer, injected input).</summary>
     public int IgnoredInputs { get; init; }
     public int InjectedInputs { get; init; }
+    /// <summary>Hardware reports Windows delivered from the chosen device during the test (moves included).</summary>
+    public int DeviceInputs { get; init; }
+    /// <summary>Another pointing device the person is using instead of the chosen one (its reports don't count), with its report count.</summary>
+    public PointerDevice? OtherDevice { get; init; }
+    public int OtherDeviceInputs { get; init; }
     public DateTimeOffset? StartedUtc { get; init; }
     public DateTimeOffset? FinishedUtc { get; init; }
     public string? Notes { get; init; }

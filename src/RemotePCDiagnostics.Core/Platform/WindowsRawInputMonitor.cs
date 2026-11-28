@@ -14,7 +14,7 @@ namespace RemotePCDiagnostics.Core.Platform;
 public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisposable
 {
     private readonly object _gate = new();
-    private readonly Dictionary<nint, DeviceInfo> _devices = [];
+    private readonly Dictionary<nint, DeviceInfo?> _devices = [];
     private readonly Dictionary<nint, bool> _buttonDown = [];
     private static readonly TimeSpan PtpMouseWindow = TimeSpan.FromMilliseconds(250);
     private DateTimeOffset _lastPtpAt;
@@ -311,10 +311,8 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
             if (_devices.TryGetValue(handle, out var known)) return known;
         }
         var info = Describe(handle);
-        lock (_gate)
-        {
-            if (info is not null) _devices[handle] = info;
-        }
+        // Cached even when null: a device that can't be described would otherwise be looked up again on every report.
+        lock (_gate) _devices[handle] = info;
         return info;
     }
 
@@ -370,8 +368,12 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
         }
     }
 
+    // Remote Desktop's mouse and keyboard are root-enumerated (ROOT\RDP_MOU, ROOT\RDP_KBD) or on the terminal input bus. Software
+    // devices (SWD\) are not treated as virtual: some laptops' built-in keyboards and touchpads sit behind one.
     private static bool IsVirtual(string? instanceId) =>
-        instanceId is not null && (instanceId.StartsWith(@"ROOT\", StringComparison.OrdinalIgnoreCase) || instanceId.StartsWith(@"SWD\", StringComparison.OrdinalIgnoreCase));
+        instanceId is not null && (instanceId.StartsWith(@"ROOT\", StringComparison.OrdinalIgnoreCase)
+            || instanceId.StartsWith(@"TERMINPUT_BUS\", StringComparison.OrdinalIgnoreCase)
+            || instanceId.Contains("RDP_", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The digitizer kind among a device's raw input collections (touchpad first), or null when it has none.</summary>
     private static PointerDeviceKind? DigitizerSibling(string parent)

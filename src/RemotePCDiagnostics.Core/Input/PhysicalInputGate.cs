@@ -25,6 +25,9 @@ public sealed class PhysicalInputGate : IDisposable
     private int _ignored;
     private int _injected;
     private DateTimeOffset? _lastTouchpadPress;
+    private string? _otherDevice;
+    private int _otherEvents;
+    private int _deviceEvents;
 
     private sealed class Waiter(PhysicalInputKind kind, PointerButton? button, int minContacts)
     {
@@ -94,8 +97,14 @@ public sealed class PhysicalInputGate : IDisposable
 
     public void ResetCounts()
     {
-        lock (_gate) { _ignored = 0; _injected = 0; }
+        lock (_gate) { _ignored = 0; _injected = 0; _otherDevice = null; _otherEvents = 0; _deviceEvents = 0; }
     }
+
+    /// <summary>Hardware reports from the chosen device (moves included) since the counts were reset.</summary>
+    public int DeviceEvents { get { lock (_gate) return _deviceEvents; } }
+
+    /// <summary>The last other pointing device Windows saw input from, and how many of its reports were left out.</summary>
+    public (string? Id, int Events) OtherDevice { get { lock (_gate) return (_otherDevice, _otherEvents); } }
 
     public void Dispose() => Stop();
 
@@ -111,7 +120,12 @@ public sealed class PhysicalInputGate : IDisposable
                 if (e.Kind != PhysicalInputKind.Move) _injected++;
                 return;
             }
-            if (e.Kind != PhysicalInputKind.Key && DeviceId is not null && e.DeviceId != DeviceId) return;
+            if (e.Kind != PhysicalInputKind.Key && DeviceId is not null && e.DeviceId != DeviceId)
+            {
+                if (e.DeviceId is not null) { _otherDevice = e.DeviceId; _otherEvents++; }
+                return;
+            }
+            if (e.Kind != PhysicalInputKind.Key) _deviceEvents++;
             if (e.Kind == PhysicalInputKind.ButtonDown && e.DeviceKind == PointerDeviceKind.Touchpad) _lastTouchpadPress = e.At;
             var consumed = false;
             if (_waiters.Count > 0 && _clock.GetUtcNow() - e.At <= Window)

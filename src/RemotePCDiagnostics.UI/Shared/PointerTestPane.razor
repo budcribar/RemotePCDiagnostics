@@ -181,6 +181,21 @@
                 <div class="meta">@snap.CellsTouched.Count of @snap.CellCount squares · most touches at once @snap.MaxTouchPoints</div>
             }
 
+            <div class="meta" data-testid="pointer-input-sources">
+                Windows input from @(snap.Device?.Name ?? "this device"): <strong>@snap.DeviceInputs</strong>
+                @if (snap.InjectedInputs > 0)
+                {
+                    <span> · from software: @snap.InjectedInputs</span>
+                }
+            </div>
+            @if (snap.OtherDevice is { } other && snap.OtherDeviceInputs > snap.DeviceInputs)
+            {
+                <div class="notice" data-testid="pointer-other-device">
+                    Your input is coming from @DeviceLabel(other), not the device being tested, so it doesn't count.
+                    <button type="button" class="btn-small btn-primary" data-testid="pointer-switch-device" @onclick="() => SwitchTo(other)">Test @other.Name instead</button>
+                </div>
+            }
+
             <div class="ptr-hud-actions">
                 <span class="meta" data-testid="pointer-seconds-left">No input: @snap.SecondsLeft s left</span>
                 <button type="button" class="btn-small" data-testid="pointer-skip" @onclick="Service.Skip">Skip step</button>
@@ -258,6 +273,13 @@
         _fullscreen = true;
         App.Fullscreen?.RequestFullscreen(true);
         return Task.CompletedTask;
+    }
+
+    private Task SwitchTo(PointerDevice device)
+    {
+        if (_devices.All(d => d.Id != device.Id)) LoadDevices();
+        _deviceId = device.Id;
+        return Start();
     }
 
     private void Stop()

@@ -156,6 +156,27 @@ public class PointerTestTests
     }
 
     [Fact]
+    public async Task Input_from_another_device_is_reported_so_the_person_can_switch_to_it()
+    {
+        var (t, hw, c) = New(Mouse, Pad);
+        t.Start(Mouse);
+        for (var i = 0; i < 5; i++) hw.Send(Hw(c, PhysicalInputKind.Move, Pad));
+        await t.CornerAsync(0);
+        t.Tick();
+        Assert.Equal(0, t.Current.CornerCount);
+        Assert.Equal(Pad, t.Current.OtherDevice);
+        Assert.Equal(5, t.Current.OtherDeviceInputs);
+        Assert.Equal(0, t.Current.DeviceInputs);
+
+        t.Start(Pad);
+        Assert.Null(t.Current.OtherDevice);
+        hw.Send(Hw(c, PhysicalInputKind.Move, Pad));
+        await t.CornerAsync(0);
+        Assert.Equal(1, t.Current.CornerCount);
+        Assert.Equal(1, t.Current.DeviceInputs);
+    }
+
+    [Fact]
     public async Task Hardware_input_older_than_the_window_does_not_count()
     {
         var (t, hw, c) = New();
@@ -544,6 +565,23 @@ public class PointerTestPageTests : BunitContext
         page.Find("[data-testid='pointer-overlay']").TriggerEvent("onpointerup", new PointerEventArgs { Button = 0 });
         page.WaitForAssertion(() => Assert.DoesNotContain("ptr-dragging", page.Find("[data-testid='pointer-box-left']").ClassName ?? ""));
         Assert.False(pointer.Current.LeftDragged);
+    }
+
+    [Fact]
+    public void A_key_released_while_its_check_waits_does_not_stay_held()
+    {
+        var hw = new FakePhysicalInput(Mouse);
+        var bench = new PhysicalBenchQaService();
+        var page = Render(hw, new PointerTestService(hw), bench, "keyboard");
+        var zone = page.Find("[data-testid='keyboard-test-zone']");
+
+        // Windows' report arrives after the page's keydown and keyup.
+        zone.KeyDown(new KeyboardEventArgs { Code = "KeyQ", Key = "q" });
+        zone.KeyUp(new KeyboardEventArgs { Code = "KeyQ", Key = "q" });
+        hw.Send(new PhysicalInputEvent(DateTimeOffset.UtcNow, PhysicalInputKind.Key));
+        page.WaitForAssertion(() => Assert.Equal(1, bench.Current.UniqueKeysPressed), TimeSpan.FromSeconds(3));
+        page.WaitForAssertion(() => Assert.Empty(page.FindAll(".kb-cap-held")));
+        Assert.NotEmpty(page.FindAll(".kb-cap-hit"));
     }
 
     [Fact]
