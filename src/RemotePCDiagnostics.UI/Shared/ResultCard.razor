@@ -1,0 +1,47 @@
+@* One card for a test's or check's result, so every page lays a result out the same way: status dot, title, the shared
+   pass / warn / fail badge (ResultBadge), the headline, then whatever the page adds (a CardList, a meta line, buttons).
+   Give it a whole result (Result) to get the badge and dot the Checks list shows for it; a Status for one part of a result
+   (dot only, unless BadgeText or Badge asks for the badge); or a Dot for a live reading that has no verdict yet. *@
+<div class="@CssClass" data-testid="@TestId" @attributes="Attributes">
+    <div class="card-head">
+        <span class="dot dot-@DotKind"></span>
+        <strong>@Title</strong>
+        @if (ShowsBadge)
+        {
+            <ResultBadge Row="@EffectiveRow" Text="@BadgeText" Kind="@BadgeKind" RunLabel="@RunLabel" TestId="@(BadgeTestId ?? (TestId is { Length: > 0 } ? TestId + "-badge" : null))" />
+        }
+    </div>
+    @if (Headline is not null)
+    {
+        <div class="headline">@Headline</div>
+    }
+    @ChildContent
+</div>
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    /// <summary>The whole result this card shows. Sets the dot and badge the way the Checks list row shows them.</summary>
+    [Parameter] public DiagnosticResult? Result { get; set; }
+    /// <summary>The status of the part of a result this card shows (when there is no <see cref="Result"/>).</summary>
+    [Parameter] public DiagnosticStatus? Status { get; set; }
+    /// <summary>An explicit dot (ok, warning, error, running, neutral) for a live reading or a part with its own rule.</summary>
+    [Parameter] public string? Dot { get; set; }
+    [Parameter] public string? Headline { get; set; }
+    /// <summary>Show or hide the badge. Default: shown for a whole <see cref="Result"/> or when <see cref="BadgeText"/> is set.</summary>
+    [Parameter] public bool? Badge { get; set; }
+    [Parameter] public string? BadgeText { get; set; }
+    [Parameter] public string? BadgeKind { get; set; }
+    /// <summary>"extended run" for a stress test that ran in the stress suite's extended mode (DiagnosticsService.StressRunLabel).</summary>
+    [Parameter] public string? RunLabel { get; set; }
+    /// <summary>The card's data-testid. The badge gets "{TestId}-badge" unless <see cref="BadgeTestId"/> says otherwise.</summary>
+    [Parameter] public string? TestId { get; set; }
+    [Parameter] public string? BadgeTestId { get; set; }
+    /// <summary>Extra classes on the card (is-running, card-with-visual, clickable...).</summary>
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter(CaptureUnmatchedValues = true)] public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    private RowKind EffectiveRow => Result is { } r ? CheckRows.KindOf(r) : ResultBadge.RowFor(Status ?? DiagnosticStatus.NotRun);
+    private string DotKind => Dot ?? (Result is not null ? ResultBadge.DotFor(EffectiveRow) : ResultBadge.DotFor(Status ?? DiagnosticStatus.NotRun));
+    private bool ShowsBadge => Badge ?? (Result is not null || BadgeText is not null);
+    private string CssClass => Class is { Length: > 0 } ? "card result-card " + Class : "card result-card";
+}

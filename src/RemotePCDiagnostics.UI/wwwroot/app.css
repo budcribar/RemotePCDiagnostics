@@ -54,14 +54,13 @@
 
 /* ---- Scale tokens (both themes). Use these instead of literal sizes so every page lines up.
    Spacing: --space-N is N x 2px (--space-4 = 8px). Type: --fs-2xs 11px up to --fs-5xl 24px. Radius: --radius-xs 4px up to --radius-pill.
-   Colours stay in the theme blocks above; --status-* name the pass / warn / fail / not-run colours the results card and status chips share. ---- */
+   Colours stay in the theme blocks above; the pass / warn / fail colours are the chip-* and dot-* classes (ResultBadge, ResultCard). ---- */
 :root {
     --space-1: 2px; --space-2: 4px; --space-3: 6px; --space-4: 8px; --space-5: 10px; --space-6: 12px; --space-7: 14px; --space-8: 16px; --space-9: 18px; --space-10: 20px; --space-12: 24px; --space-14: 28px; --space-16: 32px;
     --fs-2xs: 11px; --fs-xs: 12px; --fs-sm: 13px; --fs-md: 14px; --fs-lg: 15px; --fs-xl: 16px; --fs-2xl: 17px; --fs-3xl: 18px; --fs-4xl: 20px; --fs-5xl: 24px;
     --radius-xs: 4px; --radius-sm: 6px; --radius-md: 8px; --radius-lg: 10px; --radius-xl: 12px; --radius-pill: 999px;
     --font-mono: "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
     --brand-blue: #1d4ed8; --on-color: #ffffff; --on-bright: #0b0f14;
-    --status-ok: var(--chip-ok); --status-warn: var(--chip-warn); --status-err: var(--chip-err); --status-na: var(--chip-na); --status-run: var(--dot-running);
 }
 
 /* ---------- Base ---------- */

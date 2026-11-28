@@ -70,12 +70,9 @@ else
     @if (!running && rep is not null && rep.Notice != AudioVerdicts.PrivacyMessage && rep.Input != "None found" && rep.Output != "None found")
     {
         <div class="cards">
-            <div class="card" data-testid="m2s-card-level">
-                <div class="card-head"><span class="dot dot-@(rep.MicHeardSomething ? "ok" : "error")"></span><strong>Microphone level</strong></div>
-                <div class="headline">@Db(rep.MicPeakDbfs) peak</div>
+            <ResultCard TestId="m2s-card-level" Title="Microphone level" Status="@(rep.MicHeardSomething ? DiagnosticStatus.Ok : DiagnosticStatus.Error)" Headline="@($"{Db(rep.MicPeakDbfs)} peak")">
                 <CardList Items="@([ $"RMS {Db(rep.MicRmsDbfs)}", rep.Input, rep.FeedbackDetected ? "Stopped: feedback detected" : rep.GainReduced ? "Volume was turned down automatically to avoid feedback" : null ])" />
-
-            </div>
+            </ResultCard>
         </div>
         @if (rep.MicHeardSomething && !rep.FeedbackDetected)
         {

@@ -2671,22 +2671,9 @@
         }
     };
 
-    private static string OutcomeChip(DiagnosticStatus status) => status switch
-    {
-        DiagnosticStatus.Ok => "ok",
-        DiagnosticStatus.Warning => "warn",
-        DiagnosticStatus.Error => "err",
-        DiagnosticStatus.Running => "run",
-        _ => "na",
-    };
+    private static string OutcomeChip(DiagnosticStatus status) => ResultBadge.ChipFor(status);
 
-    private static string OutcomeChip(PhysicalCheckOutcome outcome) => outcome switch
-    {
-        PhysicalCheckOutcome.Passed => "ok",
-        PhysicalCheckOutcome.PassedWithNote => "warn",
-        PhysicalCheckOutcome.Failed => "err",
-        _ => "na",
-    };
+    private static string OutcomeChip(PhysicalCheckOutcome outcome) => ResultBadge.ChipFor(outcome);
 
     private static string OutcomeLabel(DiagnosticStatus status) => status switch
     {

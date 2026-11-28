@@ -1016,13 +1016,7 @@ else
         _ => "Not run",
     };
 
-    private static string OutcomeChip(PhysicalCheckOutcome outcome) => outcome switch
-    {
-        PhysicalCheckOutcome.Passed => "ok",
-        PhysicalCheckOutcome.PassedWithNote => "warn",
-        PhysicalCheckOutcome.Failed => "err",
-        _ => "na",
-    };
+    private static string OutcomeChip(PhysicalCheckOutcome outcome) => ResultBadge.ChipFor(outcome);
 
     private static string OutcomeLabel(PhysicalCheckOutcome outcome) => outcome switch
     {
