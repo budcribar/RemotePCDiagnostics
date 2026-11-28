@@ -98,7 +98,6 @@
     var index = snap.Steps.ToList().FindIndex(s => s.Step == current) + 1;
     <div class="ptr-overlay" data-testid="pointer-overlay" role="dialog" aria-modal="true" aria-label="Pointer and touch test"
          @oncontextmenu:preventDefault="true"
-         @onpointermove="@(current == PointerStep.Drag ? EventCallback.Factory.Create<PointerEventArgs>(this, OnOverlayMove) : default)"
          @onpointerup="@(current == PointerStep.Drag ? EventCallback.Factory.Create<PointerEventArgs>(this, OnOverlayUp) : default)"
          @onpointercancel="@(current == PointerStep.Drag ? EventCallback.Factory.Create<PointerEventArgs>(this, OnOverlayUp) : default)">
         @if (current == PointerStep.Move)
@@ -158,7 +157,6 @@
                         {
                             var dragging = _dragBox == b;
                             <div class="ptr-box @(dragging ? "ptr-dragging" : "")" data-testid="pointer-box-@name.ToLowerInvariant()"
-                                 style="@(dragging ? $"position: fixed; left: {_dragX - 40:0}px; top: {_dragY - 20:0}px" : "")"
                                  @onpointerdown="e => OnDragStart(b, e)" @onmousedown:preventDefault="true">@name</div>
                         }
                     }
@@ -179,6 +177,21 @@
             else if (current == PointerStep.TouchGrid)
             {
                 <div class="meta">@snap.CellsTouched.Count of @snap.CellCount squares · most touches at once @snap.MaxTouchPoints</div>
+            }
+
+            <div class="meta" data-testid="pointer-input-sources">
+                Windows input from @(snap.Device?.Name ?? "this device"): <strong>@snap.DeviceInputs</strong>
+                @if (snap.InjectedInputs > 0)
+                {
+                    <span> · from software: @snap.InjectedInputs</span>
+                }
+            </div>
+            @if (snap.OtherDevice is { } other && snap.OtherDeviceInputs > snap.DeviceInputs)
+            {
+                <div class="notice" data-testid="pointer-other-device">
+                    Your input is coming from @DeviceLabel(other), not the device being tested, so it doesn't count.
+                    <button type="button" class="btn-small btn-primary" data-testid="pointer-switch-device" @onclick="() => SwitchTo(other)">Test @other.Name instead</button>
+                </div>
             }
 
             <div class="ptr-hud-actions">
@@ -206,7 +219,6 @@
     private bool _autoStarted;
     private bool _fullscreen;
     private PointerButton? _dragBox;
-    private double _dragX, _dragY;
     private readonly HashSet<long> _touches = [];
     private double _gridLeft, _gridTop, _gridW, _gridH;
 
@@ -258,6 +270,13 @@
         _fullscreen = true;
         App.Fullscreen?.RequestFullscreen(true);
         return Task.CompletedTask;
+    }
+
+    private Task SwitchTo(PointerDevice device)
+    {
+        if (_devices.All(d => d.Id != device.Id)) LoadDevices();
+        _deviceId = device.Id;
+        return Start();
     }
 
     private void Stop()
@@ -333,14 +352,9 @@
     private Task OnDragStart(PointerButton box, PointerEventArgs e)
     {
         if (ButtonOf(e.Button) is not { } b) return Task.CompletedTask;
+        // dialogs.js moves the box with the pointer; only the press and the release come here.
         _dragBox = box;
-        (_dragX, _dragY) = (e.ClientX, e.ClientY);
         return Service.ButtonDownAsync(b);
-    }
-
-    private void OnOverlayMove(PointerEventArgs e)
-    {
-        if (_dragBox is not null) (_dragX, _dragY) = (e.ClientX, e.ClientY);
     }
 
     private void OnOverlayUp(PointerEventArgs e)

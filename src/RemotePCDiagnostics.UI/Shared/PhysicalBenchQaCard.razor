@@ -31,7 +31,7 @@
 
             <label class="kb-layout-picker">
                 Keyboard layout
-                <select data-testid="keyboard-layout" @bind="_layoutId">
+                <select data-testid="keyboard-layout" @bind="_layoutId" @bind:after="OnLayoutChosen">
                     @foreach (var candidate in LayoutCandidates)
                     {
                         <option value="@candidate.Id">@candidate.Name</option>
@@ -355,6 +355,7 @@ else
     private PhysicalBenchQaService ActiveService => Service ?? _fallbackService;
 
     private ElementReference _keyZoneRef;
+    private bool _autoCaptured;
     private ElementReference _overlayRef;
     private bool _shouldFocusKeyZone;
     private bool _shouldFocusOverlay;
@@ -476,8 +477,11 @@ else
         _keyGate ??= new PhysicalInputGate(App.PhysicalInput);
         _keyGate.RemoteSessionActive = RemoteSessionActive;
 
-        if (FilterSection is null or "keyboard" && !IsRemoteDisplay && !_capturingKeys)
+        // Capture keys once, when the card first shows. Not on every parameter change: the page re-renders often, and taking focus
+        // back each time closed the layout list (and any other control the person clicked) before a choice could be made.
+        if (FilterSection is null or "keyboard" && !IsRemoteDisplay && !_autoCaptured)
         {
+            _autoCaptured = true;
             _capturingKeys = true;
             _shouldFocusKeyZone = true;
         }
@@ -562,6 +566,14 @@ else
             _heldKeys.Clear();
     }
 
+    // Back to the keys once a layout is picked, so typing carries on without another click.
+    private void OnLayoutChosen()
+    {
+        if (IsRemoteDisplay) return;
+        _capturingKeys = true;
+        _shouldFocusKeyZone = true;
+    }
+
     private void ActivateKeyZone()
     {
         if (!_capturingKeys)
@@ -583,9 +595,18 @@ else
 
         var id = NormalizeKeyCode(e);
         if (string.IsNullOrEmpty(id)) return;
+        // Held keys are tracked at once, before the hardware check: the key's keyup can arrive while the check waits, and adding it
+        // afterwards would leave it held for good.
+        var repeat = !_heldKeys.Add(id);
+        _lastKeyDisplay = string.IsNullOrWhiteSpace(e.Code) || string.Equals(e.Code, e.Key, StringComparison.OrdinalIgnoreCase)
+            ? e.Key
+            : $"{e.Key} ({e.Code})";
+        var heldNow = _heldKeys.Count;
+        if (repeat && _pressedKeys.Contains(id)) return;
+
         if (_keyGate is { } gate)
         {
-            _keyGate.Start();
+            gate.Start();
             var counted = await gate.AcceptAsync(PhysicalInputKind.Key);
             var ignored = gate.Ignored;
             ActiveService.Update(s => s with { IgnoredKeys = Math.Max(s.IgnoredKeys, ignored), KeysVerified = gate.Verified });
@@ -593,13 +614,8 @@ else
         }
 
         _pressedKeys.Add(id);
-        _heldKeys.Add(id);
-        if (_heldKeys.Count > _peakRollover)
-            _peakRollover = _heldKeys.Count;
-
-        _lastKeyDisplay = string.IsNullOrWhiteSpace(e.Code) || string.Equals(e.Code, e.Key, StringComparison.OrdinalIgnoreCase)
-            ? e.Key
-            : $"{e.Key} ({e.Code})";
+        if (heldNow > _peakRollover)
+            _peakRollover = heldNow;
 
         var uniqueCount = Math.Max(_pressedKeys.Count, ActiveService.Current.UniqueKeysPressed);
         var peak = Math.Max(_peakRollover, ActiveService.Current.PeakKeyRollover);

@@ -723,3 +723,38 @@
     hookVoice();
     hookControl();
 })();
+
+// Pointer test, Drag step: the box follows the pointer here in the page, not through .NET on every move (that lagged behind the
+// cursor). .NET still gets the press on the box and the release on a target, which is what the test checks.
+(function () {
+    let drag = null;
+    const end = () => {
+        if (!drag) return;
+        const el = drag.el;
+        drag = null;
+        // After the release has been delivered, so the target under the pointer (not the box) gets the pointerup.
+        setTimeout(() => {
+            el.classList.remove('ptr-dragging');
+            el.style.position = el.style.left = el.style.top = el.style.width = '';
+        }, 0);
+    };
+    document.addEventListener('pointerdown', e => {
+        const el = e.target instanceof Element ? e.target.closest('.ptr-box') : null;
+        if (!el || drag) return;
+        const r = el.getBoundingClientRect();
+        drag = { el, id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top };
+        el.classList.add('ptr-dragging');
+        el.style.width = r.width + 'px';
+        el.style.position = 'fixed';
+        el.style.left = r.left + 'px';
+        el.style.top = r.top + 'px';
+    }, true);
+    document.addEventListener('pointermove', e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        if (!drag.el.isConnected) { drag = null; return; }
+        drag.el.style.left = (e.clientX - drag.dx) + 'px';
+        drag.el.style.top = (e.clientY - drag.dy) + 'px';
+    }, true);
+    document.addEventListener('pointerup', e => { if (drag && e.pointerId === drag.id) end(); }, true);
+    document.addEventListener('pointercancel', e => { if (drag && e.pointerId === drag.id) end(); }, true);
+})();
