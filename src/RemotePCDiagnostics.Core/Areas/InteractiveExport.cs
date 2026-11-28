@@ -34,8 +34,8 @@ public static class InteractiveExport
 
     public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
-        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane), Json);
+        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane, charger), Json);
 
     /// <summary>The Wi-Fi connect pane: the networks its picker lists, the one picked, and whether starting drops a remote session.</summary>
     /// <param name="PasswordTyped">Whether a password is typed (never the password itself).</param>
@@ -51,7 +51,7 @@ public static class InteractiveExport
 
     public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
-        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null) => new
+        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -71,6 +71,7 @@ public static class InteractiveExport
             SoundCheckTest(page, soundCheck ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.SoundCheck), false), help),
             WifiTest(page, wifi ?? DiagnosticResult.NotRun(ModuleSlugs.WifiConnect), wifiPane),
             EthernetTest(page, ethernet ?? DiagnosticResult.NotRun(ModuleSlugs.EthernetPort), ethernetPane),
+            ChargerTest(page, charger ?? DiagnosticResult.NotRun(ModuleSlugs.ChargerReplug)),
         },
     };
 
@@ -267,6 +268,45 @@ public static class InteractiveExport
         };
     }
 
+    /// <summary>The charger replug test: measured only (Windows saw each change or not), with no verdict a person enters.</summary>
+    private static object ChargerTest(PageState page, DiagnosticResult r)
+    {
+        var rep = r.Payload as ChargerReplugReport;
+        static double? Secs(TimeSpan? t) => t is { } v ? Math.Round(v.TotalSeconds, 1) : null;
+        return new
+        {
+            id = "charger",
+            name = "Charger replug",
+            @checked = page.CheckedTestIds.Contains("charger"),
+            open = page.SelectedTestId == "charger",
+            state = r.Status == DiagnosticStatus.Running ? "running"
+                : r.Cancelled ? "cancelled"
+                : rep is not null ? "done"
+                : "waiting-for-person",
+            runId = r.RunId,
+            // While running, the message is the step the person is asked to do now ("Unplug the charger now.").
+            step = r.Status == DiagnosticStatus.Running ? T(r.Message) : null,
+            measured = rep is null ? null : new
+            {
+                outcome = rep.Outcome.ToString(),
+                unplugSeenAfterSeconds = Secs(rep.UnplugSeenAfter),
+                plugSeenAfterSeconds = Secs(rep.PlugSeenAfter),
+                startedCharging = rep.StartedCharging,
+                batteryPercent = rep.Percent,
+            },
+            result = r.Status == DiagnosticStatus.Running ? null
+                : r.Cancelled ? "cancelled"
+                : rep is null ? null
+                : rep.RunEnd == RunEnd.CouldNotRun ? "not-applicable"
+                : r.Status switch { DiagnosticStatus.Ok => "passed", DiagnosticStatus.Error => "failed", _ => "warning" },
+            message = T(r.Message),
+            instructions = $"Press Start replug test with the charger plugged in. When asked, unplug the charger, then plug it back in: Windows "
+                + $"must see each change within {ChargerReplug.StepWindow.TotalSeconds:0} seconds, and the battery must start charging "
+                + "(a full battery passes). RPCD decides the result; the person only follows the prompts.",
+            reportIf = ReportIf.Charger,
+        };
+    }
+
     /// <summary>The Ethernet port test: measured only (link, speed, duplex, pings or loopback frames), with no verdict a person enters.</summary>
     private static object EthernetTest(PageState page, DiagnosticResult r, EthernetPane? pane)
     {
@@ -391,6 +431,8 @@ public static class InteractiveExport
             + "the test cannot start.";
         public const string SoundCheck = "The person hears the chime on the wrong side, hears nothing although the Can't hear sound list is "
             + "empty, or the list shows a problem the person doesn't have.";
+        public const string Charger = "The person unplugged or plugged in the charger but the test didn't see it, the battery charged but "
+            + "the test said it didn't, or the PC charges only from a dock the test doesn't account for.";
         public const string MicToSpeaker = "The person's microphone or speaker is not listed, there is no playback, or feedback makes the test "
             + "unusable.";
     }

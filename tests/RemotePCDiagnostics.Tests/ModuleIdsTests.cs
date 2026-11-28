@@ -48,6 +48,7 @@ public class ModuleIdsTests
         ["SoundCheck"] = "b81b0a57-43d2-4ad4-8572-1480fbe6cf0f",
         ["WifiConnect"] = "3f0c2b8e-5d71-4a9e-b6c4-2e8d9a7f1c35",
         ["EthernetPort"] = "6f2cda7d-0f7b-456c-a0dc-dedd9582c069",
+        ["ChargerReplug"] = "6e740559-6220-4ea6-b09b-303928f1982f",
     };
 
     [Fact]

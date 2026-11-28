@@ -77,6 +77,8 @@ public static class ModuleIds
     public static readonly Guid WifiConnect = new("3f0c2b8e-5d71-4a9e-b6c4-2e8d9a7f1c35");
     /// <summary>Slug <c>EthernetPort</c>.</summary>
     public static readonly Guid EthernetPort = new("6f2cda7d-0f7b-456c-a0dc-dedd9582c069");
+    /// <summary>Slug <c>ChargerReplug</c>.</summary>
+    public static readonly Guid ChargerReplug = new("6e740559-6220-4ea6-b09b-303928f1982f");
     /// <summary>Slug <c>WindowsMaintenance</c>.</summary>
     public static readonly Guid WindowsMaintenance = new("f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41");
 
@@ -119,6 +121,7 @@ public static class ModuleIds
         [SoundCheck] = ModuleSlugs.SoundCheck,
         [WifiConnect] = ModuleSlugs.WifiConnect,
         [EthernetPort] = ModuleSlugs.EthernetPort,
+        [ChargerReplug] = ModuleSlugs.ChargerReplug,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -173,4 +176,6 @@ public static class ModuleSlugs
     public const string WifiConnect = "WifiConnect";
     /// <summary>The interactive wired port test: cable to the network, or a loopback plug (Interactive tests page).</summary>
     public const string EthernetPort = "EthernetPort";
+    /// <summary>The interactive charger unplug and replug test (Interactive tests page).</summary>
+    public const string ChargerReplug = "ChargerReplug";
 }
