@@ -130,6 +130,10 @@ public partial class MainWindow : Window
                             // Hardware details first: the Dashboard header needs them, and a read made before the Agent connected failed.
                             await AutoRun.ReadHardwareInventoryAsync(diag, provider.GetRequiredService<ResultStore>(),
                                 App.Loggers.CreateLogger(typeof(AutoRun).FullName!), rereadFailed: true).ConfigureAwait(false);
+                            // Temperatures wait until someone runs the checks (Bud, Nov 28): only a reading someone already asked for is
+                            // read again, now with the Agent's rights.
+                            if (provider.GetRequiredService<ResultStore>().Get(LibreHardwareMonitorModule.ModuleName).Status == DiagnosticStatus.NotRun
+                                && !diag.IsRunning(LibreHardwareMonitorModule.ModuleName)) return;
                             while (diag.IsRunning(LibreHardwareMonitorModule.ModuleName))
                             {
                                 await Task.Delay(250).ConfigureAwait(false);
