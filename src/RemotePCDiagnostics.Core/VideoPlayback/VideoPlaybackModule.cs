@@ -144,8 +144,13 @@ public sealed class VideoPlaybackModule(
         Key: "stream-" + s.Index.ToString(CultureInfo.InvariantCulture), Detail: s.Error)).ToList();
 
         var level = Level(r.Outcome);
+        var stuttered = r.Outcome == VideoPlaybackOutcome.Passed && r.Streams.Any(s => Stuttered(s, o));
+        if (stuttered) level = AreaLevel.Warning;
         var note = r.Outcome switch
         {
+            VideoPlaybackOutcome.Passed when stuttered => $"Playback kept up, but at least one stream dropped more than {o.DropWarnPercent:0.#}% of its frames "
+                + $"or had late audio for more than {o.AudioGlitchWarnPercent:0.#}% of it, so video may stutter now and then. Close other apps, check the temperature, "
+                + "and update the graphics driver if it keeps happening.",
             VideoPlaybackOutcome.TooManyDropped => $"At least one stream dropped more than {o.DropFailPercent:0}% of its frames: the PC couldn't keep up with {Plural(r.MostStreams, "video")} at once. "
                 + (r.SoftwareDecode ? "The video was decoded on the processor, which is much slower: update the graphics driver. " : "")
                 + "Try fewer streams; if even one or two stutter, update the graphics driver, check the temperature, and close other apps.",
@@ -181,6 +186,7 @@ public sealed class VideoPlaybackModule(
         var worst = r.Streams.Count == 0 ? null : r.Streams.MaxBy(s => s.DroppedPercent);
         return r.Outcome switch
         {
+            VideoPlaybackOutcome.Passed when r.Streams.Any(s => Stuttered(s, o)) => $"Passed with some stutter: {what}, {r.DroppedPercent:0.#}% of frames dropped, decoded on the graphics chip",
             VideoPlaybackOutcome.Passed => $"Passed: {what}, {r.DroppedPercent:0.#}% of frames dropped, decoded on the graphics chip",
             VideoPlaybackOutcome.SoftwareDecode => $"Decoded on the processor, not the graphics chip: {what}, {r.DroppedPercent:0.#}% of frames dropped",
             VideoPlaybackOutcome.TooManyDropped => $"Failed: stream {worst?.Index} dropped {worst?.DroppedPercent:0.#}% of its frames (over {o.DropFailPercent:0}%) with {what}",
@@ -211,9 +217,13 @@ public sealed class VideoPlaybackModule(
     {
         VideoStreamEnd.Crashed or VideoStreamEnd.DriverReset or VideoStreamEnd.Hung => AreaLevel.Error,
         _ when s.DroppedPercent > o.DropFailPercent => AreaLevel.Error,
-        _ when s.SoftwareDecode || s.DroppedFrames > 0 || s.AudioGlitches > 0 => AreaLevel.Warning,
+        _ when s.SoftwareDecode || Stuttered(s, o) => AreaLevel.Warning,
         _ => AreaLevel.Ok,
     };
+
+    /// <summary>Dropped frames or late audio above the warning share, but not enough frames to fail.</summary>
+    public static bool Stuttered(VideoStreamResult s, VideoPlaybackOptions o) =>
+        s.DroppedPercent > o.DropWarnPercent || s.AudioGlitchPercent > o.AudioGlitchWarnPercent;
 
     public static string StreamText(VideoStreamResult s) => s.End switch
     {
@@ -256,6 +266,7 @@ public sealed class VideoPlaybackModule(
             headline = slow.Count == 1
                 ? $"{slow[0].DisplayName} is decoding video on the processor ({slow[0].CpuPercentOfCore:0}% of a core, no video decode engine use)"
                 : $"{string.Join(", ", slow.Select(a => a.DisplayName))} are decoding video on the processor";
+            if (r.NoAv1Decoder && slow.Any(a => MediaAppCatalog.Find(a.Name)?.Browser == true)) headline += ", most likely AV1, which this graphics chip can't decode";
         }
         else
         {
@@ -281,6 +292,8 @@ public sealed class VideoPlaybackModule(
         if (!r.SessionsAvailable) parts.Add("Windows listed no media sessions, so only apps using the video decode engine count as playing");
         if (!r.EnginesAvailable) parts.Add("video decode engine load not reported on this PC");
         if (r.OtherDecodePercent >= MediaAppsCheck.DecodeActivePercent) parts.Add($"Windows itself decoding {r.OtherDecodePercent:0.#}%");
+        if (r.HardwareDecodeFormats is { Count: > 0 } f)
+            parts.Add($"graphics chip decodes {MediaAppCatalog.JoinAnd(f)}" + (r.NoAv1Decoder ? " (no AV1)" : ""));
         return string.Join(" · ", parts);
     }
 

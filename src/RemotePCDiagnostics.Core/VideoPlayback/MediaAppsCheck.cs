@@ -40,8 +40,11 @@ public sealed class MediaAppsCheck(IVideoPlaybackSource source, IStressClock? cl
             IReadOnlyList<MediaSessionInfo> sessions;
             try { sessions = source.ReadMediaSessions(); }
             catch (Exception ex) { log.Info($"Media apps: media sessions unavailable: {ex.Message}"); sessions = []; }
-            var result = Evaluate(before, after, seconds, loads, sessions, source.SelfProcessId, enginesOk);
-            log.Info($"Media apps: {result.Apps.Count} apps, sessions={sessions.Count}, engines={enginesOk}: "
+            IReadOnlyList<string>? formats;
+            try { formats = source.ReadHardwareDecodeFormats(); }
+            catch (Exception ex) { log.Info($"Media apps: decode formats unavailable: {ex.Message}"); formats = null; }
+            var result = Evaluate(before, after, seconds, loads, sessions, source.SelfProcessId, enginesOk, formats);
+            log.Info($"Media apps: {result.Apps.Count} apps, sessions={sessions.Count}, engines={enginesOk}, formats={(formats is null ? "unknown" : string.Join(",", formats))}: "
                 + string.Join("; ", result.Apps.Select(a => $"{a.Name} playing={a.Playing} cpu={a.CpuPercentOfCore:0}% decode={a.DecodePercent:0.0}% {a.Verdict}")));
             return result;
         }
@@ -57,8 +60,10 @@ public sealed class MediaAppsCheck(IVideoPlaybackSource source, IStressClock? cl
     /// <summary>The verdict per app from two process snapshots <paramref name="seconds"/> apart, the decode engine load over that time and the
     /// media sessions. Lists every app that plays or decodes, plus video apps that are open but idle (as Not playing).</summary>
     public static MediaAppsResult Evaluate(IReadOnlyList<MediaProcess> before, IReadOnlyList<MediaProcess> after, double seconds,
-        IReadOnlyList<GpuEngineLoad> loads, IReadOnlyList<MediaSessionInfo> sessions, int selfPid, bool enginesAvailable)
+        IReadOnlyList<GpuEngineLoad> loads, IReadOnlyList<MediaSessionInfo> sessions, int selfPid, bool enginesAvailable,
+        IReadOnlyList<string>? hardwareDecodeFormats = null)
     {
+        var noAv1 = hardwareDecodeFormats is { Count: > 0 } && !hardwareDecodeFormats.Contains(VideoFormats.Av1);
         var earlier = before.GroupBy(p => p.ProcessId).ToDictionary(g => g.Key, g => g.First().CpuTime);
         var decodeByPid = loads.Where(l => l.IsVideoDecode).GroupBy(l => l.ProcessId).ToDictionary(g => g.Key, g => g.Max(l => l.Percent));
         var apps = new List<MediaAppUsage>();
@@ -76,11 +81,23 @@ public sealed class MediaAppsCheck(IVideoPlaybackSource source, IStressClock? cl
             if (known is null && verdict == MediaAppVerdict.NotPlaying) continue;
             if (known is null && g.Key.Equals("dwm", StringComparison.OrdinalIgnoreCase)) { other += decode; continue; }
             apps.Add(new MediaAppUsage(g.Key, known?.DisplayName ?? g.Key, g.Count(), playing, videoApp, Math.Round(cpu, 1), Math.Round(decode, 1), verdict,
-                verdict == MediaAppVerdict.ProcessorDecode ? known?.Advice ?? MediaAppCatalog.GenericAdvice : null));
+                verdict == MediaAppVerdict.ProcessorDecode ? Advice(known, noAv1, hardwareDecodeFormats) : null));
         }
         var ordered = apps.OrderBy(a => a.Verdict switch { MediaAppVerdict.ProcessorDecode => 0, MediaAppVerdict.GraphicsChip => 1, MediaAppVerdict.LightLoad => 2, _ => 3 })
             .ThenByDescending(a => a.CpuPercentOfCore).ToList();
-        return new MediaAppsResult(TimeSpan.FromSeconds(seconds), ordered, sessions.Count > 0, enginesAvailable, Math.Round(other, 1));
+        return new MediaAppsResult(TimeSpan.FromSeconds(seconds), ordered, sessions.Count > 0, enginesAvailable, Math.Round(other, 1), hardwareDecodeFormats);
+    }
+
+    /// <summary>What to do about an app decoding on the processor. A browser on a chip with no AV1 decoder is most likely playing AV1 (YouTube's
+    /// usual format), which no browser setting moves to the chip: say so first, then the app's own setting in case acceleration is also off.</summary>
+    public static string Advice(MediaApp? known, bool noAv1Decoder, IReadOnlyList<string>? hardwareDecodeFormats)
+    {
+        var own = known?.Advice ?? MediaAppCatalog.GenericAdvice;
+        if (!noAv1Decoder || known?.Browser != true) return own;
+        var decodes = hardwareDecodeFormats is { Count: > 0 } f ? $" (it decodes {MediaAppCatalog.JoinAnd(f)})" : "";
+        return $"This graphics chip can't decode AV1{decodes}, and YouTube and many other sites send AV1, so the browser decodes it on the processor "
+            + "even with graphics acceleration on. To move it to the chip, block AV1 with a browser extension such as enhanced-h264ify and reload "
+            + $"the video. If that doesn't help: {own}";
     }
 
     public static MediaAppVerdict Verdict(bool playing, bool videoApp, double cpuPercentOfCore, double decodePercent, bool enginesAvailable) =>
@@ -91,7 +108,11 @@ public sealed class MediaAppsCheck(IVideoPlaybackSource source, IStressClock? cl
 }
 
 /// <summary>A media app the check knows: its exe name, what to call it, whether it plays video, and where its hardware acceleration setting is.</summary>
-public sealed record MediaApp(string ExeName, string DisplayName, bool Video, string Advice, params string[] SessionIds);
+public sealed record MediaApp(string ExeName, string DisplayName, bool Video, string Advice, params string[] SessionIds)
+{
+    /// <summary>A web browser: it plays whatever format the site sends, so a chip with no AV1 decoder explains processor decoding.</summary>
+    public bool Browser => MediaAppCatalog.Browsers.Contains(ExeName);
+}
 
 /// <summary>Apps people play video in, with the setting that moves decoding to the graphics chip. Matched on the exe name (no extension).</summary>
 public static class MediaAppCatalog
@@ -130,6 +151,12 @@ public static class MediaAppCatalog
         .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
     public static MediaApp? Find(string exeName) => ByExe.GetValueOrDefault(exeName);
+
+    public static readonly IReadOnlySet<string> Browsers = new HashSet<string>(["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"], StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>"A, B and C".</summary>
+    public static string JoinAnd(IReadOnlyList<string> items) =>
+        items.Count <= 1 ? string.Join("", items) : string.Join(", ", items.Take(items.Count - 1)) + " and " + items[^1];
 
     /// <summary>Whether a media session's app id belongs to the exe: a Win32 app's id is its name ("Chrome", "Spotify.exe", "vlc"), a Store app's
     /// is its package family ("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic").</summary>

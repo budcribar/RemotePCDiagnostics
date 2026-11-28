@@ -23,6 +23,10 @@ public interface IVideoPlaybackSource
     /// <summary>The media sessions Windows shows in its volume flyout (the app and whether it is playing). Empty when Windows can't list them.</summary>
     IReadOnlyList<MediaSessionInfo> ReadMediaSessions();
 
+    /// <summary>The video formats the graphics chip decodes in hardware (<see cref="VideoFormats"/> names), or null when this PC can't say.
+    /// The media apps check uses it to explain a browser decoding on the processor: most often the site sends AV1 and the chip has no AV1 decoder.</summary>
+    IReadOnlyList<string>? ReadHardwareDecodeFormats() => null;
+
     /// <summary>This app's own process id (its decode load is the stress test's), and the number of logical processors.</summary>
     int SelfProcessId { get; }
     int LogicalProcessors { get; }

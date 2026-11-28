@@ -52,6 +52,13 @@ public sealed class RecordingVideoPlaybackSource(IVideoPlaybackSource inner, Cal
         return list;
     }
 
+    public IReadOnlyList<string>? ReadHardwareDecodeFormats()
+    {
+        var formats = inner.ReadHardwareDecodeFormats();
+        recorder.Add(RecordedCall.FromVideo(VideoPlaybackKeys.DecodeFormats, JsonSerializer.Serialize(formats)));
+        return formats;
+    }
+
     public IReadOnlyList<MediaSessionInfo> ReadMediaSessions()
     {
         var list = inner.ReadMediaSessions();
@@ -119,7 +126,7 @@ public sealed class RecordingVideoPlaybackSource(IVideoPlaybackSource inner, Cal
 /// <summary>The keys of the video playback test's answers in a recording.</summary>
 public static class VideoPlaybackKeys
 {
-    public const string Clip = "clip", Engines = "engines", Processes = "processes", Sessions = "sessions";
+    public const string Clip = "clip", Engines = "engines", Processes = "processes", Sessions = "sessions", DecodeFormats = "decodeformats";
     public const string LostPrefix = "lost: ", UnsupportedPrefix = "unsupported: ", CouldNotRunPrefix = "unavailable: ";
     public static string Open(int index) => "open\n" + index.ToString(CultureInfo.InvariantCulture);
     public static string Samples(int index) => "samples\n" + index.ToString(CultureInfo.InvariantCulture);
@@ -175,6 +182,11 @@ internal sealed class ReplayVideoPlaybackSource(RecordingReplay replay) : IVideo
     public IReadOnlyList<MediaProcess> ReadProcesses() =>
         replay.AnswerFor(RecordingReplay.VideoKey(VideoPlaybackKeys.Processes), "video processes") is { StdOut: { } json }
             ? JsonSerializer.Deserialize<RecordingVideoPlaybackSource.ProcessesAnswer>(json)!.Processes : [];
+
+    // Recordings made before the decode formats were read have none: answer unknown, not a miss.
+    public IReadOnlyList<string>? ReadHardwareDecodeFormats() =>
+        replay.PeekFor(RecordingReplay.VideoKey(VideoPlaybackKeys.DecodeFormats)) is { StdOut: { } json }
+            ? JsonSerializer.Deserialize<List<string>?>(json) : null;
 
     public IReadOnlyList<MediaSessionInfo> ReadMediaSessions() =>
         replay.AnswerFor(RecordingReplay.VideoKey(VideoPlaybackKeys.Sessions), "video sessions") is { StdOut: { } json }
