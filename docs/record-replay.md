@@ -81,6 +81,7 @@ A check whose answers a recording doesn't hold (a recording made before the reco
 | Crashes & unexpected restarts | The event logs (wevtutil), the dump files from WMI (`CIM_DataFile`, `Win32_Directory`), the graphics drivers from `Win32_PnPSignedDriver` | The event logs (wevtutil), the dump folders listed by the app, osquery `drivers` |
 | Windows error log | The event logs (wevtutil) | The same |
 | Sleep, wake & standby drain | powercfg, the System log (wevtutil), the battery report (`powercfg /batteryreport`, kept by name) | The same |
+| Battery drain & runtime test | WMI (`BatteryStatus` with voltage, `BatteryFullChargedCapacity`, `Win32_Battery`) for each 30 s reading; the Agent's `battery_drain_power` answers are not recorded (unit tests use a fake Agent and battery for the pass, warn, fail, pause and shut-off paths) | Without the Agent: Skipped, Needs the Agent |
 | Sound | Core Audio (`IAudioStateSource`, kept as one JSON answer, `RecordedCall.AudioKind`), WMI (`Win32_Service`, `Win32_PnPEntity`, `Win32_PnPSignedDriver` for MEDIA, `BatteryStaticData`), the registry (microphone privacy, mono audio) | None (no Store edition fallback; without Core Audio its device cards say they couldn't be read) |
 
 The event log checks are built at the time the PC was recorded, in UTC (`ReportClock`, `FixedClock`), so "in the last 7 days" and the

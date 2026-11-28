@@ -68,8 +68,9 @@ public sealed class BundledModulesTests : IDisposable
     public static readonly Guid[] AdminModules = [ModuleIds.DismScanHealth, ModuleIds.SfcVerifyOnly, ModuleIds.SecurityAudit];
 
     /// <summary>Modules whose class is the app's Core type (other parts of the app use it too), so only their plugin is the DLL's. The
-    /// last four used to need administrator; in user mode they ask the app for those reads (host queries).</summary>
-    public static readonly Guid[] CoreTypeModules = [.. AdminModules, ModuleIds.Sensors, ModuleIds.DriveHealth, ModuleIds.Services, ModuleIds.Crashes, ModuleIds.DiskSpace, ModuleIds.DuplicateFiles];
+    /// last four used to need administrator; in user mode they ask the app for those reads (host queries). The battery drain test (the
+    /// Checks page panel uses its type) asks the Agent for its power settings.</summary>
+    public static readonly Guid[] CoreTypeModules = [.. AdminModules, ModuleIds.Sensors, ModuleIds.DriveHealth, ModuleIds.Services, ModuleIds.Crashes, ModuleIds.DiskSpace, ModuleIds.DuplicateFiles, ModuleIds.BatteryDrain];
 
     [Fact]
     public void Every_built_in_module_ships_as_its_own_dll()
