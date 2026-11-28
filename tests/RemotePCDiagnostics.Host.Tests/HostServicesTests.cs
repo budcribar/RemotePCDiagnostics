@@ -74,7 +74,7 @@ public class HostServicesTests
             Assert.Empty(duplicates);
             // DiagnosticsService throws on a duplicate name, so resolving it proves the registered set is consistent.
             var diag = provider.GetRequiredService<DiagnosticsService>();
-            Assert.Equal([ModuleSlugs.CpuStress, ModuleSlugs.MemoryTest, ModuleSlugs.DiskSpeed, ModuleSlugs.GpuStress, ModuleSlugs.NetworkTest], diag.StressOrder);
+            Assert.Equal([ModuleSlugs.CpuStress, ModuleSlugs.MemoryTest, ModuleSlugs.DiskSpeed, ModuleSlugs.GpuStress, ModuleSlugs.GpuMemory, ModuleSlugs.NetworkTest], diag.StressOrder);
             // Every registered module uses its permanent built-in id, and its name is the slug that id was given.
             foreach (var m in modules)
             {
@@ -100,10 +100,12 @@ public class HostServicesTests
             Assert.Equal("LibreHardwareMonitorPage", diag.Catalog.Get(ModuleIds.Sensors)!.DetailsComponent?.Name);
             Assert.Equal("SecurityAuditPage", diag.Catalog.Get(ModuleIds.SecurityAudit)!.DetailsComponent?.Name);
 
-            // Same Stress tests list as before it was data-driven: suite order, then on-demand stress-page tests (Cooling, DISM/SFC, NPU). (Audio and webcam are on interactive page).
+            // Stress tests list: suite order (the graphics memory test runs after the GPU stress test), then the on-demand tests by group and
+            // order: Cooling, the disk surface scan and drive self-test, video playback, DISM/SFC, NPU. (Audio and webcam are on the interactive page.)
             var screen = provider.GetRequiredService<ChecksScreenState>();
-            string[] expected = [ModuleSlugs.CpuStress, ModuleSlugs.MemoryTest, ModuleSlugs.DiskSpeed, ModuleSlugs.GpuStress, ModuleSlugs.NetworkTest,
-                ModuleSlugs.Cooling, ModuleSlugs.DismScanHealth, ModuleSlugs.SfcVerifyOnly, ModuleSlugs.NpuTest];
+            string[] expected = [ModuleSlugs.CpuStress, ModuleSlugs.MemoryTest, ModuleSlugs.DiskSpeed, ModuleSlugs.GpuStress, ModuleSlugs.GpuMemory, ModuleSlugs.NetworkTest,
+                ModuleSlugs.Cooling, ModuleSlugs.DiskSurfaceScan, ModuleSlugs.DriveSelfTest, ModuleSlugs.VideoPlayback,
+                ModuleSlugs.DismScanHealth, ModuleSlugs.SfcVerifyOnly, ModuleSlugs.NpuTest];
             var shown = screen.StressModules.Select(m => m.Name).ToList();
             Assert.Equal(expected.Where(shown.Contains), shown); // the NPU test is hidden until its hardware is found
             Assert.DoesNotContain(ModuleSlugs.SecurityAudit, shown);
