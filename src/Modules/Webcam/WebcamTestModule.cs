@@ -21,6 +21,8 @@ public sealed class WebcamTestModule(IWebcamIo io, ILogger? log = null, IRegistr
     /// <summary>Extra time allowed for opening and closing the camera before the run times out.</summary>
     public static readonly TimeSpan OpenCloseAllowance = TimeSpan.FromSeconds(15);
     public const int MaxWidth = 1280, MaxHeight = 720, MaxFps = 30;
+    /// <summary>Frame rate a strobed IR camera is expected to deliver, for the dropped-frame estimate.</summary>
+    public const int IrExpectedFps = 7;
 
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.Webcam;
@@ -66,7 +68,8 @@ public sealed class WebcamTestModule(IWebcamIo io, ILogger? log = null, IRegistr
         var privacy = false;
         try { privacy = io.IsCameraBlockedByPrivacy(); } catch { }
         var failed = new WebcamReport(WebcamVerdict.DeviceError, dev.Name, dev.Bus, 0, 0, 0, null, duration, WebcamStats.Empty, null) { Kind = dev.Kind };
-        var analyzer = new WebcamAnalyzer(MaxFps);
+        // Dropped frames are estimated against the expected rate; an IR camera runs far slower than a color one.
+        var analyzer = new WebcamAnalyzer(dev.Kind == WebcamKind.Infrared ? IrExpectedFps : MaxFps);
         var gate = new object();
         var req = new WebcamCaptureRequest(dev.Id, duration, MaxWidth, MaxHeight, MaxFps, f => { lock (gate) analyzer.Add(f); });
         progress?.Report("Capturing from the camera…");

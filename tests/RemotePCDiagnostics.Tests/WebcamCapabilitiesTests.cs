@@ -125,6 +125,46 @@ public class WebcamCapabilitiesTests
         Assert.StartsWith("Passed: the IR camera", WebcamVerdicts.MessageOf(rep));
     }
 
+    [Theory]
+    [InlineData(7.4, WebcamVerdict.Pass)]  // strobed Windows Hello camera (VH1): normal for IR
+    [InlineData(15, WebcamVerdict.Pass)]
+    [InlineData(2, WebcamVerdict.LowFps)]
+    public void An_IR_camera_has_its_own_frame_rate_floor(double fps, WebcamVerdict expected)
+    {
+        var n = (int)Math.Round(fps * 5);
+        var a = new WebcamAnalyzer(WebcamTestModule.IrExpectedFps);
+        for (var i = 0; i < n; i++) a.Add(new WebcamFrame(W, H, Scene(i), TimeSpan.FromSeconds(i / fps)));
+        var s = a.Result(TimeSpan.FromSeconds(5));
+        Assert.Equal(expected, WebcamVerdicts.Decide(s, WebcamKind.Infrared));
+        // The same rate on a color camera under 10 fps is still low.
+        if (fps < WebcamVerdicts.MinFps) Assert.Equal(WebcamVerdict.LowFps, WebcamVerdicts.Decide(s));
+        if (expected == WebcamVerdict.LowFps)
+        {
+            var ir = new WebcamDevice(WebcamDevice.InfraredPrefix + "g", "IR Camera", WebcamBus.BuiltIn, WebcamKind.Infrared);
+            var rep = WebcamTestModule.Evaluate(s, ir, new WebcamCaptureResult(340, 340, 15, "L8"), TimeSpan.FromSeconds(5), false);
+            Assert.StartsWith("The IR camera works, but its frame rate is very low", WebcamVerdicts.MessageOf(rep));
+        }
+    }
+
+    [Fact]
+    public void The_same_Hello_sensor_in_several_source_groups_is_one_IR_camera()
+    {
+        static WebcamIrCandidate C(string group, string name, string? sensor, int sources, bool panel, bool color = false) =>
+            new(new WebcamDevice(WebcamDevice.InfraredPrefix + group, name, panel ? WebcamBus.BuiltIn : WebcamBus.Unknown, WebcamKind.Infrared), sensor, sources, panel, color);
+        var list = WebcamIrSources.Distinct(
+        [
+            C("combined", "Front Camera", null, 3, false, color: true),       // color + IR sensor group, no device info
+            C("hello", "Front IR Camera", @"\\?\USB#IR1", 1, true),
+            C("profile", "Front IR Camera", @"\\?\USB#IR1", 2, false),     // same sensor again
+            C("usb", "Logitech BRIO IR", @"\\?\USB#BRIO", 1, false),
+        ]);
+        Assert.Equal(["hello", "usb"], list.Select(d => d.Id[WebcamDevice.InfraredPrefix.Length..]));
+        // A depth camera whose only IR stream is in a combined group is still listed.
+        Assert.Single(WebcamIrSources.Distinct([C("realsense", "RealSense", null, 3, false, color: true)]));
+        Assert.Equal(@"\\?\USB#X", WebcamIrSources.DevicePathOf(@"Source#0@\\?\USB#X"));
+        Assert.Null(WebcamIrSources.DevicePathOf("Source#0"));
+    }
+
     [Fact]
     public async Task An_IR_camera_Windows_keeps_for_Hello_is_not_supported_not_failed()
     {
