@@ -320,7 +320,9 @@ button:disabled { opacity: 1; color: var(--text-muted); background: var(--surfac
 a.btn-small { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-weight: 600; text-decoration: none; cursor: pointer; transition: background-color .15s, border-color .15s, box-shadow .15s, color .15s; }
 a.btn-small:hover { border-color: var(--accent); color: var(--accent); }
 [data-theme="light"] .btn-small { color: #1d4ed8; }
-.status-line .status-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* The message after the dot takes the rest of the row and wraps inside it, so a long message never
+   pushes itself onto a line of its own below the dot (flex-wrap only moves badges and buttons). */
+.status-line .status-text, .status-line > .dot + span { flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; }
 .status-line .status-action { margin-left: auto; flex: none; }
 
 /* Toolbars on test pages: controls wrap as labelled groups. */

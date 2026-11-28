@@ -94,7 +94,7 @@
     </section>
 }
 
-@if (status is { } st && s.Stage is not (WorkflowStage.Idle or WorkflowStage.Review)) { <p class="status-line" data-testid="wf-status"><span class="dot dot-@(s.IsRunning || Flow.Busy ? "running" : "ok")"></span>@st</p> }
+@if (status is { } st && s.Stage is not (WorkflowStage.Idle or WorkflowStage.Review)) { <p class="status-line" data-testid="wf-status"><span class="dot dot-@(s.IsRunning || Flow.Busy ? "running" : "ok")"></span><span>@st</span></p> }
 @if (s.Error is { } err) { <p class="notice notice-error" data-testid="wf-error">@err</p> }
 @if (_message is { } m) { <p class="notice" data-testid="wf-message">@m</p> }
 
