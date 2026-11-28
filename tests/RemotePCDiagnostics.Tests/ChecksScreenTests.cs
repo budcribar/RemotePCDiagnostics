@@ -82,6 +82,26 @@ public class ChecksScreenTests
     }
 
     [Fact]
+    public void A_test_the_catalog_puts_on_the_Interactive_tests_page_is_not_on_the_Checks_list()
+    {
+        var store = new ResultStore();
+        // The battery drain test once answered IncludeInRunAll true through the interface; its catalog page keeps it off the list anyway.
+        var svc = new DiagnosticsService(store, [new FakeModule("A", _ => Task.FromResult(FakeModule.Ok("A"))),
+            new FakeModule(ModuleSlugs.BatteryDrain, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.BatteryDrain)))]);
+        var s = new ChecksScreenState(svc, store);
+        Assert.Equal(["A"], s.ChecksModules.Select(m => m.Name));
+        Assert.Equal("interactive", s.PageFor(ModuleSlugs.BatteryDrain));
+        Assert.Null(s.GroupOf(ModuleSlugs.BatteryDrain));
+    }
+
+    [Fact]
+    public void The_battery_drain_test_is_never_in_Run_all_through_the_interface()
+    {
+        var m = new Core.Battery.BatteryDrainModule(null!, null!, null!, null!);
+        Assert.False(((IDiagnosticModule)m).IncludeInRunAll);
+    }
+
+    [Fact]
     public void Pages_ChecksAndStressAreSeparate_AuditHasItsOwnPage()
     {
         var (_, _, s, _) = Build();
