@@ -290,7 +290,7 @@ else
                     @if (open)
                     {
                         <tr class="history-details" data-testid="history-details"><td colspan="5">
-                            <div class="meta">@(entry.Suite is { } s ? $"Part of the stress tests ({s}). " : "")Machine: @entry.Machine · App version @entry.AppVersion</div>
+                            <div class="meta">@(entry.Suite is { } s ? $"Part of the stress tests ({s}). " : "")Machine: @entry.Machine · App version @AppVersionComparer.ForDisplay(entry.AppVersion)</div>
                             @if (HistoryPresentation.Measurements(entry).Count > 0)
                             {
                                 <div class="meta"><strong>Measurements</strong></div>

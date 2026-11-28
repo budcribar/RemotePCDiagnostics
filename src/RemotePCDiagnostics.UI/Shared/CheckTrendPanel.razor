@@ -67,7 +67,7 @@
                                     @foreach (var line in details.Take(12)) { <li>@line</li> }
                                 </ul>
                             }
-                            @if (!string.IsNullOrEmpty(r.AppVersion)) { <div class="meta">Version @r.AppVersion</div> }
+                            @if (!string.IsNullOrEmpty(r.AppVersion)) { <div class="meta">Version @AppVersionComparer.ForDisplay(r.AppVersion)</div> }
                         </div>
                     }
                 </li>

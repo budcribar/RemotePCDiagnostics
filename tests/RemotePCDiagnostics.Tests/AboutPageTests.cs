@@ -45,6 +45,11 @@ public class AboutPageTests : BunitContext
         Assert.Equal(BrowserContract.About.ToString(), root.GetAttribute("data-rpcd-contract"));
         Assert.Equal("2", root.GetAttribute("data-rpcd-contract"));
         Assert.Contains("About Remote PC Diagnostics", cut.Find("[data-testid='about-title']").TextContent);
+        // The commit has its own row, so the build version leaves out the +commit; the data attribute keeps the full string.
+        var version = cut.Find("[data-testid='about-version']");
+        Assert.Equal(AppVersionComparer.ForDisplay(AppBuildInfo.Version), version.TextContent);
+        Assert.DoesNotContain("+", version.TextContent);
+        Assert.Equal(AppBuildInfo.Version, version.GetAttribute("data-rpcd-version"));
 
         var data = cut.Find("[data-testid='about-report-data']");
         Assert.Equal("1", data.GetAttribute("data-schema"));

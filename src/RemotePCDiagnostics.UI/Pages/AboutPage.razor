@@ -15,7 +15,7 @@
     <h2>Version @AppBuildInfo.Release</h2>
     <p>Use the full build version below when reporting a problem or comparing logs.</p>
     <dl>
-        <dt>Build version</dt><dd data-testid="about-version" data-rpcd-version="@AppBuildInfo.Version" style="overflow-wrap:anywhere">@AppBuildInfo.Version</dd>
+        <dt>Build version</dt><dd data-testid="about-version" data-rpcd-version="@AppBuildInfo.Version" style="overflow-wrap:anywhere">@AppVersionComparer.ForDisplay(AppBuildInfo.Version)</dd>
         <dt>Git commit</dt><dd style="overflow-wrap:anywhere">@AppBuildInfo.Commit</dd>
         <dt>Session</dt><dd>@Session.Mode</dd>
         <dt>Computer</dt><dd>@Session.MachineName</dd>
