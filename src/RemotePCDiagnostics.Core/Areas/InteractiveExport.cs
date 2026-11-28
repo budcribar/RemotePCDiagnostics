@@ -33,8 +33,12 @@ public static class InteractiveExport
     private static string? T(string? v) => AreaReportExport.Text(v, AreaReportExport.MaxTextLength);
 
     public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
-        ModuleState? soundCheck = null, SoundCheckHelp? help = null) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help), Json);
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane), Json);
+
+    /// <summary>The Wi-Fi connect pane: the networks its picker lists, the one picked, and whether starting drops a remote session.</summary>
+    /// <param name="PasswordTyped">Whether a password is typed (never the password itself).</param>
+    public sealed record WifiPane(IReadOnlyList<WifiNetworkSeen> Networks, string? PickedSsid, bool PasswordTyped, bool DropsRemoteSession, bool Scanning);
 
     /// <summary>The Sound check pane's helper lists: what it shows and why (Can't hear sound, or only one side heard).</summary>
     /// <param name="Mode">"cant-hear", "one-side" or null when no list shows.</param>
@@ -42,7 +46,7 @@ public static class InteractiveExport
     public sealed record SoundCheckHelp(string? Mode, bool Reading, IReadOnlyList<SoundCheckStep> Steps, bool ServicesOk);
 
     public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
-        ModuleState? soundCheck = null, SoundCheckHelp? help = null) => new
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -60,6 +64,7 @@ public static class InteractiveExport
             SpeakerToMicTest(page, speakerToMic),
             MicToSpeakerTest(page, micToSpeaker),
             SoundCheckTest(page, soundCheck ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.SoundCheck), false), help),
+            WifiTest(page, wifi ?? DiagnosticResult.NotRun(ModuleSlugs.WifiConnect), wifiPane),
         },
     };
 
@@ -260,8 +265,64 @@ public static class InteractiveExport
     /// When an agent coaching a test should report a learning (Admin's report_learning tool): the test's instructions or screen did not
     /// match what the person has. One line each, written for the agent, not the person.
     /// </summary>
+    /// <summary>The Wi-Fi connect test: measured only (connected or not, pings, signal), with no verdict a person enters.</summary>
+    private static object WifiTest(PageState page, DiagnosticResult r, WifiPane? pane)
+    {
+        var rep = r.Payload as WifiConnectReport;
+        static object? Pings(PingStats? p) => p is null ? null : new { sent = p.Sent, received = p.Received, lossPercent = p.LossPercent, averageMs = p.AverageMs, maxMs = p.MaxMs };
+        return new
+        {
+            id = "wifi",
+            name = "Wi-Fi connect",
+            @checked = page.CheckedTestIds.Contains("wifi"),
+            open = page.SelectedTestId == "wifi",
+            state = r.Status == DiagnosticStatus.Running ? "running" : rep is not null ? "done" : "waiting-for-person",
+            runId = r.RunId,
+            step = r.Status == DiagnosticStatus.Running ? T(r.Message) : null,
+            networks = pane?.Networks.Take(WifiRadio.MaxNetworksShown).Select(n => new
+            {
+                ssid = V(n.Ssid), security = n.Security, band = n.Band, rssiDbm = n.Rssi, saved = n.HasProfile, connected = n.Connected,
+                needsPassword = !n.HasProfile && n.CanTypePassword && n.Security is not (WifiRadio.Open or WifiRadio.Owe),
+                canTest = n.HasProfile || n.CanTypePassword,
+            }).ToList(),
+            pickedSsid = V(pane?.PickedSsid),
+            passwordTyped = pane?.PasswordTyped,
+            scanning = pane?.Scanning,
+            // Starting the test disconnects this PC's only network route, so a remote session drops until the test ends (about a minute).
+            dropsRemoteSession = pane?.DropsRemoteSession,
+            measured = rep is null ? null : new
+            {
+                outcome = rep.Outcome.ToString(),
+                ssid = V(rep.Ssid),
+                mode = rep.Mode,
+                adapter = V(rep.Adapter),
+                connectSeconds = rep.ConnectSeconds,
+                gateway = rep.Gateway is null ? null : "router",
+                routerPings = Pings(rep.GatewayPings),
+                internetPings = Pings(rep.InternetPings),
+                rssiMinDbm = rep.RssiMin,
+                rssiMaxDbm = rep.RssiMax,
+                rssiAverageDbm = rep.RssiAverage,
+                restore = rep.Restore.ToString(),
+                originalSsid = V(rep.OriginalSsid),
+                wlanError = rep.ErrorCode,
+            },
+            result = r.Status == DiagnosticStatus.Running || rep is null ? null
+                : rep.RunEnd == RunEnd.CouldNotRun ? "not-applicable"
+                : r.Status switch { DiagnosticStatus.Ok => "passed", DiagnosticStatus.Error => "failed", _ => "warning" },
+            message = T(r.Message),
+            instructions = "The person picks a network (a saved one, or types its password; the password is never saved or shown) and presses "
+                + $"Start Wi-Fi test. RPCD disconnects, connects, pings the router and the internet for {WifiConnect.PingTime.TotalSeconds:0} seconds, "
+                + "then goes back to the original network. When dropsRemoteSession is true the remote session drops for about a minute and "
+                + "reconnects by itself: read this again after it reconnects. RPCD decides the result.",
+            reportIf = ReportIf.Wifi,
+        };
+    }
+
     public static class ReportIf
     {
+        public const string Wifi = "The person's network is not listed, the test says it couldn't connect although the password is right and "
+            + "other devices connect, or the PC didn't go back to its original network.";
         public const string Keyboard = "The person's keyboard does not match any layout offered (for example AZERTY, Japanese, a compact "
             + "laptop or a keyboard with extra keys), keys they press do not light up, or they cannot find a key the test asks for.";
         public const string Display = "The full-screen test does not open on the screen the person is using, does not cover it, cannot be "

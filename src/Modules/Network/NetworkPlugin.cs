@@ -8,5 +8,6 @@ public sealed class NetworkPlugin : IModulePlugin
 {
     public void Register(IServiceCollection services, IPluginContext context) =>
         services.AddModule(context, sp => new NetworkModule(sp.GetRequiredService<INetworkSource>(), sp.GetRequiredService<SystemCommandRunner>(),
-            includeWifiAndIpConfig: true, log: context.Log));
+            includeWifiAndIpConfig: true, log: context.Log,
+            radio: sp.GetService<IWifiRadioSource>() ?? new WlanRadioSource(context.Log)));
 }
