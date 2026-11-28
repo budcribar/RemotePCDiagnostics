@@ -17,14 +17,13 @@ else
     var rep = r.Payload as SecurityAuditReport;
     var running = r.Status == DiagnosticStatus.Running;
     var suiteBusy = Diagnostics.IsStressSuiteRunning;
-    <div class="toolbar toolbar-grouped">
-        <span class="icon-badge page-icon"><Icon Name="sec" Size="20" /></span><h1 data-testid="audit-title">@m.DisplayName</h1>
+    <CheckToolbar IconName="sec" Title="@m.DisplayName" TitleTestId="audit-title" Class="toolbar-grouped">
         @if (running) { <button data-testid="audit-cancel" @onclick="() => Cancel(m)">Cancel</button> }
         else { <button data-testid="audit-start" disabled="@suiteBusy" @onclick="() => Start(m)">@(r.Status == DiagnosticStatus.NotRun ? "Start audit" : "Run again")</button> }
-    </div>
+    </CheckToolbar>
     <p class="meta" data-testid="audit-intro">Checks this PC's Windows security settings against a recommended baseline. It only reads settings — nothing is changed. The audit runs only when you start it and can take a few minutes (it stops automatically after @SecurityAuditModule.FormatDuration(AuditTimeout(m))).</p>
-    <p data-testid="audit-status" class="@(r.Status == DiagnosticStatus.Error && rep is null ? "status-line error-text" : running ? "status-line is-running" : "status-line")">
-        <span class="@DotClass(r.Status)"></span>
+    @* Red only when the audit ended in an error with no report; a finished audit shows its findings in the cards below. *@
+    <CheckStatusLine TestId="audit-status" Status="r.Status" Error="@(r.Status == DiagnosticStatus.Error && rep is null)">
         @if (r.Status == DiagnosticStatus.NotRun && _lastRun is { } lr)
         {
             @* Not run in this session, but an earlier audit is in the Event Log: say so, so nobody re-runs a 5-minute audit for nothing. *@
@@ -34,11 +33,10 @@ else
         {
             <span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run. Press Start audit to begin.", DiagnosticStatus.Running => $"Auditing security settings… {Elapsed}", _ => r.Message })</span>
         }
-        @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
-    </p>
+    </CheckStatusLine>
     @if (running)
     {
-        <div class="run-progress run-progress-indeterminate" data-testid="audit-run-progress" aria-hidden="true"><div></div></div>
+        <RunProgress TestId="audit-run-progress" Indeterminate="true" />
         <div class="cards">
             <div class="card is-running card-with-visual" data-testid="audit-live-progress">
                 <div class="card-main">

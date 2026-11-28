@@ -1,5 +1,5 @@
-@* Expandable summary card. Error/empty states use friendly text supplied by the page. *@
-<div class="card card-expandable @(Expanded ? "card-expanded" : "")" data-testid="osquery-card-@Id">
+@* Expandable summary card shared by the check pages. Error/empty states use friendly text supplied by the page. *@
+<div @attributes="AdditionalAttributes" class="card card-expandable @(Expanded ? "card-expanded" : "")" data-testid="@CardTestId">
     <div class="card-summary-toggle" role="button" tabindex="0" aria-expanded="@(Expanded ? "true" : "false")"
          @onclick="() => OnOpen.InvokeAsync(Id)" @onkeydown='e => { if (e.Key is "Enter" or " ") OnOpen.InvokeAsync(Id); }'>
         <div class="card-head">
@@ -7,8 +7,8 @@
             <strong title="@Title">@Title</strong>
             <span class="chevron-icon @(Expanded ? "is-open" : "")" aria-hidden="true">▾</span>
         </div>
-        @if (ErrorText is not null) { <div class="headline error-text" data-testid="osquery-card-@Id-error">@ErrorText</div> }
-        else if (EmptyText is not null) { <div class="headline warn-text" data-testid="osquery-card-@Id-empty">@EmptyText</div> }
+        @if (ErrorText is not null) { <div class="headline error-text" data-testid="@($"{CardTestId}-error")">@ErrorText</div> }
+        else if (EmptyText is not null) { <div class="headline warn-text" data-testid="@($"{CardTestId}-empty")">@EmptyText</div> }
         else { @ChildContent }
     </div>
     @if (Expanded && Details is not null)
@@ -32,5 +32,10 @@
     [Parameter] public RenderFragment? ChildContent { get; set; }
     [Parameter] public RenderFragment? Details { get; set; }
     [Parameter] public EventCallback<string> OnOpen { get; set; }
+    /// <summary>The card's test id; osquery-card-{Id} when not set (the id every area check's cards have always used).</summary>
+    [Parameter] public string? TestId { get; set; }
+    /// <summary>Other attributes for the card's root, such as a page's own data-* markers.</summary>
+    [Parameter(CaptureUnmatchedValues = true)] public IReadOnlyDictionary<string, object>? AdditionalAttributes { get; set; }
+    private string CardTestId => TestId ?? $"osquery-card-{Id}";
     private string DotCss => "dot dot-" + (ErrorText is not null ? "error" : EmptyText is not null ? "warning" : Dot ?? "ok");
 }

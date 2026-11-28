@@ -6,7 +6,10 @@
    the module's manifest, never from where it runs: its own UI above the generic report, or instead of it (detailsReplaceReport). So
    switching a module between in process and out of process (About page) changes nothing on the page. Out of process its own UI comes
    from the module UI host in a sandboxed frame; when it can't (a UI that needs the app process, or no frame host here), the page says so
-   and shows the report. *@
+   and shows the report.
+   Embedded (the Checks pane and Dashboard cards) is passed down as a cascading value, so the shared page header (CheckToolbar,
+   CheckStatusLine) leaves out the title and status line that the row or card above already shows. *@
+<CascadingValue Name="@EmbeddedName" Value="@Embedded" IsFixed="true">
 @if (DiagnosticModule is { } m)
 {
     var um = m as IUserModeModule;
@@ -47,7 +50,13 @@
         <AreaPage Slug="@m.Name.ToLowerInvariant()" />
     }
 }
+</CascadingValue>
 
 @code {
+    /// <summary>Name of the cascading value that tells a page it is shown inside the Checks pane or a Dashboard card.</summary>
+    public const string EmbeddedName = "RemotePCDiagnostics.EmbeddedDetails";
+
     [Parameter] public IDiagnosticModule? DiagnosticModule { get; set; }
+    /// <summary>True inside the Checks pane and Dashboard cards, whose row or card already shows the check's name and status.</summary>
+    [Parameter] public bool Embedded { get; set; }
 }

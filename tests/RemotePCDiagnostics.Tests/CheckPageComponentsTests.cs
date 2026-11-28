@@ -1,0 +1,253 @@
+using Bunit;
+using Microsoft.Extensions.DependencyInjection;
+using RemotePCDiagnostics.Core;
+using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Session;
+using RemotePCDiagnostics.UI;
+using RemotePCDiagnostics.UI.Pages;
+using RemotePCDiagnostics.UI.Shared;
+
+namespace RemotePCDiagnostics.Tests;
+
+/// <summary>The header pieces the check pages share (toolbar, status line, step progress) and SummaryCard's test id.</summary>
+public class CheckPageComponentsTests : BunitContext
+{
+    [Fact]
+    public void CheckToolbar_RendersIconAndTitleInOneToolbar()
+    {
+        var cut = Render<CheckToolbar>(p => p
+            .Add(c => c.IconName, "hw")
+            .Add(c => c.Title, "Hardware inventory")
+            .Add(c => c.TitleTestId, "hw-title"));
+
+        // One toolbar and nothing around it, so the page's layout (and app.css for pages not on this component yet) stays as it was.
+        var root = Assert.Single(cut.Nodes.OfType<AngleSharp.Dom.IElement>());
+        Assert.Equal("toolbar", root.ClassName);
+        Assert.NotNull(root.QuerySelector(".icon-badge.page-icon svg.icon"));
+        Assert.Equal("Hardware inventory", cut.Find("h1[data-testid='hw-title']").TextContent);
+    }
+
+    [Fact]
+    public void CheckToolbar_ExtraClassAndButtons_FollowTheTitle()
+    {
+        var cut = Render<CheckToolbar>(p => p
+            .Add(c => c.IconName, "sec")
+            .Add(c => c.Title, "Security audit")
+            .Add(c => c.Class, "toolbar-grouped")
+            .AddChildContent("<button data-testid=\"go\">Start</button>"));
+
+        Assert.Equal("toolbar toolbar-grouped", cut.Find(".toolbar").ClassName);
+        Assert.Null(cut.Find("h1").GetAttribute("data-testid"));
+        Assert.NotNull(cut.Find("h1 + button[data-testid='go']"));
+    }
+
+    [Fact]
+    public void CheckStatusLine_Finished_ShowsMessageAndCheckAgain()
+    {
+        var cut = Render<CheckStatusLine>(p => p
+            .Add(c => c.TestId, "area-status")
+            .Add(c => c.Status, DiagnosticStatus.Ok)
+            .Add(c => c.Message, "All good · 3 drives")
+            .Add(c => c.ActionTestId, "area-requery"));
+
+        var line = cut.Find("p[data-testid='area-status']");
+        Assert.Equal("status-line", line.ClassName);
+        Assert.NotNull(line.QuerySelector(".dot.dot-ok"));
+        // bUnit parses the markup as HTML, where a <ul> closes the <p> it sits in, so look for the list on the whole render
+        // (Blazor itself builds the DOM directly and keeps it inside the status line).
+        Assert.Equal(2, cut.FindAll(".card-list.card-list-strong li").Count);
+        Assert.Equal("Check again", cut.Find("[data-testid='area-requery']").TextContent);
+        Assert.Empty(cut.FindAll("[data-testid='running-badge']"));
+    }
+
+    [Fact]
+    public void CheckStatusLine_Running_ShowsStripeBadgeAndNoButton()
+    {
+        var cut = Render<CheckStatusLine>(p => p
+            .Add(c => c.TestId, "area-status")
+            .Add(c => c.Status, DiagnosticStatus.Running)
+            .Add(c => c.Message, "Running...")
+            .Add(c => c.ActionTestId, "area-requery"));
+
+        var line = cut.Find("p[data-testid='area-status']");
+        Assert.Contains("is-running", line.ClassList);
+        Assert.Equal("Checking…", line.QuerySelector(".status-text")!.TextContent.Trim());
+        Assert.NotNull(line.QuerySelector("[data-testid='running-badge']"));
+        Assert.Empty(cut.FindAll("[data-testid='area-requery']"));
+
+        var withStep = Render<CheckStatusLine>(p => p
+            .Add(c => c.TestId, "area-status")
+            .Add(c => c.Status, DiagnosticStatus.Running)
+            .Add(c => c.Message, "Reading drive 2 of 3"));
+        Assert.Equal("Reading drive 2 of 3", withStep.Find(".status-text").TextContent.Trim());
+    }
+
+    [Fact]
+    public void CheckStatusLine_NotRunAndError_UseTheSameWordsAndColours()
+    {
+        var notRun = Render<CheckStatusLine>(p => p
+            .Add(c => c.TestId, "s")
+            .Add(c => c.Status, DiagnosticStatus.NotRun)
+            .Add(c => c.NotRunText, "Not run.")
+            .Add(c => c.ActionTestId, "run"));
+        Assert.Equal("Not run.", notRun.Find(".status-text").TextContent.Trim());
+        Assert.Equal("Run check", notRun.Find("[data-testid='run']").TextContent);
+
+        var error = Render<CheckStatusLine>(p => p
+            .Add(c => c.TestId, "s")
+            .Add(c => c.Status, DiagnosticStatus.Error)
+            .Add(c => c.Message, "Couldn't read the drives"));
+        Assert.Contains("error-text", error.Find(".status-line").ClassList);
+
+        var notRed = Render<CheckStatusLine>(p => p
+            .Add(c => c.TestId, "s")
+            .Add(c => c.Status, DiagnosticStatus.Error)
+            .Add(c => c.Error, false));
+        Assert.DoesNotContain("error-text", notRed.Find(".status-line").ClassList);
+    }
+
+    [Fact]
+    public void CheckStatusLine_PageCanHoldOrDisableTheButton()
+    {
+        var disabled = Render<CheckStatusLine>(p => p
+            .Add(c => c.TestId, "lhm-status")
+            .Add(c => c.Status, DiagnosticStatus.Ok)
+            .Add(c => c.ActionTestId, "lhm-requery")
+            .Add(c => c.ActionDisabled, true));
+        Assert.True(disabled.Find("[data-testid='lhm-requery']").HasAttribute("disabled"));
+
+        var clicks = 0;
+        var enabled = Render<CheckStatusLine>(p => p
+            .Add(c => c.TestId, "lhm-status")
+            .Add(c => c.Status, DiagnosticStatus.Ok)
+            .Add(c => c.ActionTestId, "lhm-requery")
+            .Add(c => c.OnAction, () => { clicks++; }));
+        Assert.False(enabled.Find("[data-testid='lhm-requery']").HasAttribute("disabled"));
+        enabled.Find("[data-testid='lhm-requery']").Click();
+        Assert.Equal(1, clicks);
+
+        var hidden = Render<CheckStatusLine>(p => p
+            .Add(c => c.TestId, "lhm-status")
+            .Add(c => c.Status, DiagnosticStatus.Ok)
+            .Add(c => c.ActionTestId, "lhm-requery")
+            .Add(c => c.ShowAction, false));
+        Assert.Empty(hidden.FindAll("[data-testid='lhm-requery']"));
+    }
+
+    [Fact]
+    public void RunProgress_RendersOnlyWithSteps()
+    {
+        Assert.Empty(Render<RunProgress>(p => p.Add(c => c.TestId, "area-progress").Add(c => c.Progress, (CheckProgress?)null)).FindAll(".progress"));
+        Assert.Empty(Render<RunProgress>(p => p.Add(c => c.TestId, "area-progress").Add(c => c.Progress, new CheckProgress(1, 1, ""))).FindAll(".progress"));
+
+        var cut = Render<RunProgress>(p => p.Add(c => c.TestId, "area-progress").Add(c => c.Progress, new CheckProgress(1, 4, "Drive 1")));
+        var bar = cut.Find(".progress.run-progress[data-testid='area-progress'] > .progress-bar");
+        Assert.Equal("width:25%", bar.GetAttribute("style"));
+    }
+
+    [Fact]
+    public void RunProgress_Indeterminate_ShowsTheMovingBarWithoutAPercent()
+    {
+        var cut = Render<RunProgress>(p => p.Add(c => c.TestId, "audit-run-progress").Add(c => c.Indeterminate, true));
+        var bar = cut.Find(".run-progress.run-progress-indeterminate[data-testid='audit-run-progress']");
+        Assert.Equal("true", bar.GetAttribute("aria-hidden"));
+        Assert.Single(bar.Children);
+        Assert.Empty(cut.FindAll(".progress-bar"));
+    }
+
+    [Fact]
+    public void SummaryCard_KeepsItsDefaultTestId_AndTakesAPagesOwn()
+    {
+        var area = Render<SummaryCard>(p => p.Add(c => c.Id, "update").Add(c => c.Title, "Windows Update").Add(c => c.EmptyText, "Nothing found"));
+        Assert.NotNull(area.Find("[data-testid='osquery-card-update']"));
+        Assert.NotNull(area.Find("[data-testid='osquery-card-update-empty']"));
+
+        var sensors = Render<SummaryCard>(p => p
+            .Add(c => c.Id, "cpu")
+            .Add(c => c.Title, "Processor")
+            .Add(c => c.TestId, "lhm-card-cpu")
+            .AddUnmatched("data-sensor-group", "cpu"));
+        var card = sensors.Find("[data-testid='lhm-card-cpu']");
+        Assert.Equal("cpu", card.GetAttribute("data-sensor-group"));
+        Assert.Equal("Processor", card.QuerySelector(".card-head strong")!.GetAttribute("title"));
+        Assert.Empty(sensors.FindAll("[data-testid='osquery-card-cpu']"));
+    }
+
+    [Fact]
+    public void CheckToolbar_Embedded_LeavesOutIconAndTitle_AndKeepsOnlyThePagesButtons()
+    {
+        var bare = Render<CheckToolbar>(p => p
+            .Add(c => c.IconName, "hw")
+            .Add(c => c.Title, "Hardware inventory")
+            .Add(c => c.TitleTestId, "hw-title")
+            .AddCascadingValue(ModuleDetailsView.EmbeddedName, true));
+        Assert.Empty(bare.Nodes.OfType<AngleSharp.Dom.IElement>());
+
+        var withButtons = Render<CheckToolbar>(p => p
+            .Add(c => c.IconName, "sec")
+            .Add(c => c.Title, "Security audit")
+            .Add(c => c.TitleTestId, "audit-title")
+            .Add(c => c.Class, "toolbar-grouped")
+            .AddChildContent("<button data-testid=\"go\">Start</button>")
+            .AddCascadingValue(ModuleDetailsView.EmbeddedName, true));
+        var toolbar = withButtons.Find(".toolbar.toolbar-grouped");
+        Assert.NotNull(toolbar.QuerySelector("button[data-testid='go']"));
+        Assert.Empty(withButtons.FindAll("h1, .page-icon, [data-testid='audit-title']"));
+    }
+
+    [Fact]
+    public void CheckStatusLine_Embedded_KeepsOnlyAHiddenCopyOfTheStatusText()
+    {
+        var cut = Render<CheckStatusLine>(p => p
+            .Add(c => c.TestId, "area-status")
+            .Add(c => c.Status, DiagnosticStatus.Running)
+            .Add(c => c.Message, "Reading drive 2 of 3")
+            .Add(c => c.ActionTestId, "area-requery")
+            .Add(c => c.ShowAction, true)
+            .AddCascadingValue(ModuleDetailsView.EmbeddedName, true));
+
+        var copy = cut.Find("p[data-testid='area-status']");
+        Assert.True(copy.HasAttribute("hidden"));
+        Assert.Equal("Reading drive 2 of 3", copy.QuerySelector(".status-text")!.TextContent.Trim());
+        Assert.Empty(cut.FindAll(".status-line, .dot, [data-testid='running-badge'], [data-testid='area-requery']"));
+
+        var custom = Render<CheckStatusLine>(p => p
+            .Add(c => c.TestId, "audit-status")
+            .Add(c => c.Status, DiagnosticStatus.NotRun)
+            .AddChildContent("<span data-testid=\"audit-lastrun\">Last run yesterday</span>")
+            .AddCascadingValue(ModuleDetailsView.EmbeddedName, true));
+        Assert.NotNull(custom.Find("p[hidden][data-testid='audit-status'] [data-testid='audit-lastrun']"));
+    }
+
+    [Fact]
+    public void AreaPage_InsideChecksOrADashboardCard_LeavesOutItsHeader_ButKeepsItsCards()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var store = new ResultStore();
+        var bios = new FakeModule(ModuleSlugs.BiosFirmware, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.BiosFirmware)));
+        var diagnostics = new DiagnosticsService(store, [bios]);
+        Services.AddSingleton(store);
+        Services.AddSingleton(diagnostics);
+        Services.AddSingleton(new ChecksScreenState(diagnostics, store));
+        Services.AddSingleton<ISessionContext>(new SessionContext(SessionMode.Local));
+        Services.AddSingleton(new AppServices());
+        var report = new AreaReport(
+        [
+            new AreaCard("current", "Current BIOS / UEFI", AreaLevel.Ok, "F.34", "Insyde",
+                ["Detail", "Value"], [new AreaRow(AreaLevel.Ok, ["Version", "F.34"])]),
+        ], "BIOS F.34", DiagnosticStatus.Ok);
+        store.Set(new DiagnosticResult<AreaReport>(ModuleSlugs.BiosFirmware, DiagnosticStatus.Ok, report.Summary, DateTimeOffset.Now, report));
+
+        var page = Render<AreaPage>(p => p.Add(c => c.Slug, ModuleSlugs.BiosFirmware));
+        Assert.NotNull(page.Find("h1[data-testid='area-title']"));
+        Assert.NotNull(page.Find("p.status-line[data-testid='area-status']"));
+        Assert.NotNull(page.Find("[data-testid='area-requery']"));
+
+        var embedded = Render<AreaPage>(p => p
+            .Add(c => c.Slug, ModuleSlugs.BiosFirmware)
+            .AddCascadingValue(ModuleDetailsView.EmbeddedName, true));
+        Assert.Empty(embedded.FindAll("[data-testid='area-title'], .page-icon, .status-line, [data-testid='area-requery']"));
+        Assert.True(embedded.Find("p[data-testid='area-status']").HasAttribute("hidden"));
+        Assert.NotNull(embedded.Find("[data-testid='osquery-card-current']"));
+    }
+}
