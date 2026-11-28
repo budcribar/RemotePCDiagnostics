@@ -24,6 +24,16 @@ public sealed record SessionLaunchOptions(
     string? Group = null,
     bool Admin = false)
 {
+    /// <summary>
+    /// This copy was restarted from a remote session while the remote user had control (<see cref="GiveControlArg"/>): hand it back
+    /// to them when they rejoin, as an unattended session would, instead of leaving it with the person at the PC. Only a restarted
+    /// copy (<see cref="RestartedArg"/>) in Remote mode takes it; the session itself stays supervised.
+    /// </summary>
+    public bool GiveControl { get; init; }
+
+    /// <summary>See <see cref="GiveControl"/>.</summary>
+    public const string GiveControlArg = "--give-control";
+
     public const string ModeVariable = "REMOTEPC_MODE";
     public const string ServerUrlVariable = "REMOTEPC_SERVER_URL";
     public const string IdVariable = "REMOTEPC_ID";
@@ -213,7 +223,8 @@ public sealed record SessionLaunchOptions(
             throw new ArgumentException($"Invalid remote server URL '{url}'. Set {ServerUrlVariable} (or -u=) to e.g. {DefaultServerUrl}.");
 
         var remoteOpts = new SessionLaunchOptions(SessionMode.Remote, uri, id, postReboot, unattended, voice, group, admin);
-        return ApplyPendingReboot(remoteOpts, pendingReboot);
+        var giveControl = IsRestarted(argList) && argList.Any(a => string.Equals(a, GiveControlArg, StringComparison.OrdinalIgnoreCase));
+        return ApplyPendingReboot(remoteOpts, pendingReboot) with { GiveControl = giveControl };
     }
 
     /// <summary>
@@ -265,8 +276,9 @@ public sealed record SessionLaunchOptions(
     /// Arguments for the copy started when a restart is requested from a browser (RemoteBlazorWebView's Refreshed event:
     /// the session's page was loaded again, or Restart was pressed in the session bar). The same session id keeps the
     /// remote user's link working; <see cref="RestartedArg"/> lets the new copy wait for this one to release the one-copy lock.
+    /// <paramref name="giveControl"/>: the remote user had control, so the new copy hands it back when they rejoin (<see cref="GiveControlArg"/>).
     /// </summary>
-    public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId, bool unattended = false, bool voice = false, string? group = null, bool? admin = null)
+    public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId, bool unattended = false, bool voice = false, string? group = null, bool? admin = null, bool giveControl = false)
     {
         if (sessionId == Guid.Empty) throw new ArgumentException("A restart needs the session id the server assigned.", nameof(sessionId));
         var list = new List<string> { $"-u={serverUri.AbsoluteUri.TrimEnd('/')}", $"-i={sessionId:D}" };
@@ -274,6 +286,7 @@ public sealed record SessionLaunchOptions(
         if (unattended) list.Add(UnattendedArg);
         if (voice) list.Add(VoiceArg);
         if (admin.HasValue) list.Add(admin.Value ? AdminArg : "--no-admin");
+        if (giveControl && !unattended) list.Add(GiveControlArg); // unattended already gives control on joining
         list.Add(RestartedArg);
         return list;
     }
@@ -294,7 +307,7 @@ public sealed record SessionLaunchOptions(
 
             var ok = arg.ToLowerInvariant() switch
             {
-                RestartedArg or UnattendedArg or VoiceArg or AdminArg or "--no-admin" => true,
+                RestartedArg or UnattendedArg or VoiceArg or AdminArg or "--no-admin" or GiveControlArg => true,
                 var a when a.StartsWith("-u=", StringComparison.Ordinal) =>
                     Uri.TryCreate(arg[3..], UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp),
                 var a when a.StartsWith("-i=", StringComparison.Ordinal) => Guid.TryParse(arg[3..], out var id) && id != Guid.Empty,

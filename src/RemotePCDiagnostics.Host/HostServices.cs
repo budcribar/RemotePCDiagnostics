@@ -288,7 +288,7 @@ public static class HostServices
             // Setup starts the app again with this once the update is installed: the same relay, session id and group, so the
             // remote user's page reconnects instead of waiting for a session that never comes back.
             getRelaunchArguments: () => session.Mode == SessionMode.Remote && session.ServerUri is not null && session.SessionId != Guid.Empty
-                ? SessionLaunchOptions.RestartArguments(session.ServerUri, session.SessionId, session.Unattended, session.Voice, session.Group, session.Admin)
+                ? SessionLaunchOptions.RestartArguments(session.ServerUri, session.SessionId, session.Unattended, session.Voice, session.Group, session.Admin, session.RemoteUserHadControl)
                 : [SessionLaunchOptions.RestartedArg],
             elevation: sp.GetRequiredService<IElevationContext>()));
         // Uploads each finished benchmark pass to the shop's comparison. MainLayout injects it, so it listens from the first page on.

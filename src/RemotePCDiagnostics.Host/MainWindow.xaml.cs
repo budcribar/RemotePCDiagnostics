@@ -30,6 +30,8 @@ public partial class MainWindow : Window
     private Uri? _remoteUserUrl;
     private DispatcherTimer? _readyTimer;
     private readonly SessionAudit _audit = new(App.Audit);
+    /// <summary>What this window last wrote to the active session file (Remote, once the relay assigned the id).</summary>
+    private volatile ActiveSessionInfo? _activeSession;
     private readonly SystemAwake _awake = new();
     public MainWindow()
     {
@@ -267,14 +269,18 @@ public partial class MainWindow : Window
             {
                 ServerUri = launch.ServerUri,
                 Id = sessionCtx.SessionId, // Guid.Empty in Local; in Remote a fixed id (-i=<guid>, REMOTEPC_ID) or a new one
-                Unattended = launch.Unattended,
+                // Unattended sessions give the remote user control as soon as they join. A copy restarted while the remote user had
+                // control (--give-control) does the same, so the technician who pressed Restart gets control back when their page
+                // rejoins; the session stays supervised otherwise (the audit and the session info still say so).
+                Unattended = launch.Unattended || launch.GiveControl,
                 Voice = launch.Voice,
                 // The copy started on a restart: same server, session, and shop group, same unattended/voice, marked --restarted so it waits
                 // for this copy to exit. Called on the UI thread, or on a background thread when this window is not responding.
                 RestartArguments = (server, id) =>
                 {
-                    Logger.Info($"Restart requested from a browser: starting a new copy for session {id} (group={launch.Group}); this one closes");
-                    return SessionLaunchOptions.RestartArguments(server, id, launch.Unattended, launch.Voice, launch.Group, launch.Admin);
+                    var giveControl = _audit.RemoteUserHadControl;
+                    Logger.Info($"Restart requested from a browser: starting a new copy for session {id} (group={launch.Group}, remoteHadControl={giveControl}); this one closes");
+                    return SessionLaunchOptions.RestartArguments(server, id, launch.Unattended, launch.Voice, launch.Group, launch.Admin, giveControl);
                 },
             });
         }
@@ -312,7 +318,8 @@ public partial class MainWindow : Window
             if (_provider.GetService<ISessionContext>() is SessionContext sc && e.Id != Guid.Empty)
             {
                 sc.SessionId = e.Id;
-                ActiveSessionInfo.TryWrite(new ActiveSessionInfo(
+                sc.RemoteControlSource = () => _audit.RemoteUserHadControl;
+                _activeSession = new ActiveSessionInfo(
                     Process.GetCurrentProcess().Id,
                     Running: true,
                     SessionId: e.Id.ToString(),
@@ -321,7 +328,10 @@ public partial class MainWindow : Window
                     StartedUtc: DateTimeOffset.UtcNow,
                     Unattended: sc.Unattended,
                     Voice: sc.Voice,
-                    Admin: sc.Admin));
+                    Admin: sc.Admin,
+                    RemoteControl: _audit.RemoteUserHasControl,
+                    RemoteLeftInControlUtc: _audit.RemoteLeftInControlUtc);
+                ActiveSessionInfo.TryWrite(_activeSession);
             }
             // The link to share is the read-only /mirror page: this window holds the app's own page, and the remote user is
             // handed control from the session bar.
@@ -336,6 +346,13 @@ public partial class MainWindow : Window
         RemoteBlazorWebView.ParticipantsChanged += (_, e) =>
         {
             _audit.Update([.. e.Participants.Select(p => new SessionParticipant(p.ClientId, p.IsOwner, p.HasControl, p.UserName))]);
+            // The Agent reads who has control from the session file when Admin starts an update, so the relaunched app hands
+            // control back to the technician.
+            if (_activeSession is { } active)
+            {
+                var updated = active with { RemoteControl = _audit.RemoteUserHasControl, RemoteLeftInControlUtc = _audit.RemoteLeftInControlUtc };
+                if (updated != active && ActiveSessionInfo.TryWrite(updated)) _activeSession = updated;
+            }
             _provider.GetService<RemoteUsers>()?.Set(e.Participants.Count(p => !p.IsOwner)); // the top bar's badge
         };
         RemoteBlazorWebView.Connected += (_, e) => Dispatcher.BeginInvoke(() =>
@@ -741,7 +758,7 @@ public partial class MainWindow : Window
             var session = _provider.GetService<ISessionContext>();
             var sessionId = session?.SessionId is { } sid && sid != Guid.Empty ? sid : Guid.NewGuid();
             IReadOnlyList<string> args = keepRemoteArgs && _serverUri is not null
-                ? SessionLaunchOptions.RestartArguments(_serverUri, sessionId, session?.Unattended ?? false, session?.Voice ?? false, _group, session?.Admin)
+                ? SessionLaunchOptions.RestartArguments(_serverUri, sessionId, session?.Unattended ?? false, session?.Voice ?? false, _group, session?.Admin, _audit.RemoteUserHadControl)
                 : ["--restarted"];
             var psi = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
             foreach (var arg in args) psi.ArgumentList.Add(arg);

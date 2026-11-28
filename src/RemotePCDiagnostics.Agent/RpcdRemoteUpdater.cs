@@ -660,13 +660,14 @@ internal sealed class RpcdRemoteUpdater : IDisposable
 
     /// <summary>The restart command line for the session the app published, so Setup brings that same session back.</summary>
     public static IReadOnlyList<string>? RelaunchForActiveSession(string? configuredServer) =>
-        RelaunchForActiveSession(configuredServer, AgentLayout.ActiveSessionPath(), IsHostProcessAlive);
+        RelaunchForActiveSession(configuredServer, AgentLayout.ActiveSessionPath(), IsHostProcessAlive, DateTimeOffset.UtcNow);
 
     /// <summary>
     /// The restart command line from the session file at <paramref name="path"/>, only while the Host that wrote it still runs.
     /// A file left behind by a Host that crashed would otherwise reopen the app into a session that is gone.
     /// </summary>
-    internal static IReadOnlyList<string>? RelaunchForActiveSession(string? configuredServer, string path, Func<int, bool> hostAlive)
+    /// The remote user who had control when the update started gets it back when the relaunched app's page rejoins.
+    internal static IReadOnlyList<string>? RelaunchForActiveSession(string? configuredServer, string path, Func<int, bool> hostAlive, DateTimeOffset nowUtc)
     {
         if (!Uri.TryCreate(configuredServer, UriKind.Absolute, out var server))
             return null;
@@ -687,7 +688,8 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             return null;
         if (!Guid.TryParse(info.SessionId, out var sessionId) || sessionId == Guid.Empty)
             return null;
-        var args = SessionLaunchOptions.RestartArguments(server, sessionId, info.Unattended, info.Voice, info.Group, info.Admin);
+        var giveControl = SessionAudit.HadControl(info.RemoteControl, info.RemoteLeftInControlUtc, nowUtc);
+        var args = SessionLaunchOptions.RestartArguments(server, sessionId, info.Unattended, info.Voice, info.Group, info.Admin, giveControl);
         return SessionLaunchOptions.IsRestartCommandLine(args) ? args : null;
     }
 

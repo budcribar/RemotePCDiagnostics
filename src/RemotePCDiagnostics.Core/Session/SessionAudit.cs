@@ -27,9 +27,15 @@ public static class SessionAuditIds
 /// The first page that is not this PC's window is the remote user; any later ones are read-only viewers.
 /// Service and fix actions are already logged with who did them (event 1100), so they are not repeated here.
 /// </summary>
-public sealed class SessionAudit(Action<LogEntry> write)
+public sealed class SessionAudit(Action<LogEntry> write, Func<DateTimeOffset>? clock = null)
 {
+    /// <summary>How long after the remote user's page left while in control <see cref="RemoteUserHadControl"/> still says yes: a
+    /// browser refresh drops their page and joins a new one, and the restart it asks for comes after that.</summary>
+    public static readonly TimeSpan ControlLeftGrace = TimeSpan.FromMinutes(2);
+
     private readonly object _lock = new();
+    private readonly Func<DateTimeOffset> _clock = clock ?? (() => DateTimeOffset.UtcNow);
+    private DateTimeOffset? _remoteLeftInControlUtc;
     private Dictionary<string, SessionParticipant> _present = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _roles = new(StringComparer.Ordinal);
     private string? _controller;
@@ -66,17 +72,25 @@ public sealed class SessionAudit(Action<LogEntry> write)
                     $"{Capital(role)} joined.\nName: {NameOf(p)}");
             }
 
+            // The remote user's page left while it had control (closed, refreshed, or its connection dropped): remembered for a
+            // short while, so a restart asked for right after still gives control back.
+            var previous = _controller is { } pc && _present.TryGetValue(pc, out var prev) ? prev : null;
+            if (previous is { IsOwner: false } && !now.ContainsKey(previous.Id)) _remoteLeftInControlUtc = _clock();
+
             // Control moved.
             var controller = roster.FirstOrDefault(p => p.HasControl);
             if (controller is not null && controller.Id != _controller)
             {
                 if (controller.IsOwner)
                 {
+                    // Taken back (or handed back) while the remote user is still here: that is the owner's choice, so it sticks.
+                    if (previous is { IsOwner: false } && now.ContainsKey(previous.Id)) _remoteLeftInControlUtc = null;
                     if (_controller is not null) // the owner starting in control is not news
                         Write(SessionAuditIds.ControlBackToOwner, "Control is back with the person at this PC.");
                 }
                 else
                 {
+                    _remoteLeftInControlUtc = null;
                     Write(SessionAuditIds.ControlToRemoteUser,
                         $"Control moved to the {RoleOf(controller.Id)}.\nName: {NameOf(controller)}");
                 }
@@ -95,6 +109,38 @@ public sealed class SessionAudit(Action<LogEntry> write)
         }
     }
 
+    /// <summary>
+    /// True when the remote user has control now, or their page left while it had control less than <see cref="ControlLeftGrace"/>
+    /// ago (and the person at this PC has not taken it back since). A restart asked for from the session then hands control back
+    /// to the remote user when they rejoin, instead of leaving it with the person at this PC.
+    /// </summary>
+    public bool RemoteUserHadControl
+    {
+        get
+        {
+            lock (_lock) return HadControl(RemoteUserHasControlLocked(), _remoteLeftInControlUtc, _clock());
+        }
+    }
+
+    /// <summary>The remote user has control right now.</summary>
+    public bool RemoteUserHasControl
+    {
+        get { lock (_lock) return RemoteUserHasControlLocked(); }
+    }
+
+    /// <summary>When the remote user's page last left while it had control (null once the person at this PC took it back).</summary>
+    public DateTimeOffset? RemoteLeftInControlUtc
+    {
+        get { lock (_lock) return _remoteLeftInControlUtc; }
+    }
+
+    /// <summary><see cref="RemoteUserHadControl"/> from saved state (the Agent reads it from the active session file).</summary>
+    public static bool HadControl(bool hasControlNow, DateTimeOffset? leftInControlUtc, DateTimeOffset nowUtc) =>
+        hasControlNow || (leftInControlUtc is { } left && nowUtc - left <= ControlLeftGrace && nowUtc >= left);
+
+    private bool RemoteUserHasControlLocked() =>
+        _controller is { } c && _present.TryGetValue(c, out var p) && !p.IsOwner;
+
     public void Ended(string reason)
     {
         lock (_lock)
@@ -105,6 +151,7 @@ public sealed class SessionAudit(Action<LogEntry> write)
             _present = new(StringComparer.Ordinal);
             _roles.Clear();
             _controller = null;
+            _remoteLeftInControlUtc = null;
         }
     }
 

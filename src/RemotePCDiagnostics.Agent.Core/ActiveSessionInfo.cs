@@ -11,8 +11,12 @@ public sealed record ActiveSessionInfo(
     DateTimeOffset StartedUtc,
     bool Unattended = false,
     bool Voice = false,
-    bool? Admin = null)
+    bool? Admin = null,
+    bool RemoteControl = false,
+    DateTimeOffset? RemoteLeftInControlUtc = null)
 {
+    // RemoteControl: the remote user has control now. RemoteLeftInControlUtc: when their page last left while it had control.
+    // The Agent reads both when it starts an update, so the app it relaunches hands control back to the technician.
     public static ActiveSessionInfo? Parse(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return null;
