@@ -112,6 +112,9 @@ public static class AppVersionComparer
     /// The comparable build identity: no leading <c>v</c>, no <c>+commit</c> metadata.
     /// Null when <paramref name="value"/> is not an RPCD version.
     /// </summary>
+    /// <summary>The version to show people: <see cref="Normalize"/> when it is an RPCD version (drops the <c>+commit</c> hash), otherwise the text as given.</summary>
+    public static string? ForDisplay(string? value) => Normalize(value) ?? value;
+
     public static string? Normalize(string? value)
     {
         if (Parse(value) is null || string.IsNullOrWhiteSpace(value))

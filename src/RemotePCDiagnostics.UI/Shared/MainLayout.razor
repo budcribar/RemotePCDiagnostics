@@ -47,9 +47,9 @@
                 <button type="button"
                         class="badge app-update-pill"
                         data-testid="app-update-pill"
-                        title="@(update.InstallKind == AppInstallKind.MicrosoftStore ? "A Microsoft Store update is available" : $"Update to Remote PC Diagnostics {update.LatestVersion}")"
+                        title="@(update.InstallKind == AppInstallKind.MicrosoftStore ? "A Microsoft Store update is available" : $"Update to Remote PC Diagnostics {AppVersionComparer.ForDisplay(update.LatestVersion)}")"
                         @onclick="OpenUpdateDialog">
-                    <span>@(update.InstallKind == AppInstallKind.MicrosoftStore ? "Update available" : $"Update {update.LatestVersion}")</span>
+                    <span>@(update.InstallKind == AppInstallKind.MicrosoftStore ? "Update available" : $"Update {AppVersionComparer.ForDisplay(update.LatestVersion)}")</span>
                 </button>
             }
             @* Only when an Agent is installed but not doing admin work. With no Agent at all the app just offers less (the Dashboard says why). *@
@@ -229,13 +229,16 @@
             </div>
             <div class="app-update-body">
                 <p>
-                    Installed: <strong>@pendingUpdate.InstalledVersion</strong>
+                    Installed: <strong data-testid="app-update-installed">@AppVersionComparer.ForDisplay(pendingUpdate.InstalledVersion)</strong>
                     @if (!string.IsNullOrWhiteSpace(pendingUpdate.LatestVersion))
                     {
-                        <span> &rarr; Available: <strong>@pendingUpdate.LatestVersion</strong></span>
+                        <span> &rarr; Available: <strong data-testid="app-update-available">@AppVersionComparer.ForDisplay(pendingUpdate.LatestVersion)</strong></span>
                     }
                 </p>
-                <p class="muted">
+                @* Once installing starts, the dialog shows only the versions, the release notes link and the Installing... button. *@
+                @if (!_updateInstalling)
+                {
+                <p class="muted" data-testid="app-update-explainer">
                     @if (pendingUpdate.InstallKind == AppInstallKind.MicrosoftStore)
                     {
                         <span>This update will be downloaded and installed from the Microsoft Store. Remote PC Diagnostics will close when the update completes.</span>
@@ -249,23 +252,10 @@
                         <span>Windows will ask for administrator approval. The elevated agent will then download the update and verify its checksum (SHA-256) before installing it.</span>
                     }
                 </p>
+                }
                 @if (!string.IsNullOrWhiteSpace(pendingUpdate.ReleaseUrl))
                 {
                     <p><a href="@pendingUpdate.ReleaseUrl" target="_blank" rel="noopener noreferrer">View release notes on GitHub</a></p>
-                }
-                @if (_updateProgress is { } progress)
-                {
-                    <div class="app-update-progress" data-testid="app-update-progress">
-                        <span>@(progress.Message ?? progress.Stage)</span>
-                        @if (progress.Percent is int pct)
-                        {
-                            <progress value="@pct" max="100"></progress>
-                        }
-                    </div>
-                }
-                @if (!string.IsNullOrWhiteSpace(_updateMessage))
-                {
-                    <p class="app-update-status" data-testid="app-update-status">@_updateMessage</p>
                 }
                 @if (!string.IsNullOrWhiteSpace(_updateError))
                 {
@@ -301,8 +291,6 @@
     private bool _shopInfoDialogOpen;
     private bool _updateDialogOpen;
     private bool _updateInstalling;
-    private AppUpdateProgress? _updateProgress;
-    private string? _updateMessage;
     private string? _updateError;
 
     private AppUpdateInfo? AvailableUpdate => App.AppUpdate?.Latest;
@@ -557,8 +545,6 @@
         if (!_updateInstalling)
         {
             _updateError = null;
-            _updateMessage = null;
-            _updateProgress = null;
         }
         _updateDialogOpen = true;
     }
@@ -577,21 +563,15 @@
 
         _updateInstalling = true;
         _updateError = null;
-        _updateMessage = null;
-        _updateProgress = new AppUpdateProgress("starting", null, "Preparing update...");
 
         var installStarted = false;
         try
         {
-            var result = await updater.InstallUpdateAsync(p =>
-            {
-                _updateProgress = p;
-                _ = InvokeAsync(StateHasChanged);
-            });
+            // Only the Installing... button shows while the update runs; the app closes or restarts when it is done.
+            var result = await updater.InstallUpdateAsync();
             if (result.Ok)
             {
                 installStarted = true;
-                _updateMessage = result.Message ?? "Update started.";
             }
             else
             {
