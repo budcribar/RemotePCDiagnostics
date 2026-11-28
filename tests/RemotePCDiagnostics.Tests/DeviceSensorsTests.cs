@@ -293,6 +293,51 @@ public sealed class DeviceSensorsTests
         Assert.Equal(SensorTestVerdict.Passed, t.Current.Verdict);
     }
 
+    [Fact]
+    public async Task Start_with_a_source_error_skips_and_surfaces_the_read_error()
+    {
+        var (t, _) = await Started(DeviceSensorSnapshot.Unavailable("Sensor API unavailable"));
+        Assert.Equal(SensorTestVerdict.Skipped, t.Current.Verdict);
+        Assert.Equal("Sensor API unavailable", t.Current.ReadError);
+        Assert.All(t.Current.Steps, s =>
+        {
+            Assert.Equal(SensorStepState.NotSupported, s.State);
+            Assert.Contains("Sensor API unavailable", s.Reason);
+        });
+        Assert.Equal("The sensors couldn't be read: Sensor API unavailable", DeviceSensorTestService.Summary(t.Current));
+    }
+
+    [Fact]
+    public async Task Confirm_presence_yes_passes_and_no_fails()
+    {
+        var (yes, _) = await Started(Snap(Presence(true, 450)));
+        Assert.Equal(SensorTestStep.Presence, yes.Current.Current);
+        yes.ConfirmPresence(true);
+        Assert.True(yes.Current.PresenceConfirmed);
+        Assert.Equal(SensorTestVerdict.Passed, yes.Current.Verdict);
+        Assert.Equal(SensorStepState.Passed, yes.Current.Steps.Single(s => s.Step == SensorTestStep.Presence).State);
+        Assert.Equal("The person saw it follow them.", yes.Current.Steps.Single(s => s.Step == SensorTestStep.Presence).Reason);
+
+        var (no, _) = await Started(Snap(Presence(false, 1200)));
+        Assert.Equal(SensorTestStep.Presence, no.Current.Current);
+        no.ConfirmPresence(false);
+        Assert.False(no.Current.PresenceConfirmed);
+        Assert.Equal(SensorTestVerdict.Failed, no.Current.Verdict);
+        Assert.Equal(SensorStepState.Failed, no.Current.Steps.Single(s => s.Step == SensorTestStep.Presence).State);
+        Assert.Equal("The person said it didn't follow them.", no.Current.Steps.Single(s => s.Step == SensorTestStep.Presence).Reason);
+    }
+
+    [Fact]
+    public void Duplicate_device_ids_in_device_manager_do_not_crash_build()
+    {
+        var devices = new SensorDeviceReading([
+            new SensorDevice("HID Sensor Collection V2", "Sensor", @"HID\VID_8087&PID_0AC2\7&1&0000", 0),
+            new SensorDevice("HID Sensor Collection V2", "Sensor", @"hid\vid_8087&pid_0ac2\7&1&0000", 0),
+        ]);
+        var r = DeviceSensorAnalysis.Build(Snap(Accel()), devices);
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+    }
+
     // ---- interactive-data
 
     [Fact]

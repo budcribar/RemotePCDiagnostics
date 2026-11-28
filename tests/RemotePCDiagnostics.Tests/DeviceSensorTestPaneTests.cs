@@ -1,5 +1,10 @@
 using Bunit;
+using Microsoft.Extensions.DependencyInjection;
+using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.DeviceSensors;
+using RemotePCDiagnostics.Core.Session;
+using RemotePCDiagnostics.UI;
+using RemotePCDiagnostics.UI.Pages;
 using RemotePCDiagnostics.UI.Shared;
 
 namespace RemotePCDiagnostics.Tests;
@@ -33,14 +38,38 @@ public sealed class DeviceSensorTestPaneTests : BunitContext
         Assert.Equal("active", cut.Find("[data-testid=devicesensors-step-tilt]").GetAttribute("data-state"));
         Assert.Equal("notsupported", cut.Find("[data-testid=devicesensors-step-presence]").GetAttribute("data-state"));
         Assert.Contains("Hinge 115°", cut.Find("[data-testid=devicesensors-other]").TextContent);
-        if (Environment.GetEnvironmentVariable("RPCD_PANE_MARKUP") is { Length: > 0 } dir) File.WriteAllText(Path.Combine(dir, "tilt.html"), cut.Markup);
 
         cut.Find("[data-testid=devicesensors-skip]").Click();
         Assert.Equal("light", cut.Find("[data-testid=devicesensors-current]").GetAttribute("data-step"));
         await cut.InvokeAsync(() => test.Observe(Snap(0, 0, -1, 90)));
-        if (Environment.GetEnvironmentVariable("RPCD_PANE_MARKUP") is { Length: > 0 } dir2) File.WriteAllText(Path.Combine(dir2, "light.html"), cut.Markup);
 
         var remote = Render<DeviceSensorTestPane>(p => p.Add(x => x.Service, new DeviceSensorTestService(autoPoll: false)).Add(x => x.IsRemoteDisplay, true));
         Assert.True(remote.Find("[data-testid=devicesensors-start]").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void Run_selected_on_a_sensorless_pc_finishes_with_skipped_without_hanging()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var store = new ResultStore();
+        var diagnostics = new DiagnosticsService(store, []);
+        using var sensorTest = new DeviceSensorTestService(new Fixed(new DeviceSensorSnapshot([])), autoPoll: false);
+        Services.AddSingleton(store);
+        Services.AddSingleton(diagnostics);
+        Services.AddSingleton(new ChecksScreenState(diagnostics, store));
+        Services.AddSingleton<ISessionContext>(new SessionContext(SessionMode.Local));
+        Services.AddSingleton(new AppServices(SensorTest: sensorTest));
+
+        var page = Render<InteractiveTestsPage>();
+        page.Find("[data-testid=interactive-select-all]").Click();
+        page.Find("[data-testid=interactive-check-devicesensors]").Click();
+        page.Find("[data-testid=interactive-run-selected]").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            Assert.Equal(SensorTestVerdict.Skipped, sensorTest.Current.Verdict);
+            Assert.Equal("Skipped", page.Find("[data-testid=interactive-status-devicesensors]").TextContent.Trim());
+            Assert.NotNull(page.Find("[data-testid=interactive-run-selected]"));
+        });
     }
 }

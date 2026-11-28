@@ -54,8 +54,9 @@ public static class WindowsSensorReader
         {
             var category = CategoryAll;
             var hr = manager.GetSensorsByCategory(ref category, out var collection);
-            if (hr == HResultNotFound || collection is null) return new([]);
+            if (hr == HResultNotFound) return new([]);
             if (hr < 0) return DeviceSensorSnapshot.Unavailable($"Windows couldn't list the sensors (0x{hr:X8}).");
+            if (collection is null) return new([]);
             try
             {
                 if (collection.GetCount(out var count) < 0) return DeviceSensorSnapshot.Unavailable("Windows couldn't count the sensors.");
@@ -87,11 +88,19 @@ public static class WindowsSensorReader
             Clean(Property(s, PidManufacturer)?.Text), Clean(Property(s, PidModel)?.Text), connection,
             DeviceSensorTypes.InstanceIdFromPath(Property(s, PidDevicePath)?.Text));
         if (state is DeviceSensorStatus.AccessDenied or DeviceSensorStatus.Error or DeviceSensorStatus.NotAvailable) return sensor;
+        if (!ReadsData(sensor.Kind)) return sensor;
         var hr = s.GetData(out var report);
         if (hr < 0 || report is null) return sensor with { ReadError = $"No data report (0x{hr:X8})" };
         try { return sensor with { Reading = Reading(sensor.Kind, report) }; }
         finally { Marshal.ReleaseComObject(report); }
     }
+
+    private static bool ReadsData(DeviceSensorKind kind) => kind is
+        DeviceSensorKind.Accelerometer or DeviceSensorKind.Gravity or DeviceSensorKind.LinearAccelerometer
+        or DeviceSensorKind.Gyrometer or DeviceSensorKind.Compass or DeviceSensorKind.Magnetometer
+        or DeviceSensorKind.Inclinometer or DeviceSensorKind.Orientation or DeviceSensorKind.SimpleOrientation
+        or DeviceSensorKind.AmbientLight or DeviceSensorKind.Proximity or DeviceSensorKind.HumanPresence
+        or DeviceSensorKind.HingeAngle or DeviceSensorKind.Switch;
 
     private static string? Clean(string? v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim();
 

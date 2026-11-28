@@ -859,7 +859,18 @@
     public override void Dispose()
     {
         base.Dispose();
-        ActiveSensorTest.Changed -= OnSensorTestChanged;
+        if (App.SensorTest is { } sensorTest)
+        {
+            sensorTest.Changed -= OnSensorTestChanged;
+            if (sensorTest.IsRunning) sensorTest.Cancel();
+        }
+        else if (_fallbackSensorTest is { } fallbackSensorTest)
+        {
+            fallbackSensorTest.Changed -= OnSensorTestChanged;
+            if (fallbackSensorTest.IsRunning) fallbackSensorTest.Cancel();
+            fallbackSensorTest.Dispose();
+            _fallbackSensorTest = null;
+        }
         _batchCts?.Cancel();
         _interactiveWaitTcs?.TrySetCanceled();
         _batchCts?.Dispose();
@@ -950,23 +961,25 @@
     private async Task WaitForSensorTestAsync(CancellationToken ct)
     {
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var started = false;
-        void OnChanged()
+        var before = ActiveSensorTest.Current.StartedUtc;
+        void Check()
         {
-            var v = ActiveSensorTest.Current.Verdict;
-            if (v == SensorTestVerdict.Running) started = true;
-            else if (started) tcs.TrySetResult();
+            var snap = ActiveSensorTest.Current;
+            if (snap.StartedUtc != before && snap.Verdict != SensorTestVerdict.Running)
+                tcs.TrySetResult();
         }
         using var reg = ct.Register(() => tcs.TrySetCanceled(ct));
-        ActiveSensorTest.Changed += OnChanged;
+        ActiveSensorTest.Changed += Check;
         try
         {
+            Check();
             await InvokeAsync(StateHasChanged);
+            Check();
             await tcs.Task;
         }
         finally
         {
-            ActiveSensorTest.Changed -= OnChanged;
+            ActiveSensorTest.Changed -= Check;
         }
     }
 

@@ -142,6 +142,7 @@
 
     private bool _starting;
     private bool _autoStarted;
+    private bool _disposed;
     private DeviceSensorTestService? _subscribed;
 
     protected override void OnParametersSet()
@@ -162,13 +163,22 @@
 
     private async Task StartAsync()
     {
-        if (IsRemoteDisplay || _starting) return;
+        if (IsRemoteDisplay || _starting || _disposed) return;
         _starting = true;
         try { await Service.StartAsync(); }
-        finally { _starting = false; await InvokeAsync(StateHasChanged); }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        finally
+        {
+            _starting = false;
+            if (!_disposed) await InvokeAsync(StateHasChanged);
+        }
     }
 
-    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+    private void OnChanged()
+    {
+        if (!_disposed) _ = InvokeAsync(StateHasChanged);
+    }
 
     private void OnNotes(ChangeEventArgs e) => Service.SetNotes(e.Value?.ToString());
 
@@ -227,6 +237,12 @@
 
     public void Dispose()
     {
-        if (_subscribed is not null) _subscribed.Changed -= OnChanged;
+        _disposed = true;
+        if (_subscribed is not null)
+        {
+            _subscribed.Changed -= OnChanged;
+            if (_subscribed.IsRunning) _subscribed.Cancel();
+            _subscribed = null;
+        }
     }
 }

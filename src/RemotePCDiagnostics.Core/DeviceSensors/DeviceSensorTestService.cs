@@ -83,6 +83,9 @@ public sealed class DeviceSensorTestService : IDisposable
     private readonly bool _autoPoll;
     private SensorTestSnapshot _current = new();
     private DateTimeOffset _stepStarted;
+    private long _generation;
+    private bool _disposed;
+    private CancellationTokenSource? _startCts;
     private CancellationTokenSource? _loop;
 
     public DeviceSensorTestService(IDeviceSensorSource? source = null, TimeProvider? clock = null, TimeSpan? poll = null, bool autoPoll = true)
@@ -135,48 +138,87 @@ public sealed class DeviceSensorTestService : IDisposable
     /// <summary>Reads the sensors and starts with the first step the PC has a sensor for. Ends at once (Skipped) when it has none.</summary>
     public async Task StartAsync(CancellationToken ct = default)
     {
-        StopLoop();
-        DeviceSensorSnapshot first;
-        try { first = _source is null ? DeviceSensorSnapshot.Unavailable("Sensors can't be read here.") : await _source.ReadAsync(ct).ConfigureAwait(false); }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex) { first = DeviceSensorSnapshot.Unavailable(ex.Message); }
+        using var startCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        long gen;
+        CancellationTokenSource? oldLoop;
+        CancellationTokenSource? oldStart;
         lock (_lock)
         {
-            var now = _clock.GetUtcNow();
-            var steps = Enum.GetValues<SensorTestStep>().Select(step =>
-            {
-                var sensor = first.Error is null ? SensorFor(first, step) : null;
-                if (sensor is null)
-                    return new SensorStepResult(step, SensorStepState.NotSupported, first.Error is { } e ? "The sensors couldn't be read: " + e
-                        : step switch
-                        {
-                            SensorTestStep.Tilt => "This PC has no accelerometer.",
-                            SensorTestStep.Light => "This PC has no light sensor.",
-                            _ => "This PC has no presence or proximity sensor.",
-                        });
-                if (sensor.State is DeviceSensorStatus.Error or DeviceSensorStatus.AccessDenied or DeviceSensorStatus.NotAvailable)
-                    return new SensorStepResult(step, SensorStepState.Failed, $"{DeviceSensorAnalysis.Name(sensor)} is {DeviceSensorTypes.StateText(sensor.State).ToLowerInvariant()}.",
-                        DeviceSensorAnalysis.Name(sensor));
-                return new SensorStepResult(step, SensorStepState.Pending, null, DeviceSensorAnalysis.Name(sensor));
-            }).ToList();
-            _current = new SensorTestSnapshot { Verdict = SensorTestVerdict.Running, Steps = steps, StartedUtc = now, Notes = _current.Notes };
-            AdvanceLocked(now);
-            ApplyReadingsLocked(first);
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            gen = ++_generation;
+            oldLoop = _loop;
+            _loop = null;
+            oldStart = _startCts;
+            _startCts = startCts;
         }
-        Raise();
-        if (_autoPoll && IsRunning) StartLoop();
+        CancelAndDispose(oldLoop);
+        TryCancel(oldStart);
+
+        try
+        {
+            DeviceSensorSnapshot first;
+            try
+            {
+                first = _source is null
+                    ? DeviceSensorSnapshot.Unavailable("Sensors can't be read here.")
+                    : await _source.ReadAsync(startCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex) { first = DeviceSensorSnapshot.Unavailable(ex.Message); }
+
+            bool shouldPoll;
+            lock (_lock)
+            {
+                if (_disposed || _generation != gen) return;
+                ct.ThrowIfCancellationRequested();
+                var now = _clock.GetUtcNow();
+                var steps = Enum.GetValues<SensorTestStep>().Select(step =>
+                {
+                    var sensor = first.Error is null ? SensorFor(first, step) : null;
+                    if (sensor is null)
+                        return new SensorStepResult(step, SensorStepState.NotSupported, first.Error is { } e ? "The sensors couldn't be read: " + e
+                            : step switch
+                            {
+                                SensorTestStep.Tilt => "This PC has no accelerometer.",
+                                SensorTestStep.Light => "This PC has no light sensor.",
+                                _ => "This PC has no presence or proximity sensor.",
+                            });
+                    if (sensor.State is DeviceSensorStatus.Error or DeviceSensorStatus.AccessDenied or DeviceSensorStatus.NotAvailable)
+                        return new SensorStepResult(step, SensorStepState.Failed, $"{DeviceSensorAnalysis.Name(sensor)} is {DeviceSensorTypes.StateText(sensor.State).ToLowerInvariant()}.",
+                            DeviceSensorAnalysis.Name(sensor));
+                    return new SensorStepResult(step, SensorStepState.Pending, null, DeviceSensorAnalysis.Name(sensor));
+                }).ToList();
+                _current = new SensorTestSnapshot { Verdict = SensorTestVerdict.Running, Steps = steps, StartedUtc = now, Notes = _current.Notes };
+                AdvanceLocked(now);
+                ApplyReadingsLocked(first);
+                shouldPoll = _autoPoll && _current.Verdict == SensorTestVerdict.Running;
+            }
+            Raise();
+            if (shouldPoll) StartLoop(gen);
+        }
+        finally
+        {
+            lock (_lock)
+            {
+                if (ReferenceEquals(_startCts, startCts)) _startCts = null;
+            }
+        }
     }
 
     /// <summary>Applies one read of the sensors (the poll loop calls this; tests call it directly) and moves the test on.</summary>
     public void Observe(DeviceSensorSnapshot? reading)
     {
+        bool finished;
         lock (_lock)
         {
             if (_current.Verdict != SensorTestVerdict.Running) return;
             if (reading is not null) ApplyReadingsLocked(reading);
             var now = _clock.GetUtcNow();
             CheckStepLocked(now);
+            finished = _current.Verdict != SensorTestVerdict.Running;
         }
+        if (finished) StopLoop();
         Raise();
     }
 
@@ -187,34 +229,60 @@ public sealed class DeviceSensorTestService : IDisposable
     /// <summary>The person's answer to whether the presence reading followed them.</summary>
     public void ConfirmPresence(bool follows)
     {
+        bool finished;
         lock (_lock)
         {
-            if (_current.Current != SensorTestStep.Presence) return;
+            if (_current.Verdict != SensorTestVerdict.Running || _current.Current != SensorTestStep.Presence) return;
             _current = _current with { PresenceConfirmed = follows };
+            SetStepLocked(SensorTestStep.Presence, follows ? SensorStepState.Passed : SensorStepState.Failed,
+                follows ? "The person saw it follow them." : "The person said it didn't follow them.");
+            AdvanceLocked(_clock.GetUtcNow());
+            finished = _current.Verdict != SensorTestVerdict.Running;
         }
-        EndStep(follows ? SensorStepState.Passed : SensorStepState.Failed,
-            follows ? "The person saw it follow them." : "The person said it didn't follow them.");
+        if (finished) StopLoop();
+        Raise();
     }
 
     public void Cancel()
     {
-        StopLoop();
+        CancellationTokenSource? oldLoop;
+        CancellationTokenSource? oldStart;
+        bool changed;
         lock (_lock)
         {
-            if (_current.Verdict != SensorTestVerdict.Running) return;
-            _current = _current with
-            {
-                Verdict = SensorTestVerdict.Cancelled, Current = null, SecondsLeft = 0, FinishedUtc = _clock.GetUtcNow(),
-                Steps = [.. _current.Steps.Select(s => s.State is SensorStepState.Pending or SensorStepState.Active ? s with { State = SensorStepState.Skipped, Reason = "Stopped." } : s)],
-            };
+            ++_generation;
+            oldLoop = _loop;
+            _loop = null;
+            oldStart = _startCts;
+            _startCts = null;
+            changed = _current.Verdict == SensorTestVerdict.Running;
+            if (changed)
+                _current = _current with
+                {
+                    Verdict = SensorTestVerdict.Cancelled, Current = null, SecondsLeft = 0, FinishedUtc = _clock.GetUtcNow(),
+                    Steps = [.. _current.Steps.Select(s => s.State is SensorStepState.Pending or SensorStepState.Active ? s with { State = SensorStepState.Skipped, Reason = "Stopped." } : s)],
+                };
         }
-        Raise();
+        CancelAndDispose(oldLoop);
+        TryCancel(oldStart);
+        if (changed) Raise();
     }
 
     public void Reset()
     {
-        StopLoop();
-        lock (_lock) _current = new SensorTestSnapshot();
+        CancellationTokenSource? oldLoop;
+        CancellationTokenSource? oldStart;
+        lock (_lock)
+        {
+            ++_generation;
+            oldLoop = _loop;
+            _loop = null;
+            oldStart = _startCts;
+            _startCts = null;
+            _current = new SensorTestSnapshot();
+        }
+        CancelAndDispose(oldLoop);
+        TryCancel(oldStart);
         Raise();
     }
 
@@ -226,13 +294,15 @@ public sealed class DeviceSensorTestService : IDisposable
 
     private void EndStep(SensorStepState state, string reason)
     {
+        bool finished;
         lock (_lock)
         {
             if (_current.Verdict != SensorTestVerdict.Running || _current.Current is not { } step) return;
             SetStepLocked(step, state, reason);
             AdvanceLocked(_clock.GetUtcNow());
+            finished = _current.Verdict != SensorTestVerdict.Running;
         }
-        if (!IsRunning) StopLoop();
+        if (finished) StopLoop();
         Raise();
     }
 
@@ -341,17 +411,25 @@ public sealed class DeviceSensorTestService : IDisposable
         var passed = s.Steps.Count(x => x.State == SensorStepState.Passed);
         var failed = s.Steps.Where(x => x.State == SensorStepState.Failed).ToList();
         var tested = s.Steps.Count(x => x.State is SensorStepState.Passed or SensorStepState.Failed);
-        if (s.Steps.All(x => x.State == SensorStepState.NotSupported)) return "This PC has no sensors the test can check";
+        if (s.Steps.Count > 0 && s.Steps.All(x => x.State == SensorStepState.NotSupported))
+            return s.ReadError is { Length: > 0 } err ? "The sensors couldn't be read: " + err : "This PC has no sensors the test can check";
         if (failed.Count > 0) return $"{Title(failed[0].Step)}: {failed[0].Reason}";
         if (s.Verdict == SensorTestVerdict.Cancelled) return "Stopped";
+        if (s.ReadError is { Length: > 0 } readErr && tested == 0) return "The sensors couldn't be read: " + readErr;
         return tested == 0 ? "Every step skipped" : $"{passed} of {tested} sensors passed";
     }
 
-    private void StartLoop()
+    private void StartLoop(long gen)
     {
-        var cts = new CancellationTokenSource();
-        var token = cts.Token;
-        lock (_lock) _loop = cts;
+        CancellationTokenSource cts;
+        CancellationToken token;
+        lock (_lock)
+        {
+            if (_disposed || _generation != gen || _current.Verdict != SensorTestVerdict.Running) return;
+            cts = new CancellationTokenSource();
+            token = cts.Token;
+            _loop = cts;
+        }
         _ = Task.Run(async () =>
         {
             try
@@ -374,9 +452,20 @@ public sealed class DeviceSensorTestService : IDisposable
     {
         CancellationTokenSource? loop;
         lock (_lock) { loop = _loop; _loop = null; }
-        if (loop is null) return;
-        loop.Cancel();
-        loop.Dispose();
+        CancelAndDispose(loop);
+    }
+
+    private static void CancelAndDispose(CancellationTokenSource? cts)
+    {
+        if (cts is null) return;
+        try { cts.Cancel(); } catch (ObjectDisposedException) { }
+        cts.Dispose();
+    }
+
+    private static void TryCancel(CancellationTokenSource? cts)
+    {
+        if (cts is null) return;
+        try { cts.Cancel(); } catch (ObjectDisposedException) { }
     }
 
     private void Raise()
@@ -384,5 +473,20 @@ public sealed class DeviceSensorTestService : IDisposable
         try { Changed?.Invoke(); } catch { }
     }
 
-    public void Dispose() => StopLoop();
+    public void Dispose()
+    {
+        CancellationTokenSource? oldLoop;
+        CancellationTokenSource? oldStart;
+        lock (_lock)
+        {
+            _disposed = true;
+            ++_generation;
+            oldLoop = _loop;
+            _loop = null;
+            oldStart = _startCts;
+            _startCts = null;
+        }
+        CancelAndDispose(oldLoop);
+        TryCancel(oldStart);
+    }
 }

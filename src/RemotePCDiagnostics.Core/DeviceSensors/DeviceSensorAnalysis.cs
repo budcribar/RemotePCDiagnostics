@@ -77,7 +77,10 @@ public static class DeviceSensorAnalysis
             return AreaReport.Failed("Couldn't check the sensors: " + snapshot.Error);
         var cards = new List<AreaCard>();
         var parts = new List<string>();
-        var byInstance = devices.Devices.ToDictionary(d => d.DeviceId, StringComparer.OrdinalIgnoreCase);
+        var byInstance = devices.Devices
+            .Where(d => !string.IsNullOrEmpty(d.DeviceId))
+            .DistinctBy(d => d.DeviceId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(d => d.DeviceId, StringComparer.OrdinalIgnoreCase);
         SensorDevice? DeviceOf(DeviceSensor s) => s.InstanceId is { } id && byInstance.TryGetValue(id, out var d) ? d : null;
 
         if (snapshot.Error is { } err)
