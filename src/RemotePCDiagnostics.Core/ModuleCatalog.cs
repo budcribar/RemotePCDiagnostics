@@ -45,6 +45,7 @@ public static class BuiltInModules
         new(ModuleIds.DiskSpace, ModuleSlugs.DiskSpace, "Large files & folders", ModuleKind.OnDemand, ModuleGroups.Storage, 300),
         new(ModuleIds.DuplicateFiles, ModuleSlugs.DuplicateFiles, "Duplicate files", ModuleKind.OnDemand, ModuleGroups.Storage, 400),
         new(ModuleIds.DiskSurfaceScan, ModuleSlugs.DiskSurfaceScan, "Disk surface scan", ModuleKind.OnDemand, ModuleGroups.Storage, 500),
+        new(ModuleIds.DriveSelfTest, ModuleSlugs.DriveSelfTest, "Drive self-test", ModuleKind.OnDemand, ModuleGroups.Storage, 500),
         // Merged into other modules; kept so History can still name their old results.
         new(ModuleIds.BsodHistory, ModuleSlugs.BsodHistory, "Blue screens & unexpected restarts", ModuleKind.Check, ModuleGroups.Windows, 310) { MergedInto = ModuleIds.Crashes },
         new(ModuleIds.WifiConfig, ModuleSlugs.WifiConfig, "Wi-Fi & network config", ModuleKind.Check, ModuleGroups.Network, 110) { MergedInto = ModuleIds.Network },

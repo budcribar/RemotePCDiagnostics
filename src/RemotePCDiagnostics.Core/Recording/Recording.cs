@@ -99,6 +99,9 @@ public sealed record RecordedCall
     /// ("start 0 quick 0", "status 0"), <see cref="StdOut"/> the status JSON, <see cref="ExitCode"/> 2 when the Agent was missing.
     /// </summary>
     public const string DiskScanKind = "diskscan";
+    /// <summary>One drive self-test request to the Agent (<see cref="Storage.IDriveSelfTestSource"/>): <see cref="Query"/> is the request
+    /// ("status 0"), <see cref="StdOut"/> the Agent's JSON answer, <see cref="Error"/> why there was none.</summary>
+    public const string SelfTestKind = "selftest";
 
     public string Kind { get; init; } = "";
 
@@ -156,11 +159,21 @@ public sealed record RecordedCall
 
     public static RecordedCall FromAudio(Audio.AudioState s) => new() { Kind = AudioKind, StdOut = s.ToJson(), Error = s.Error };
 
+    public static RecordedCall FromSelfTest(IReadOnlyList<string> args, Storage.SelfTestReply r) => new()
+    {
+        Kind = SelfTestKind, Query = string.Join(' ', args), StdOut = r.Answer?.ToJson(), Error = r.Error, TimedOut = r.NoAgent ? true : null,
+    };
+
+    /// <summary>The self-test answer this call holds (<see cref="TimedOut"/> marks "no Agent" for these calls).</summary>
+    public Storage.SelfTestReply ToSelfTestReply() =>
+        Storage.SelfTestAnswer.Parse(StdOut) is { } answer && Error is null ? new(answer, null)
+            : Storage.SelfTestReply.Failed(Error ?? "The answer couldn't be read.", noAgent: TimedOut == true);
+
     public static RecordedCall FromWifi(Areas.WifiRadioReading r) => new() { Kind = WifiKind, StdOut = r.Scrubbed().ToJson(), Error = r.Error };
 
     /// <summary>Kept as rows, like WMI (WMI, registry, the package list, antivirus products).</summary>
     public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind or AntivirusKind;
 
     /// <summary>Short text naming the call, for test messages.</summary>
-    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind is AudioKind or WifiKind ? Kind : Kind == DiskScanKind ? $"diskscan {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
+    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind is AudioKind or WifiKind ? Kind : Kind == DiskScanKind ? $"diskscan {Query}" : Kind == SelfTestKind ? $"selftest {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
 }

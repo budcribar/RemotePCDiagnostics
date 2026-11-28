@@ -100,6 +100,17 @@ public sealed class RecordingRegistrySource(IRegistrySource inner, CallRecorder 
     }
 }
 
+/// <summary>Passes each drive self-test request to the Agent and records the answer.</summary>
+public sealed class RecordingDriveSelfTestSource(Storage.IDriveSelfTestSource inner, CallRecorder recorder) : Storage.IDriveSelfTestSource
+{
+    public async Task<Storage.SelfTestReply> RunAsync(IReadOnlyList<string> args, CancellationToken ct)
+    {
+        var r = await inner.RunAsync(args, ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromSelfTest(args, r));
+        return r;
+    }
+}
+
 /// <summary>Records a report file under a fixed name (its real path changes every run).</summary>
 public sealed class FileRecorder(CallRecorder recorder)
 {
@@ -161,6 +172,7 @@ public sealed class RecordingReplay
     public Alerts.IAlertReadings Alerts => new ReplayAlerts(this);
     /// <summary>The surface scan's recorded answers: a repeated status question gets the next one, then the last again.</summary>
     public Storage.IDiskScanSource DiskScans => new ReplayDiskScans(this);
+    public Storage.IDriveSelfTestSource SelfTest => new ReplaySelfTest(this);
 
     /// <summary>The report file recorded under <paramref name="name"/>; null when it wasn't made or isn't in the recording.</summary>
     public string? FileText(string name) => Answer(FileKey(name), $"file {name}") is { Error: null } c ? c.StdOut : null;
@@ -189,6 +201,7 @@ public sealed class RecordingReplay
         RecordedCall.FileKind => FileKey(c.File ?? ""),
         RecordedCall.AlertsKind => AlertsKey(c.Query ?? ""),
         RecordedCall.DiskScanKind => DiskScanKey(c.Query ?? ""),
+        RecordedCall.SelfTestKind => SelfTestKey(c.Query ?? ""),
         _ => ProcessKey(c.File ?? "", c.Args ?? []),
     };
 
@@ -199,6 +212,7 @@ public sealed class RecordingReplay
     public static string FileKey(string name) => "file\n" + name;
     public static string AlertsKey(string reading) => "alerts\n" + reading;
     public static string DiskScanKey(string request) => "diskscan\n" + request;
+    public static string SelfTestKey(string request) => "selftest\n" + request;
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
     /// <remarks>WQL ignores case, and a path in a query is spelled as Windows gave it (C:\WINDOWS on one PC, C:\Windows on another).</remarks>
     public static string WmiKey(string ns, string wql) => "wmi\n" + ns.ToLowerInvariant() + "\n" + wql.ToLowerInvariant();
@@ -253,6 +267,17 @@ public sealed class RecordingReplay
     {
         public Task<WmiQueryResult> ReadAsync(string reading, long afterRecordId, TimeSpan lookBack, CancellationToken ct) =>
             Task.FromResult(replay.Answer(AlertsKey(reading), $"alerts {reading}")?.ToWmiResult() ?? Core.Alerts.AlertReadings.Failed(reading, "Not in the recording."));
+    }
+
+    /// <summary>A request asked again (status while a test runs) gets the recorded answers in order, then the last one again.</summary>
+    private sealed class ReplaySelfTest(RecordingReplay replay) : Storage.IDriveSelfTestSource
+    {
+        public Task<Storage.SelfTestReply> RunAsync(IReadOnlyList<string> args, CancellationToken ct)
+        {
+            var request = string.Join(' ', args);
+            return Task.FromResult(replay.Answer(SelfTestKey(request), $"selftest {request}")?.ToSelfTestReply()
+                                   ?? Storage.SelfTestReply.Failed("Not in the recording."));
+        }
     }
 
     private sealed class ReplayDiskScans(RecordingReplay replay) : Storage.IDiskScanSource
