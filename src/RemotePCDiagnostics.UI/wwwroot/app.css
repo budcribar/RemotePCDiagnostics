@@ -1919,7 +1919,8 @@ body:has(.ptr-overlay) [class*="rbwv-"] { display: none !important; }
    test's page below drops its Progress card and bar, and on Stress tests its Start/Stop toolbar (Cancel is in the Running banner). */
 .ct-live { display: flex; align-items: center; gap: 14px; margin: 8px 0 0 46px; flex-wrap: wrap; }
 .ct-live-text { flex: 1 1 220px; min-width: 0; }
-.ct-live-headline { font-family: var(--font-num); font-size: 20px; font-weight: 700; color: var(--text-strong); line-height: 1.25; }
+.ct-live-headline.is-number { font-family: var(--font-num); }
+.ct-live-headline { font-size: 20px; font-weight: 700; color: var(--text-strong); line-height: 1.25; }
 .ct-live-facts, .ct-live .error-text { margin: 2px 0 0; }
 .ct-live .progress.ct-live-bar { height: 4px; margin: 8px 0 0; max-width: none; }
 .ct-live .progress.ct-live-bar > div { background: var(--accent); }

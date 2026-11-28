@@ -27,11 +27,14 @@
     var availableChecks = checkChoices.Where(c => c.Available).ToList();
     var enabledChecks = availableChecks.Count(c => c.Enabled);
     var checksRunning = Screen.RunningGroup == CheckGroup.Checks || Screen.Modules(CheckGroup.Checks).Any(m => Store.Get(m.Name).Status == DiagnosticStatus.Running);
-    // Stress tests page while a test runs: the list tucks away to the left (a slim "Show tests" rail) so the running test gets the
+    // Stress tests page while a test runs, Checks page while Run all / Run selected goes: the list tucks away to the left (a slim
+    // "Show tests" / "Show checks" rail) so the running test gets the
     // width, and Cancel sits in the Running banner. The list comes back by itself when the run ends or is cancelled.
     var stressRunning = _stressRunning = _group == CheckGroup.Stress && StressRunning(pageModules);
-    if (!stressRunning) _listPeek = false;
-    var listTucked = stressRunning && !_listPeek;
+    var listRunning = stressRunning || (_group == CheckGroup.Checks && Screen.RunningGroup == CheckGroup.Checks);
+    if (!listRunning) _listPeek = false;
+    var listTucked = listRunning && !_listPeek;
+    var listNoun = _group == CheckGroup.Stress ? "tests" : "checks";
     // One Cancel for each running operation: the banner's for a group run or a stress test, the scan card's own Cancel scan for a long
     // scan started on its own. The group's Run selected button is not drawn while the banner has Cancel (they share the test id).
     var groupRunHere = Screen.RunningGroup == _group;
@@ -144,13 +147,13 @@
             </div>
         </details>
     }
-    <div class="ct-workspace @(stressRunning ? "is-running" : "") @(listTucked ? "is-tucked" : "")" data-testid="checks-workspace" data-list-state="@(listTucked ? "tucked" : "open")">
+    <div class="ct-workspace @(listRunning ? "is-running" : "") @(listTucked ? "is-tucked" : "")" data-testid="checks-workspace" data-list-state="@(listTucked ? "tucked" : "open")">
         <section class="ct-list" aria-label="@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")">
-            @if (stressRunning)
+            @if (listRunning)
             {
                 <button type="button" class="ct-list-toggle" data-testid="checks-list-toggle" aria-expanded="@(listTucked ? "false" : "true")"
-                        aria-controls="ct-list-body" title="@(listTucked ? "Show the test list" : "Hide the test list")" @onclick="() => _listPeek = !_listPeek">
-                    <span class="ct-list-toggle-icon" aria-hidden="true">@(listTucked ? "›" : "‹")</span><span class="ct-list-toggle-text">@(listTucked ? "Show tests" : "Hide tests")</span>
+                        aria-controls="ct-list-body" title="@(listTucked ? $"Show the {listNoun} list" : $"Hide the {listNoun} list")" @onclick="() => _listPeek = !_listPeek">
+                    <span class="ct-list-toggle-icon" aria-hidden="true">@(listTucked ? "›" : "‹")</span><span class="ct-list-toggle-text">@(listTucked ? $"Show {listNoun}" : $"Hide {listNoun}")</span>
                 </button>
             }
             <div class="ct-list-body" id="ct-list-body" inert="@listTucked">
@@ -302,7 +305,7 @@
     private readonly List<ILiveProgressSource> _liveSources = [];
     private void OnLiveProgress(object? sender, EventArgs e) => OnScreenChanged();
 
-    /// <summary>The tucked test list was opened again during a run ("Show tests"); cleared when the run ends.</summary>
+    /// <summary>The tucked list was opened again during a run ("Show tests" / "Show checks"); cleared when the run ends.</summary>
     private bool _listPeek;
 
     /// <summary>A stress test runs: a Run selected, a test started from its own card, or one an agent started.</summary>
@@ -668,7 +671,7 @@
                 var live = LiveFor(m, r);
                 <div class="ct-live" role="status" data-testid="checks-detail-progress" data-check-id="@m.Name">
                     <div class="ct-live-text">
-                        <div class="ct-live-headline" data-testid="checks-detail-progress-headline">@live.Headline</div>
+                        <div class="ct-live-headline @(live.Headline.Length > 0 && char.IsDigit(live.Headline[0]) ? "is-number" : "")" data-testid="checks-detail-progress-headline">@live.Headline</div>
                         @if (live.Facts is { Count: > 0 } facts) { <div class="meta ct-live-facts" data-testid="checks-detail-progress-facts">@string.Join(" · ", facts)</div> }
                         @if (live.Problem is { } problem) { <div class="meta error-text" data-testid="checks-detail-progress-problem">@problem</div> }
                         @if (live.Fraction is { } share)
