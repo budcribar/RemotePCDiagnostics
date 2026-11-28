@@ -46,6 +46,7 @@ public class ModuleIdsTests
         ["Sound"] = "56dea360-0bd7-4230-b072-0d54d91e90e4",
         ["WindowsMaintenance"] = "f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41",
         ["SoundCheck"] = "b81b0a57-43d2-4ad4-8572-1480fbe6cf0f",
+        ["Cooling"] = "adda2b29-4378-44da-b7ef-64376b0da30f",
     };
 
     [Fact]

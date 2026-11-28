@@ -9,6 +9,7 @@ public static class BuiltInModules
     [
         new(ModuleIds.Osquery, ModuleSlugs.Osquery, "Hardware inventory", ModuleKind.Check, ModuleGroups.Hardware, 100),
         new(ModuleIds.Sensors, ModuleSlugs.Sensors, "Temperatures & fans", ModuleKind.Check, ModuleGroups.Hardware, 200),
+        new(ModuleIds.Cooling, ModuleSlugs.Cooling, "Cooling test", ModuleKind.OnDemand, ModuleGroups.Hardware, 250),
         new(ModuleIds.DeviceDrivers, ModuleSlugs.DeviceDrivers, "Device Manager & drivers", ModuleKind.Check, ModuleGroups.Hardware, 300),
         new(ModuleIds.BiosFirmware, ModuleSlugs.BiosFirmware, "BIOS & firmware", ModuleKind.Check, ModuleGroups.Hardware, 400),
         new(ModuleIds.DriveHealth, ModuleSlugs.DriveHealth, "Drive health & free space", ModuleKind.Check, ModuleGroups.Storage, 100),

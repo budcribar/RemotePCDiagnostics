@@ -202,6 +202,12 @@ run_benchmark
 
 If a named test is unavailable (no checkbox; `reason` on that `tests` row), `set_benchmark_tests` returns `invalid_argument` and changes nothing. Say why and leave the pass unstarted. An unavailable kind that is still saved as enabled has no checkbox to clear. When `settings.enabled` still contains it after the empty call, the list does not match, so leave the pass unstarted.
 
+## Cooling test
+
+`Cooling` is an on-demand check in the Hardware group of the Checks page (the Temperatures & fans page offers it too, `lhm-cooling-run`); Run all never starts it. Above its report, `cooling-options` carries `data-mode` (`quick` or `full`) and `data-switch-modes`; `cooling-mode` picks Quick (2 minutes at low load, about 4 minutes in all) or Full (5 minutes, about 7), and `cooling-switch-modes` turns the thermal mode part on or off. `cooling-chart` draws the temperature, load and fan over time (`data-points`). Start it with `checks-run-one`; `cancel-check` stops the load and puts the thermal modes back.
+
+The finished report is the generic `area-report-data`, with cards `idle` (heat at low load: Error when the CPU stays within 10 °C of its Tj max, or 100 °C when it reports none, for 60 s while under 30 % busy; Warning when it runs within 25 °C of Tj max), `fans` (Error "Fan not responding" when the fans don't rise 20 % or read 0 while the CPU warms 5 °C or more under 90 s of full load; Warning "No fan readings", still heating at the end, or the load stopped early near Tj max), `fan-control` (Not supported: no maker lets Windows apps set fan speeds), `modes` (each Windows power mode and the maker's thermal profile set through the Agent and read back; Error "Profile won't set"; Skipped "Needs the Agent" without it; the originals are put back) and `samples` (one row every 5 s: seconds, phase, CPU °C, CPU load %, fan RPM).
+
 ## Hardware inventory report
 
 The Hardware inventory check (`Osquery`) renders `area-report-data` like the other checks, once a run has finished: cards `system`, `cpu`, `memory` and `disks`, with the rows the page's drawers show (one row per memory slot and per drive). Serial numbers and the hardware UUID are left out of this copy.

@@ -54,6 +54,9 @@ public static class AgentScripts
     public const string HpBatteryRead = "hp_battery_read";
     /// <summary>Args: the setting's name and the value to set (the Agent checks the setting lists it).</summary>
     public const string HpBatterySet = "hp_battery_set";
+    /// <summary>Args: "list"; "set", "windows" or "maker" and the mode's id; or "restore". Windows' power mode and the PC maker's thermal
+    /// profile for the cooling test (<see cref="Cooling.AgentCoolingModes"/>); prints <see cref="Cooling.CoolingModesAnswer"/> JSON.</summary>
+    public const string CoolingModes = "cooling_modes";
 
     public const string RebootTask = "reboot";
     public const string WorkflowTask = "workflow";
@@ -167,6 +170,9 @@ public static class AgentScripts
             case HpBatterySet:
                 return a.Count == 2 && Battery.HpBatteryCharge.IsSetting(Arg(0)) && Battery.HpBatteryCharge.IsValue(Arg(1))
                     ? Native(new Battery.HpBatterySetAction(Arg(0)!, Arg(1)!)) : Refuse("That isn't an HP battery setting this app changes.");
+
+            case CoolingModes:
+                return Cooling.CoolingModesAction.Parse(a) is { } cooling ? Native(cooling) : Refuse("That isn't a thermal mode request this app sends.");
 
             default:
                 return Refuse($"Unknown script '{request.Name}'.");

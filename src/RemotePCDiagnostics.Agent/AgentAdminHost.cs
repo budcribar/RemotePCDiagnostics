@@ -248,6 +248,8 @@ internal static class AgentAdminHost
         using (parent)
         {
             TryBindKillOnParentCloseJob(parentPid);
+            // Thermal modes a cooling test changed before this helper (or an earlier one) was ended go back.
+            if (OperatingSystem.IsWindows()) RemotePCDiagnostics.Core.Cooling.AgentCoolingModesHost.RecoverAtStart();
 
             using var cts = new CancellationTokenSource();
             _ = WatchParentExitAsync(parent, cts);

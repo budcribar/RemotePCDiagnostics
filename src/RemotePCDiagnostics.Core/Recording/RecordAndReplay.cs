@@ -57,6 +57,24 @@ public sealed class RecordingAlertReadings(Alerts.IAlertReadings inner, CallReco
     }
 }
 
+/// <summary>Passes each cooling test sample and thermal mode request on and records the answer.</summary>
+public sealed class RecordingCoolingSource(Cooling.ICoolingSource inner, CallRecorder recorder) : Cooling.ICoolingSource
+{
+    public async Task<Cooling.CoolingReading> SampleAsync(CancellationToken ct)
+    {
+        var r = await inner.SampleAsync(ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromCoolingSample(r));
+        return r;
+    }
+
+    public async Task<Cooling.CoolingModesReply> ModesAsync(IReadOnlyList<string> args, CancellationToken ct)
+    {
+        var r = await inner.ModesAsync(args, ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromCoolingModes(args, r));
+        return r;
+    }
+}
+
 /// <summary>Passes each Core Audio read to the real source and records the answer.</summary>
 public sealed class RecordingAudioStateSource(Audio.IAudioStateSource inner, CallRecorder recorder) : Audio.IAudioStateSource
 {
@@ -136,6 +154,8 @@ public sealed class RecordingReplay
     public Audio.IAudioStateSource Audio => new ReplayAudio(this);
     public IProcessLauncher Launcher => new ReplayLauncher(this);
     public Alerts.IAlertReadings Alerts => new ReplayAlerts(this);
+    /// <summary>The cooling test's recorded samples, in order (then the last again), and its thermal mode answers.</summary>
+    public Cooling.ICoolingSource Cooling => new ReplayCooling(this);
 
     /// <summary>The report file recorded under <paramref name="name"/>; null when it wasn't made or isn't in the recording.</summary>
     public string? FileText(string name) => Answer(FileKey(name), $"file {name}") is { Error: null } c ? c.StdOut : null;
@@ -162,6 +182,7 @@ public sealed class RecordingReplay
         RecordedCall.AudioKind => AudioKey,
         RecordedCall.FileKind => FileKey(c.File ?? ""),
         RecordedCall.AlertsKind => AlertsKey(c.Query ?? ""),
+        RecordedCall.CoolingKind => CoolingKey(c.Query ?? ""),
         _ => ProcessKey(c.File ?? "", c.Args ?? []),
     };
 
@@ -170,6 +191,7 @@ public sealed class RecordingReplay
     public const string AudioKey = "audio";
     public static string FileKey(string name) => "file\n" + name;
     public static string AlertsKey(string reading) => "alerts\n" + reading;
+    public static string CoolingKey(string request) => "cooling\n" + request;
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
     /// <remarks>WQL ignores case, and a path in a query is spelled as Windows gave it (C:\WINDOWS on one PC, C:\Windows on another).</remarks>
     public static string WmiKey(string ns, string wql) => "wmi\n" + ns.ToLowerInvariant() + "\n" + wql.ToLowerInvariant();
@@ -216,6 +238,20 @@ public sealed class RecordingReplay
     {
         public Task<WmiQueryResult> ReadAsync(string reading, long afterRecordId, TimeSpan lookBack, CancellationToken ct) =>
             Task.FromResult(replay.Answer(AlertsKey(reading), $"alerts {reading}")?.ToWmiResult() ?? Core.Alerts.AlertReadings.Failed(reading, "Not in the recording."));
+    }
+
+    private sealed class ReplayCooling(RecordingReplay replay) : Cooling.ICoolingSource
+    {
+        public Task<Cooling.CoolingReading> SampleAsync(CancellationToken ct) =>
+            Task.FromResult(Core.Cooling.CoolingReading.Parse(replay.Answer(CoolingKey(RecordedCall.CoolingSampleQuery), "cooling sample")?.StdOut)
+                            ?? new Core.Cooling.CoolingReading(null, null, null, null));
+
+        public Task<Cooling.CoolingModesReply> ModesAsync(IReadOnlyList<string> args, CancellationToken ct)
+        {
+            var request = string.Join(' ', args);
+            return Task.FromResult(replay.Answer(CoolingKey(request), $"cooling {request}")?.ToCoolingModesReply()
+                                   ?? Core.Cooling.CoolingModesReply.Failed("Not in the recording."));
+        }
     }
 
     private sealed class ReplayLauncher(RecordingReplay replay) : IProcessLauncher

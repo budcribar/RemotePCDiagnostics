@@ -27,6 +27,8 @@ internal static class AgentRunLoop
             try { ProtectedStateFolder.Ensure(null); } catch { }
         try { AgentPaths.EnsureSessionsDirectory(); } catch { }
         // An in-app update may have replaced this service mid-way (Setup's Agent MSI step): bring the session's app back.
+        // A cooling test that was switching thermal modes when the PC restarted or the Agent stopped: put the modes back.
+        if (OperatingSystem.IsWindows()) RemotePCDiagnostics.Core.Cooling.AgentCoolingModesHost.RecoverAtStart(RemotePCDiagnostics.Core.Logging.AppLoggerFactory.From(log).CreateLogger("Cooling"));
         try { platform.ResumePendingRelaunch(); } catch { }
         var publisher = new AgentStatusPublisher();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);

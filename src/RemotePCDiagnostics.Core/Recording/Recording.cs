@@ -92,6 +92,12 @@ public sealed record RecordedCall
     public const string FileKind = "file";
     /// <summary>What the Agent's alerts read (<see cref="Alerts.IAlertReadings"/>): events and levels, kept as rows like WMI.</summary>
     public const string AlertsKind = "alerts";
+    /// <summary>
+    /// The cooling test's readings (<see cref="Cooling.ICoolingSource"/>): <see cref="Query"/> is "sample" (a temperature, load and fan
+    /// sample, JSON in <see cref="StdOut"/>, replayed in order) or the Agent's thermal mode request ("list", "set windows ID", "restore"),
+    /// with its answer JSON in <see cref="StdOut"/>, <see cref="Error"/> and <see cref="ExitCode"/> 2 when the Agent was missing.
+    /// </summary>
+    public const string CoolingKind = "cooling";
 
     public string Kind { get; init; } = "";
 
@@ -139,11 +145,23 @@ public sealed record RecordedCall
 
     public static RecordedCall FromAlerts(WmiQueryResult r) => FromWmi(r) with { Kind = AlertsKind };
 
+    public const string CoolingSampleQuery = "sample";
+
+    public static RecordedCall FromCoolingSample(Cooling.CoolingReading r) => new() { Kind = CoolingKind, Query = CoolingSampleQuery, StdOut = r.ToJson() };
+
+    public static RecordedCall FromCoolingModes(IReadOnlyList<string> args, Cooling.CoolingModesReply r) => new()
+    {
+        Kind = CoolingKind, Query = string.Join(' ', args), StdOut = r.Answer?.ToJson(), Error = r.Error, ExitCode = r.NoAgent ? 2 : r.Ok ? 0 : 1,
+    };
+
+    public Cooling.CoolingModesReply ToCoolingModesReply() =>
+        Cooling.CoolingModesAnswer.Parse(StdOut) is { } a ? new(a, null) : new(null, Error ?? "Not in the recording.", NoAgent: ExitCode == 2);
+
     public static RecordedCall FromAudio(Audio.AudioState s) => new() { Kind = AudioKind, StdOut = s.ToJson(), Error = s.Error };
 
     /// <summary>Kept as rows, like WMI (WMI, registry, the package list, antivirus products).</summary>
     public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind or AntivirusKind;
 
     /// <summary>Short text naming the call, for test messages.</summary>
-    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind == AudioKind ? "audio" : $"{File} {string.Join(' ', Args ?? [])}";
+    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind == AudioKind ? "audio" : Kind == CoolingKind ? $"cooling {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
 }
