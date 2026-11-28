@@ -23,6 +23,22 @@
     <div class="notice notice-error">@note</div>
 }
 
+@* The cooling test (heat at low load, fans under load, thermal modes) reads these same sensors over a few minutes: offered here with its last verdict. *@
+@if (Diagnostics.Modules.FirstOrDefault(m => m.Id == ModuleIds.Cooling) is { } cooling)
+{
+    var last = Store.Get(cooling.Name);
+    var coolingBusy = last.Status == DiagnosticStatus.Running;
+    <div class="notice" data-testid="lhm-cooling" data-status="@last.Status.ToString().ToLowerInvariant()">
+        <strong>Cooling test</strong>:
+        @if (last.Status is DiagnosticStatus.NotRun) { <span>checks that the PC isn't hot at low load and that the fans speed up under a full CPU load (about 4 minutes).</span> }
+        else { <span class="@DotClass(last.Status)"></span> <span data-testid="lhm-cooling-verdict">@last.Message</span> }
+        @* A link, not NavigationManager: this page injects nothing (resultOnlyUi). The click starts the test and the link opens the
+           Stress tests page, where on-demand tests (Cooling too) show their progress, choices and chart. *@
+        <a class="btn-small status-action" href="@ChecksScreenState.StressRoute" data-testid="lhm-cooling-run" data-action="run-check" data-check-id="@cooling.Name"
+           aria-disabled="@(coolingBusy ? "true" : "false")" @onclick="() => RunCooling(cooling)">@(coolingBusy ? "Running…" : last.Status is DiagnosticStatus.NotRun ? "Test the cooling" : "Test again")</a>
+    </div>
+}
+
 @if (report is not null)
 {
     <div class="cards" data-testid="lhm-readings" data-result-run-id="@r.RunId" data-sampled-at="@r.Timestamp.ToString("O")">
@@ -146,6 +162,14 @@
     }
     private PeriodicTimer? _timer;
     private CancellationTokenSource? _cts;
+
+    /// <summary>Selects the cooling test on the Stress tests page and starts it unless it is already running; the link itself then
+    /// opens that page. The screen state comes from Services, not [Inject]: this page injects nothing (resultOnlyUi).</summary>
+    private void RunCooling(IDiagnosticModule cooling)
+    {
+        if (Services.GetService(typeof(ChecksScreenState)) is ChecksScreenState screen) screen.SelectedModule = cooling.Name;
+        if (Store.Get(cooling.Name).Status != DiagnosticStatus.Running) _ = Diagnostics.RunAsync(cooling.Name);
+    }
 
     private async Task Refresh()
     {

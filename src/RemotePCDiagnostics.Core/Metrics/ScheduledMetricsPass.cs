@@ -106,8 +106,10 @@ public sealed class CoreMetricsProbes(string? appFolder, Func<CancellationToken,
         {
             var b = batteries[i];
             var worn = b.HealthPercent is < BatteryStatus.LowHealthPercent;
-            var summary = b.HealthPercent is { } h ? $"Battery health {h}%" : "Battery present";
-            var status = worn ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
+            // The same fault states the app's check fails on (no charging check here: the pass takes one reading).
+            var fault = BatteryCondition.Faults(b).FirstOrDefault(f => f.Level == AreaLevel.Error);
+            var summary = fault?.Text ?? (b.HealthPercent is { } h ? $"Battery health {h}%" : "Battery present");
+            var status = fault is not null ? DiagnosticStatus.Error : worn ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
             var report = new AreaReport([], summary, status) { KeyMetrics = CheckKeyMetrics.Battery(b) };
             var result = new DiagnosticResult(ModuleSlugs.BatteryPower, status, summary, DateTimeOffset.Now, report);
             list.Add(batteries.Count == 1 ? result : result with { InstanceKey = "battery-" + i, InstanceLabel = BatteryLabel(b, i) });

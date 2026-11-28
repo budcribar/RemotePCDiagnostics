@@ -668,9 +668,21 @@ public static class HardwareQaCertificate
             return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, summary);
         }
 
-        var parts = new List<string>(3);
+        var parts = new List<string>(5);
         if (qa is { SolidColorsInspected: > 0 })
             parts.Add($"{qa.SolidColorsInspected} test {(qa.SolidColorsInspected == 1 ? "pattern" : "patterns")} inspected");
+        var screens = qa?.DisplayScreens ?? [];
+        var failedScreens = screens.Where(s => s.ColorCheck == Display.ColorCheckState.Failed).ToList();
+        var passedScreens = screens.Count(s => s.ColorCheck == Display.ColorCheckState.Passed);
+        foreach (var s in failedScreens)
+            parts.Add(Display.DisplayColorCheck.Summary(s));
+        if (passedScreens > 0)
+            parts.Add(failedScreens.Count == 0 && passedScreens == 1 ? Display.DisplayColorCheck.Summary(screens.First(s => s.ColorCheck == Display.ColorCheckState.Passed))
+                : $"Color channels OK on {passedScreens} {(passedScreens == 1 ? "screen" : "screens")}");
+        if (qa?.BlankScreen == Display.BlankScreenOutcome.Returned)
+            parts.Add("Picture came back after screen off");
+        else if (qa?.BlankScreen == Display.BlankScreenOutcome.DidNotReturn)
+            parts.Add("A screen stayed dark after screen off");
         if (qa is { MaxTouchPoints: > 0 })
             parts.Add($"{qa.MaxTouchPoints}-point touch verified");
         if (!string.IsNullOrWhiteSpace(qa?.DisplayNotes))
