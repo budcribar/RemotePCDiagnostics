@@ -4,7 +4,7 @@
 @* The module's own UI: the battery's health and charge as gauges, from the app's last run, with a "Check now" that reads the battery again
    right here (in the module UI host, user mode, its own process; that reading isn't stored in the app). Framed on the module page above the
    generic report. Uses nothing but Components and Core types, styled inline (the frame has none of the app's CSS). *@
-<div style="display: flex; flex-direction: column; gap: 10px" data-testid="battery-gauges">
+<div style="display: flex; flex-direction: column; gap: var(--space-5)" data-testid="battery-gauges">
     @if (Shown is not { } r)
     {
         <div data-testid="battery-gauges-empty">@(LastResult is { Status: DiagnosticStatus.Running } ? "Reading the battery…" : "Run the check to see battery health.")</div>
@@ -26,7 +26,7 @@
     }
     @if (LastResult is { Status: not DiagnosticStatus.NotRun } last)
     {
-        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+        <div style="display: flex; gap: var(--space-4); align-items: center; flex-wrap: wrap">
             <span style="opacity: .8">From the app's run at @last.Timestamp.ToLocalTime().ToString("T")</span>
         </div>
     }

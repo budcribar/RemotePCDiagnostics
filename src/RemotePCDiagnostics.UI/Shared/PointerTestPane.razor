@@ -11,7 +11,7 @@
 }
 
 <div class="phys-qa-pane" data-testid="interactive-pointer-pane">
-    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+    <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
         <strong>Mouse, touchpad &amp; touchscreen</strong>
         <span class="chip chip-@VerdictChip(snap.Verdict)" data-testid="pointer-status-chip">@VerdictLabel(snap.Verdict)</span>
         @if (running)
@@ -34,7 +34,7 @@
         touchscreen. Only input from this PC's own hardware counts, so the test can't be passed from a remote session.
     </p>
 
-    <div class="toolbar" style="margin-bottom: 4px; flex-wrap: wrap">
+    <div class="toolbar" style="margin-bottom: var(--space-2); flex-wrap: wrap">
         <label class="meta">Device
             <select data-testid="pointer-device-select" disabled="@running" @onchange="OnDeviceChange">
                 @foreach (var d in devices)
@@ -139,7 +139,7 @@
                     }
                     <span class="@(snap.RightDoubleClick ? "ptr-ok" : "")">Right @(snap.RightDoubleClick ? "✓" : "")</span>
                 </div>
-                <label class="meta" style="display: flex; align-items: center; gap: 6px"><input type="checkbox" data-testid="pointer-no-middle" checked="@snap.NoMiddleButton" @onchange="OnNoMiddle" /> My device has no middle button</label>
+                <label class="meta" style="display: flex; align-items: center; gap: var(--space-3)"><input type="checkbox" data-testid="pointer-no-middle" checked="@snap.NoMiddleButton" @onchange="OnNoMiddle" /> My device has no middle button</label>
             }
             else if (current == PointerStep.Scroll)
             {

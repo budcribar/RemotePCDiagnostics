@@ -9,7 +9,7 @@
     {
         <div class="notice" data-testid="@($"{p}-holders")">
             <strong>Using the camera now</strong>
-            <ul style="margin: 4px 0 0">
+            <ul style="margin: var(--space-2) 0 0">
                 @foreach (var h in rep.Holders)
                 {
                     var holder = h;
@@ -43,7 +43,7 @@
 
     @if (rep.Stats.Frames > 0 && rep.Kind == WebcamKind.Color)
     {
-        <div class="toolbar" style="margin: 8px 0 4px; flex-wrap: wrap" data-testid="@($"{p}-question")">
+        <div class="toolbar" style="margin: var(--space-4) 0 var(--space-2); flex-wrap: wrap" data-testid="@($"{p}-question")">
             <strong>Do you see yourself in the preview?</strong>
             <button type="button" class="btn-small @(rep.PersonSawPicture == true ? "btn-primary" : "")" data-testid="@($"{p}-sees-yes")"
                     data-selected="@(rep.PersonSawPicture == true ? "true" : "false")" disabled="@IsRemote" @onclick="() => OnAnswer.InvokeAsync(true)">Yes</button>

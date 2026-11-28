@@ -204,9 +204,9 @@
                     </label>
                     @if (f.Details is { Count: > 0 } details)
                     {
-                        <details class="wf-fix-details" data-testid="wf-fix-details" style="margin: -4px 0 8px 26px;">
+                        <details class="wf-fix-details" data-testid="wf-fix-details" style="margin: -4px 0 var(--space-4) 26px;">
                             <summary class="meta">Show @details.Count new @(details.Count == 1 ? "item" : "items") not yet excluded</summary>
-                            <ul class="meta" style="margin: 4px 0 0 18px; padding: 0;">
+                            <ul class="meta" style="margin: var(--space-2) 0 0 var(--space-9); padding: 0;">
                                 @foreach (var d in details)
                                 {
                                     <li>@d</li>
@@ -275,7 +275,7 @@
                     <a href="@_publishedReportUrl" target="_blank" rel="noopener noreferrer" data-testid="published-report-url">@_publishedReportUrl</a>
                     @if (!string.IsNullOrWhiteSpace(_publishedReportShortHash))
                     {
-                        <span class="chip chip-ok" style="margin-left: 8px">SHA-256 @_publishedReportShortHash</span>
+                        <span class="chip chip-ok" style="margin-left: var(--space-4)">SHA-256 @_publishedReportShortHash</span>
                     }
                 </div>
             </div>

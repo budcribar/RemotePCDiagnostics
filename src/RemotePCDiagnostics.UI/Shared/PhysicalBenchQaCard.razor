@@ -16,7 +16,7 @@
         @if (FilterSection is null or "keyboard")
         {
             <div class="phys-qa-pane" data-testid="interactive-keyboard-pane">
-            <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+            <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
                 <strong>Keyboard matrix &amp; rollover (NKRO)</strong>
                 <span class="chip chip-@kbChip" data-testid="keyboard-status-chip">@kbLabel</span>
                 <button type="button"
@@ -118,7 +118,7 @@
         <div class="phys-qa-pane" data-testid="interactive-display-pane"
              @ontouchstart="OnTouchEvent"
              @ontouchmove="OnTouchEvent">
-            <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+            <div class="card-head" style="margin-bottom: var(--space-4); flex-wrap: wrap">
                 <strong>Display dead-pixel &amp; touch check</strong>
                 <span class="chip chip-@dispChip" data-testid="display-status-chip">@dispLabel</span>
             </div>
@@ -140,7 +140,7 @@
                 }
             </div>
 
-            <div class="kb-stats meta" style="margin: 8px 0">
+            <div class="kb-stats meta" style="margin: var(--space-4) 0">
                 <span><strong data-testid="display-colors-count">@snap.SolidColorsInspected</strong> / @Patterns.Length test patterns inspected</span>
                 <span> · </span>
                 <span><strong data-testid="display-touch-count">@snap.MaxTouchPoints</strong> max touch points</span>
@@ -196,7 +196,7 @@
                 }
             </div>
 
-            <div style="margin-bottom: 8px">
+            <div style="margin-bottom: var(--space-4)">
                 <button type="button" class="btn btn-outline" style="width:auto"
                         data-testid="display-test-launch"
                         disabled="@Blocked"
@@ -228,8 +228,8 @@
 
 @if (CardShell)
 {
-    <section class="card wf-section" data-testid="physical-qa-card" style="margin-bottom: 16px">
-        <div class="toolbar" style="margin-bottom: 8px">
+    <section class="card wf-section" data-testid="physical-qa-card" style="margin-bottom: var(--space-8)">
+        <div class="toolbar" style="margin-bottom: var(--space-4)">
             <div>
                 <strong>Interactive bench QA: Keyboard &amp; Display</strong>
                 <span class="meta"> · Quick technician verification rolled onto the 1-page Buyer QR Certificate</span>
