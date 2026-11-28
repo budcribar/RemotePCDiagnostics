@@ -120,4 +120,16 @@ public class DashboardSummaryTests
         Assert.False(sum.AuditNotRun);
         Assert.Empty(sum.Problems);
     }
+
+    [Fact]
+    public void StressNotRunCount_CountsOnlyTheStressPageList_WhenGiven()
+    {
+        var mods = new List<BannerModule>([.. AllStress(), new("Webcam", "Webcam test", true, false, DiagnosticStatus.NotRun),
+            new("DiskSurfaceScan", "Disk surface scan", true, false, DiagnosticStatus.NotRun), Audit()]);
+        Assert.Equal(5, DashboardSummary.Build(mods, null).StressNotRunCount);
+        var sum = DashboardSummary.Build(mods, null, ["CpuStress", "MemoryTest", "GpuStress", "diskSurfaceScan"]);
+        Assert.Equal(4, sum.StressNotRunCount);
+        Assert.Equal("On-demand tests not run: 4 (stress tests and disk surface scan)", sum.StressNotRunNote);
+        Assert.True(sum.AuditNotRun);
+    }
 }

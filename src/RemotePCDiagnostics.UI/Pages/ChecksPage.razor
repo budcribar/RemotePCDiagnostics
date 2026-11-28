@@ -451,11 +451,11 @@
                 <div class="ct-group-actions">
                     @if (g == CheckGroup.Stress)
                     {
-                        <div class="theme-switch" role="group" aria-label="Stress test length" data-testid="checks-mode">
+                        <div class="theme-switch ct-mode-switch" role="group" aria-label="Stress test length" data-testid="checks-mode">
                             <button class="@(Screen.Mode == StressSuiteMode.Short ? "on" : "")" aria-pressed="@(Screen.Mode == StressSuiteMode.Short ? "true" : "false")" disabled="@running"
-                                    data-testid="checks-mode-quick" @onclick="() => Screen.Mode = StressSuiteMode.Short">Short (~1 min each)</button>
+                                    data-testid="checks-mode-quick" @onclick="() => Screen.Mode = StressSuiteMode.Short">Short (~1&nbsp;min&nbsp;each)</button>
                             <button class="@(Screen.Mode == StressSuiteMode.Extended ? "on" : "")" aria-pressed="@(Screen.Mode == StressSuiteMode.Extended ? "true" : "false")" disabled="@running"
-                                    data-testid="checks-mode-extended" @onclick="() => Screen.Mode = StressSuiteMode.Extended">Extended (~5 min each)</button>
+                                    data-testid="checks-mode-extended" @onclick="() => Screen.Mode = StressSuiteMode.Extended">Extended (~5&nbsp;min&nbsp;each)</button>
                         </div>
                     }
                     @if (running) { <button class="btn btn-stop" data-testid="checks-run-@id" @onclick="Screen.Stop">Stop</button> }
