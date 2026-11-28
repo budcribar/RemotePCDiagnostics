@@ -1884,3 +1884,6 @@ body:has(.ptr-overlay) [class*="rbwv-"] { display: none !important; }
 .cam-details { margin: 8px 0; }
 .cam-details > summary { cursor: pointer; padding: 4px 0; }
 .cam-details > table.detail { margin-top: 4px; }
+/* "You don't have control" note, shown when a tap lands on RemoteBlazorWebView's read-only overlay (dialogs.js). Above that overlay (z 10000). */
+.rpd-no-control-note { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 10001; max-width: min(92vw, 420px); box-sizing: border-box; padding: 10px 14px; border-radius: 10px; background: var(--text-strong, #111); color: var(--surface, #fff); box-shadow: var(--shadow-lg); font-size: 14px; line-height: 1.35; text-align: center; pointer-events: none; animation: fade .15s ease-out; }
+.rpd-no-control-note[hidden] { display: none; }

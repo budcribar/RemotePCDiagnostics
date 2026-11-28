@@ -758,3 +758,65 @@
     document.addEventListener('pointerup', e => { if (drag && e.pointerId === drag.id) end(); }, true);
     document.addEventListener('pointercancel', e => { if (drag && e.pointerId === drag.id) end(); }, true);
 })();
+
+// A tap on a page that doesn't have control does nothing: RemoteBlazorWebView lays a transparent overlay
+// (#__remote-mirror-overlay) over the page and drops the input. Say so, with a short beep and a note, so a technician on a
+// phone doesn't think the page is stuck (#269). Throttled, so a run of taps gives one beep.
+(function () {
+    const OVERLAY_ID = '__remote-mirror-overlay';
+    const QUIET_MS = 1500, NOTE_MS = 4000;
+    let lastBeep = 0, audio = null, hideTimer = 0;
+
+    function beep() {
+        try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            audio = audio || new Ctx();
+            if (audio.state === 'suspended') audio.resume();
+            const osc = audio.createOscillator(), gain = audio.createGain(), t = audio.currentTime;
+            osc.type = 'sine';
+            osc.frequency.value = 440;
+            gain.gain.setValueAtTime(0.0001, t);
+            gain.gain.exponentialRampToValueAtTime(0.2, t + 0.01);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+            osc.connect(gain).connect(audio.destination);
+            osc.start(t);
+            osc.stop(t + 0.2);
+        } catch { /* no audio here: the note still shows */ }
+    }
+
+    function message() {
+        const state = window.RemoteControl && typeof window.RemoteControl.getState === 'function' ? window.RemoteControl.getState() : null;
+        if (state && state.restarting) return 'The app is restarting. Wait a moment.';
+        if (state && state.connectionState === 'disconnected') return 'The connection to this PC was lost.';
+        const owner = state ? state.isOwner : !!(window.RemoteBlazor && window.RemoteBlazor.isOwner);
+        return owner
+            ? 'The technician has control. Take control to use the app here.'
+            : "You don't have control yet. The person at this PC needs to give it to you.";
+    }
+
+    function showNote() {
+        let note = document.getElementById('rpd-no-control-note');
+        if (!note) {
+            note = document.createElement('div');
+            note.id = 'rpd-no-control-note';
+            note.className = 'rpd-no-control-note';
+            note.setAttribute('role', 'status');
+            note.setAttribute('data-testid', 'no-control-note');
+            document.body.appendChild(note);
+        }
+        note.textContent = message();
+        note.hidden = false;
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => { note.hidden = true; }, NOTE_MS);
+    }
+
+    document.addEventListener('pointerdown', e => {
+        if (!(e.target instanceof Element) || e.target.id !== OVERLAY_ID) return;
+        showNote();
+        const now = Date.now();
+        if (now - lastBeep < QUIET_MS) return;
+        lastBeep = now;
+        beep();
+    }, true);
+})();
