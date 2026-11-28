@@ -55,6 +55,11 @@ public static class AgentScripts
     /// <summary>Args: the setting's name and the value to set (the Agent checks the setting lists it).</summary>
     public const string HpBatterySet = "hp_battery_set";
     /// <summary>
+    /// Args: "status", "cancel" or "clear"; or "schedule" and "standard" or "extended". The Windows boot memory test
+    /// (<see cref="Stress.AgentMemoryDiagnostic"/>); prints <see cref="Stress.MemoryDiagnosticAnswer"/> JSON.
+    /// </summary>
+    public const string MemoryDiagnostic = "memory_diagnostic";
+    /// <summary>
     /// Args: "start", disk number, "quick" or "full", time limit in minutes (0 for none); or "status"/"stop" and the disk number. The
     /// read-only surface scan of one physical disk (<see cref="Storage.AgentDiskScans"/>). Prints the scan's status as JSON.
     /// </summary>
@@ -178,6 +183,12 @@ public static class AgentScripts
                 return a.Count == 2 && Battery.HpBatteryCharge.IsSetting(Arg(0)) && Battery.HpBatteryCharge.IsValue(Arg(1))
                     ? Native(new Battery.HpBatterySetAction(Arg(0)!, Arg(1)!)) : Refuse("That isn't an HP battery setting this app changes.");
 
+            case MemoryDiagnostic:
+                if (a.Count == 0 || !Stress.AgentMemoryDiagnostic.IsVerb(Arg(0))) return Refuse("That isn't a memory test request.");
+                if (Arg(0) == "schedule")
+                    return a.Count == 2 && Stress.AgentMemoryDiagnostic.ParseMix(Arg(1)) is { } mix
+                        ? Native(new Stress.MemoryDiagnosticAction("schedule", mix)) : Refuse("Choose the standard or extended test.");
+                return a.Count == 1 ? Native(new Stress.MemoryDiagnosticAction(Arg(0)!, null)) : Refuse("That isn't a memory test request.");
             case DiskReadScan:
                 return Storage.DiskReadScanAction.Parse(a) is { } scan ? Native(scan) : Refuse("That isn't a disk surface scan this app runs.");
 

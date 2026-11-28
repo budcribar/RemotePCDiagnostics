@@ -112,6 +112,17 @@ public sealed class RecordingDriveSelfTestSource(Storage.IDriveSelfTestSource in
     }
 }
 
+/// <summary>Passes each boot memory test request to the Agent and records the answer.</summary>
+public sealed class RecordingMemoryDiagnosticSource(Stress.IMemoryDiagnosticSource inner, CallRecorder recorder) : Stress.IMemoryDiagnosticSource
+{
+    public async Task<Stress.MemoryDiagnosticReply> RunAsync(IReadOnlyList<string> args, CancellationToken ct)
+    {
+        var r = await inner.RunAsync(args, ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromMemoryDiagnostic(args, r));
+        return r;
+    }
+}
+
 /// <summary>
 /// Passes the graphics memory test to the real chips and records what they answered: the adapter list, each allocation, and every
 /// dispatch that found wrong words or lost the device, keyed by its block and its number on that block. A run makes thousands of clean
@@ -227,6 +238,7 @@ public sealed class RecordingReplay
     public Areas.IWifiRadioSource Wifi => new ReplayWifi(this);
     public IProcessLauncher Launcher => new ReplayLauncher(this);
     public Alerts.IAlertReadings Alerts => new ReplayAlerts(this);
+    public Stress.IMemoryDiagnosticSource MemoryDiagnostic => new ReplayMemoryDiagnostic(this);
     /// <summary>The surface scan's recorded answers: a repeated status question gets the next one, then the last again.</summary>
     public Storage.IDiskScanSource DiskScans => new ReplayDiskScans(this);
     public Storage.IDriveSelfTestSource SelfTest => new ReplaySelfTest(this);
@@ -264,6 +276,7 @@ public sealed class RecordingReplay
         RecordedCall.WifiKind => WifiKey,
         RecordedCall.FileKind => FileKey(c.File ?? ""),
         RecordedCall.AlertsKind => AlertsKey(c.Query ?? ""),
+        RecordedCall.MemoryDiagnosticKind => MemoryDiagnosticKey(c.Query ?? ""),
         RecordedCall.DiskScanKind => DiskScanKey(c.Query ?? ""),
         RecordedCall.SelfTestKind => SelfTestKey(c.Query ?? ""),
         RecordedCall.GpuMemoryKind => GpuMemoryKey(c.Query ?? ""),
@@ -276,6 +289,7 @@ public sealed class RecordingReplay
     public const string WifiKey = "wifi";
     public static string FileKey(string name) => "file\n" + name;
     public static string AlertsKey(string reading) => "alerts\n" + reading;
+    public static string MemoryDiagnosticKey(string request) => "memdiag\n" + request;
     public static string DiskScanKey(string request) => "diskscan\n" + request;
     public static string SelfTestKey(string request) => "selftest\n" + request;
     public static string GpuMemoryKey(string query) => "gpumemory\n" + query;
@@ -331,6 +345,16 @@ public sealed class RecordingReplay
             Task.FromResult(replay.Answer(WifiKey, "wifi") is { } c
                 ? c.Error is { } e && c.StdOut is null ? Areas.WifiRadioReading.Unavailable(e) : Areas.WifiRadioReading.FromJson(c.StdOut)
                 : Areas.WifiRadioReading.Unavailable("Not in the recording."));
+    }
+
+    private sealed class ReplayMemoryDiagnostic(RecordingReplay replay) : Stress.IMemoryDiagnosticSource
+    {
+        public Task<Stress.MemoryDiagnosticReply> RunAsync(IReadOnlyList<string> args, CancellationToken ct)
+        {
+            var request = string.Join(' ', args);
+            return Task.FromResult(replay.Answer(MemoryDiagnosticKey(request), $"memdiag {request}")?.ToMemoryDiagnosticReply()
+                                   ?? Stress.MemoryDiagnosticReply.Failed("Not in the recording."));
+        }
     }
 
     /// <summary>The recorded events are replayed whatever the window asked for; the Agent drops the ones it has seen by record id.</summary>
