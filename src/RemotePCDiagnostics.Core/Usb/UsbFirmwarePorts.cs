@@ -73,7 +73,8 @@ public static class UsbFirmwarePorts
         var q = await wmi.QueryAsync(ns, sql, ct).ConfigureAwait(false);
         if (!q.Success)
         {
-            var needsAgent = q.Error?.Contains(AgentWmiSource.NotConnected, StringComparison.Ordinal) == true;
+            var needsAgent = q.Error?.Contains(AgentWmiSource.NotConnected, StringComparison.Ordinal) == true
+                || q.Error?.Contains("Access denied", StringComparison.OrdinalIgnoreCase) == true;
             return new(maker, [], needsAgent ? "Needs the Agent: BIOS settings can only be read with administrator rights."
                 : $"{maker}'s BIOS settings couldn't be read: {q.Error}", needsAgent);
         }

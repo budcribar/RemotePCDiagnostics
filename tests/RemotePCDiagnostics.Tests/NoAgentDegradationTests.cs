@@ -67,6 +67,65 @@ public class NoAgentDegradationTests
     }
 
     [Fact]
+    public void Agent_only_cards_and_rows_are_omitted_when_no_agent_is_installed()
+    {
+        var biosCard = new AreaCard("bios-usb", "USB port BIOS settings", AreaLevel.Neutral, "Needs the Agent",
+            "BIOS settings can only be read with administrator rights.", ["Setting", "Value"], [],
+            EmptyText: "Needs the Agent: BIOS settings can only be read with administrator rights.");
+        var modesCard = new AreaCard("modes", "Thermal modes", AreaLevel.Neutral, "Skipped: Needs the Agent",
+            "", ["Mode"], [], EmptyText: "Install the Agent (or turn on Admin Repair Mode).");
+        var chargerCard = new AreaCard("charger", "Charger", AreaLevel.Ok, "Plugged in", "", ["Item", "Value"],
+            [
+                new AreaRow(AreaLevel.Neutral, ["Rated wattage", "Not reported by Windows"]),
+                new AreaRow(AreaLevel.Neutral, ["AC adapter device", "Needs the Agent"]),
+                new AreaRow(AreaLevel.Neutral, ["Note", "Limited. " + ElevationService.AdminRepairHint]),
+            ]);
+        var report = new AreaReport([biosCard, modesCard, chargerCard], "s", DiagnosticStatus.Ok);
+
+        // Setup edition (Agent installed but disconnected): keeps all cards & rows intact.
+        Assert.Same(report, FixAccess.WithoutAgentHints(report, noAgent: false));
+
+        // Store edition (no Agent): omits Needs-the-Agent cards/rows and strips AdminRepairHint from rows.
+        var clean = FixAccess.WithoutAgentHints(report, noAgent: true)!;
+        var kept = Assert.Single(clean.Cards);
+        Assert.Equal("charger", kept.Id);
+        Assert.Equal(2, kept.Rows.Count);
+        Assert.DoesNotContain(kept.Rows, r => r.Values.Contains("Needs the Agent"));
+        Assert.Equal("Limited.", kept.Rows[1].Values[1]);
+    }
+
+    [Fact]
+    public void Agent_only_on_demand_modules_are_marked_RequiresAgent_and_hidden_without_agent()
+    {
+        foreach (var id in new[] { ModuleIds.DismScanHealth, ModuleIds.SfcVerifyOnly, ModuleIds.DiskSurfaceScan, ModuleIds.DriveSelfTest, ModuleIds.BatteryDrain })
+            Assert.True(BuiltInModules.Descriptors.Single(d => d.Id == id).RequiresAgent, $"Expected {id} to have RequiresAgent = true");
+
+        var store = new ResultStore();
+        var diag = new DiagnosticsService(store, [
+            new OnDemandStub(ModuleIds.CpuStress, ModuleSlugs.CpuStress),
+            new OnDemandStub(ModuleIds.DiskSurfaceScan, ModuleSlugs.DiskSurfaceScan),
+            new OnDemandStub(ModuleIds.DriveSelfTest, ModuleSlugs.DriveSelfTest),
+        ]);
+        var noAgentScreen = new ChecksScreenState(diag, store) { HasAgent = () => false };
+        Assert.Contains(noAgentScreen.StressModules, m => m.Name == ModuleSlugs.CpuStress);
+        Assert.DoesNotContain(noAgentScreen.StressModules, m => m.Name is ModuleSlugs.DiskSurfaceScan or ModuleSlugs.DriveSelfTest);
+        var withAgentScreen = new ChecksScreenState(diag, store) { HasAgent = () => true };
+        Assert.Contains(withAgentScreen.StressModules, m => m.Name == ModuleSlugs.DiskSurfaceScan);
+        Assert.Contains(withAgentScreen.StressModules, m => m.Name == ModuleSlugs.DriveSelfTest);
+    }
+
+    private sealed class OnDemandStub(Guid id, string name) : IDiagnosticModule
+    {
+        public Guid Id => id;
+        public string Name => name;
+        public string DisplayName => name;
+        public bool IncludeInRunAll => false;
+        public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
+        public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);
+        public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default) => Task.FromResult(FakeModule.Ok(name));
+    }
+
+    [Fact]
     public void Sensors_without_agent_report_what_was_read_without_a_warning()
     {
         var none = LibreHardwareMonitorModule.BuildReport(new SensorSnapshot([], IsElevated: false));

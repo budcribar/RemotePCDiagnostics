@@ -2,9 +2,11 @@
 @using RemotePCDiagnostics.Core.Areas
 @using RemotePCDiagnostics.Core.Cooling
 @using RemotePCDiagnostics.Core.Plugins
+@using RemotePCDiagnostics.Core.Session
+@inject IServiceProvider Services
 @* Above the generic report: the next run's choices, then the temperature-and-load chart (live while it runs, else the last run's).
    After a run the chart draws the "samples" card's rows, so Admin's report data carries the same numbers this draws. *@
-<div class="cooling" data-testid="cooling-options" data-mode="@(Module?.Mode == CoolingTestMode.Full ? "full" : "quick")" data-switch-modes="@(Module?.SwitchModes != false ? "true" : "false")">
+<div class="cooling" data-testid="cooling-options" data-mode="@(Module?.Mode == CoolingTestMode.Full ? "full" : "quick")" data-switch-modes="@(!NoAgent && Module?.SwitchModes != false ? "true" : "false")">
     <div class="toolbar">
         <label class="meta">Watch low load for
             <select data-testid="cooling-mode" disabled="@Running" @onchange="SetMode">
@@ -12,8 +14,11 @@
                 <option value="full" selected="@(Module?.Mode == CoolingTestMode.Full)">5 minutes (Full, about 7 minutes in all)</option>
             </select>
         </label>
-        <label class="meta"><input type="checkbox" data-testid="cooling-switch-modes" disabled="@Running" checked="@(Module?.SwitchModes != false)" @onchange="SetSwitch" />
-            Switch thermal modes (and HP Omen fans to max), then put them back (Agent)</label>
+        @if (!NoAgent)
+        {
+            <label class="meta"><input type="checkbox" data-testid="cooling-switch-modes" disabled="@Running" checked="@(Module?.SwitchModes != false)" @onchange="SetSwitch" />
+                Switch thermal modes (and HP Omen fans to max), then put them back (Agent)</label>
+        }
     </div>
     <p class="meta">Watches the CPU's temperature and load, then runs 90 seconds of full CPU load and checks that the fans speed up and the
         temperature levels off, then lets it cool for 30 seconds. On HP Omen and Victus laptops it then runs the fans at max for 20 seconds. It fails when the CPU stays within 10 °C of its Tj max for a minute while
@@ -56,6 +61,12 @@
 
     private CoolingTestModule? Module => DiagnosticModule as CoolingTestModule;
     private bool Running => LastResult is { Status: DiagnosticStatus.Running };
+    private bool NoAgent => AgentShopPillState.NoAgent(Services)();
+
+    protected override void OnParametersSet()
+    {
+        if (NoAgent && Module is not null && !Running) Module.SwitchModes = false;
+    }
 
     /// <summary>While running, the live samples; after a run, the samples card's rows.</summary>
     private IReadOnlyList<CoolingSample> Points =>

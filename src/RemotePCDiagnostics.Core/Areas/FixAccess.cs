@@ -53,18 +53,55 @@ public static class FixAccess
     }
 
     /// <summary>
-    /// <paramref name="report"/> without the "Turn on Admin Repair Mode" hint in its cards when <paramref name="noAgent"/> (no Agent is
-    /// installed, so there is nothing to turn on): a card that couldn't read something just says so. The same report when nothing changes.
+    /// <paramref name="report"/> for an install with no Agent (the Microsoft Store app without the companion Agent): omits cards and rows
+    /// whose only content is "Needs the Agent", and drops "Turn on Admin Repair Mode" hints everywhere. The same report when nothing changes.
     /// </summary>
     public static AreaReport? WithoutAgentHints(AreaReport? report, bool noAgent)
     {
-        if (!noAgent || report is null || !report.Cards.Any(HasHint)) return report;
-        return report with { Cards = report.Cards.Select(c => HasHint(c) ? c with { Meta = Strip(c.Meta)!, Note = Strip(c.Note) } : c).ToList() };
+        if (!noAgent || report is null || !report.Cards.Any(NeedsCleanup)) return report;
+        var cards = new List<AreaCard>(report.Cards.Count);
+        foreach (var c in report.Cards)
+        {
+            if (IsAgentOnlyCard(c)) continue;
+            cards.Add(NeedsCleanup(c) ? CleanCard(c) : c);
+        }
+        return report with { Cards = cards };
     }
+
+    private static bool NeedsCleanup(AreaCard card) =>
+        IsAgentOnlyCard(card) || HasHint(card) || card.Rows.Any(r => IsAgentOnlyRow(r) || RowHasHint(r));
+
+    private static bool IsAgentOnlyCard(AreaCard card) =>
+        card.Headline.StartsWith("Needs the Agent", StringComparison.OrdinalIgnoreCase)
+        || card.Headline.StartsWith("Skipped: Needs the Agent", StringComparison.OrdinalIgnoreCase)
+        || (card.Rows.Count == 0 && (card.EmptyText?.StartsWith("Needs the Agent", StringComparison.OrdinalIgnoreCase) == true
+            || card.EmptyText?.StartsWith("Install the Agent", StringComparison.OrdinalIgnoreCase) == true));
+
+    private static bool IsAgentOnlyRow(AreaRow row) =>
+        row.Values.Any(v => v.Equals("Needs the Agent", StringComparison.OrdinalIgnoreCase)
+            || v.StartsWith("Needs the Agent:", StringComparison.OrdinalIgnoreCase));
+
+    private static bool RowHasHint(AreaRow row) =>
+        row.Values.Any(v => v.Contains(Session.ElevationService.AdminRepairHint, StringComparison.Ordinal));
 
     private static bool HasHint(AreaCard card) =>
         card.Meta.Contains(Session.ElevationService.AdminRepairHint, StringComparison.Ordinal)
-        || card.Note?.Contains(Session.ElevationService.AdminRepairHint, StringComparison.Ordinal) == true;
+        || card.Note?.Contains(Session.ElevationService.AdminRepairHint, StringComparison.Ordinal) == true
+        || card.EmptyText?.Contains(Session.ElevationService.AdminRepairHint, StringComparison.Ordinal) == true;
+
+    private static AreaCard CleanCard(AreaCard card)
+    {
+        var rows = card.Rows.Where(r => !IsAgentOnlyRow(r))
+            .Select(r => RowHasHint(r) ? r with { Values = r.Values.Select(v => Strip(v)!).ToList() } : r)
+            .ToList();
+        return card with
+        {
+            Meta = Strip(card.Meta)!,
+            Note = Strip(card.Note),
+            EmptyText = Strip(card.EmptyText),
+            Rows = rows,
+        };
+    }
 
     private static string? Strip(string? text) =>
         text?.Replace(Session.ElevationService.AdminRepairHint, "", StringComparison.Ordinal).Trim() is { Length: > 0 } t ? t

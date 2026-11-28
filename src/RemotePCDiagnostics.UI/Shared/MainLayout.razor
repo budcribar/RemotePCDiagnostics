@@ -56,15 +56,28 @@
             @if (AgentShopPillState.ShowRestrictedBadge(App.Elevation, AgentLink.Current.Kind))
             {
                 <span class="admin-mode-slot" data-testid="admin-mode-badge">
-                    <button type="button"
-                            class="badge admin-mode-pill admin-mode-restricted"
-                            data-testid="admin-mode-restricted"
-                            title="Agent not connected. Low-level hardware sensors and system repairs require the Agent."
-                            aria-label="Restricted Mode. Agent not connected. Low-level hardware sensors and system repairs require the Agent."
-                            @onclick="OpenConnectDialog">
-                        <Icon Name="lock" Size="14" />
-                        <span>Restricted Mode</span>
-                    </button>
+                    @if (HasShopToShow)
+                    {
+                        <button type="button"
+                                class="badge admin-mode-pill admin-mode-restricted"
+                                data-testid="admin-mode-restricted"
+                                title="Agent not connected. Low-level hardware sensors and system repairs require the Agent."
+                                aria-label="Restricted Mode. Agent not connected. Low-level hardware sensors and system repairs require the Agent."
+                                @onclick="OpenConnectDialog">
+                            <Icon Name="lock" Size="14" />
+                            <span>Restricted Mode</span>
+                        </button>
+                    }
+                    else
+                    {
+                        <span class="badge admin-mode-pill admin-mode-restricted"
+                              data-testid="admin-mode-restricted"
+                              title="Agent not connected. Low-level hardware sensors and system repairs require the Agent."
+                              aria-label="Restricted Mode. Agent not connected. Low-level hardware sensors and system repairs require the Agent.">
+                            <Icon Name="lock" Size="14" />
+                            <span>Restricted Mode</span>
+                        </span>
+                    }
                 </span>
             }
             @if (Session.Mode == SessionMode.Remote)
@@ -341,14 +354,13 @@
             Remote.Count);
 
     /// <summary>
-    /// The shop dialog has something to show: a remote session or Agent link, a shop code, saved branding, or a relay. Without any (no relay
-    /// configured) the pill is plain text, so it doesn't open an empty "Verified Shop" dialog.
+    /// The shop dialog has something to show: a remote session or Agent link, a shop code, or a relay. Without any (standalone local mode
+    /// with no relay configured) the pill is plain text, so it doesn't open an empty "Verified Shop" remote dialog.
     /// </summary>
     private bool HasShopToShow =>
         IsAgentConnected
         || Session.ServerUri is not null
         || !string.IsNullOrWhiteSpace(EffectiveShopGroup)
-        || ActiveShopBranding is { HasAny: true }
         || !string.IsNullOrWhiteSpace(App.Preferences?.Current?.RelayServerUrl);
 
     private void OpenConnectDialog() => OpenShopInfoDialog();
