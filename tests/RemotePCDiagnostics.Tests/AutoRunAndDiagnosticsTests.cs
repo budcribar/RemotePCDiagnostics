@@ -96,22 +96,21 @@ public class AutoRunTests
     /// <summary>Bud, Nov 28: the Dashboard header said "Querying hardware…" until someone ran the checks. The hardware inventory is read
     /// right away, even with auto-run off.</summary>
     [Fact]
-    public async Task StartHardwareInventory_RunsOsquery_EvenWithAutoRunOff()
+    public async Task ReadHardwareInventory_RunsOsquery_EvenWithAutoRunOff()
     {
         var m = new FakeModule(ModuleSlugs.Osquery, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.Osquery)));
         var store = new ResultStore();
         var svc = new DiagnosticsService(store, [m]);
         Assert.False(AutoRun.IsEnabled(_ => null));
 
-        var run = AutoRun.StartHardwareInventory(svc, store, null);
+        var r = await AutoRun.ReadHardwareInventoryAsync(svc, store, null).WaitAsync(Wait);
 
-        Assert.NotNull(run);
-        await run.WaitAsync(Wait);
+        Assert.Equal(DiagnosticStatus.Ok, r?.Status);
         Assert.Equal(DiagnosticStatus.Ok, store.Get(ModuleSlugs.Osquery).Status);
     }
 
     [Fact]
-    public async Task StartHardwareInventory_SkipsWhenItHasAResultOrIsRunning()
+    public async Task ReadHardwareInventory_JoinsARunningRead_AndSkipsWhenItHasAResult()
     {
         var gate = new TaskCompletionSource();
         var calls = 0;
@@ -119,17 +118,71 @@ public class AutoRunTests
         var store = new ResultStore();
         var svc = new DiagnosticsService(store, [m]);
 
-        var first = AutoRun.StartHardwareInventory(svc, store, null);
-        Assert.NotNull(first);
-        Assert.Null(AutoRun.StartHardwareInventory(svc, store, null)); // still running
+        var first = AutoRun.ReadHardwareInventoryAsync(svc, store, null);
+        var second = AutoRun.ReadHardwareInventoryAsync(svc, store, null); // joins the first read
+        Assert.False(second.IsCompleted);
         gate.SetResult();
-        await first.WaitAsync(Wait);
-        Assert.Null(AutoRun.StartHardwareInventory(svc, store, null)); // has a result
+        await Task.WhenAll(first, second).WaitAsync(Wait);
+        Assert.Equal(DiagnosticStatus.Ok, second.Result?.Status);
+        Assert.Null(await AutoRun.ReadHardwareInventoryAsync(svc, store, null).WaitAsync(Wait)); // has a result
         Assert.Equal(1, calls);
 
         // No Osquery module here (or it can't run): nothing starts and nothing throws.
         var empty = new ResultStore();
-        Assert.Null(AutoRun.StartHardwareInventory(new DiagnosticsService(empty, []), empty, null));
+        Assert.Null(await AutoRun.ReadHardwareInventoryAsync(new DiagnosticsService(empty, []), empty, null).WaitAsync(Wait));
+    }
+
+    /// <summary>Bud, Nov 28 (BUDSLAPTOP): the startup read ran before the Agent's pipe was up and showed "Couldn't read hardware details".
+    /// It now waits for the Agent first.</summary>
+    [Fact]
+    public async Task ReadHardwareInventory_WaitsForTheAgent_BeforeReading()
+    {
+        var connected = false;
+        var readWhileConnected = new List<bool>();
+        var m = new FakeModule(ModuleSlugs.Osquery, _ => { lock (readWhileConnected) readWhileConnected.Add(Volatile.Read(ref connected)); return Task.FromResult(FakeModule.Ok(ModuleSlugs.Osquery)); });
+        var store = new ResultStore();
+        var svc = new DiagnosticsService(store, [m]);
+
+        var read = AutoRun.ReadHardwareInventoryAsync(svc, store, null, () => Volatile.Read(ref connected), agentWait: TimeSpan.FromSeconds(10));
+        await Task.Delay(400);
+        Assert.False(read.IsCompleted);
+        Assert.Equal(DiagnosticStatus.NotRun, store.Get(ModuleSlugs.Osquery).Status); // the header keeps "Querying hardware…"
+        Volatile.Write(ref connected, true);
+
+        Assert.Equal(DiagnosticStatus.Ok, (await read.WaitAsync(Wait))?.Status);
+        Assert.Equal([true], readWhileConnected);
+    }
+
+    [Fact]
+    public async Task ReadHardwareInventory_NoAgentOrTimeout_ReadsWithoutIt()
+    {
+        var m = new FakeModule(ModuleSlugs.Osquery, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.Osquery)));
+        var store = new ResultStore();
+        var svc = new DiagnosticsService(store, [m]);
+        // A PC with no Agent (the Store edition on its own) doesn't wait.
+        var r = await AutoRun.ReadHardwareInventoryAsync(svc, store, null, () => false, () => true, TimeSpan.FromMinutes(5)).WaitAsync(Wait);
+        Assert.Equal(DiagnosticStatus.Ok, r?.Status);
+
+        // An Agent that never connects: it reads anyway once the wait is over.
+        var store2 = new ResultStore();
+        var r2 = await AutoRun.ReadHardwareInventoryAsync(new DiagnosticsService(store2, [m]), store2, null, () => false, agentWait: TimeSpan.FromMilliseconds(300)).WaitAsync(Wait);
+        Assert.Equal(DiagnosticStatus.Ok, r2?.Status);
+    }
+
+    /// <summary>When the Agent connects, a hardware read that failed (it ran before the Agent) is read again, before the sensors.</summary>
+    [Fact]
+    public async Task ReadHardwareInventory_RereadFailed_ReadsAFailedResultAgain()
+    {
+        var calls = 0;
+        var m = new FakeModule(ModuleSlugs.Osquery, _ => { Interlocked.Increment(ref calls); return Task.FromResult(FakeModule.Ok(ModuleSlugs.Osquery)); });
+        var store = new ResultStore();
+        var svc = new DiagnosticsService(store, [m]);
+        store.Set(new DiagnosticResult(ModuleSlugs.Osquery, DiagnosticStatus.Error, "Couldn't read hardware details on this PC.", DateTimeOffset.Now));
+
+        Assert.Null(await AutoRun.ReadHardwareInventoryAsync(svc, store, null).WaitAsync(Wait)); // only on request
+        Assert.Equal(DiagnosticStatus.Ok, (await AutoRun.ReadHardwareInventoryAsync(svc, store, null, rereadFailed: true).WaitAsync(Wait))?.Status);
+        Assert.Null(await AutoRun.ReadHardwareInventoryAsync(svc, store, null, rereadFailed: true).WaitAsync(Wait)); // a good result stays
+        Assert.Equal(1, calls);
     }
 
     [Fact]

@@ -34,24 +34,51 @@ public static class AutoRun
 
     /// <summary>
     /// Reads the hardware inventory (<see cref="ModuleSlugs.Osquery"/>) in the background, whatever <see cref="EnvironmentVariable"/> says:
-    /// the Dashboard header (model, processor, memory) shows it, so it is read when the app starts and when a page that shows it opens,
-    /// not only when someone runs the checks. Does nothing when it already has a result, is running, or can't run here.
-    /// Returns the run, or null when nothing was started. Never throws.
+    /// the Dashboard header (model, processor, memory) shows it, so it is read when the app starts, when the Agent connects and when a page
+    /// that shows it opens, not only when someone runs the checks.
     /// </summary>
-    public static Task<DiagnosticResult>? StartHardwareInventory(DiagnosticsService service, ResultStore store, ILogger? log)
+    /// <remarks>
+    /// The Setup edition reads hardware through the Agent, so a read before the Agent's pipe is up fails at once ("Couldn't read hardware
+    /// details", Bud, Nov 28 on BUDSLAPTOP). When <paramref name="agentConnected"/> says the Agent isn't connected yet and
+    /// <paramref name="noAgent"/> doesn't say this PC has none, it waits up to <paramref name="agentWait"/> for it first.
+    /// It joins a read already running rather than starting another, so a caller can wait for it before its own reads (the sensors).
+    /// It starts nothing when the inventory already has a result, unless <paramref name="rereadFailed"/> and that result failed.
+    /// Returns the result, or null when nothing was read. Never throws.
+    /// </remarks>
+    public static async Task<DiagnosticResult?> ReadHardwareInventoryAsync(
+        DiagnosticsService service,
+        ResultStore store,
+        ILogger? log,
+        Func<bool>? agentConnected = null,
+        Func<bool>? noAgent = null,
+        TimeSpan agentWait = default,
+        bool rereadFailed = false,
+        CancellationToken ct = default)
     {
         const string name = ModuleSlugs.Osquery;
         try
         {
-            if (store.Get(name).Status != DiagnosticStatus.NotRun || service.IsRunning(name) || !service.CanRun(name)) return null;
-            log.Info("Reading the hardware inventory for the Dashboard header");
-            var t = service.RunAsync(name, isBackgroundAutoRun: true);
-            _ = t.ContinueWith(r => log.Info($"Hardware inventory finished: {(r.IsCompletedSuccessfully ? r.Result.Status.ToString() : r.Exception?.GetBaseException().Message)}"), TaskScheduler.Default);
-            return t;
+            if (!service.CanRun(name)) return null;
+            if (agentConnected is not null && !agentConnected() && noAgent?.Invoke() != true && agentWait > TimeSpan.Zero)
+            {
+                var waitUntil = DateTimeOffset.UtcNow + agentWait;
+                while (!agentConnected() && noAgent?.Invoke() != true && DateTimeOffset.UtcNow < waitUntil)
+                    await Task.Delay(250, ct).ConfigureAwait(false);
+                if (!agentConnected()) log.Info("Hardware inventory: the Agent hasn't connected, reading without it");
+            }
+            var status = store.Get(name).Status;
+            var needed = status == DiagnosticStatus.NotRun || (rereadFailed && status is DiagnosticStatus.Error or DiagnosticStatus.Warning);
+            if (!needed && !service.IsRunning(name)) return null;
+            if (!service.IsRunning(name)) log.Info("Reading the hardware inventory for the Dashboard header");
+            // Joins the run in flight, if any; marked background so an update doesn't wait on it.
+            var result = await service.RunAsync(name, ct: ct, isBackgroundAutoRun: true).ConfigureAwait(false);
+            log.Info($"Hardware inventory finished: {result.Status}");
+            return result;
         }
+        catch (OperationCanceledException) { return null; }
         catch (Exception ex)
         {
-            log.Info($"Hardware inventory could not start: {ex.Message}");
+            log.Info($"Hardware inventory could not be read: {ex.Message}");
             return null;
         }
     }
