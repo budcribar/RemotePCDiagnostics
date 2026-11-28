@@ -136,6 +136,8 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(_ => new WasapiAudioStateSource(L<WasapiAudioStateSource>()));
         // Disk surface scan: the Agent reads the raw disk (admin); the app only asks it to start, report and stop.
         services.AddSingleton<RemotePCDiagnostics.Core.Storage.IDiskScanSource>(sp => new RemotePCDiagnostics.Core.Storage.AgentDiskScanSource(sp.GetRequiredService<SystemCommandRunner>()));
+        // The USB tree (configuration manager and the hub driver), read in the app: no administrator rights needed.
+        services.AddSingleton<RemotePCDiagnostics.Core.Usb.IUsbTreeSource>(_ => new RemotePCDiagnostics.Core.Usb.WindowsUsbTreeSource(L<RemotePCDiagnostics.Core.Usb.WindowsUsbTreeSource>()));
         // NPU test: on-demand only, own page, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(L<WindowsNpuIo>()));
         // GPU stress test: Direct3D 11 compute devices.
@@ -426,6 +428,7 @@ public sealed class HostQueryBackendSlot
             Wmi = sp.GetService<RemotePCDiagnostics.Core.DataSources.IWmiSource>(),
             Packages = sp.GetService<RemotePCDiagnostics.Core.DataSources.IPackageSource>(),
             Audio = sp.GetService<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(),
+            Usb = sp.GetService<RemotePCDiagnostics.Core.Usb.IUsbTreeSource>(),
         };
     }
 }

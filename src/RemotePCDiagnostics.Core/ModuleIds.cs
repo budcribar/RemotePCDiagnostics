@@ -93,6 +93,10 @@ public static class ModuleIds
     public static readonly Guid BatteryDrain = new("32ea07c3-6c63-4453-a03e-7d778b74b308");
     /// <summary>Slug <c>VideoPlayback</c>.</summary>
     public static readonly Guid VideoPlayback = new("d0392e61-8686-4da4-aaa9-fb2808ed72a6");
+    /// <summary>Slug <c>UsbPorts</c>.</summary>
+    public static readonly Guid UsbPorts = new("b6237a7b-102a-4a68-8553-0fed276ef946");
+    /// <summary>Slug <c>UsbPortCheck</c>.</summary>
+    public static readonly Guid UsbPortCheck = new("1b68970d-8ec7-45ee-bc39-bc88bca9de77");
 
     /// <summary>Every built-in id with its slug (the module's Name). Includes modules that are not registered on every build.</summary>
     public static IReadOnlyDictionary<Guid, string> BuiltIn { get; } = new Dictionary<Guid, string>
@@ -140,6 +144,8 @@ public static class ModuleIds
         [Cooling] = ModuleSlugs.Cooling,
         [BatteryDrain] = ModuleSlugs.BatteryDrain,
         [VideoPlayback] = ModuleSlugs.VideoPlayback,
+        [UsbPorts] = ModuleSlugs.UsbPorts,
+        [UsbPortCheck] = ModuleSlugs.UsbPortCheck,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -208,4 +214,7 @@ public static class ModuleSlugs
     public const string BatteryDrain = "BatteryDrain";
     /// <summary>The video playback test: copies of a test clip played at once (dropped frames, hardware decode), and the media apps check.</summary>
     public const string VideoPlayback = "VideoPlayback";
+    public const string UsbPorts = "UsbPorts";
+    /// <summary>The interactive USB port check: plug a device into each port in turn (Interactive tests page).</summary>
+    public const string UsbPortCheck = "UsbPortCheck";
 }

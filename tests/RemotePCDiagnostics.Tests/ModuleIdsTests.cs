@@ -55,6 +55,8 @@ public class ModuleIdsTests
         ["DiskSurfaceScan"] = "46272fdc-6e61-4e3b-bf6f-bec95e0be7eb",
         ["Cooling"] = "adda2b29-4378-44da-b7ef-64376b0da30f",
         ["BatteryDrain"] = "32ea07c3-6c63-4453-a03e-7d778b74b308",
+        ["UsbPorts"] = "b6237a7b-102a-4a68-8553-0fed276ef946",
+        ["UsbPortCheck"] = "1b68970d-8ec7-45ee-bc39-bc88bca9de77",
     };
 
     [Fact]

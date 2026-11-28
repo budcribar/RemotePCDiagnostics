@@ -34,8 +34,11 @@ public static class InteractiveExport
 
     public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
-        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane, charger), Json);
+        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane, charger, usbPortCheck), Json);
+
+    /// <summary>The USB port check's result and what it has seen so far in the watch that is running (the result is Running meanwhile).</summary>
+    public sealed record UsbPortCheckState(ModuleState Module, Usb.UsbPortCheckReport Live);
 
     /// <summary>The Wi-Fi connect pane: the networks its picker lists, the one picked, and whether starting drops a remote session.</summary>
     /// <param name="PasswordTyped">Whether a password is typed (never the password itself).</param>
@@ -51,7 +54,7 @@ public static class InteractiveExport
 
     public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
-        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null) => new
+        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -72,6 +75,7 @@ public static class InteractiveExport
             WifiTest(page, wifi ?? DiagnosticResult.NotRun(ModuleSlugs.WifiConnect), wifiPane),
             EthernetTest(page, ethernet ?? DiagnosticResult.NotRun(ModuleSlugs.EthernetPort), ethernetPane),
             ChargerTest(page, charger ?? DiagnosticResult.NotRun(ModuleSlugs.ChargerReplug)),
+            UsbPortCheckTest(page, usbPortCheck ?? new(new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.UsbPortCheck), false), Usb.UsbPortCheckReport.Empty)),
         },
     };
 
@@ -357,6 +361,47 @@ public static class InteractiveExport
         };
     }
 
+    private static object UsbPortCheckTest(PageState page, UsbPortCheckState s)
+    {
+        var r = s.Module.Result;
+        var running = r.Status == DiagnosticStatus.Running;
+        var rep = running ? s.Live : r.Payload as Usb.UsbPortCheckReport;
+        return new
+        {
+            id = "usbports",
+            name = "USB port check",
+            @checked = page.CheckedTestIds.Contains("usbports"),
+            open = page.SelectedTestId == "usbports",
+            state = running ? "in-progress" : rep?.EveryDeviceWorked is not null || s.Module.PersonEntered ? "done"
+                : rep is not null ? "waiting-for-person-verdict" : "waiting-for-person",
+            runId = r.RunId,
+            measured = rep is null ? null : new
+            {
+                portsTested = rep.PortsTested.Count,
+                ports = rep.PortsTested.Select(a => new
+                {
+                    device = V(a.Name),
+                    port = V(a.Where),
+                    speed = a.Speed.ToString(),
+                    speedText = V(Usb.UsbAnalysis.SpeedText(a.Speed, a.Usb4)),
+                    belowItsSpeed = a.Downgraded,
+                    works = a.Works,
+                    problem = a.ProblemCode != 0 ? V(new ProblemDevice(a.Name, "USB", a.DeviceId, a.ProblemCode, "").FriendlyError)
+                        : a.PortStatus is { } ps && Usb.UsbPortStatus.IsFailure(ps) ? V(Usb.UsbPortStatus.Describe(ps)) : null,
+                }).ToList(),
+                drops = rep.Drops.Select(d => new { hub = V(d.HubName), devices = d.Devices.Select(V).ToList() }).ToList(),
+                notice = T(rep.Notice),
+            },
+            everyDeviceWorked = rep?.EveryDeviceWorked,
+            personOutcome = rep?.EveryDeviceWorked is not null || s.Module.PersonEntered ? Person(r.Status) : null,
+            message = T(running ? Usb.UsbPortCheck.Outcome(s.Live).Message : r.Message),
+            instructions = "Start watching, then the person plugs a USB stick or mouse into each USB port in turn (USB-A and USB-C, and the "
+                + "dock's ports). Each device shows with the port it was found on and its speed; a USB 3 device at USB 2 speed is flagged. "
+                + "When every port is done the person presses Finish and answers Did every device work? (Yes or No).",
+            reportIf = ReportIf.UsbPortCheck,
+        };
+    }
+
     /// <summary>
     /// When an agent coaching a test should report a learning (Admin's report_learning tool): the test's instructions or screen did not
     /// match what the person has. One line each, written for the agent, not the person.
@@ -433,6 +478,8 @@ public static class InteractiveExport
             + "empty, or the list shows a problem the person doesn't have.";
         public const string Charger = "The person unplugged or plugged in the charger but the test didn't see it, the battery charged but "
             + "the test said it didn't, or the PC charges only from a dock the test doesn't account for.";
+        public const string UsbPortCheck = "A device the person plugs in doesn't show, shows on the wrong port, or shows a speed that "
+            + "disagrees with the device or the port (for example a USB 3 stick in a blue port shown at USB 2 speed when it works fast).";
         public const string MicToSpeaker = "The person's microphone or speaker is not listed, there is no playback, or feedback makes the test "
             + "unusable.";
     }

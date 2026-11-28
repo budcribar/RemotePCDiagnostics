@@ -41,6 +41,9 @@ public static class UserModePlugin
         // Core Audio in the restricted module host isn't guaranteed, so a module that lists audio.state reads it through the app.
         if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.AudioState, StringComparer.Ordinal))
             services.AddSingleton<Audio.IAudioStateSource>(new Audio.HostAudioStateSource(hostQueries, log));
+        // The USB tree is read in the app too, so it's recorded with the app's other answers.
+        if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.UsbTree, StringComparer.Ordinal))
+            services.AddSingleton<Usb.IUsbTreeSource>(new Usb.HostUsbTreeSource(hostQueries, log));
         plugin.Register(services, context);
         var sp = services.BuildServiceProvider();
         var modules = sp.GetServices<IDiagnosticModule>().ToList();
