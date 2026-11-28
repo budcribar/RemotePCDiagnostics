@@ -57,8 +57,8 @@ env:
   FULL_RELEASE: ${{ (inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]'))) && 'true' || 'false' }}
   TESTSHOP_RELEASE: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.testshop_release || (github.event_name == 'push' && contains(github.event.head_commit.message, '[testshop-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[testshop-release]'))) && 'true' || 'false' }}
   PUBLISH_ARTIFACTS: ${{ (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch') && (inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')))) && 'true' || 'false' }}
-  # Code signing (installer/Sign-ReleaseFile.ps1, docs/update-signing.md). Only main and v* tags sign; the Azure federated
-  # credential trusts only those refs too. Empty on other refs or until the ARTIFACT_SIGNING_* repository variables exist.
+  # Code signing (installer/Sign-ReleaseFile.ps1, docs/update-signing.md). Only main and v* tags sign, inside the
+  # code-signing environment (the only subject the Azure federated credential trusts). Empty on other refs or until the ARTIFACT_SIGNING_* repository variables exist.
   SIGN_RELEASE: ${{ (github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && vars.ARTIFACT_SIGNING_ACCOUNT != '') && 'true' || 'false' }}
   # Full compression for release installers (default push to main TestShop release, or full-release); PR/branch dev runs use fast.
   INSTALLER_COMPRESSION: ${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'workflow_dispatch' && (inputs.full_release || inputs.testshop_release || inputs.release_tag != ''))) && 'lzma2/ultra64' || 'lzma2/fast' }}
@@ -241,6 +241,8 @@ jobs:
     if: ${{ inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]')) }}
     runs-on: windows-latest
     timeout-minutes: 40
+    # The Azure federated credential trusts only this environment; its deployment rules allow only main and v* tags.
+    environment: ${{ (github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && vars.ARTIFACT_SIGNING_ACCOUNT != '') && 'code-signing' || '' }}
     permissions:
       contents: read
       id-token: write
@@ -437,6 +439,8 @@ jobs:
     if: ${{ inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]')) }}
     runs-on: windows-latest
     timeout-minutes: 25
+    # The Azure federated credential trusts only this environment; its deployment rules allow only main and v* tags.
+    environment: ${{ (github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && vars.ARTIFACT_SIGNING_ACCOUNT != '') && 'code-signing' || '' }}
     permissions:
       contents: read
       id-token: write
@@ -564,6 +568,8 @@ jobs:
     name: TestShop demo bundle (RPCD + RPCDA)
     runs-on: windows-latest
     timeout-minutes: 20
+    # The Azure federated credential trusts only this environment; its deployment rules allow only main and v* tags.
+    environment: ${{ (github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && vars.ARTIFACT_SIGNING_ACCOUNT != '') && 'code-signing' || '' }}
     permissions:
       contents: read
       id-token: write
@@ -755,6 +761,8 @@ jobs:
     if: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.testshop_release || (github.event_name == 'push' && contains(github.event.head_commit.message, '[testshop-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[testshop-release]'))) && !(inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]'))) }}
     runs-on: windows-latest
     timeout-minutes: 20
+    # The Azure federated credential trusts only this environment; its deployment rules allow only main and v* tags.
+    environment: ${{ (github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && vars.ARTIFACT_SIGNING_ACCOUNT != '') && 'code-signing' || '' }}
     permissions:
       contents: read
       id-token: write
@@ -899,6 +907,8 @@ jobs:
     if: ${{ inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]')) }}
     runs-on: windows-latest
     timeout-minutes: 20
+    # The Azure federated credential trusts only this environment; its deployment rules allow only main and v* tags.
+    environment: ${{ (github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && vars.ARTIFACT_SIGNING_ACCOUNT != '') && 'code-signing' || '' }}
     permissions:
       contents: read
       id-token: write

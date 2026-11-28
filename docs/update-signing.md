@@ -11,7 +11,8 @@ The pieces:
   `Microsoft.ArtifactSigning.Client` dlib). `installer/Build-Installer.ps1` and `msi/Build-AgentMsi.ps1` call it right
   before they write the `.sha256` file, so checksums always describe the signed file. Without the
   `ARTIFACT_SIGNING_*` variables it prints "Code signing skipped" and does nothing.
-- `.github/workflows/ci.yml` signs only on `main` and `v*` tags (`SIGN_RELEASE`), after an OIDC sign-in to Azure.
+- `.github/workflows/ci.yml` signs only on `main` and `v*` tags (`SIGN_RELEASE`), in the `code-signing` environment,
+  after an OIDC sign-in to Azure.
   Pull requests and other branches build unsigned.
 - `UpdatePublisher.Pin` (`src/RemotePCDiagnostics.Core/Session/UpdatePublisher.cs`) is the pinned publisher: the
   certificate's CN, the Artifact Signing identity EKU, and the SHA-256 of the root certificate. While it is null the
@@ -25,11 +26,15 @@ The pieces:
    takes a few business days. The validated name becomes the certificate's CN.
 3. **Certificate profile.** Create a Public Trust certificate profile linked to that identity validation.
 4. **App registration for GitHub.** In Microsoft Entra ID, create an app registration. Under Certificates & secrets,
-   add two federated credentials (GitHub Actions scenario, repository `budcribar/RemotePCDiagnostics`):
-   entity type Branch `main`, and entity type Tag `v*`. No client secret is needed.
+   add one federated credential (GitHub Actions scenario, repository `budcribar/RemotePCDiagnostics`, entity type
+   Environment, name `code-signing`). Azure matches the subject exactly, so a branch or tag wildcard won't work; the
+   environment covers both `main` and `v*` tags. No client secret is needed.
 5. **Role.** On the Artifact Signing account, assign the app registration the *Artifact Signing Certificate Profile
    Signer* role (older name: *Trusted Signing Certificate Profile Signer*).
-6. **Repository variables** (Settings > Secrets and variables > Actions > Variables; none of these are secrets):
+6. **GitHub environment.** In the repository, open Settings > Environments > New environment, name it `code-signing`.
+   Under Deployment branches and tags choose Selected branches and tags, then add the branch rule `main` and the tag
+   rule `v*`. This is what stops other branches (and edited workflows on them) from getting a signing token.
+7. **Repository variables** (Settings > Secrets and variables > Actions > Variables; none of these are secrets):
    `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `ARTIFACT_SIGNING_ENDPOINT`, `ARTIFACT_SIGNING_ACCOUNT`,
    `ARTIFACT_SIGNING_PROFILE`.
 
