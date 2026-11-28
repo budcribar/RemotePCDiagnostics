@@ -1,16 +1,25 @@
 @* Status line shared by the check pages: the status dot, what the check found (or that it is running), and its run button.
    One copy keeps the pages alike: red text on an error, the running stripe and Running badge while it runs, and the same
-   button labels (Run check before the first run, Check again after). It renders the p itself and nothing around it, so the
-   Checks pane and Dashboard cards still hide it through app.css. *@
-<p data-testid="@TestId" class="@LineClass">
-    <span class="@("dot dot-" + Status.ToString().ToLowerInvariant())"></span>
-    <span class="status-text">@if (ChildContent is not null) { @ChildContent } else if (IsBusy) { <span>@BusyText</span> } else if (Status == DiagnosticStatus.NotRun && NotRunText is not null) { <span>@NotRunText</span> } else { <CardList Text="@Message" Strong="true" /> }</span>
-    @if (Status == DiagnosticStatus.Running && RunningBadge) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
-    @if (ActionTestId is not null && (ShowAction ?? !IsBusy))
-    {
-        <button class="btn-small status-action" data-testid="@ActionTestId" disabled="@ActionDisabled" @onclick="OnAction">@(ActionText ?? (Status == DiagnosticStatus.NotRun ? "Run check" : "Check again"))</button>
-    }
-</p>
+   button labels (Run check before the first run, Check again after).
+   Inside a check's details in the Checks pane or a Dashboard card (ModuleDetailsView with Embedded), the row or card above already
+   shows the dot, the result and the run button, so none of that is rendered: only a hidden copy of the status text stays, so an
+   agent still reads the same test id there (browser contract). *@
+@if (Embedded)
+{
+    <p data-testid="@TestId" hidden>@StatusText</p>
+}
+else
+{
+    <p data-testid="@TestId" class="@LineClass">
+        <span class="@("dot dot-" + Status.ToString().ToLowerInvariant())"></span>
+        @StatusText
+        @if (Status == DiagnosticStatus.Running && RunningBadge) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
+        @if (ActionTestId is not null && (ShowAction ?? !IsBusy))
+        {
+            <button class="btn-small status-action" data-testid="@ActionTestId" disabled="@ActionDisabled" @onclick="OnAction">@(ActionText ?? (Status == DiagnosticStatus.NotRun ? "Run check" : "Check again"))</button>
+        }
+    </p>
+}
 @code {
     [Parameter, EditorRequired] public string TestId { get; set; } = "";
     [Parameter] public DiagnosticStatus Status { get; set; }
@@ -36,7 +45,10 @@
     [Parameter] public bool? ShowAction { get; set; }
     [Parameter] public bool ActionDisabled { get; set; }
     [Parameter] public EventCallback OnAction { get; set; }
+    /// <summary>Set by <see cref="ModuleDetailsView"/> when the page is shown inside the Checks pane or a Dashboard card.</summary>
+    [CascadingParameter(Name = ModuleDetailsView.EmbeddedName)] public bool Embedded { get; set; }
 
+    private RenderFragment StatusText => @<span class="status-text">@if (ChildContent is not null) { @ChildContent } else if (IsBusy) { <span>@BusyText</span> } else if (Status == DiagnosticStatus.NotRun && NotRunText is not null) { <span>@NotRunText</span> } else { <CardList Text="@Message" Strong="true" /> }</span>;
     private bool IsBusy => Busy ?? Status == DiagnosticStatus.Running;
     private string BusyText => Status == DiagnosticStatus.Running && !string.IsNullOrWhiteSpace(Message) && Message != "Running..." ? Message : RunningText;
     private string LineClass => "status-line"

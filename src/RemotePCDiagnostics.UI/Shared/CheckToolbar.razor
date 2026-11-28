@@ -1,7 +1,14 @@
 @* Page header shared by the check pages: icon badge and title, then any buttons the page adds after the title.
-   It renders the toolbar div itself and nothing around it, so a page shown inside the Checks pane or a Dashboard card
-   still has its header hidden by app.css (.ct-detail-body > .toolbar, .dash-card-details > .toolbar). *@
-<div class="@(string.IsNullOrEmpty(Class) ? "toolbar" : "toolbar " + Class)"><span class="icon-badge page-icon"><Icon Name="@IconName" Size="20" /></span><h1 data-testid="@TitleTestId">@Title</h1>@ChildContent</div>
+   Inside a check's details in the Checks pane or a Dashboard card (ModuleDetailsView with Embedded), the row or card above already
+   shows the check's name and icon, so the title is left out: only the page's own buttons are rendered, and nothing when it has none. *@
+@if (!Embedded)
+{
+    <div class="@ToolbarClass"><span class="icon-badge page-icon"><Icon Name="@IconName" Size="20" /></span><h1 data-testid="@TitleTestId">@Title</h1>@ChildContent</div>
+}
+else if (ChildContent is not null)
+{
+    <div class="@ToolbarClass">@ChildContent</div>
+}
 @code {
     /// <summary>Icon name, as <see cref="Icon"/> takes it (usually the module's slug).</summary>
     [Parameter, EditorRequired] public string IconName { get; set; } = "";
@@ -12,4 +19,8 @@
     [Parameter] public string? Class { get; set; }
     /// <summary>Controls after the title (start, cancel, choices).</summary>
     [Parameter] public RenderFragment? ChildContent { get; set; }
+    /// <summary>Set by <see cref="ModuleDetailsView"/> when the page is shown inside the Checks pane or a Dashboard card.</summary>
+    [CascadingParameter(Name = ModuleDetailsView.EmbeddedName)] public bool Embedded { get; set; }
+
+    private string ToolbarClass => string.IsNullOrEmpty(Class) ? "toolbar" : "toolbar " + Class;
 }

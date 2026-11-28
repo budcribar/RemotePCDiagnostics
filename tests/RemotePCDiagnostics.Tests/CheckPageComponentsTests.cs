@@ -1,5 +1,10 @@
 using Bunit;
+using Microsoft.Extensions.DependencyInjection;
 using RemotePCDiagnostics.Core;
+using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Session;
+using RemotePCDiagnostics.UI;
+using RemotePCDiagnostics.UI.Pages;
 using RemotePCDiagnostics.UI.Shared;
 
 namespace RemotePCDiagnostics.Tests;
@@ -8,14 +13,14 @@ namespace RemotePCDiagnostics.Tests;
 public class CheckPageComponentsTests : BunitContext
 {
     [Fact]
-    public void CheckToolbar_RendersOnlyTheToolbar_SoEmbeddedPagesStillHideIt()
+    public void CheckToolbar_RendersIconAndTitleInOneToolbar()
     {
         var cut = Render<CheckToolbar>(p => p
             .Add(c => c.IconName, "hw")
             .Add(c => c.Title, "Hardware inventory")
             .Add(c => c.TitleTestId, "hw-title"));
 
-        // app.css hides `.ct-detail-body > .toolbar` in the Checks pane: the toolbar has to be the component's root element.
+        // One toolbar and nothing around it, so the page's layout (and app.css for pages not on this component yet) stays as it was.
         var root = Assert.Single(cut.Nodes.OfType<AngleSharp.Dom.IElement>());
         Assert.Equal("toolbar", root.ClassName);
         Assert.NotNull(root.QuerySelector(".icon-badge.page-icon svg.icon"));
@@ -166,5 +171,83 @@ public class CheckPageComponentsTests : BunitContext
         Assert.Equal("cpu", card.GetAttribute("data-sensor-group"));
         Assert.Equal("Processor", card.QuerySelector(".card-head strong")!.GetAttribute("title"));
         Assert.Empty(sensors.FindAll("[data-testid='osquery-card-cpu']"));
+    }
+
+    [Fact]
+    public void CheckToolbar_Embedded_LeavesOutIconAndTitle_AndKeepsOnlyThePagesButtons()
+    {
+        var bare = Render<CheckToolbar>(p => p
+            .Add(c => c.IconName, "hw")
+            .Add(c => c.Title, "Hardware inventory")
+            .Add(c => c.TitleTestId, "hw-title")
+            .AddCascadingValue(ModuleDetailsView.EmbeddedName, true));
+        Assert.Empty(bare.Nodes.OfType<AngleSharp.Dom.IElement>());
+
+        var withButtons = Render<CheckToolbar>(p => p
+            .Add(c => c.IconName, "sec")
+            .Add(c => c.Title, "Security audit")
+            .Add(c => c.TitleTestId, "audit-title")
+            .Add(c => c.Class, "toolbar-grouped")
+            .AddChildContent("<button data-testid=\"go\">Start</button>")
+            .AddCascadingValue(ModuleDetailsView.EmbeddedName, true));
+        var toolbar = withButtons.Find(".toolbar.toolbar-grouped");
+        Assert.NotNull(toolbar.QuerySelector("button[data-testid='go']"));
+        Assert.Empty(withButtons.FindAll("h1, .page-icon, [data-testid='audit-title']"));
+    }
+
+    [Fact]
+    public void CheckStatusLine_Embedded_KeepsOnlyAHiddenCopyOfTheStatusText()
+    {
+        var cut = Render<CheckStatusLine>(p => p
+            .Add(c => c.TestId, "area-status")
+            .Add(c => c.Status, DiagnosticStatus.Running)
+            .Add(c => c.Message, "Reading drive 2 of 3")
+            .Add(c => c.ActionTestId, "area-requery")
+            .Add(c => c.ShowAction, true)
+            .AddCascadingValue(ModuleDetailsView.EmbeddedName, true));
+
+        var copy = cut.Find("p[data-testid='area-status']");
+        Assert.True(copy.HasAttribute("hidden"));
+        Assert.Equal("Reading drive 2 of 3", copy.QuerySelector(".status-text")!.TextContent.Trim());
+        Assert.Empty(cut.FindAll(".status-line, .dot, [data-testid='running-badge'], [data-testid='area-requery']"));
+
+        var custom = Render<CheckStatusLine>(p => p
+            .Add(c => c.TestId, "audit-status")
+            .Add(c => c.Status, DiagnosticStatus.NotRun)
+            .AddChildContent("<span data-testid=\"audit-lastrun\">Last run yesterday</span>")
+            .AddCascadingValue(ModuleDetailsView.EmbeddedName, true));
+        Assert.NotNull(custom.Find("p[hidden][data-testid='audit-status'] [data-testid='audit-lastrun']"));
+    }
+
+    [Fact]
+    public void AreaPage_InsideChecksOrADashboardCard_LeavesOutItsHeader_ButKeepsItsCards()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var store = new ResultStore();
+        var bios = new FakeModule(ModuleSlugs.BiosFirmware, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.BiosFirmware)));
+        var diagnostics = new DiagnosticsService(store, [bios]);
+        Services.AddSingleton(store);
+        Services.AddSingleton(diagnostics);
+        Services.AddSingleton(new ChecksScreenState(diagnostics, store));
+        Services.AddSingleton<ISessionContext>(new SessionContext(SessionMode.Local));
+        Services.AddSingleton(new AppServices());
+        var report = new AreaReport(
+        [
+            new AreaCard("current", "Current BIOS / UEFI", AreaLevel.Ok, "F.34", "Insyde",
+                ["Detail", "Value"], [new AreaRow(AreaLevel.Ok, ["Version", "F.34"])]),
+        ], "BIOS F.34", DiagnosticStatus.Ok);
+        store.Set(new DiagnosticResult<AreaReport>(ModuleSlugs.BiosFirmware, DiagnosticStatus.Ok, report.Summary, DateTimeOffset.Now, report));
+
+        var page = Render<AreaPage>(p => p.Add(c => c.Slug, ModuleSlugs.BiosFirmware));
+        Assert.NotNull(page.Find("h1[data-testid='area-title']"));
+        Assert.NotNull(page.Find("p.status-line[data-testid='area-status']"));
+        Assert.NotNull(page.Find("[data-testid='area-requery']"));
+
+        var embedded = Render<AreaPage>(p => p
+            .Add(c => c.Slug, ModuleSlugs.BiosFirmware)
+            .AddCascadingValue(ModuleDetailsView.EmbeddedName, true));
+        Assert.Empty(embedded.FindAll("[data-testid='area-title'], .page-icon, .status-line, [data-testid='area-requery']"));
+        Assert.True(embedded.Find("p[data-testid='area-status']").HasAttribute("hidden"));
+        Assert.NotNull(embedded.Find("[data-testid='osquery-card-current']"));
     }
 }
