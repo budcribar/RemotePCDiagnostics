@@ -63,6 +63,67 @@ public class DashboardUiPolishTests : BunitContext
         Assert.Contains("1 / 2 passed", cut.Find("[data-testid='dashboard-verdict-pill']").TextContent);
     }
 
+    /// <summary>Bud, Nov 28 (VH1): "System looks healthy, 1 / 28 passed" while nearly every check was Not run.</summary>
+    [Fact]
+    public void Dashboard_Verdict_NotHealthyWhileMostChecksHaventRun()
+    {
+        var store = new ResultStore();
+        RegisterDashboardServices(store,
+            new FakeModule(ModuleSlugs.DriveHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DriveHealth))),
+            new FakeModule(ModuleSlugs.BatteryPower, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.BatteryPower))),
+            new FakeModule(ModuleSlugs.Network, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.Network))));
+        store.Set(new DiagnosticResult(ModuleSlugs.DriveHealth, DiagnosticStatus.Ok, "2 drives", DateTimeOffset.Now));
+
+        var cut = Render<Dashboard>();
+
+        var title = cut.Find("[data-testid='dashboard-verdict-title']").TextContent;
+        Assert.DoesNotContain("healthy", title);
+        Assert.Contains("No problems found so far", title);
+        Assert.Contains("2 of 3 checks haven't run yet", cut.Find("[data-testid='dashboard-last-checked']").TextContent);
+        var pill = cut.Find("[data-testid='dashboard-verdict-pill']");
+        Assert.Contains("1 / 3 passed", pill.TextContent);
+        Assert.Contains("chip-na", pill.ClassName);
+
+        // Once every check has run with no problem, it is healthy.
+        store.Set(new DiagnosticResult(ModuleSlugs.BatteryPower, DiagnosticStatus.Ok, "fine", DateTimeOffset.Now));
+        store.Set(new DiagnosticResult(ModuleSlugs.Network, DiagnosticStatus.Ok, "fine", DateTimeOffset.Now));
+        cut.WaitForAssertion(() => Assert.Contains("System looks healthy", cut.Find("[data-testid='dashboard-verdict-title']").TextContent));
+        Assert.Contains("chip-ok", cut.Find("[data-testid='dashboard-verdict-pill']").ClassName);
+    }
+
+    /// <summary>Bud, Nov 28 (VH1): the Dashboard still listed Battery drain after it moved to the Interactive tests page. The Dashboard
+    /// lists what the Checks page lists.</summary>
+    [Fact]
+    public void Dashboard_ListsTheChecksPageChecks_NotTestsOnOtherPages()
+    {
+        var store = new ResultStore();
+        RegisterDashboardServices(store,
+            new FakeModule(ModuleSlugs.DriveHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DriveHealth))),
+            new FakeModule(ModuleSlugs.BatteryDrain, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.BatteryDrain)))); // catalog Page = interactive
+
+        var cut = Render<Dashboard>();
+
+        Assert.NotNull(cut.Find("[data-testid='dashboard-card-drivehealth']"));
+        Assert.Empty(cut.FindAll($"[data-testid='dashboard-card-{ModuleSlugs.BatteryDrain.ToLowerInvariant()}']"));
+    }
+
+    /// <summary>Bud, Nov 28: hardware should be read first so the header shows up. Opening the Dashboard reads it when nothing has.</summary>
+    [Fact]
+    public void Dashboard_FirstRender_ReadsHardwareInventory_SoTheHeaderFillsIn()
+    {
+        var store = new ResultStore();
+        var calls = 0;
+        RegisterDashboardServices(store,
+            new FakeModule(ModuleSlugs.Osquery, _ => { Interlocked.Increment(ref calls); return Task.FromResult(new DiagnosticResult(ModuleSlugs.Osquery, DiagnosticStatus.Error, "osquery missing", DateTimeOffset.Now)); }),
+            new FakeModule(ModuleSlugs.DriveHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DriveHealth))));
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() => Assert.Contains("osquery missing", cut.Find("[data-testid='dashboard-status']").TextContent));
+        Assert.Equal(1, calls);
+        Assert.Equal(DiagnosticStatus.NotRun, store.Get(ModuleSlugs.DriveHealth).Status); // only the hardware inventory, not the checks
+    }
+
     private sealed class FakeOnDemand(string name) : IDiagnosticModule
     {
         public string Name => name;

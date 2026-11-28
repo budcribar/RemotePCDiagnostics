@@ -24,7 +24,8 @@
     var cpuTemp = cpuGroup?.Hottest;
 
     var settings = App.CheckSettings?.Settings ?? new CheckSettings();
-    var allCheckModules = Diagnostics.Modules.Where(m => m.IncludeInRunAll).ToList();
+    // The same list as the Checks page: a test moved to the Stress tests or Interactive tests page isn't a system check here either.
+    var allCheckModules = Screen.ChecksModules;
     var orderedAll = CheckEnableRules.ApplyOrder(allCheckModules, m => m.Name, settings.Order);
     var enabledModules = orderedAll.Where(m => settings.IsEnabled(m.Name)).ToList();
 
@@ -41,6 +42,8 @@
     // Only a finished, good result counts as passed: a check stopped before it finished (or not run yet) didn't pass.
     var passedCount = enabledResults.Count(x => x.Result.Status == DiagnosticStatus.Ok && !x.Result.Cancelled);
     var stoppedCount = enabledResults.Count(x => x.Result.Cancelled);
+    // "Healthy" only once every enabled check has an answer: one passed check out of 28 says nothing about the other 27.
+    var notRunCount = enabledResults.Count(x => x.Result.Status == DiagnosticStatus.NotRun);
     var errorCount = problems.Count(x => x.Result.Status == DiagnosticStatus.Error);
     var warningCount = problems.Count(x => x.Result.Status == DiagnosticStatus.Warning);
 
@@ -122,7 +125,7 @@
                     : checking ? "run"
                     : errorCount > 0 ? "bad"
                     : warningCount > 0 ? "warn"
-                    : completedCount > 0 ? "ok" : "na";
+                    : completedCount > 0 && notRunCount == 0 ? "ok" : "na";
                 var canExpandTriage = problems.Count > 0;
             }
             @if (canExpandTriage)
@@ -181,7 +184,7 @@
                                 {
                                     <span>Checking… (@completedCount / @enabledModules.Count)</span>
                                 }
-                                else if (completedCount > 0 && stoppedCount > 0)
+                                else if (completedCount > 0 && (stoppedCount > 0 || notRunCount > 0))
                                 {
                                     <span>No problems found so far</span>
                                 }
@@ -196,7 +199,7 @@
                             </strong>
                             @if (!checking && completedCount > 0 && enabledModules.Count > 0)
                             {
-                                <span class="chip chip-ok" data-testid="dashboard-verdict-pill">@passedCount / @enabledModules.Count passed</span>
+                                <span class="chip @(notRunCount == 0 && stoppedCount == 0 ? "chip-ok" : "chip-na")" data-testid="dashboard-verdict-pill">@passedCount / @enabledModules.Count passed</span>
                             }
                         </div>
                         <div class="meta dash-verdict-sub" data-testid="dashboard-last-checked">
@@ -211,6 +214,10 @@
                             else if (stoppedCount > 0)
                             {
                                 <span>@passedCount of @enabledModules.Count enabled checks passed. @stoppedCount stopped before finishing.</span>
+                            }
+                            else if (completedCount > 0 && notRunCount > 0)
+                            {
+                                <span>@notRunCount of @enabledModules.Count checks haven't run yet. Refresh runs them all.</span>
                             }
                             else if (completedCount > 0)
                             {
@@ -532,6 +539,8 @@
         if (firstRender)
         {
             RemotePCDiagnostics.Core.StartupProfiler.Mark("DashboardFirstRender");
+            // The header shows the hardware inventory: read it now if nothing has yet (a remote session, or results were cleared).
+            AutoRun.StartHardwareInventory(Diagnostics, Store, null);
             if (Session.Mode == SessionMode.Remote && !_remotePrefsLoaded && App.CheckSettings is { } cs)
             {
                 _remotePrefsLoaded = true;

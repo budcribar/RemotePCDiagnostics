@@ -175,6 +175,13 @@ public partial class MainWindow : Window
             if (rec.Actor == ServiceActor.Remote && !RebootResumeCoordinator.IsPostRebootComparison(rec)) App.Log($"Remote user ran an automated fix: {rec.Message.TrimEnd('.')}.");
         };
 
+        // The hardware inventory is the exception: the Dashboard header (model, processor, memory) shows it, so read it right away
+        // instead of leaving the header on "Querying hardware…" until someone runs the checks.
+        _ = Task.Run(() => AutoRun.StartHardwareInventory(
+            provider.GetRequiredService<DiagnosticsService>(),
+            provider.GetRequiredService<ResultStore>(),
+            App.Loggers.CreateLogger(typeof(AutoRun).FullName!)));
+
         // Checks don't run by themselves on launch: they run when the person, a remote user or an AI agent asks. REMOTEPC_AUTORUN=1
         // brings back the old launch-time run (development and demos); StartEnabledChecksAsync returns at once when it is off.
         if (StartupOptimizations.DeferAutoRun)
