@@ -2,10 +2,10 @@
 ; Build via: pwsh -NoProfile -File installer/Build-Installer.ps1
 
 #ifndef AppVersion
-  #define AppVersion "1.2.0"
+  #define AppVersion "1.3.0"
 #endif
 #ifndef AppNumericVersion
-  #define AppNumericVersion "1.2.0.0"
+  #define AppNumericVersion "1.3.0.0"
 #endif
 #ifndef RepoRoot
   #define RepoRoot ".."

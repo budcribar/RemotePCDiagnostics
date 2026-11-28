@@ -8,8 +8,8 @@ on:
         default: 'prerelease'
         required: true
       target_tag:
-        description: 'Target release tag (e.g. v1.2.0)'
-        default: 'v1.2.0'
+        description: 'Target release tag (e.g. v1.3.0)'
+        default: 'v1.3.0'
         required: true
 
 permissions:

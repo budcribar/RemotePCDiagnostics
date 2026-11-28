@@ -2,7 +2,7 @@
   <!-- One version for every assembly (shown in History details and written to the Event Log). Bump on release. -->
   <PropertyGroup>
     <Product>Remote PC Diagnostics</Product>
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <!-- The SDK appends the Git revision to InformationalVersion.
          Keep the attempt segment fixed at .1 (not GITHUB_RUN_ATTEMPT): "Re-run failed jobs" reuses artifacts
          built in attempt 1 while the release job runs in attempt 2, which would make release notes (or a retried
