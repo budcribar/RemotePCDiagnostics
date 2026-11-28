@@ -540,9 +540,18 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     private async Task KeepInitialPipeAsync(string pipeName, bool quiet)
     {
         var connectTimeout = quiet ? TimeSpan.FromMilliseconds(500) : TimeSpan.FromSeconds(3);
+        var loops = 0;
         while (Volatile.Read(ref _disposed) == 0)
         {
-            if (!IsAdminHelperConnected)
+            loops++;
+            if (IsAdminHelperConnected)
+            {
+                // Admin Repair Mode took over while this pipe was down (VH1, Nov 28: the app started while an update was replacing
+                // the Agent service, and stayed on the UAC helper all session). Every 10 s, go back to the pipe once it answers.
+                if (loops % ReturnToPipeEveryLoops == 0)
+                    await TryReturnToKeptPipeAsync(pipeName).ConfigureAwait(false);
+            }
+            else
             {
                 var entered = false;
                 try
@@ -571,6 +580,92 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
             try { await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
             catch { return; }
         }
+    }
+
+    /// <summary>The keep-alive loop runs every 2 s; it looks for the kept pipe again every this many loops while on the helper.</summary>
+    internal static int ReturnToPipeEveryLoops { get; set; } = 5;
+
+    private int _keptPipeOnlyReads;
+
+    /// <summary>The pipe the app's current Agent client is on (the Agent service, or an Admin Repair Mode helper's own pipe).</summary>
+    public string? ConnectedPipeName
+    {
+        get { lock (_stateLock) return _client is { IsConnected: true } c ? c.PipeName : null; }
+    }
+
+    /// <summary>
+    /// Moves from the Admin Repair Mode helper back to <paramref name="pipeName"/> (the Agent service) when it answers again. The helper
+    /// closes once nothing is running on it. A pipe that only serves reads to this user is not a step up, so the helper stays.
+    /// </summary>
+    private async Task TryReturnToKeptPipeAsync(string pipeName)
+    {
+        if (Volatile.Read(ref _keptPipeOnlyReads) != 0) return;
+        AdminPipeClient? current;
+        lock (_stateLock) current = _client;
+        if (current is null || string.Equals(current.PipeName, pipeName, StringComparison.OrdinalIgnoreCase) || current.StartedBiosJob)
+            return;
+        if (!await _enableGate.WaitAsync(0).ConfigureAwait(false)) return;
+        try
+        {
+            AdminPipeClient back;
+            try
+            {
+                back = await AdminPipeClient.ConnectAsync(pipeName, TimeSpan.FromMilliseconds(500), CancellationToken.None, _log,
+                    requireSystemOwnedPipe: string.Equals(pipeName, ServiceAdminPipeName, StringComparison.OrdinalIgnoreCase)).ConfigureAwait(false);
+            }
+            catch { return; } // Still down: try again later, quietly.
+
+            if (back.Restricted && !current.Restricted)
+            {
+                Volatile.Write(ref _keptPipeOnlyReads, 1);
+                _log?.Info($"[elevation] Agent pipe '{pipeName}' is back but only serves reads to this user; staying in Admin Repair Mode.");
+                await back.DisposeAsync().ConfigureAwait(false);
+                return;
+            }
+
+            Process? helperProc;
+            lock (_stateLock)
+            {
+                if (!ReferenceEquals(_client, current))
+                {
+                    helperProc = null;
+                    current = null;
+                }
+                else
+                {
+                    _client = back;
+                    helperProc = _helperProcess;
+                    _helperProcess = null;
+                }
+            }
+            if (current is null)
+            {
+                await back.DisposeAsync().ConfigureAwait(false);
+                return;
+            }
+
+            current.Disconnected -= OnHelperDisconnected;
+            back.Disconnected += OnHelperDisconnected;
+            _log?.Info($"[elevation] Agent pipe '{pipeName}' is back (helperPid={back.HelperPid}); leaving Admin Repair Mode (helperPid={current.HelperPid}).");
+            NotifyChanged();
+            _ = CloseHelperWhenIdleAsync(current, helperProc);
+        }
+        finally
+        {
+            _enableGate.Release();
+        }
+    }
+
+    /// <summary>A call that read the old client just before the switch finishes on it; the helper closes after that.</summary>
+    private static async Task CloseHelperWhenIdleAsync(AdminPipeClient helper, Process? helperProc)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+        var deadline = DateTime.UtcNow + TimeSpan.FromHours(4);
+        while ((!helper.IsIdle || helper.StartedBiosJob) && helper.IsConnected && DateTime.UtcNow < deadline)
+            await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+        if (helper.StartedBiosJob) return; // Closing would end the flash: the helper ends with the app.
+        try { await helper.DisposeAsync().ConfigureAwait(false); } catch { }
+        TryTerminateHelper(helperProc);
     }
 
     private void OnHelperDisconnected()
