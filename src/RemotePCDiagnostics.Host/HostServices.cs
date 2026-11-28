@@ -79,6 +79,11 @@ public static class HostServices
             sp.GetService<IElevatedCommandBridge>(),
             L<LhmSensorProvider>(),
             isLocalProcessElevated: () => false));
+        // Cooling test: the same sensors as Temperatures & fans, Windows' CPU times, and the Agent for thermal modes. Registered here so
+        // RPCD_LOG / RPCD_REPLAY can record and replay it.
+        services.AddSingleton<RemotePCDiagnostics.Core.Cooling.ICoolingSource>(sp => new RemotePCDiagnostics.Core.Cooling.CoolingSource(
+            sp.GetRequiredService<ISensorProvider>(), new RemotePCDiagnostics.Core.Cooling.WindowsCpuLoadSource(), sp.GetRequiredService<SystemCommandRunner>(),
+            L<RemotePCDiagnostics.Core.Cooling.CoolingSource>()));
         services.AddSingleton(sp => new SystemCommandRunner(
             log: L<SystemCommandRunner>(),
             elevatedBridge: sp.GetRequiredService<IElevatedCommandBridge>(),

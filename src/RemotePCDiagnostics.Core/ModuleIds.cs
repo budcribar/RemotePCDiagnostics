@@ -87,6 +87,8 @@ public static class ModuleIds
     public static readonly Guid DriveSelfTest = new("84f91bee-422b-4ffb-baba-1665b5c2cab7");
     /// <summary>Slug <c>GpuMemory</c>.</summary>
     public static readonly Guid GpuMemory = new("fe79a8ac-1fca-4933-9ae8-f8016d4ba216");
+    /// <summary>Slug <c>Cooling</c>.</summary>
+    public static readonly Guid Cooling = new("adda2b29-4378-44da-b7ef-64376b0da30f");
 
     /// <summary>Every built-in id with its slug (the module's Name). Includes modules that are not registered on every build.</summary>
     public static IReadOnlyDictionary<Guid, string> BuiltIn { get; } = new Dictionary<Guid, string>
@@ -131,6 +133,7 @@ public static class ModuleIds
         [DiskSurfaceScan] = ModuleSlugs.DiskSurfaceScan,
         [DriveSelfTest] = ModuleSlugs.DriveSelfTest,
         [GpuMemory] = ModuleSlugs.GpuMemory,
+        [Cooling] = ModuleSlugs.Cooling,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -193,4 +196,6 @@ public static class ModuleSlugs
     public const string DriveSelfTest = "DriveSelfTest";
     /// <summary>The graphics memory (VRAM) test: patterns written and checked in each graphics chip's memory.</summary>
     public const string GpuMemory = "GpuMemory";
+    /// <summary>The cooling test: heat at low load, fan response under CPU load, and thermal mode switching (Agent).</summary>
+    public const string Cooling = "Cooling";
 }

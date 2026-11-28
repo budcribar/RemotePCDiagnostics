@@ -69,6 +69,24 @@ public sealed class RecordingDiskScanSource(Storage.IDiskScanSource inner, CallR
     }
 }
 
+/// <summary>Passes each cooling test sample and thermal mode request on and records the answer.</summary>
+public sealed class RecordingCoolingSource(Cooling.ICoolingSource inner, CallRecorder recorder) : Cooling.ICoolingSource
+{
+    public async Task<Cooling.CoolingReading> SampleAsync(CancellationToken ct)
+    {
+        var r = await inner.SampleAsync(ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromCoolingSample(r));
+        return r;
+    }
+
+    public async Task<Cooling.CoolingModesReply> ModesAsync(IReadOnlyList<string> args, CancellationToken ct)
+    {
+        var r = await inner.ModesAsync(args, ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromCoolingModes(args, r));
+        return r;
+    }
+}
+
 /// <summary>Passes each Core Audio read to the real source and records the answer.</summary>
 public sealed class RecordingAudioStateSource(Audio.IAudioStateSource inner, CallRecorder recorder) : Audio.IAudioStateSource
 {
@@ -243,6 +261,8 @@ public sealed class RecordingReplay
     public Storage.IDiskScanSource DiskScans => new ReplayDiskScans(this);
     public Storage.IDriveSelfTestSource SelfTest => new ReplaySelfTest(this);
     public GpuMemory.IGpuMemorySource GpuMemorySource => new ReplayGpuMemory(this);
+    /// <summary>The cooling test's recorded samples, in order (then the last again), and its thermal mode answers.</summary>
+    public Cooling.ICoolingSource Cooling => new ReplayCooling(this);
 
     /// <summary>The report file recorded under <paramref name="name"/>; null when it wasn't made or isn't in the recording.</summary>
     public string? FileText(string name) => Answer(FileKey(name), $"file {name}") is { Error: null } c ? c.StdOut : null;
@@ -280,6 +300,7 @@ public sealed class RecordingReplay
         RecordedCall.DiskScanKind => DiskScanKey(c.Query ?? ""),
         RecordedCall.SelfTestKind => SelfTestKey(c.Query ?? ""),
         RecordedCall.GpuMemoryKind => GpuMemoryKey(c.Query ?? ""),
+        RecordedCall.CoolingKind => CoolingKey(c.Query ?? ""),
         _ => ProcessKey(c.File ?? "", c.Args ?? []),
     };
 
@@ -298,6 +319,7 @@ public sealed class RecordingReplay
     public static string GpuMemoryQuery(string adapterId, string what) => adapterId + "\n" + what;
     public static string GpuMemoryRun(string adapterId, int block, int n) => GpuMemoryQuery(adapterId, "run") + "\n" + block.ToString(System.Globalization.CultureInfo.InvariantCulture)
         + "\n" + n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    public static string CoolingKey(string request) => "cooling\n" + request;
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
     /// <remarks>WQL ignores case, and a path in a query is spelled as Windows gave it (C:\WINDOWS on one PC, C:\Windows on another).</remarks>
     public static string WmiKey(string ns, string wql) => "wmi\n" + ns.ToLowerInvariant() + "\n" + wql.ToLowerInvariant();
@@ -423,6 +445,20 @@ public sealed class RecordingReplay
             }
 
             public void Dispose() { }
+        }
+    }
+
+    private sealed class ReplayCooling(RecordingReplay replay) : Cooling.ICoolingSource
+    {
+        public Task<Cooling.CoolingReading> SampleAsync(CancellationToken ct) =>
+            Task.FromResult(Core.Cooling.CoolingReading.Parse(replay.Answer(CoolingKey(RecordedCall.CoolingSampleQuery), "cooling sample")?.StdOut)
+                            ?? new Core.Cooling.CoolingReading(null, null, null, null));
+
+        public Task<Cooling.CoolingModesReply> ModesAsync(IReadOnlyList<string> args, CancellationToken ct)
+        {
+            var request = string.Join(' ', args);
+            return Task.FromResult(replay.Answer(CoolingKey(request), $"cooling {request}")?.ToCoolingModesReply()
+                                   ?? Core.Cooling.CoolingModesReply.Failed("Not in the recording."));
         }
     }
 

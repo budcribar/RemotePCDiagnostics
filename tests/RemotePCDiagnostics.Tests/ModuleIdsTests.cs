@@ -52,6 +52,7 @@ public class ModuleIdsTests
         ["EthernetPort"] = "6f2cda7d-0f7b-456c-a0dc-dedd9582c069",
         ["ChargerReplug"] = "6e740559-6220-4ea6-b09b-303928f1982f",
         ["DiskSurfaceScan"] = "46272fdc-6e61-4e3b-bf6f-bec95e0be7eb",
+        ["Cooling"] = "adda2b29-4378-44da-b7ef-64376b0da30f",
     };
 
     [Fact]

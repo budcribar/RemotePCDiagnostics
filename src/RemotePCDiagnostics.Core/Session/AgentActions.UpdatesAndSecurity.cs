@@ -34,6 +34,9 @@ public sealed partial class WindowsAgentNativeOps
             case Storage.DiskReadScanAction scan:
                 result = Storage.AgentDiskScans.Windows.Run(scan);
                 break;
+            case Cooling.CoolingModesAction cooling:
+                result = Cooling.AgentCoolingModesHost.Run(cooling);
+                break;
         }
     }
 }

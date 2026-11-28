@@ -53,6 +53,7 @@ public static class RecordReplaySwitches
         Replace(services, _ => replay.DiskScans);
         Replace(services, _ => replay.SelfTest);
         Replace(services, _ => replay.GpuMemorySource);
+        Replace(services, _ => replay.Cooling);
         Decorate<SystemCommandRunner>(services, (_, c) =>
             new SystemCommandRunner(replay.Launcher, c.Log, c.Timeout, c.ElevatedBridge, c.IsProcessElevatedCheck, c.NativeOps));
     }
@@ -71,6 +72,7 @@ public static class RecordReplaySwitches
         Decorate<Storage.IDiskScanSource>(services, (_, d) => new RecordingDiskScanSource(d, calls));
         Decorate<Storage.IDriveSelfTestSource>(services, (_, s) => new RecordingDriveSelfTestSource(s, calls));
         Decorate<GpuMemory.IGpuMemorySource>(services, (_, g) => new RecordingGpuMemorySource(g, calls));
+        Decorate<Cooling.ICoolingSource>(services, (_, c) => new RecordingCoolingSource(c, calls));
         // The checks behave as they do without the recorder (scripted: false): it only notes what the real tools answer.
         Decorate<SystemCommandRunner>(services, (_, c) => new SystemCommandRunner(new RecordingProcessLauncher(c.Launcher, calls), c.Log, c.Timeout,
             c.ElevatedBridge, c.IsProcessElevatedCheck, c.NativeOps, scripted: c.IsScripted));

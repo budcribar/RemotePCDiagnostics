@@ -250,6 +250,8 @@ internal static class AgentAdminHost
             TryBindKillOnParentCloseJob(parentPid);
             // Power settings a drive self-test changed before this helper (or an earlier one) was ended go back once no drive is testing.
             if (OperatingSystem.IsWindows()) RemotePCDiagnostics.Core.Storage.AgentDriveSelfTestHost.RecoverAtStart();
+            // Thermal modes a cooling test changed before this helper (or an earlier one) was ended go back.
+            if (OperatingSystem.IsWindows()) RemotePCDiagnostics.Core.Cooling.AgentCoolingModesHost.RecoverAtStart();
 
             using var cts = new CancellationTokenSource();
             _ = WatchParentExitAsync(parent, cts);

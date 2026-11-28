@@ -69,6 +69,9 @@ public static class AgentScripts
     /// self-test (<see cref="Storage.AgentDriveSelfTest"/>); prints <see cref="Storage.SelfTestAnswer"/> JSON.
     /// </summary>
     public const string DriveSelfTest = "drive_selftest";
+    /// <summary>Args: "list"; "set", "windows" or "maker" and the mode's id; or "restore". Windows' power mode and the PC maker's thermal
+    /// profile for the cooling test (<see cref="Cooling.AgentCoolingModes"/>); prints <see cref="Cooling.CoolingModesAnswer"/> JSON.</summary>
+    public const string CoolingModes = "cooling_modes";
 
     public const string RebootTask = "reboot";
     public const string WorkflowTask = "workflow";
@@ -194,6 +197,8 @@ public static class AgentScripts
 
             case DriveSelfTest:
                 return DriveSelfTestPlan(a) is { } selfTest ? Native(selfTest) : Refuse("That isn't a drive self-test request.");
+            case CoolingModes:
+                return Cooling.CoolingModesAction.Parse(a) is { } cooling ? Native(cooling) : Refuse("That isn't a thermal mode request this app sends.");
 
             default:
                 return Refuse($"Unknown script '{request.Name}'.");
