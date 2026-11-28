@@ -3,6 +3,7 @@
 @using RemotePCDiagnostics.Core.Workflow
 @inherits StoreAwareComponent
 @inject AppServices App
+@inject ChecksScreenState Screen
 @inject ISessionContext Session
 @inject IJSRuntime JS
 @{
@@ -23,7 +24,9 @@
         _ => "Bench intake snapshot",
     };
     var benchRunning = ActiveBenchQa.IsRunning;
-    var benchBusyElsewhere = !benchRunning && Diagnostics.IsAnyStressRunning;
+    // Checks, stress tests or the service workflow running: Start waits for them (one long run at a time), and says why.
+    var busyReason = benchRunning ? null : RemotePCDiagnostics.Core.Workflow.RunGate.BusyReason(RemotePCDiagnostics.Core.Workflow.RunKind.Qa, Screen, Diagnostics, ActiveBenchQa, App.Workflow);
+    var benchBusyElsewhere = busyReason is not null;
     // Waiting on the person (keyboard, display): every automated check is done, so what failed can be fixed and re-checked now.
     var waitingFor = benchRunning ? ActiveBenchQa.WaitingFor : null;
     var automatedRunning = benchRunning && waitingFor is null;
@@ -102,7 +105,7 @@
     <div class="banner-actions">
         <button type="button"
                 class="btn btn-primary"
-                data-testid="bench-qa-start"
+                data-testid="bench-qa-start" data-busy-reason="@busyReason" title="@busyReason"
                 disabled="@(benchRunning || benchBusyElsewhere || _selectedItems.Count == 0)"
                 @onclick="StartBenchQa">
             <Icon Name="@(benchRunning ? "refresh" : "play")" Size="14" />
@@ -112,6 +115,7 @@
         {
             <button type="button" class="btn btn-outline" data-testid="bench-qa-stop" @onclick="StopBenchQa">Stop</button>
         }
+        @if (busyReason is not null) { <span class="meta run-busy-note" role="status" data-testid="bench-qa-busy">@busyReason</span> }
     </div>
     @if (benchRunning && (ActiveBenchQa.RunItemIds.Count > 0 || ActiveBenchQa.TotalSteps > 0))
     {
@@ -450,6 +454,8 @@ else if (waitingFor is { Length: > 0 })
         SyncActiveBenchOptions();
         ActivePhysicalQa.Changed += OnBenchStateChanged;
         ActiveBenchQa.Changed += OnBenchStateChanged;
+        Screen.Changed += OnOtherRunChanged;
+        if (App.Workflow is { } flow) flow.Changed += OnOtherRunChanged;
         EnsureCertificateSnapshot(force: true);
     }
 
@@ -502,6 +508,9 @@ else if (waitingFor is { Length: > 0 })
         }
     }
 
+    /// <summary>Checks or the service workflow started or ended: Start is greyed out (or back) with the reason.</summary>
+    private void OnOtherRunChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
+
     private void OnBenchStateChanged()
     {
         SyncActiveBenchOptions();
@@ -519,6 +528,8 @@ else if (waitingFor is { Length: > 0 })
     {
         ActivePhysicalQa.Changed -= OnBenchStateChanged;
         ActiveBenchQa.Changed -= OnBenchStateChanged;
+        Screen.Changed -= OnOtherRunChanged;
+        if (App.Workflow is { } flow) flow.Changed -= OnOtherRunChanged;
         // The run keeps going after the page closes (it waits on the keyboard and display checks itself).
         base.Dispose();
     }

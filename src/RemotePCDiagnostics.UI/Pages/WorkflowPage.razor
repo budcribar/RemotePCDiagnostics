@@ -5,6 +5,7 @@
 @using RemotePCDiagnostics.Core.Optimizations
 @implements IDisposable
 @inject WorkflowService Flow
+@inject ChecksScreenState Screen
 @inject BenchmarkService Bench
 @inject DiagnosticsService Diagnostics
 @inject AppServices App
@@ -108,7 +109,8 @@
             @* What the stopped run already did to the PC: the report box, with the same report as the saved file. *@
             <WorkflowReportBox Html="@ReportHtml(s)" MessageChanged="m => _changeMessage = m" />
         }
-        <button class="btn btn-primary" data-testid="wf-start-checks" disabled="@Flow.Busy" @onclick="RunChecks"><Icon Name="play" Size="12" /> Start: run all checks</button>
+        <button class="btn btn-primary" data-testid="wf-start-checks" data-busy-reason="@BusyReason" title="@BusyReason" disabled="@(Flow.Busy || BusyReason is not null)" @onclick="RunChecks"><Icon Name="play" Size="12" /> Start: run all checks</button>
+        @if (BusyReason is { } why) { <span class="meta run-busy-note" role="status" data-testid="wf-busy">@why</span> }
         break;
 
     case WorkflowStage.Checking:
@@ -233,9 +235,10 @@
         }
         @if (_startError is { } se) { <p class="notice notice-error" role="alert" data-testid="wf-signin-error">@se</p> }
         <div class="toolbar">
-            <button class="btn btn-primary" data-testid="wf-go" disabled="@_starting" @onclick="Start"><Icon Name="play" Size="12" /> @(_starting ? "Starting…" : $"Start: restart, benchmark, apply {approved} fix{(approved == 1 ? "" : "es")}, report")</button>
+            <button class="btn btn-primary" data-testid="wf-go" data-busy-reason="@BusyReason" title="@BusyReason" disabled="@(_starting || BusyReason is not null)" @onclick="Start"><Icon Name="play" Size="12" /> @(_starting ? "Starting…" : $"Start: restart, benchmark, apply {approved} fix{(approved == 1 ? "" : "es")}, report")</button>
             <button class="btn-small" data-testid="wf-start-over" @onclick="StartOver">Start over</button>
             <button type="button" hidden data-testid="wf-dismiss" @onclick="DismissReview">Dismiss review</button>
+            @if (BusyReason is { } goWhy) { <span class="meta run-busy-note" role="status" data-testid="wf-busy">@goWhy</span> }
         </div>
         break;
 
@@ -466,16 +469,21 @@
         _message, Flow.CheckItems, _openAreas,
         new WorkflowExport.SignIn(_signIn is { SignsInBySelf: true }, _signIn?.RestartSignOn, !_starting), Flow.CanChangeAfterRun, _changeMessage);
 
+    /// <summary>Checks, stress tests or a QA check running elsewhere: the workflow's Start waits for them, and says why.</summary>
+    private string? BusyReason => RemotePCDiagnostics.Core.Workflow.RunGate.BusyReason(RemotePCDiagnostics.Core.Workflow.RunKind.Workflow, Screen, Diagnostics, App.BenchQa, null);
+
     protected override void OnInitialized()
     {
         Flow.Changed += OnChanged;
         Bench.Changed += OnChanged;
         if (Prefs is not null) Prefs.Changed += OnChanged;
         if (App.Elevation is { } elev) elev.Changed += OnChanged;
+        Screen.Changed += OnChanged;
+        if (App.BenchQa is { } qa) qa.Changed += OnChanged;
         LoadSignIn();
         foreach (var a in Prefs?.Current.WorkflowOpenAreas ?? []) _openAreas.Add(a);
         Nav.LocationChanged += OnLeftWorkflow;
-        if (Flow.State.Stage == WorkflowStage.Idle && !Flow.Busy && Flow.HasCompletedCheckModuleResults)
+        if (Flow.State.Stage == WorkflowStage.Idle && !Flow.Busy && Flow.HasCompletedCheckModuleResults && BusyReason is null)
             _ = Flow.RunChecksAsync();
     }
 
@@ -518,6 +526,8 @@
         Bench.Changed -= OnChanged;
         if (Prefs is not null) Prefs.Changed -= OnChanged;
         if (App.Elevation is { } elev) elev.Changed -= OnChanged;
+        Screen.Changed -= OnChanged;
+        if (App.BenchQa is { } qa) qa.Changed -= OnChanged;
     }
 
     private async Task EnableWorkflowAdminModeAsync()
