@@ -82,6 +82,47 @@ public class ChecksScreenTests
     }
 
     [Fact]
+    public void A_test_the_catalog_puts_on_the_Interactive_tests_page_is_not_on_the_Checks_list()
+    {
+        var store = new ResultStore();
+        // The battery drain test once answered IncludeInRunAll true through the interface; its catalog page keeps it off the list anyway.
+        var svc = new DiagnosticsService(store, [new FakeModule("A", _ => Task.FromResult(FakeModule.Ok("A"))),
+            new FakeModule(ModuleSlugs.BatteryDrain, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.BatteryDrain)))]);
+        var s = new ChecksScreenState(svc, store);
+        Assert.Equal(["A"], s.ChecksModules.Select(m => m.Name));
+        Assert.Equal("interactive", s.PageFor(ModuleSlugs.BatteryDrain));
+        Assert.Null(s.GroupOf(ModuleSlugs.BatteryDrain));
+    }
+
+    [Fact]
+    public void The_battery_drain_test_is_never_in_Run_all_through_the_interface()
+    {
+        var m = new Core.Battery.BatteryDrainModule(null!, null!, null!, null!);
+        Assert.False(((IDiagnosticModule)m).IncludeInRunAll);
+    }
+
+    [Fact]
+    public void Disk_surface_drive_self_test_vram_and_video_playback_are_stress_tests_only()
+    {
+        // Each says IncludeInRunAll => false; through IDiagnosticModule (what the Checks list and Run all see) it must say the same.
+        IDiagnosticModule[] tests =
+        [
+            new Core.Storage.DiskSurfaceScanModule(null!, null!),
+            new Core.Storage.DriveSelfTestModule(null!),
+            new Core.GpuMemory.GpuMemoryModule(new Core.GpuMemory.NoGpuMemorySource()),
+            new Core.VideoPlayback.VideoPlaybackModule(null!),
+        ];
+        Assert.All(tests, m => Assert.False(m.IncludeInRunAll));
+        var store = new ResultStore();
+        var svc = new DiagnosticsService(store, [new FakeModule("A", _ => Task.FromResult(FakeModule.Ok("A"))), .. tests]);
+        var s = new ChecksScreenState(svc, store);
+        Assert.Equal(["A"], s.ChecksModules.Select(m => m.Name));
+        // On the Stress tests page (other tests may have turned one of them off in the shared module catalog, so not all four need show).
+        Assert.NotEmpty(s.StressModules);
+        Assert.All(s.StressModules, m => Assert.Contains(m.Name, (string[])["DiskSurfaceScan", "DriveSelfTest", "GpuMemory", "VideoPlayback"]));
+    }
+
+    [Fact]
     public void Pages_ChecksAndStressAreSeparate_AuditHasItsOwnPage()
     {
         var (_, _, s, _) = Build();

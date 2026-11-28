@@ -50,7 +50,9 @@
             var r = Store.Get(m.Name);
             return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled, CheckEnableRules.IsTurnedOff(r), CheckRows.IsCouldNotRun(r));
         }),
-        Diagnostics.LastStressSuiteProgress);
+        Diagnostics.LastStressSuiteProgress,
+        // The Stress tests tile counts only what that page lists, not the interactive tests or other on-demand modules.
+        Screen.Modules(CheckGroup.Stress).Select(m => m.Name));
 
     var checkChoices = Diagnostics.CheckChoices();
     var availableChoices = checkChoices.Where(c => c.Available).ToList();

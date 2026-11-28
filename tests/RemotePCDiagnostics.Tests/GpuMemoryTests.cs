@@ -434,9 +434,9 @@ public sealed class GpuMemoryTests
     public void The_module_is_a_stress_test_after_the_gpu_stress_test_and_never_in_run_all()
     {
         var m = new GpuMemoryModule(new NoGpuMemorySource());
-        Assert.False(m.IncludeInRunAll);
+        Assert.False(((IDiagnosticModule)m).IncludeInRunAll);
+        Assert.False(((IStressSuiteModule)m).IncludeInRunAll);
         Assert.IsAssignableFrom<ICancellableScan>(m);
-        Assert.IsAssignableFrom<IStressSuiteModule>(m);
         var d = BuiltInModules.Descriptors.Single(x => x.Id == ModuleIds.GpuMemory);
         Assert.Equal(ModuleKind.StressTest, d.Kind);
         Assert.Contains(ModuleIds.GpuStress, d.RunAfter);

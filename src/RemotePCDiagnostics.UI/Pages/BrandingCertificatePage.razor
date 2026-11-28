@@ -132,10 +132,33 @@
     }
 </section>
 
-@if (waitingFor is { Length: > 0 })
+@if (waitingFor is "keyboard" or "display")
 {
     @* The run waits on this check, not the page: leaving the page and coming back shows it again, and the run carries on. *@
     <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="@waitingFor" RemoteSessionActive="@(Session.Mode == SessionMode.Remote || _isRemoteDisplay)" />
+}
+else if (waitingFor is { Length: > 0 })
+{
+    @* The other guided steps: the pointer test runs here, the charger test's prompts show as the run's status, and the USB port,
+       video output and Ethernet checks are done on the Interactive tests page (the run waits for their result). *@
+    var openPage = waitingFor is "pointer" or "charger" ? null : BenchQaRunner.InteractivePageFor(waitingFor);
+    <section class="card wf-section qa-guided" data-testid="qa-guided" data-step="@waitingFor" style="margin-bottom: 16px">
+        <div class="qa-attention-top">
+            <strong data-testid="qa-guided-title">@ItemLabel(waitingFor)</strong>
+            <span class="qa-attention-actions">
+                @if (openPage is not null)
+                {
+                    <a class="btn btn-primary" data-testid="qa-guided-open" href="@openPage">Open the check</a>
+                }
+                <button type="button" class="btn btn-outline" data-testid="qa-guided-skip" @onclick="ActiveBenchQa.SkipWaiting">Skip this step</button>
+            </span>
+        </div>
+        <p class="meta" data-testid="qa-guided-help">@GuidedHelp(waitingFor)</p>
+        @if (waitingFor == "pointer" && App.PointerTest is { } pointer)
+        {
+            <PointerTestPane Service="pointer" IsRemoteDisplay="_isRemoteDisplay" RemoteSessionActive="@(Session.Mode == SessionMode.Remote || _isRemoteDisplay)" />
+        }
+    </section>
 }
 
 @{
@@ -221,8 +244,8 @@
             }
             else if (waitingFor is not null)
             {
-                <span class="chip chip-na" data-testid="qa-live-verdict">Waiting on the @waitingFor check</span>
-                <span class="meta" data-testid="qa-live-note"> · automated checks done; finish the @waitingFor check to complete the certificate</span>
+                <span class="chip chip-na" data-testid="qa-live-verdict">Waiting on the @WaitingName(waitingFor) check</span>
+                <span class="meta" data-testid="qa-live-note"> · automated checks done; finish the @WaitingName(waitingFor) check to complete the certificate</span>
             }
             else
             {
@@ -299,9 +322,11 @@
     private BenchQaRunner? _fallbackBenchQa;
     private PhysicalBenchQaService ActivePhysicalQa => App.PhysicalQa ?? _fallbackPhysicalQa;
     private ShopRelayClient ActiveRelay => App.ShopRelay ?? _fallbackRelay;
-    private BenchQaRunner ActiveBenchQa => App.BenchQa ?? (_fallbackBenchQa ??= new BenchQaRunner(Diagnostics, Store, App.Workflow, App.Preferences, ActivePhysicalQa));
+    private BenchQaRunner ActiveBenchQa => App.BenchQa ?? (_fallbackBenchQa ??= new BenchQaRunner(Diagnostics, Store, App.Workflow, App.Preferences, ActivePhysicalQa, pointerTest: App.PointerTest));
 
-    private readonly HashSet<string> _selectedItems = new(HardwareQaCertificate.DefaultSelectedItemIds, StringComparer.OrdinalIgnoreCase);
+    // The pointer test starts selected on a PC with a battery (a laptop's touchpad); see BenchQaRunner.DefaultSelection.
+    private readonly HashSet<string> _selectedItems = new(
+        BenchQaRunner.DefaultSelection(new RemotePCDiagnostics.Core.Areas.WindowsPowerLineSource().Read()?.HasBattery), StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _expandedGroups = new(StringComparer.OrdinalIgnoreCase);
 
     private bool AllQaOptionsSelected =>
@@ -353,6 +378,27 @@
             return ActiveBenchQa.RunItemIds.Count > 0 ? $"Running QA ({done} of {total} checked)…" : $"Re-running ({done}/{total})…";
         }
     }
+
+    /// <summary>The short name of a guided step for "Waiting on the … check".</summary>
+    private static string WaitingName(string itemId) => itemId switch
+    {
+        "pointer" => "mouse & touchpad",
+        "charger" => "charger",
+        "usb-port" => "USB port",
+        "video-output" => "video output",
+        "ethernet" => "Ethernet port",
+        _ => itemId,
+    };
+
+    private static string GuidedHelp(string itemId) => itemId switch
+    {
+        "pointer" => "Pick the touchpad, mouse or touchscreen and press Start. Only input from this PC's own hardware counts.",
+        "charger" => "Unplug the charger when asked, then plug it back in. Windows must see each change and the battery must start charging.",
+        "usb-port" => "Open the check, press Start watching, then plug a USB stick or other device into each port in turn and press Finish. This step ends when the check has a result.",
+        "video-output" => "Open the check, press Start watching, then plug a monitor into each video port in turn and press Finish. This step ends when the check has a result.",
+        "ethernet" => "Open the check, pick the port, plug in a network cable or a loopback plug and press Start. This step ends when the check has a result.",
+        _ => "",
+    };
 
     private static string ItemLabel(string itemId) =>
         HardwareQaCertificate.Groups.SelectMany(g => g.Items).FirstOrDefault(i => string.Equals(i.Id, itemId, StringComparison.OrdinalIgnoreCase))?.Label ?? itemId;
@@ -572,10 +618,11 @@
     private const string SecurityItemId = "security";
     private RemediationActions? _qaFixUi;
 
-    /// <summary>The page with a failed item's details and fixes; null for items without one (the interactive checks).</summary>
+    /// <summary>The page with a failed item's details and fixes; null for items without one (keyboard, display).</summary>
     private static string? PageFor(string itemId)
     {
         if (itemId == SecurityItemId) return "security-audit";
+        if (BenchQaRunner.InteractivePageFor(itemId) is { } interactive) return interactive;
         return BenchQaRunner.SlugsForItem(itemId) is [var slug, ..] ? $"module/{Uri.EscapeDataString(slug)}" : null;
     }
 

@@ -205,7 +205,10 @@ public sealed class ChecksScreenState
 
     public IReadOnlyList<IDiagnosticModule> ChecksModules => GetChecksModules();
 
-    private IReadOnlyList<IDiagnosticModule> GetChecksModules() => _diag.Modules.Where(m => m.IncludeInRunAll).ToList();
+    /// <remarks>A module the catalog puts on a page of its own (Interactive tests, Security audit) is never listed here, even when the
+    /// module itself still answers IncludeInRunAll true through <see cref="IDiagnosticModule"/>.</remarks>
+    private IReadOnlyList<IDiagnosticModule> GetChecksModules() =>
+        _diag.Modules.Where(m => m.IncludeInRunAll && _diag.Catalog.Get(m.Id)?.Page is null).ToList();
 
     private static readonly HashSet<string> ExcludedFromStress = new(StringComparer.OrdinalIgnoreCase)
     {

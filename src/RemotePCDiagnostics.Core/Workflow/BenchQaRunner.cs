@@ -1,4 +1,9 @@
+using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Cooling;
+using RemotePCDiagnostics.Core.GpuMemory;
+using RemotePCDiagnostics.Core.Input;
 using RemotePCDiagnostics.Core.Preferences;
+using RemotePCDiagnostics.Core.Storage;
 
 namespace RemotePCDiagnostics.Core.Workflow;
 
@@ -8,7 +13,9 @@ namespace RemotePCDiagnostics.Core.Workflow;
 /// 2) Read-only Windows image/system file integrity (DISM ScanHealth + SFC verify-only),
 /// 3) Short thermal-guarded local hardware stress (CPU, RAM, Disk, GPU — skipping NetworkTest so offline benches pass),
 /// 4) Dongle-free WASAPI speaker→mic loopback, webcam frame check, and NPU test when applicable,
-/// 5) Automatic save of the 1-page Buyer Hardware QA QR Certificate.
+/// 5) Guided steps someone at the bench does (keyboard, display, pointer, charger replug, USB ports, video outputs, Ethernet),
+/// 6) Automatic save of the 1-page Buyer Hardware QA QR Certificate.
+/// The long tests (disk surface scan, extended drive self-test, boot memory test, battery drain) are not part of it.
 /// </summary>
 public sealed class BenchQaRunner(
     DiagnosticsService diag,
@@ -16,7 +23,9 @@ public sealed class BenchQaRunner(
     WorkflowService? workflow = null,
     PreferencesService? prefs = null,
     PhysicalBenchQaService? physicalQa = null,
-    ILogger? log = null)
+    ILogger? log = null,
+    PointerTestService? pointerTest = null,
+    IPowerLineSource? power = null)
 {
     public static readonly IReadOnlyList<string> LocalHardwareStressSlugs =
     [
@@ -34,6 +43,9 @@ public sealed class BenchQaRunner(
         ["gpu-stress"] = ModuleSlugs.GpuStress,
     };
 
+    /// <summary>The graphics memory test runs after the stress tests (Quick, about 90 s), not in the stress suite.</summary>
+    private const string GpuMemoryItemId = "gpu-memory";
+
     private static readonly (string ItemId, string Slug)[] BaseCheckItems =
     [
         ("hardware", ModuleSlugs.Osquery),
@@ -43,6 +55,56 @@ public sealed class BenchQaRunner(
         ("stability", ModuleSlugs.Crashes),
         ("drivers", ModuleSlugs.DeviceDrivers),
     ];
+
+    /// <summary>Quick read-only checks and short tests that run right after the base checks, before the stress tests heat the PC.</summary>
+    private static readonly (string ItemId, string Slug)[] AddedCheckItems =
+    [
+        ("usb", ModuleSlugs.UsbPorts),
+        ("displays", ModuleSlugs.Displays),
+        ("device-sensors", ModuleSlugs.DeviceSensors),
+        ("drive-self-test", ModuleSlugs.DriveSelfTest),
+        ("cooling", ModuleSlugs.Cooling),
+    ];
+
+    /// <summary>
+    /// Guided steps someone at the bench does, in the order the run waits on them. Keyboard, display and pointer are shown on the QA page;
+    /// the charger test runs here and the page shows its prompts; the USB port, video output and Ethernet checks are done on the
+    /// Interactive tests page (<see cref="InteractivePageFor"/>), and the run waits for their result.
+    /// </summary>
+    public static readonly IReadOnlyList<string> GuidedItemIds = ["keyboard", "display", "pointer", "charger", "usb-port", "video-output", "ethernet"];
+
+    private static readonly IReadOnlyDictionary<string, string> GuidedItemToSlug = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["charger"] = ModuleSlugs.ChargerReplug,
+        ["usb-port"] = ModuleSlugs.UsbPortCheck,
+        ["video-output"] = ModuleSlugs.DisplayOutputCheck,
+        ["ethernet"] = ModuleSlugs.EthernetPort,
+    };
+
+    /// <summary>The Interactive tests pane of a guided step done there, or of the pointer and charger tests; null for the others.</summary>
+    public static string? InteractivePageFor(string itemId) => itemId.ToLowerInvariant() switch
+    {
+        "pointer" => "interactive?test=pointer",
+        "charger" => "interactive?test=charger",
+        "usb-port" => "interactive?test=usbports",
+        "video-output" => "interactive?test=displayoutputs",
+        "ethernet" => "interactive?test=ethernet",
+        _ => null,
+    };
+
+    /// <summary>Tests that load the PC: left out of a re-check while someone is at the bench, like the stress tests.</summary>
+    private static readonly string[] LoadSlugs = [ModuleSlugs.Cooling, ModuleSlugs.GpuMemory];
+
+    /// <summary>
+    /// The QA selection the page starts with: the default items, plus the pointer test on a PC with a battery (a laptop's touchpad is a
+    /// common refurb failure).
+    /// </summary>
+    public static IReadOnlyCollection<string> DefaultSelection(bool? hasBattery)
+    {
+        var set = new HashSet<string>(HardwareQaCertificate.DefaultSelectedItemIds, StringComparer.OrdinalIgnoreCase);
+        if (hasBattery == true) set.Add("pointer");
+        return set;
+    }
 
     private static readonly string[] IntegritySlugs =
     [
@@ -86,7 +148,7 @@ public sealed class BenchQaRunner(
         RunItemIds.Count == 0 ? 0.0 : Math.Clamp((double)CompletedItems / RunItemIds.Count, 0.0, 1.0);
 
     /// <summary>
-    /// The person check the run is waiting on ("keyboard" or "display"), or null. Every automated check has finished by then, so the page
+    /// The guided step the run is waiting on (an item of <see cref="GuidedItemIds"/>: "keyboard", "display", "pointer", "charger", ...), or null. Every automated check has finished by then, so the page
     /// shows what needs attention and its fixes, and <see cref="RerunAsync"/> can re-check a fixed item without stopping the run.
     /// </summary>
     public string? WaitingFor { get; private set; }
@@ -174,6 +236,10 @@ public sealed class BenchQaRunner(
         var includeKeyboard = selected.Contains("keyboard");
         var includeDisplay = selected.Contains("display");
         var includeIntegrity = selected.Contains("integrity");
+        var addedSlugs = AddedCheckItems.Where(a => selected.Contains(a.ItemId) && diag.CanRun(a.Slug)).Select(a => a.Slug).ToList();
+        var gpuMemory = selected.Contains(GpuMemoryItemId) && diag.CanRun(ModuleSlugs.GpuMemory);
+        // Keyboard and display keep their own steps below; the rest of the guided steps follow them in GuidedItemIds order.
+        var guidedItems = GuidedItemIds.Where(id => id is not ("keyboard" or "display") && selected.Contains(id) && GuidedCanRun(id)).ToList();
 
         IncludeStress = includeStress;
         IncludeAudioCamera = includeAudioCamera;
@@ -227,7 +293,8 @@ public sealed class BenchQaRunner(
         var keyboardStep = includeKeyboard ? 1 : 0;
         var displayStep = includeDisplay ? 1 : 0;
         var saveStep = workflow is not null ? 1 : 0;
-        TotalSteps = baseStepCount + integrityToConsider.Count + suiteStressSlugs.Count + plainStressSlugs.Count + peripheralSlugs.Count + securitySlugs.Count + keyboardStep + displayStep + saveStep;
+        TotalSteps = baseStepCount + addedSlugs.Count + integrityToConsider.Count + suiteStressSlugs.Count + plainStressSlugs.Count + (gpuMemory ? 1 : 0)
+            + peripheralSlugs.Count + securitySlugs.Count + keyboardStep + displayStep + guidedItems.Count + saveStep;
         CompletedSteps = 0;
         LastSavedCertificatePath = null;
         Status = runAllBaseChecks
@@ -274,6 +341,19 @@ public sealed class BenchQaRunner(
                     CompletedSteps++;
                     Raise();
                 }
+            }
+
+            // Step 1b: Quick hardware checks added later (USB, displays, sensors), the short drive self-test and the quick cooling test.
+            // The cooling test runs before the stress tests so its low-load reading starts from a PC that isn't already hot.
+            foreach (var slug in addedSlugs)
+            {
+                token.ThrowIfCancellationRequested();
+                Status = $"Checking {diag.Catalog.DisplayName(slug)}…";
+                Raise();
+                await RunModuleSafeAsync(slug, token).ConfigureAwait(false);
+                if (ItemForSlug(slug) is { } addedItem) MarkItemDone(addedItem, raise: false);
+                CompletedSteps++;
+                Raise();
             }
 
             // Step 2: Read-only Windows integrity checks (DismScanHealth, SfcVerifyOnly) if selected and not already completed
@@ -343,6 +423,18 @@ public sealed class BenchQaRunner(
                 }
             }
 
+            // Step 3b: Graphics memory (VRAM) test, Quick
+            if (gpuMemory)
+            {
+                token.ThrowIfCancellationRequested();
+                Status = $"Testing {diag.Catalog.DisplayName(ModuleSlugs.GpuMemory)} (quick)…";
+                Raise();
+                await RunModuleSafeAsync(ModuleSlugs.GpuMemory, token).ConfigureAwait(false);
+                MarkItemDone(GpuMemoryItemId, raise: false);
+                CompletedSteps++;
+                Raise();
+            }
+
             // Step 4: Selected audio loopback, webcam, and NPU checks
             foreach (var slug in peripheralSlugs)
             {
@@ -391,6 +483,18 @@ public sealed class BenchQaRunner(
                 Raise();
             }
 
+            // Step 7b: The other guided steps: pointer, charger replug, USB ports, video outputs, Ethernet
+            foreach (var itemId in guidedItems)
+            {
+                token.ThrowIfCancellationRequested();
+                Status = GuidedStatus(itemId);
+                Raise();
+                await WaitForPersonAsync(itemId, waitInteractive, token).ConfigureAwait(false);
+                MarkItemDone(itemId, raise: false);
+                CompletedSteps++;
+                Raise();
+            }
+
             // Step 8: Automatically save the 1-page HTML QR Certificate
             token.ThrowIfCancellationRequested();
             if (workflow is not null)
@@ -424,13 +528,15 @@ public sealed class BenchQaRunner(
         }
     }
 
-    /// <summary>The checks behind a QA item that Re-run can run again without anyone at the bench; empty for the interactive ones (keyboard, display).</summary>
+    /// <summary>The checks behind a QA item that Re-run can run again without anyone at the bench; empty for the guided steps.</summary>
     public static IReadOnlyList<string> SlugsForItem(string itemId)
     {
         if (BaseCheckItems.FirstOrDefault(b => string.Equals(b.ItemId, itemId, StringComparison.OrdinalIgnoreCase)) is { Slug: { } baseSlug }) return [baseSlug];
         if (StressItemToSlug.TryGetValue(itemId, out var stress)) return [stress];
+        if (AddedCheckItems.FirstOrDefault(a => string.Equals(a.ItemId, itemId, StringComparison.OrdinalIgnoreCase)) is { Slug: { } addedSlug }) return [addedSlug];
         return itemId.ToLowerInvariant() switch
         {
+            GpuMemoryItemId => [ModuleSlugs.GpuMemory],
             "integrity" => IntegritySlugs,
             "audio" => [ModuleSlugs.SpeakerToMic],
             "webcam" => [ModuleSlugs.Webcam],
@@ -537,7 +643,7 @@ public sealed class BenchQaRunner(
         try
         {
             var slugs = itemIds.SelectMany(SlugsForItem).Where(diag.CanRun)
-                .Where(s => !StressItemToSlug.Values.Contains(s, StringComparer.OrdinalIgnoreCase))
+                .Where(s => !StressItemToSlug.Values.Contains(s, StringComparer.OrdinalIgnoreCase) && !LoadSlugs.Contains(s, StringComparer.OrdinalIgnoreCase))
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             log.Info($"[bench-qa] Re-check while waiting on {WaitingFor}: {string.Join(", ", itemIds)} -> {string.Join(", ", slugs)}");
             Raise();
@@ -569,23 +675,149 @@ public sealed class BenchQaRunner(
             audit.RecheckOnNextRun(rep.NeedsAttention.Select(f => f.Id));
     }
 
+    private CancellationTokenSource? _skipCts;
+
+    /// <summary>Skips the guided step the run is waiting on (<see cref="WaitingFor"/>); the run carries on with the next one.</summary>
+    public void SkipWaiting()
+    {
+        CancellationTokenSource? skip;
+        lock (_gate) skip = _skipCts;
+        if (skip is null) return;
+        log.Info($"[bench-qa] Skipped the {WaitingFor} step");
+        try { skip.Cancel(); } catch (ObjectDisposedException) { }
+    }
+
     /// <summary>
-    /// Waits for the person to finish the keyboard or display check. The run owns this wait, not the page: leaving the QA page (to fix a
-    /// failed item on its own page, say) doesn't stop the run, and coming back shows the check still waiting.
+    /// Waits for the person to finish a guided step. The run owns this wait, not the page: leaving the QA page (to fix a failed item on
+    /// its own page, or to do the USB port check on the Interactive tests page) doesn't stop the run, and coming back shows it still waiting.
     /// </summary>
     private async Task WaitForPersonAsync(string section, Func<string, CancellationToken, Task>? waitInteractive, CancellationToken token)
     {
+        using var skip = CancellationTokenSource.CreateLinkedTokenSource(token);
+        lock (_gate) _skipCts = skip;
         WaitingFor = section;
         Raise();
         try
         {
-            if (waitInteractive is not null) await waitInteractive(section, token).ConfigureAwait(false);
-            else if (physicalQa is not null) await WaitForOutcomeAsync(physicalQa, section, token).ConfigureAwait(false);
+            var t = skip.Token;
+            if (waitInteractive is not null) await waitInteractive(section, t).ConfigureAwait(false);
+            else if (section is "keyboard" or "display")
+            {
+                if (physicalQa is not null) await WaitForOutcomeAsync(physicalQa, section, t).ConfigureAwait(false);
+            }
+            else if (section == "pointer")
+            {
+                if (pointerTest is not null) await WaitForPointerAsync(pointerTest, t).ConfigureAwait(false);
+            }
+            else if (section == "charger")
+            {
+                // The charger test runs here; its prompts (unplug, plug back in) show as the status.
+                await RunModuleSafeAsync(ModuleSlugs.ChargerReplug, t, new Progress<string>(prompt =>
+                {
+                    Status = $"Charger replug test: {prompt}";
+                    Raise();
+                })).ConfigureAwait(false);
+            }
+            else if (GuidedItemToSlug.TryGetValue(section, out var slug))
+            {
+                await WaitForResultAsync(slug, t).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            // Skipped: the item keeps whatever result it had (usually Not run) and the run goes on.
         }
         finally
         {
+            lock (_gate) _skipCts = null;
             WaitingFor = null;
         }
+    }
+
+    private static string GuidedStatus(string itemId) => itemId switch
+    {
+        "pointer" => "Mouse, touchpad & touchscreen test: go through the steps on the device…",
+        "charger" => "Charger replug test: unplug the charger, then plug it back in…",
+        "usb-port" => "USB port check: open it, then plug a USB stick into each port…",
+        "video-output" => "Video output check: open it, then plug a monitor into each video port…",
+        "ethernet" => "Ethernet port test: open it, then plug in a network cable or a loopback plug…",
+        _ => $"Waiting on the {itemId} check…",
+    };
+
+    /// <summary>Whether a guided step other than keyboard and display can run here (the charger test needs a battery).</summary>
+    private bool GuidedCanRun(string itemId) => itemId switch
+    {
+        "pointer" => pointerTest is not null,
+        "charger" => diag.CanRun(ModuleSlugs.ChargerReplug) && (power ?? new WindowsPowerLineSource()).Read() is not { HasBattery: false },
+        _ => GuidedItemToSlug.TryGetValue(itemId, out var slug) && diag.CanRun(slug),
+    };
+
+    /// <summary>Done when the check (run on the Interactive tests page) has a finished result newer than the wait.</summary>
+    private async Task WaitForResultAsync(string slug, CancellationToken token)
+    {
+        var startUtc = DateTimeOffset.UtcNow;
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnChanged(object? sender, DiagnosticResult r)
+        {
+            if (string.Equals(r.ModuleName, slug, StringComparison.OrdinalIgnoreCase)
+                && r.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error
+                && r.Timestamp.ToUniversalTime() >= startUtc)
+                done.TrySetResult();
+        }
+        store.Changed += OnChanged;
+        try
+        {
+            using var reg = token.Register(() => done.TrySetCanceled(token));
+            await done.Task.ConfigureAwait(false);
+        }
+        finally
+        {
+            store.Changed -= OnChanged;
+        }
+    }
+
+    /// <summary>Done when a pointer test that started after the wait began finishes; its result goes onto the certificate.</summary>
+    private async Task WaitForPointerAsync(PointerTestService pointer, CancellationToken token)
+    {
+        var startUtc = DateTimeOffset.UtcNow;
+        var done = new TaskCompletionSource<PointerTestSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnChanged()
+        {
+            var s = pointer.Current;
+            if (s.Verdict is not (PointerTestVerdict.NotRun or PointerTestVerdict.Running) && s.StartedUtc >= startUtc && s.FinishedUtc is not null)
+                done.TrySetResult(s);
+        }
+        pointer.Changed += OnChanged;
+        try
+        {
+            using var reg = token.Register(() => done.TrySetCanceled(token));
+            var snap = await done.Task.ConfigureAwait(false);
+            physicalQa?.Update(q => q with { PointerOutcome = PointerOutcome(snap), PointerSummary = PointerSummary(snap) });
+        }
+        finally
+        {
+            pointer.Changed -= OnChanged;
+        }
+    }
+
+    internal static PhysicalCheckOutcome PointerOutcome(PointerTestSnapshot s) => s.Verdict switch
+    {
+        PointerTestVerdict.Passed => s.Steps.Any(st => st.State is PointerStepState.Skipped) ? PhysicalCheckOutcome.PassedWithNote : PhysicalCheckOutcome.Passed,
+        PointerTestVerdict.Failed => PhysicalCheckOutcome.Failed,
+        _ => PhysicalCheckOutcome.NotRun,
+    };
+
+    internal static string PointerSummary(PointerTestSnapshot s)
+    {
+        var name = s.Device?.Name is { Length: > 0 } n ? $"{n}: " : "";
+        var passed = s.Steps.Count(st => st.State == PointerStepState.Passed);
+        var parts = new List<string> { $"{name}{passed} of {s.Steps.Count} steps passed" };
+        var failed = s.Steps.Where(st => st.State == PointerStepState.Failed).Select(st => PointerTestService.Title(st.Step)).ToList();
+        if (failed.Count > 0) parts.Add($"failed: {string.Join(", ", failed)}");
+        var skipped = s.Steps.Where(st => st.State == PointerStepState.Skipped).Select(st => PointerTestService.Title(st.Step)).ToList();
+        if (skipped.Count > 0) parts.Add($"skipped: {string.Join(", ", skipped)}");
+        if (s.Verdict == PointerTestVerdict.Cancelled) parts.Add("stopped before the end");
+        return string.Join(" · ", parts);
     }
 
     /// <summary>Done when the check has an outcome that is new since the wait began (set again, or changed).</summary>
@@ -624,11 +856,12 @@ public sealed class BenchQaRunner(
         try { diag.CancelStressSuite(); } catch { }
     }
 
-    private async Task RunModuleSafeAsync(string slug, CancellationToken ct)
+    private async Task RunModuleSafeAsync(string slug, CancellationToken ct, IProgress<string>? progress = null)
     {
+        var restore = UseQaMode(slug);
         try
         {
-            await diag.RunAsync(slug, null, ct).ConfigureAwait(false);
+            await diag.RunAsync(slug, progress, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -638,12 +871,46 @@ public sealed class BenchQaRunner(
         {
             log.Warn($"[bench-qa] {slug} failed: {ex.Message}");
         }
+        finally
+        {
+            restore?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// The QA check runs the short form of the tests that have one: the short drive self-test on every drive, the Quick graphics memory
+    /// test, and the quick cooling test without switching thermal modes. Returns what puts the person's own choice back afterwards.
+    /// </summary>
+    private Action? UseQaMode(string slug)
+    {
+        if (slug == ModuleSlugs.DriveSelfTest && diag.Catalog.ModuleFor(ModuleIds.DriveSelfTest) is DriveSelfTestModule selfTest)
+        {
+            var (mode, disks) = (selfTest.Mode, selfTest.Disks);
+            selfTest.Mode = SelfTestKind.Short;
+            selfTest.Disks = null;
+            return () => { selfTest.Mode = mode; selfTest.Disks = disks; };
+        }
+        if (slug == ModuleSlugs.GpuMemory && diag.Catalog.ModuleFor(ModuleIds.GpuMemory) is GpuMemoryModule vram)
+        {
+            var mode = vram.Mode;
+            vram.Mode = GpuMemoryMode.Quick;
+            return () => vram.Mode = mode;
+        }
+        if (slug == ModuleSlugs.Cooling && diag.Catalog.ModuleFor(ModuleIds.Cooling) is CoolingTestModule cooling)
+        {
+            var (mode, switchModes) = (cooling.Mode, cooling.SwitchModes);
+            cooling.Mode = CoolingTestMode.Quick;
+            cooling.SwitchModes = false;
+            return () => { cooling.Mode = mode; cooling.SwitchModes = switchModes; };
+        }
+        return null;
     }
 
     /// <summary>Whether a selected item has a check this PC can run now (keyboard and display are checked by the person, so always).</summary>
     private bool ItemCanRun(string itemId, List<string> suiteStressSlugs, List<string> plainStressSlugs)
     {
         if (itemId is "keyboard" or "display") return true;
+        if (GuidedItemIds.Contains(itemId)) return GuidedCanRun(itemId);
         if (itemId == "stability") return diag.CanRun(ModuleSlugs.Crashes) || diag.CanRun(ModuleSlugs.BsodHistory);
         if (StressItemToSlug.TryGetValue(itemId, out var stressSlug))
             return suiteStressSlugs.Contains(stressSlug, StringComparer.OrdinalIgnoreCase) || plainStressSlugs.Contains(stressSlug, StringComparer.OrdinalIgnoreCase);
@@ -661,7 +928,7 @@ public sealed class BenchQaRunner(
             if (string.Equals(stressSlug, slug, StringComparison.OrdinalIgnoreCase)) return item;
         if (string.Equals(slug, ModuleSlugs.SpeakerToMic, StringComparison.OrdinalIgnoreCase)) return "audio";
         if (string.Equals(slug, ModuleSlugs.Webcam, StringComparison.OrdinalIgnoreCase)) return "webcam";
-        return null;
+        return AddedCheckItems.FirstOrDefault(a => string.Equals(a.Slug, slug, StringComparison.OrdinalIgnoreCase)).ItemId;
     }
 
     /// <summary>Counts an item as finished, once, and only if this run checks it.</summary>

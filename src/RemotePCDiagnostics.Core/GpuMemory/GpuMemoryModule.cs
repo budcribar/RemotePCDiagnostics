@@ -17,7 +17,7 @@ public sealed class GpuMemoryModule(
     ISensorProvider? sensors = null,
     ILogger? log = null,
     Func<IStressClock>? clockFactory = null,
-    GpuMemoryOptions? options = null) : AreaModuleBase(log), ICancellableScan, IStressSuiteModule
+    GpuMemoryOptions? options = null) : AreaModuleBase(log), IDiagnosticModule, ICancellableScan, IStressSuiteModule // IDiagnosticModule relisted so IncludeInRunAll below reimplements it
 {
     public const string ModuleName = ModuleSlugs.GpuMemory;
     private readonly object _scanGate = new();

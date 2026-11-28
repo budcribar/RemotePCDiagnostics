@@ -23,7 +23,7 @@ public sealed class DashboardSummary
 
     /// <summary>The same note for the Stress tests page, without the security audit (it has its own page and is counted separately,
     /// so this matches <see cref="StressNotRunCount"/> and the group pills), or null when every test there ran.</summary>
-    public string? StressNotRunNote => Note(NotRun.Where(m => !IsAudit(m)).ToList());
+    public string? StressNotRunNote => Note(StressPageNotRun);
 
     private string? Note(IReadOnlyList<BannerModule> notRun)
     {
@@ -39,8 +39,12 @@ public sealed class DashboardSummary
     /// <summary>Hint shown after the note when the stress suite would run the missing tests.</summary>
     public string? NotRunHint => NotRun.Any(m => m.IsStress) ? "for stress tests, use Run checks + stress tests" : null;
 
-    /// <summary>On-demand tests on the Stress tests page that haven't run (the security audit is counted separately).</summary>
-    public int StressNotRunCount => NotRun.Count(m => !IsAudit(m));
+    /// <summary>On-demand tests on the Stress tests page that haven't run (the security audit is counted separately). Interactive
+    /// tests and other on-demand modules that live on another page are left out when the Stress tests page's list was given.</summary>
+    public int StressNotRunCount => StressPageNotRun.Count;
+
+    private IReadOnlyList<BannerModule> StressPageNotRun =>
+        NotRun.Where(m => !IsAudit(m) && (stressPage is null || stressPage.Contains(m.Name))).ToList();
 
     /// <summary>True when the security audit (its own page) hasn't run.</summary>
     public bool AuditNotRun => NotRun.Any(IsAudit);
@@ -48,13 +52,16 @@ public sealed class DashboardSummary
     private static bool IsAudit(BannerModule m) => string.Equals(m.Name, Security.SecurityAuditModule.ModuleName, StringComparison.OrdinalIgnoreCase);
 
     private int stressTotal;
+    private HashSet<string>? stressPage;
 
     /// <summary>Messages that mean the user cancelled the module, not that something is wrong.</summary>
     public static bool IsCancelled(BannerModule m) => m.Cancelled;
 
     /// <param name="modules">Modules in Dashboard order.</param>
     /// <param name="suite">Last stress suite progress; finished steps marked Skipped (not available on this PC) are not counted as not run.</param>
-    public static DashboardSummary Build(IEnumerable<BannerModule> modules, StressSuiteProgress? suite)
+    /// <param name="stressPage">Names of the modules the Stress tests page lists, so <see cref="StressNotRunCount"/> counts only those
+    /// (the Dashboard passes every module, including interactive tests). Null counts every on-demand module but the security audit.</param>
+    public static DashboardSummary Build(IEnumerable<BannerModule> modules, StressSuiteProgress? suite, IEnumerable<string>? stressPage = null)
     {
         var list = modules.ToList();
         var problems = list
@@ -68,7 +75,10 @@ public sealed class DashboardSummary
             : new HashSet<string>();
         var candidates = list.Where(m => m.OnDemand && !(m.IsStress && skipped.Contains(m.Name))).ToList();
         var notRun = candidates.Where(m => m.Status == DiagnosticStatus.NotRun).ToList();
-        return new DashboardSummary(problems, notRun) { stressTotal = candidates.Count(m => m.IsStress) };
+        return new DashboardSummary(problems, notRun) {
+            stressTotal = candidates.Count(m => m.IsStress),
+            stressPage = stressPage?.ToHashSet(StringComparer.OrdinalIgnoreCase),
+        };
     }
 
     private static string Lower(string s) => s.Length > 1 && char.IsUpper(s[0]) && char.IsLower(s[1]) ? char.ToLowerInvariant(s[0]) + s[1..] : s;

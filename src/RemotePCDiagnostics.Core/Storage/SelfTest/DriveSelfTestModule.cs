@@ -16,7 +16,7 @@ public sealed class DriveSelfTestModule(
     ILogger? log = null,
     TimeSpan? pollEvery = null,
     Func<TimeSpan, CancellationToken, Task>? delay = null,
-    Func<DateTimeOffset>? now = null) : AreaModuleBase(log), ICancellableScan
+    Func<DateTimeOffset>? now = null) : AreaModuleBase(log), IDiagnosticModule, ICancellableScan // relisted so IncludeInRunAll below reimplements it
 {
     public const string ModuleName = ModuleSlugs.DriveSelfTest;
     public static readonly TimeSpan DefaultPollEvery = TimeSpan.FromSeconds(5);

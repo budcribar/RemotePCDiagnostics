@@ -4,11 +4,13 @@ using RemotePCDiagnostics.Core.Areas;
 namespace RemotePCDiagnostics.Core.Usb;
 
 /// <summary>A device as the USB check shows it: the node, the hub port it's on (when the hub reported it) and the hub.</summary>
-public sealed record UsbDeviceView(UsbNode Node, UsbNode? Hub, UsbPortInfo? Port, bool Usb4)
+/// <param name="Usb2HalfOfUsb3Hub">A USB 3 hub shows up twice: a USB 2 hub on the port's USB 2 half and a USB 3 hub on its SuperSpeed half.
+/// This is the USB 2 one while its USB 3 twin is connected at SuperSpeed, so its USB 2 link is by design, not a slow connection.</param>
+public sealed record UsbDeviceView(UsbNode Node, UsbNode? Hub, UsbPortInfo? Port, bool Usb4, bool Usb2HalfOfUsb3Hub = false)
 {
     public string Where => UsbAnalysis.PortLabel(Hub, Port, Node.Port);
     public UsbSpeed Speed => Port?.Speed ?? UsbSpeed.Unknown;
-    public bool Downgraded => Port?.SpeedDowngraded == true;
+    public bool Downgraded => Port?.SpeedDowngraded == true && !Usb2HalfOfUsb3Hub;
 }
 
 /// <summary>Several devices behind the same hub or dock that went away within a couple of seconds of each other.</summary>
@@ -71,13 +73,25 @@ public static class UsbAnalysis
     public static IReadOnlyList<UsbDeviceView> Devices(UsbSnapshot tree)
     {
         var byId = IndexById(tree.Nodes);
-        return [.. tree.Nodes.Where(n => n.Kind is UsbNodeKind.Device or UsbNodeKind.Hub).Select(n =>
+        var placed = tree.Nodes.Where(n => n.Kind is UsbNodeKind.Device or UsbNodeKind.Hub).Select(n =>
         {
             var hub = n.ParentId is { } p && byId.TryGetValue(p, out var h) && h.IsHub ? h : null;
             var port = hub?.Ports?.FirstOrDefault(x => x.Number == n.Port);
-            return new UsbDeviceView(n, hub, port, IsUsb4(n, byId));
-        })];
+            return (Node: n, Hub: hub, Port: port);
+        }).ToList();
+        // External hubs connected at SuperSpeed: the USB 3 halves whose USB 2 twins aren't slow links.
+        var superSpeedHubs = placed.Where(x => x.Node.Kind == UsbNodeKind.Hub && (x.Port?.AtSuperSpeed == true || x.Port?.AtSuperSpeedPlus == true
+            || x.Port?.Speed is UsbSpeed.Super or UsbSpeed.SuperPlus || x.Node.HubType == 3)).ToList();
+        bool TwinAtSuperSpeed((UsbNode Node, UsbNode? Hub, UsbPortInfo? Port) x) =>
+            x.Node.Kind == UsbNodeKind.Hub && superSpeedHubs.Any(s => !ReferenceEquals(s.Node, x.Node)
+                && ((IsRealContainer(x.Node.ContainerId) && string.Equals(s.Node.ContainerId, x.Node.ContainerId, StringComparison.OrdinalIgnoreCase))
+                    || (x.Hub is not null && ReferenceEquals(s.Hub, x.Hub) && x.Port?.CompanionPort is { } c && c > 0 && c == s.Port?.Number)));
+        return [.. placed.Select(x => new UsbDeviceView(x.Node, x.Hub, x.Port, IsUsb4(x.Node, byId), TwinAtSuperSpeed(x)))];
     }
+
+    /// <summary>A container ID that names one physical device; Windows gives built-in devices all zeros or all Fs.</summary>
+    private static bool IsRealContainer(string? id) =>
+        !string.IsNullOrWhiteSpace(id) && id.Trim('{', '}').Replace("-", "", StringComparison.Ordinal).Any(c => c is not ('0' or 'f' or 'F'));
 
     private static bool IsUsb4(UsbNode n, Dictionary<string, UsbNode> byId)
     {
@@ -305,7 +319,9 @@ public static class UsbAnalysis
     {
         if (events is null)
         {
-            cards.Add(AreaCard.Failed("events", "USB errors in the System log", "The System log couldn't be read."));
+            // Not a USB problem: the card says what's missing without turning the check red.
+            const string why = "Windows didn't answer the System log query, so USB errors it logged aren't shown. Run the check again.";
+            cards.Add(new("events", "USB errors in the System log", AreaLevel.Neutral, "Not read", why, [], [], Note: why));
             return;
         }
         var usb = events.Where(IsUsbEvent).ToList();

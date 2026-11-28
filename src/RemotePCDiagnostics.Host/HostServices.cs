@@ -261,7 +261,8 @@ public static class HostServices
             sp.GetService<RemotePCDiagnostics.Core.Workflow.WorkflowService>(),
             sp.GetService<RemotePCDiagnostics.Core.Preferences.PreferencesService>(),
             sp.GetService<RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaService>(),
-            L<RemotePCDiagnostics.Core.Workflow.BenchQaRunner>()));
+            L<RemotePCDiagnostics.Core.Workflow.BenchQaRunner>(),
+            sp.GetService<RemotePCDiagnostics.Core.Input.PointerTestService>()));
         services.AddSingleton(_ => new RemotePCDiagnostics.Core.Workflow.ShopRelayClient(log: L<RemotePCDiagnostics.Core.Workflow.ShopRelayClient>()));
         services.AddSingleton<RemoteSessionHealth>();
         services.AddSingleton(sp => new DesktopSessionRelauncher(sp.GetRequiredService<ISessionContext>(), L<DesktopSessionRelauncher>()));
