@@ -1,0 +1,41 @@
+@* One card on a stress test page, in the same shape everywhere: a dot and a title, the headline, the facts as a list, then a short
+   note at the bottom. Inside StressTestShell its data-testid is the page's prefix and Id ("cpustress" and "live-temp" give
+   cpustress-live-temp). *@
+<div class="card" data-testid="@TestId">
+    <div class="card-head"><span class="dot dot-@Tone"></span><strong>@Title</strong></div>
+    @if (Headline is not null)
+    {
+        <div class="headline">@Headline</div>
+    }
+    @ChildContent
+    <CardList Items="Facts" />
+    @if (!string.IsNullOrWhiteSpace(Note))
+    {
+        <div class="meta">@Note</div>
+    }
+</div>
+
+@code {
+    /// <summary>The cascading name StressTestShell gives its data-testid prefix under.</summary>
+    public const string PrefixName = "StressTestPrefix";
+
+    [CascadingParameter(Name = PrefixName)] public string? Prefix { get; set; }
+    /// <summary>The end of the card's data-testid ("result", "live-temp").</summary>
+    [Parameter, EditorRequired] public string Id { get; set; } = "";
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    /// <summary>The dot's color: ok, warning, error, running or neutral.</summary>
+    [Parameter] public string Tone { get; set; } = "neutral";
+    [Parameter] public string? Headline { get; set; }
+    [Parameter] public IEnumerable<string?>? Facts { get; set; }
+    [Parameter] public string? Note { get; set; }
+    /// <summary>Anything else, under the headline (a table).</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private string TestId => Prefix is { Length: > 0 } p ? $"{p}-{Id}" : Id;
+
+    /// <summary>The dot for a result's status (ok, warning, error, running, notrun).</summary>
+    public static string ToneOf(DiagnosticStatus s) => s.ToString().ToLowerInvariant();
+
+    /// <summary>Good is ok, not good is a warning, not known is neutral.</summary>
+    public static string ToneOf(bool? good) => good switch { null => "neutral", true => "ok", false => "warning" };
+}

@@ -34,5 +34,5 @@ public abstract class StoreAwareComponent : ComponentBase, IDisposable
         Store.Changed -= OnChanged;
     }
 
-    protected static string DotClass(DiagnosticStatus s) => "dot dot-" + s.ToString().ToLowerInvariant();
+    protected internal static string DotClass(DiagnosticStatus s) => "dot dot-" + s.ToString().ToLowerInvariant();
 }

@@ -1,107 +1,46 @@
 @using RemotePCDiagnostics.Core.Stress
 @using RemotePCDiagnostics.Core.Osquery
 @inherits StressPageBase<DiskSpeedModule, DiskSpeedProgress, DiskSpeedReport>
-@{
-    var r = Store.Get(DiskSpeedModule.ModuleName);
-    var running = r.Status == DiagnosticStatus.Running;
-    var otherBusy = Diagnostics.IsAnyStressRunning && !running;
-    var report = r.Payload as DiskSpeedReport;
-    var p = running ? Module?.LastProgress : null;
-    var health = Store.Get(RemotePCDiagnostics.Core.Areas.DriveHealthModule.ModuleName);
-}
-<div class="toolbar">
-    <span class="icon-badge page-icon"><Icon Name="disk" Size="20" /></span><h1 data-testid="diskspeed-title">Disk speed test</h1>
-    <label class="meta">Drive
-        <select data-testid="diskspeed-drive" disabled="@(running || otherBusy)" @onchange="SetDrive">
-            @foreach (var d in _drives)
-            {
-                <option value="@d.Root" selected="@(d.Root == _drive)">@d.DisplayName · @HardwareInventory.FormatBytes(d.FreeBytes) free</option>
-            }
-        </select>
-    </label>
-    <label class="meta">Test size
-        <select data-testid="diskspeed-size" disabled="@(running || otherBusy)" @onchange="SetSize">
-            @foreach (var s in DiskSpeedOptions.SizeChoices)
-            {
-                <option value="@s" selected="@(s == _size)">@HardwareInventory.FormatBytes(s)</option>
-            }
-        </select>
-    </label>
-    <label class="meta">Run for at most
-        <select data-testid="diskspeed-duration" disabled="@(running || otherBusy)" @onchange="SetDuration">
-            @foreach (var d in DiskSpeedOptions.DurationChoices)
-            {
-                <option value="@d.TotalMinutes" selected="@(d == _duration)">@Minutes(d)</option>
-            }
-        </select>
-    </label>
-    @if (running || Diagnostics.IsStressSuiteRunning)
-    {
-        <button data-testid="diskspeed-stop" @onclick="Stop">Stop</button>
-    }
-    else
-    {
-        <button data-testid="diskspeed-start" @onclick="Start" disabled="@(running || otherBusy || Module is null || _drives.Count == 0)">Start</button>
-    }
-</div>
-<p class="meta">Measures read and write speed and checks the data comes back intact. Uses a temporary file; your files are never touched.</p>
-@if (_drives.Count == 0)
-{
-    <div class="notice notice-error">No drives that can be tested were found.</div>
-}
-
-<p data-testid="diskspeed-status" class="status-line @(running ? "is-running" : "")">
-    <span class="@DotClass(r.Status)"></span>
-    @(r.Status switch { DiagnosticStatus.NotRun => "Not run. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
-    @if (running)
-    {
-        <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span>
-    }
-</p>
-@if (health.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error)
-{
-    <p data-testid="diskspeed-health" class="status-line"><span class="@DotClass(health.Status)"></span>Drive health check: @health.Message</p>
-}
-
-@if (running)
-{
-    <div class="progress run-progress" data-testid="diskspeed-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
-    <div class="cards">
-        <div class="card is-running card-with-visual" data-testid="diskspeed-live-step">
-            <div class="card-main">
-                <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-                <div class="headline">@(p?.PhaseText ?? "Getting ready")…</div>
-                <CardList Text="@(p is null ? "" : $"{Clock(p.Elapsed)} so far · at most {Clock(p.Duration)}")" />
-            </div>
-            <TestRunningVisual Slug="@DiskSpeedModule.ModuleName" TestId="diskspeed-visual" />
-        </div>
-        <div class="card" data-testid="diskspeed-live-temp">
-            <div class="card-head"><span class="dot dot-neutral"></span><strong>Drive temperature</strong></div>
-            <div class="headline">@(p?.DriveTemperatureC is { } t ? $"{t:0}°C" : p is { SensorsAvailable: false } ? "Not available on this PC" : "—")</div>
-            <div class="meta">The test stops by itself if anything gets too hot</div>
-        </div>
-        @if (p?.FanRpm is not null)
+@{ var health = Store.Get(RemotePCDiagnostics.Core.Areas.DriveHealthModule.ModuleName); }
+<StressTestShell TReport="DiskSpeedReport" Page="this" Prefix="diskspeed" Icon="disk" Title="Disk speed test"
+                 Description="Measures read and write speed and checks the data comes back intact. Uses a temporary file; your files are never touched."
+                 DurationChoices="DiskSpeedOptions.DurationChoices" DurationLabel="Run for at most" ProgressCardId="live-step"
+                 Report="Report" Explanation="r => r.Explanation" Facts="Facts">
+    <Options>
+        <label class="meta">Drive
+            <select data-testid="diskspeed-drive" disabled="@Locked" @onchange="SetDrive">
+                @foreach (var d in _drives)
+                {
+                    <option value="@d.Root" selected="@(d.Root == _drive)">@d.DisplayName · @HardwareInventory.FormatBytes(d.FreeBytes) free</option>
+                }
+            </select>
+        </label>
+        <label class="meta">Test size
+            <select data-testid="diskspeed-size" disabled="@Locked" @onchange="SetSize">
+                @foreach (var s in DiskSpeedOptions.SizeChoices)
+                {
+                    <option value="@s" selected="@(s == _size)">@HardwareInventory.FormatBytes(s)</option>
+                }
+            </select>
+        </label>
+    </Options>
+    <Notices>
+        @if (_drives.Count == 0)
         {
-        <div class="card" data-testid="diskspeed-live-fan">
-            <div class="card-head"><span class="dot dot-neutral"></span><strong>Fan speed</strong></div>
-            <div class="headline">@($"{p.FanRpm:0} RPM")</div>
-        </div>
+            <div class="notice notice-error">No drives that can be tested were found.</div>
         }
-    </div>
-}
-else if (report is not null)
-{
-    <div class="cards">
-        <div class="card" data-testid="diskspeed-result">
-            <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
-            <div class="headline">@report.Explanation</div>
-            <CardList Items="@([ report.Drive, report.TestBytes > 0 ? $"Tested with {HardwareInventory.FormatBytes(report.TestBytes)}" : null, report.MaxDriveTemperatureC is { } mt ? $"Hottest {mt:0}°C" : null, $"Finished {r.Timestamp.ToLocalTime():g}" ])" />
-
-        </div>
+        @if (health.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error)
+        {
+            <p data-testid="diskspeed-health" class="status-line"><span class="@DotClass(health.Status)"></span><span>Drive health check: @health.Message</span></p>
+        }
+    </Notices>
+    <LiveCards>
+        <StressSensorCards Title="Drive temperature" TemperatureC="Progress?.DriveTemperatureC" SensorsAvailable="Progress?.SensorsAvailable" FanRpm="Progress?.FanRpm" />
+    </LiveCards>
+    <ReportCards Context="report">
         @if (report.TestBytes > 0)
         {
-            <div class="card" data-testid="diskspeed-speeds">
-                <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>Speeds</strong></div>
+            <StressCard Id="speeds" Title="Speeds" Tone="@StressCard.ToneOf(Result.Status)">
                 <table class="detail">
                     <tr><th>Reading large files</th><td>@DiskSpeedReport.Speed(report.SequentialReadMBps)</td></tr>
                     <tr><th>Writing large files</th><td>@DiskSpeedReport.Speed(report.SequentialWriteMBps)</td></tr>
@@ -109,15 +48,20 @@ else if (report is not null)
                     <tr><th>Writing small pieces</th><td>@DiskSpeedReport.Ops(report.RandomWriteIops)</td></tr>
                     <tr><th>Data checked</th><td>@(report.DataErrors > 0 ? $"{report.DataErrors:N0} mismatch(es) found" : report.BlocksVerified > 0 ? "All data matched" : "—")</td></tr>
                 </table>
-            </div>
+            </StressCard>
         }
-    </div>
-}
+    </ReportCards>
+</StressTestShell>
 
 @code {
     private IReadOnlyList<TestDrive> _drives = [];
     private string? _drive;
     private long _size = DiskSpeedOptions.GB;
+
+    protected override bool CanStart => Module is not null && _drives.Count > 0;
+
+    private static IEnumerable<string?> Facts(DiskSpeedReport r) =>
+        [r.Drive, r.TestBytes > 0 ? $"Tested with {HardwareInventory.FormatBytes(r.TestBytes)}" : null, r.MaxDriveTemperatureC is { } mt ? $"Hottest {mt:0}°C" : null];
 
     protected override void SyncFromModule(DiskSpeedModule m)
     {
@@ -134,4 +78,3 @@ else if (report is not null)
     private void SetDrive(ChangeEventArgs e) => _drive = e.Value?.ToString();
     private void SetSize(ChangeEventArgs e) { if (long.TryParse(e.Value?.ToString(), out var v)) _size = v; }
 }
-

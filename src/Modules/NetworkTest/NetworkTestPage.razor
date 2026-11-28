@@ -1,129 +1,64 @@
 @using RemotePCDiagnostics.Core.Stress
 @inherits StressPageBase<NetworkTestModule, NetworkTestProgress, NetworkTestReport>
-@{
-    var r = Store.Get(NetworkTestModule.ModuleName);
-    var running = r.Status == DiagnosticStatus.Running;
-    var otherBusy = Diagnostics.IsAnyStressRunning && !running;
-    var report = r.Payload as NetworkTestReport;
-    var p = running ? Module?.LastProgress : null;
-}
-<div class="toolbar">
-    <span class="icon-badge page-icon"><Icon Name="net" Size="20" /></span><h1 data-testid="nettest-title">Network test</h1>
-    <label class="meta">Run for
-        <select data-testid="nettest-duration" disabled="@(running || otherBusy)" @onchange="SetDuration">
-            @foreach (var d in NetworkTestOptions.DurationChoices)
-            {
-                <option value="@d.TotalMinutes" selected="@(d == _duration)">@Minutes(d)</option>
-            }
-        </select>
-    </label>
-    @if (running || Diagnostics.IsStressSuiteRunning)
-    {
-        <button data-testid="nettest-stop" @onclick="Stop">Stop</button>
-    }
-    else
-    {
-        <button data-testid="nettest-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
-    }
-</div>
-<p class="meta">Pings the router and the internet every second, measures speed once and looks for network errors.</p>
-
-<p data-testid="nettest-status" class="status-line @(running ? "is-running" : "")">
-    <span class="@DotClass(r.Status)"></span>
-    @(r.Status switch { DiagnosticStatus.NotRun => "Not run. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
-    @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
-</p>
-
-@if (running)
-{
-    var live = p is null ? null : PingStats.From(p.Samples.Select(s => s.InternetMs));
-    <div class="progress run-progress" data-testid="nettest-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
-    <div class="cards">
-        <div class="card is-running card-with-visual" data-testid="nettest-live-progress">
-            <div class="card-main">
-                <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-                <div class="headline">@(p is null ? "Getting ready…" : $"{p.Step}…")</div>
-                <div class="meta">@(p is null ? "" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
-            </div>
-            <TestRunningVisual Slug="@NetworkTestModule.ModuleName" TestId="nettest-visual" />
-        </div>
-        <div class="card" data-testid="nettest-live-latency">
-            <div class="card-head"><span class="dot dot-neutral"></span><strong>Delay right now</strong></div>
-            <div class="headline">@NetworkTestReport.Ms(p?.Samples.LastOrDefault()?.InternetMs)</div>
-            <CardList Text="@($"Average {NetworkTestReport.Ms(live?.AverageMs)} · {LostText(live?.LossPercent)}")" />
-        </div>
-        <div class="card" data-testid="nettest-live-temp">
-            <div class="card-head"><span class="dot dot-neutral"></span><strong>CPU temperature</strong></div>
-            <div class="headline">@(p?.CpuTemperatureC is { } t ? $"{t:0}°C" : p is { SensorsAvailable: false } ? "Not available on this PC" : "—")</div>
-            <CardList Text="@($"{(p?.FanRpm is { } fr ? $"Fan {fr:0} RPM · " : "")}Stops by itself if anything gets too hot")" />
-        </div>
-    </div>
-    @if (p is { Samples.Count: > 0 })
-    {
-        <h3>Connection over time</h3>
-        <LatencyChart Samples="p.Samples" Duration="p.Duration" TestId="nettest-live-chart" />
-    }
-}
-else if (report is not null)
-{
-    <div class="cards">
-        <div class="card" data-testid="nettest-result">
-            <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
-            <div class="headline">@report.Explanation</div>
-            <CardList Text="@($"Ran for {Clock(report.Ran)} · finished {r.Timestamp.ToLocalTime():g}")" />
-        </div>
-    </div>
-    @if (report.Samples.Count > 0)
-    {
-        <div class="cards" style="margin-top:12px">
-            <div class="card" data-testid="nettest-card-latency">
-                <div class="card-head"><span class="@Dot(report.Internet.AverageMs is null ? null : report.Internet.AverageMs < 100)"></span><strong>Latency</strong></div>
-                <div class="headline">@NetworkTestReport.Ms(report.Internet.AverageMs) average</div>
-                <CardList Text="@($"Slowest {NetworkTestReport.Ms(report.Internet.WorstMs)}{(report.HasGateway ? $" · router {NetworkTestReport.Ms(report.Gateway.AverageMs)}" : "")}")" />
-            </div>
-            <div class="card" data-testid="nettest-card-loss">
-                <div class="card-head"><span class="@Dot(report.Internet.LossPercent is null || report.Internet.Received == 0 ? null : report.Internet.LossPercent < 0.5)"></span><strong>Loss</strong></div>
-                <div class="headline">@(report.Internet.Received == 0 ? "No replies" : NetworkTestReport.Pct(report.Internet.LossPercent))</div>
-                <div class="meta">@(report.Internet.Sent - report.Internet.Received) of @report.Internet.Sent checks got no reply</div>
-            </div>
-            <div class="card" data-testid="nettest-card-jitter">
-                <div class="card-head"><span class="@Dot(report.Internet.JitterMs is null ? null : report.Internet.JitterMs < 30)"></span><strong>Jitter</strong></div>
-                <div class="headline">@NetworkTestReport.Ms(report.Internet.JitterMs)</div>
-                <div class="meta">How much the delay jumps around</div>
-            </div>
-            <div class="card" data-testid="nettest-card-speed">
-                <div class="card-head"><span class="@Dot(report.DownloadMbps is null ? null : true)"></span><strong>Speed</strong></div>
-                <div class="headline">↓ @NetworkTestReport.Speed(report.DownloadMbps) · ↑ @NetworkTestReport.Speed(report.UploadMbps)</div>
-                <div class="meta">@(report.DownloadMbps is null ? "Speed couldn't be measured" : "Download · Upload")@(!string.IsNullOrWhiteSpace(report.WifiLinkRateText) ? $" · Wi-Fi link {report.WifiLinkRateText}" : "")</div>
-            </div>
+<StressTestShell TReport="NetworkTestReport" Page="this" Prefix="nettest" Icon="net" Title="Network test"
+                 Description="Pings the router and the internet every second, measures speed once and looks for network errors."
+                 DurationChoices="NetworkTestOptions.DurationChoices" Report="Report" Explanation="r => r.Explanation" Facts="Facts">
+    <LiveCards>
+        @{
+            var p = Progress;
+            var live = p is null ? null : PingStats.From(p.Samples.Select(s => s.InternetMs));
+        }
+        <StressCard Id="live-latency" Title="Delay right now" Headline="@NetworkTestReport.Ms(p?.Samples.LastOrDefault()?.InternetMs)"
+                    Facts="@([$"Average {NetworkTestReport.Ms(live?.AverageMs)}", LostText(live?.LossPercent)])" />
+        <StressSensorCards Title="CPU temperature" TemperatureC="p?.CpuTemperatureC" SensorsAvailable="p?.SensorsAvailable" FanRpm="p?.FanRpm" />
+    </LiveCards>
+    <LiveFooter>
+        @if (Progress is { Samples.Count: > 0 } p)
+        {
+            <h3>Connection over time</h3>
+            <LatencyChart Samples="p.Samples" Duration="p.Duration" TestId="nettest-live-chart" />
+        }
+    </LiveFooter>
+    <ReportCards Context="report">
+        @if (report.Samples.Count > 0)
+        {
+            var net = report.Internet;
+            <StressCard Id="card-latency" Title="Latency" Tone="@StressCard.ToneOf(net.AverageMs is null ? null : net.AverageMs < 100)"
+                        Headline="@($"{NetworkTestReport.Ms(net.AverageMs)} average")"
+                        Facts="@([$"Slowest {NetworkTestReport.Ms(net.WorstMs)}", report.HasGateway ? $"Router {NetworkTestReport.Ms(report.Gateway.AverageMs)}" : null])" />
+            <StressCard Id="card-loss" Title="Loss" Tone="@StressCard.ToneOf(net.LossPercent is null || net.Received == 0 ? null : net.LossPercent < 0.5)"
+                        Headline="@(net.Received == 0 ? "No replies" : NetworkTestReport.Pct(net.LossPercent))"
+                        Note="@($"{net.Sent - net.Received} of {net.Sent} checks got no reply")" />
+            <StressCard Id="card-jitter" Title="Jitter" Tone="@StressCard.ToneOf(net.JitterMs is null ? null : net.JitterMs < 30)"
+                        Headline="@NetworkTestReport.Ms(net.JitterMs)" Note="How much the delay jumps around" />
+            <StressCard Id="card-speed" Title="Speed" Tone="@StressCard.ToneOf(report.DownloadMbps is null ? null : true)"
+                        Headline="@($"↓ {NetworkTestReport.Speed(report.DownloadMbps)} · ↑ {NetworkTestReport.Speed(report.UploadMbps)}")"
+                        Note="@((report.DownloadMbps is null ? "Speed couldn't be measured" : "Download · Upload") + (!string.IsNullOrWhiteSpace(report.WifiLinkRateText) ? $" · Wi-Fi link {report.WifiLinkRateText}" : ""))" />
             @if (report.Bufferbloat is { } bloat)
             {
-                <div class="card" data-testid="nettest-card-bufferbloat">
-                    <div class="card-head"><span class="@Dot(bloat.Grade is null ? null : bloat.Grade is "A" or "B")"></span><strong>Bufferbloat</strong></div>
-                    <div class="headline">@bloat.HeadlineText</div>
-                    @if (bloat.Grade is not null)
-                    {
-                        <CardList Text="@($"Idle {NetworkTestReport.Ms(bloat.IdleMedianMs)}{(bloat.DownloadAddedMs is { } da ? $" · ↓ +{da:0} ms" : "")}{(bloat.UploadAddedMs is { } ua ? $" · ↑ +{ua:0} ms" : "")}")" />
-                    }
-                    @if (!string.IsNullOrWhiteSpace(bloat.UngradedReason))
-                    {
-                        <div class="meta">@bloat.UngradedReason</div>
-                    }
-                </div>
+                <StressCard Id="card-bufferbloat" Title="Bufferbloat" Tone="@StressCard.ToneOf(bloat.Grade is null ? null : bloat.Grade is "A" or "B")"
+                            Headline="@bloat.HeadlineText" Facts="@(bloat.Grade is null ? null : BloatFacts(bloat))" Note="@bloat.UngradedReason" />
             }
-            <div class="card" data-testid="nettest-card-adapter">
-                <div class="card-head"><span class="@Dot(report.NewAdapterErrors is null ? null : report.NewAdapterErrors == 0 && report.NewAdapterDrops == 0)"></span><strong>Adapter errors</strong></div>
-                <div class="headline">@(report.NewAdapterErrors is null ? "Not reported" : report.NewAdapterErrors == 0 && report.NewAdapterDrops == 0 ? "No new errors" : $"{report.NewAdapterErrors:N0} new errors · {report.NewAdapterDrops:N0} dropped")</div>
-                <div class="meta">Problems counted by your network adapter during the test</div>
-            </div>
-        </div>
-        <h3>Connection over time</h3>
-        <LatencyChart Samples="report.Samples" Duration="report.Ran" TestId="nettest-chart" />
-    }
-}
+            <StressCard Id="card-adapter" Title="Adapter errors"
+                        Tone="@StressCard.ToneOf(report.NewAdapterErrors is null ? null : report.NewAdapterErrors == 0 && report.NewAdapterDrops == 0)"
+                        Headline="@(report.NewAdapterErrors is null ? "Not reported" : report.NewAdapterErrors == 0 && report.NewAdapterDrops == 0 ? "No new errors" : $"{report.NewAdapterErrors:N0} new errors · {report.NewAdapterDrops:N0} dropped")"
+                        Note="Problems counted by your network adapter during the test" />
+        }
+    </ReportCards>
+    <ReportFooter Context="report">
+        @if (report.Samples.Count > 0)
+        {
+            <h3>Connection over time</h3>
+            <LatencyChart Samples="report.Samples" Duration="report.Ran" TestId="nettest-chart" />
+        }
+    </ReportFooter>
+</StressTestShell>
 
 @code {
-    private static string Dot(bool? good) => good switch { null => "dot dot-neutral", true => "dot dot-ok", false => "dot dot-warning" };
-    private static string LostText(double? pct) => NetworkTestReport.Pct(pct) switch { "None" => "no replies lost", "—" => "loss not measured yet", var p => $"{p} of replies lost" };
-}
+    private static IEnumerable<string?> Facts(NetworkTestReport r) => [$"Ran for {Clock(r.Ran)}"];
 
+    private static string LostText(double? pct) => NetworkTestReport.Pct(pct) switch { "None" => "no replies lost", "—" => "loss not measured yet", var p => $"{p} of replies lost" };
+
+    private static IEnumerable<string?> BloatFacts(BufferbloatResult b) =>
+        [$"Idle {NetworkTestReport.Ms(b.IdleMedianMs)}", b.DownloadAddedMs is { } da ? $"↓ +{da:0} ms" : null, b.UploadAddedMs is { } ua ? $"↑ +{ua:0} ms" : null];
+}
