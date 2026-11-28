@@ -5,6 +5,7 @@
 @using RemotePCDiagnostics.Core.Workflow
 @using RemotePCDiagnostics.Core.Areas
 @using RemotePCDiagnostics.Core.Usb
+@using RemotePCDiagnostics.Core.Input
 @inherits StoreAwareComponent
 @inject ISessionContext Session
 @inject IJSRuntime JS
@@ -60,7 +61,8 @@
     var adLabel = adRunning ? "Running…" : adAnswer ? "Waiting for answer" : adWaiting ? "In progress" : OutcomeLabel(adResult.Status);
 
     var kbSnap = ActivePhysicalQa.Current;
-    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning || scRunning || wfRunning || ethRunning || chRunning || usbRunning || adRunning;
+    var ptrSnap = ActivePointerTest.Current;
+    var anyRunning = _isBatchRunning || ptrSnap.Verdict == PointerTestVerdict.Running || camRunning || s2mRunning || m2sRunning || scRunning || wfRunning || ethRunning || chRunning || usbRunning || adRunning;
 
     var allSelected = _selected.Count == AllTestIds.Length;
     var mixedSelected = _selected.Count > 0 && _selected.Count < AllTestIds.Length;
@@ -78,7 +80,7 @@
         <div class="banner-text">
             <div class="banner-title" data-testid="interactive-banner-title">Hands-on physical hardware verification</div>
             <div class="banner-sub" data-testid="interactive-banner-desc">
-                Select and run interactive hardware tests (keyboard matrix, LCD uniformity &amp; touch digitizer, live webcam feed, and microphone/speaker loopback).
+                Select and run interactive hardware tests (keyboard matrix, LCD uniformity &amp; touch digitizer, mouse, touchpad &amp; touchscreen, live webcam feed, and microphone/speaker loopback).
             </div>
             @if (Session.Mode == SessionMode.Remote || _hasRemoteSession)
             {
@@ -185,6 +187,33 @@
                         </div>
                         <div class="ct-row-side">
                             <span class="chip chip-@dispChip" data-testid="interactive-status-display">@dispLabel</span>
+                        </div>
+                    </div>
+
+                    @* Pointer and touch *@
+                    @{
+                        var ptrIsSel = _selectedTestId == "pointer";
+                        var ptrChip = PointerChip(ptrSnap.Verdict);
+                        var ptrLabel = PointerLabel(ptrSnap.Verdict);
+                        var ptrSummary = ptrSnap.Notes ?? (ptrSnap.Device is { } ptrDev
+                            ? $"{ptrDev.Name}: {ptrSnap.Steps.Count(st => st.State == PointerStepState.Passed)} of {ptrSnap.Steps.Count} steps passed"
+                            : "Pointer, buttons, scroll, drag, touchpad fingers and touchscreen coverage");
+                    }
+                    <div class="ct-row @(ptrIsSel ? "selected" : "")" role="button" tabindex="0" aria-pressed="@(ptrIsSel ? "true" : "false")"
+                         data-testid="interactive-row-pointer" @onclick='() => SelectTest("pointer")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("pointer") ? "true" : "false")"
+                                aria-label="Include Mouse, touchpad and touchscreen test"
+                                data-testid="interactive-check-pointer"
+                                @onclick='() => ToggleItem("pointer")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("pointer") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@(ptrChip == "ok" ? "ok" : ptrChip == "err" ? "critical" : ptrChip == "run" ? "running" : "na")"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">Mouse, touchpad &amp; touchscreen</div>
+                            <div class="ct-row-summary meta" title="@ptrSummary">@ptrSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@ptrChip" data-testid="interactive-status-pointer">@ptrLabel</span>
                         </div>
                     </div>
 
@@ -432,7 +461,11 @@
         <section class="ct-detail" aria-label="Interactive test details" data-testid="interactive-detail">
             @if (_selectedTestId == "keyboard")
             {
-                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="keyboard" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" OnOutcomeChanged="OnPhysicalQaOutcomeCompleted" />
+                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="keyboard" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" RemoteSessionActive="RemoteSessionActive" OnOutcomeChanged="OnPhysicalQaOutcomeCompleted" />
+            }
+            else if (_selectedTestId == "pointer")
+            {
+                <PointerTestPane Service="ActivePointerTest" IsRemoteDisplay="_isRemoteDisplay" RemoteSessionActive="RemoteSessionActive" AutoStart="_isBatchRunning" />
             }
             else if (_selectedTestId == "display")
             {
@@ -1260,7 +1293,11 @@
     private readonly PhysicalBenchQaService _fallbackPhysicalQa = new();
     private PhysicalBenchQaService ActivePhysicalQa => App.PhysicalQa ?? _fallbackPhysicalQa;
 
-    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "charger", "wifi", "ethernet", "usbports", "audiodevices"];
+    private PointerTestService? _fallbackPointerTest;
+    private PointerTestService ActivePointerTest => App.PointerTest ?? (_fallbackPointerTest ??= new PointerTestService(App.PhysicalInput));
+    private bool RemoteSessionActive => Session.Mode == SessionMode.Remote || _hasRemoteSession;
+
+    private static readonly string[] AllTestIds = ["keyboard", "display", "pointer", "webcam", "speakertomic", "mictospeaker", "soundcheck", "charger", "wifi", "ethernet", "usbports", "audiodevices"];
     private readonly HashSet<string> _selected = new(AllTestIds, StringComparer.OrdinalIgnoreCase);
 
     // The Wi-Fi connect pane: the last scan's networks, the one picked (null = the network the PC is on), and the typed password.
@@ -1327,7 +1364,7 @@
             kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help, wifi,
             new InteractiveExport.WifiPane(_wifiNetworks, WifiPicked?.Ssid, _wifiPassword.Length > 0, _wifiDropsSession, _wifiScanning),
             ethernet, new InteractiveExport.EthernetPane(_ethPorts, EthernetPicked?.Name, _ethMode, _ethDropsSession, _ethLoading), charger,
-            new InteractiveExport.UsbPortCheckState(PersonState(usb), usbLive ?? UsbPortCheckReport.Empty), PersonState(ad), adBusyId);
+            new InteractiveExport.UsbPortCheckState(PersonState(usb), usbLive ?? UsbPortCheckReport.Empty), PersonState(ad), adBusyId, ActivePointerTest.Current);
 
     private IReadOnlyList<AudioDevice> _outputs = [];
     private IReadOnlyList<AudioDevice> _inputs = [];
@@ -1359,6 +1396,8 @@
         LoadDevices();
         _usbPortCheckModule = GetUsbPortCheckModule();
         if (_usbPortCheckModule is not null) _usbPortCheckModule.Changed += OnUsbPortCheckChanged;
+        // The row's chip and interactive-data follow the pointer test as it runs.
+        ActivePointerTest.Changed += OnPointerTestChanged;
         if (TestQuery is { Length: > 0 } t && AllTestIds.Contains(t, StringComparer.OrdinalIgnoreCase)) _selectedTestId = t.ToLowerInvariant();
         if (_selectedTestId == "ethernet") _ = LoadEthernetPortsAsync();
         if (_selectedTestId == "soundcheck" && HelpQuery == "cant-hear") _ = OpenCantHearAsync();
@@ -1405,6 +1444,8 @@
         try { await JS.InvokeVoidAsync("rpdSession.releaseControlToLocal"); } catch { }
     }
 
+    private void OnPointerTestChanged() => _ = InvokeAsync(StateHasChanged);
+
     public override void Dispose()
     {
         _disposed = true;
@@ -1416,6 +1457,9 @@
         }
         if (_levelSource is not null) _levelSource.LevelChanged -= OnMicLevel;
         CancelAudioDevices();
+        ActivePointerTest.Changed -= OnPointerTestChanged;
+        _fallbackPointerTest?.Dispose();
+        _fallbackPointerTest = null;
         _batchCts?.Cancel();
         _interactiveWaitTcs?.TrySetCanceled();
         _batchCts?.Dispose();
@@ -1608,6 +1652,48 @@
         }
     }
 
+    /// <summary>Run selected: the pane starts the test when it opens; waits until it ends (passed, failed, skipped or stopped).</summary>
+    private async Task WaitForPointerTestAsync(CancellationToken ct)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = ActivePointerTest.Current.Verdict == PointerTestVerdict.Running;
+        void OnChanged()
+        {
+            var v = ActivePointerTest.Current.Verdict;
+            if (v == PointerTestVerdict.Running) started = true;
+            else if (started) tcs.TrySetResult();
+        }
+        using var reg = ct.Register(() => tcs.TrySetCanceled(ct));
+        ActivePointerTest.Changed += OnChanged;
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+            await tcs.Task;
+        }
+        finally
+        {
+            ActivePointerTest.Changed -= OnChanged;
+        }
+    }
+
+    private static string PointerChip(PointerTestVerdict v) => v switch
+    {
+        PointerTestVerdict.Passed => "ok",
+        PointerTestVerdict.Failed => "err",
+        PointerTestVerdict.Running => "run",
+        _ => "na",
+    };
+
+    private static string PointerLabel(PointerTestVerdict v) => v switch
+    {
+        PointerTestVerdict.Passed => "Passed",
+        PointerTestVerdict.Failed => "Failed",
+        PointerTestVerdict.Running => "Running",
+        PointerTestVerdict.Skipped => "Skipped",
+        PointerTestVerdict.Cancelled => "Stopped",
+        _ => "Not tested",
+    };
+
     private async Task RunSelectedAsync()
     {
         if (Diagnostics.IsStressSuiteRunning || _isBatchRunning || _isRemoteDisplay) return;
@@ -1631,6 +1717,9 @@
                         break;
                     case "display":
                         await WaitForPhysicalQaAsync("display", ct);
+                        break;
+                    case "pointer":
+                        await WaitForPointerTestAsync(ct);
                         break;
                     case "webcam":
                         await StartWebcamAsync();
@@ -1677,6 +1766,7 @@
     {
         _batchCts?.Cancel();
         _interactiveWaitTcs?.TrySetCanceled();
+        ActivePointerTest.Cancel();
         CancelWebcam();
         CancelSpeakerToMic();
         CancelMicToSpeaker();

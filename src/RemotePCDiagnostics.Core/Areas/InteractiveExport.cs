@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using RemotePCDiagnostics.Core.Audio;
+using RemotePCDiagnostics.Core.Input;
 using RemotePCDiagnostics.Core.Webcam;
 using RemotePCDiagnostics.Core.Workflow;
 
@@ -35,8 +36,8 @@ public static class InteractiveExport
     public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
         DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null,
-        ModuleState? audioDevices = null, string? audioDevicesBusyId = null) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane, charger, usbPortCheck, audioDevices, audioDevicesBusyId), Json);
+        ModuleState? audioDevices = null, string? audioDevicesBusyId = null, PointerTestSnapshot? pointer = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane, charger, usbPortCheck, audioDevices, audioDevicesBusyId, pointer), Json);
 
     /// <summary>The USB port check's result and what it has seen so far in the watch that is running (the result is Running meanwhile).</summary>
     public sealed record UsbPortCheckState(ModuleState Module, Usb.UsbPortCheckReport Live);
@@ -56,7 +57,7 @@ public static class InteractiveExport
     public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
         DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null,
-        ModuleState? audioDevices = null, string? audioDevicesBusyId = null) => new
+        ModuleState? audioDevices = null, string? audioDevicesBusyId = null, PointerTestSnapshot? pointer = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -70,6 +71,7 @@ public static class InteractiveExport
         {
             KeyboardTest(page, bench),
             DisplayTest(page, bench),
+            PointerTest(page, pointer ?? new PointerTestSnapshot()),
             WebcamTest(page, webcam),
             SpeakerToMicTest(page, speakerToMic),
             MicToSpeakerTest(page, micToSpeaker),
@@ -105,7 +107,8 @@ public static class InteractiveExport
         @checked = page.CheckedTestIds.Contains("keyboard"),
         open = page.SelectedTestId == "keyboard",
         state = b.KeyboardOutcome != PhysicalCheckOutcome.NotRun ? "done" : b.UniqueKeysPressed > 0 ? "in-progress" : "waiting-for-person",
-        measured = new { uniqueKeysPressed = b.UniqueKeysPressed, peakKeyRollover = b.PeakKeyRollover },
+        // Keys count only when this PC's keyboard pressed them; ignoredKeys came from elsewhere (a remote viewer, injected input).
+        measured = new { uniqueKeysPressed = b.UniqueKeysPressed, peakKeyRollover = b.PeakKeyRollover, ignoredKeys = b.IgnoredKeys, keysVerified = b.KeysVerified },
         personOutcome = b.KeyboardOutcome == PhysicalCheckOutcome.NotRun ? null : Physical(b.KeyboardOutcome),
         notes = T(b.KeyboardNotes),
         instructions = "Open the keyboard test, choose the matching layout, click Capture keys, then press every key once and a few keys "
@@ -126,6 +129,89 @@ public static class InteractiveExport
         instructions = "Launch the full-screen test, step through each solid colour looking for dead or stuck pixels, bleed and blemishes, "
             + "and touch the screen with several fingers if it is a touch screen. Then Pass & exit, or choose Note blemish or Fail display.",
         reportIf = ReportIf.Display,
+    };
+
+    private static string StepId(PointerStep s) => s switch
+    {
+        PointerStep.Move => "move",
+        PointerStep.Buttons => "buttons",
+        PointerStep.Scroll => "scroll",
+        PointerStep.Drag => "drag",
+        PointerStep.TouchpadGestures => "touchpad",
+        PointerStep.TouchGrid => "touch-grid",
+        _ => s.ToString().ToLowerInvariant(),
+    };
+
+    private static string StepState(PointerStepState s) => s switch
+    {
+        PointerStepState.NotSupported => "not-supported",
+        _ => s.ToString().ToLowerInvariant(),
+    };
+
+    private static object PointerTest(PageState page, PointerTestSnapshot p) => new
+    {
+        id = "pointer",
+        name = "Mouse, touchpad and touchscreen",
+        @checked = page.CheckedTestIds.Contains("pointer"),
+        open = page.SelectedTestId == "pointer",
+        state = p.Verdict switch
+        {
+            PointerTestVerdict.Running => "running",
+            PointerTestVerdict.NotRun => "waiting-for-person",
+            _ => "done",
+        },
+        device = p.Device is null ? null : new
+        {
+            name = V(p.Device.Name),
+            kind = p.Device.Kind.ToString().ToLowerInvariant(),
+            precisionTouchpad = p.Device.PrecisionTouchpad,
+        },
+        // Measured by RPCD from this PC's own input; the person never enters this verdict.
+        verdict = p.Verdict switch
+        {
+            PointerTestVerdict.Passed => "passed",
+            PointerTestVerdict.Failed => "failed",
+            PointerTestVerdict.Skipped => "skipped",
+            PointerTestVerdict.Cancelled => "stopped",
+            PointerTestVerdict.Running => "running",
+            _ => "notrun",
+        },
+        currentStep = p.Current is { } c ? StepId(c) : null,
+        secondsLeft = p.Current is null ? (int?)null : p.SecondsLeft,
+        steps = p.Steps.Select(s => new { id = StepId(s.Step), title = PointerTestService.Title(s.Step), state = StepState(s.State), reason = V(s.Reason) }).ToList(),
+        measured = new
+        {
+            corners = p.CornerCount,
+            leftDoubleClick = p.LeftDoubleClick,
+            rightDoubleClick = p.RightDoubleClick,
+            middleDoubleClick = p.MiddleDoubleClick,
+            noMiddleButton = p.NoMiddleButton,
+            scrollUp = p.ScrollUp,
+            scrollDown = p.ScrollDown,
+            scrollSideways = p.ScrollLeft + p.ScrollRight,
+            wheelTicks = p.WheelTicks,
+            leftDragged = p.LeftDragged,
+            rightDragged = p.RightDragged,
+            tapToClick = p.TapToClick,
+            twoFingerClick = p.TwoFingerClick,
+            maxTouchpadContacts = p.MaxTouchpadContacts,
+            cellsTouched = p.CellsTouched.Count,
+            cells = p.CellCount,
+            untouchedCells = p.Steps.Any(s => s.Step == PointerStep.TouchGrid)
+                ? Enumerable.Range(0, p.CellCount).Where(i => !p.CellsTouched.Contains(i)).ToList() : null,
+            gridColumns = p.GridColumns,
+            maxTouchPoints = p.MaxTouchPoints,
+        },
+        inputVerified = p.InputVerified,
+        unverifiedReason = V(p.UnverifiedReason),
+        ignoredInputs = p.IgnoredInputs,
+        injectedInputs = p.InjectedInputs,
+        notes = T(p.Notes),
+        instructions = p.Current is { } now ? PointerTestService.Instructions(now)
+            : "Choose the device (mouse, touchpad, touchscreen or pen) and press Start test. A full-screen test walks through moving to the corners, "
+            + "double-clicking each button, scrolling, dragging with each button, touchpad taps and fingers, and touching every square of a "
+            + "touchscreen. Each step has Skip and Doesn't work, and fails after 30 s with no input. Only this PC's own input counts.",
+        reportIf = ReportIf.Pointer,
     };
 
     private static object WebcamTest(PageState page, ModuleState m)
@@ -542,6 +628,8 @@ public static class InteractiveExport
             + "laptop or a keyboard with extra keys), keys they press do not light up, or they cannot find a key the test asks for.";
         public const string Display = "The full-screen test does not open on the screen the person is using, does not cover it, cannot be "
             + "exited, or touch does not register on a touch screen.";
+        public const string Pointer = "The person's mouse, touchpad, touchscreen or pen is not listed, input they make on the PC is not counted "
+            + "(ignoredInputs rises while they use it), or a step asks for something their device does not have.";
         public const string Webcam = "The camera the person uses is not listed, the preview never appears, or the measured result disagrees "
             + "with what the person sees.";
         public const string SpeakerToMic = "The person's speaker or microphone is not listed, they hear the tone but it is not detected, or "

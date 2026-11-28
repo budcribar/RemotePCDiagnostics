@@ -135,7 +135,7 @@
 @if (waitingFor is { Length: > 0 })
 {
     @* The run waits on this check, not the page: leaving the page and coming back shows it again, and the run carries on. *@
-    <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="@waitingFor" />
+    <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="@waitingFor" RemoteSessionActive="@(Session.Mode == SessionMode.Remote || _isRemoteDisplay)" />
 }
 
 @{
