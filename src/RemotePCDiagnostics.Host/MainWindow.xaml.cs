@@ -127,6 +127,13 @@ public partial class MainWindow : Window
                     {
                         try
                         {
+                            // Hardware details first: the Dashboard header needs them, and a read made before the Agent connected failed.
+                            await AutoRun.ReadHardwareInventoryAsync(diag, provider.GetRequiredService<ResultStore>(),
+                                App.Loggers.CreateLogger(typeof(AutoRun).FullName!), rereadFailed: true).ConfigureAwait(false);
+                            // Temperatures wait until someone runs the checks (Bud, Nov 28): only a reading someone already asked for is
+                            // read again, now with the Agent's rights.
+                            if (provider.GetRequiredService<ResultStore>().Get(LibreHardwareMonitorModule.ModuleName).Status == DiagnosticStatus.NotRun
+                                && !diag.IsRunning(LibreHardwareMonitorModule.ModuleName)) return;
                             while (diag.IsRunning(LibreHardwareMonitorModule.ModuleName))
                             {
                                 await Task.Delay(250).ConfigureAwait(false);
@@ -177,10 +184,15 @@ public partial class MainWindow : Window
 
         // The hardware inventory is the exception: the Dashboard header (model, processor, memory) shows it, so read it right away
         // instead of leaving the header on "Querying hardware…" until someone runs the checks.
-        _ = Task.Run(() => AutoRun.StartHardwareInventory(
-            provider.GetRequiredService<DiagnosticsService>(),
-            provider.GetRequiredService<ResultStore>(),
-            App.Loggers.CreateLogger(typeof(AutoRun).FullName!)));
+        // It goes through the Agent, so it waits for the Agent's pipe (up to 30 s) instead of failing before it is up.
+        // The Store edition may have no Agent at all: then it reads without one at once.
+#if RPCD_STORE
+        Func<bool>? noAgent = AgentShopPillState.NoAgent(provider);
+#else
+        Func<bool>? noAgent = null;
+#endif
+        _ = AutoRun.ReadHardwareInventoryAsync(diag, provider.GetRequiredService<ResultStore>(), App.Loggers.CreateLogger(typeof(AutoRun).FullName!),
+            elevation is null ? null : () => elevation.IsAdminHelperConnected, noAgent, TimeSpan.FromSeconds(30));
 
         // Checks don't run by themselves on launch: they run when the person, a remote user or an AI agent asks. REMOTEPC_AUTORUN=1
         // brings back the old launch-time run (development and demos); StartEnabledChecksAsync returns at once when it is off.

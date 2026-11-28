@@ -540,7 +540,10 @@
         {
             RemotePCDiagnostics.Core.StartupProfiler.Mark("DashboardFirstRender");
             // The header shows the hardware inventory: read it now if nothing has yet (a remote session, or results were cleared).
-            AutoRun.StartHardwareInventory(Diagnostics, Store, null);
+            // It goes through the Agent: wait for it (up to 30 s) rather than fail before its pipe is up.
+            var elevation = App.Elevation;
+            _ = AutoRun.ReadHardwareInventoryAsync(Diagnostics, Store, null,
+                elevation is null ? null : () => elevation.IsAdminHelperConnected, agentWait: TimeSpan.FromSeconds(30));
             if (Session.Mode == SessionMode.Remote && !_remotePrefsLoaded && App.CheckSettings is { } cs)
             {
                 _remotePrefsLoaded = true;
