@@ -576,4 +576,113 @@ public class BenchQaAndWheaTests
         Assert.All(progress, p => Assert.Equal(5, p.Total));
         Assert.Equal(progress.Select(p => p.Done).Order(), progress.Select(p => p.Done));
     }
+    [Fact]
+    public void HardwareQaCatalog_HasTheAddedChecks_AndGuidedStepsStartOff()
+    {
+        var items = HardwareQaCertificate.Groups.SelectMany(g => g.Items).ToDictionary(i => i.Id);
+        foreach (var id in new[] { "usb", "displays", "device-sensors", "drive-self-test", "gpu-memory" })
+            Assert.True(items[id].DefaultSelected, id);
+        foreach (var id in new[] { "cooling", "pointer", "charger", "usb-port", "video-output", "ethernet" })
+            Assert.False(items[id].DefaultSelected, id);
+        // Every item has a group on the certificate.
+        Assert.All(items.Keys, id => Assert.NotEqual("", HardwareQaCertificate.GroupLabelFor(id)));
+        // The long tests stay off the QA page.
+        Assert.DoesNotContain(items.Keys, id => id.Contains("surface") || id.Contains("drain") || id.Contains("memdiag"));
+
+        Assert.Contains("pointer", BenchQaRunner.DefaultSelection(hasBattery: true));
+        Assert.DoesNotContain("pointer", BenchQaRunner.DefaultSelection(hasBattery: false));
+        Assert.DoesNotContain("pointer", BenchQaRunner.DefaultSelection(hasBattery: null));
+    }
+
+    [Fact]
+    public async Task BenchQaRunner_RunsTheAddedChecks_AndWaitsOnGuidedStepsInOrder()
+    {
+        var store = new ResultStore();
+        var ran = new ConcurrentQueue<string>();
+        IDiagnosticModule Quick(string slug) => new FakeModule(slug, _ => { ran.Enqueue(slug); return Task.FromResult(FakeModule.Ok(slug)); });
+        IDiagnosticModule OnDemand(string slug) => new OnDemandFakeModule(slug, _ => { ran.Enqueue(slug); return Task.FromResult(FakeModule.Ok(slug)); });
+        var diag = new DiagnosticsService(store, [
+            Quick(ModuleSlugs.Osquery),
+            Quick(ModuleSlugs.UsbPorts),
+            Quick(ModuleSlugs.Displays),
+            Quick(ModuleSlugs.DeviceSensors),
+            OnDemand(ModuleSlugs.DriveSelfTest),
+            OnDemand(ModuleSlugs.GpuMemory),
+            OnDemand(ModuleSlugs.UsbPortCheck),
+            OnDemand(ModuleSlugs.EthernetPort),
+        ]);
+        var runner = new BenchQaRunner(diag, store);
+        var waited = new List<string>();
+        Task WaitInteractive(string section, CancellationToken ct) { waited.Add(section); return Task.CompletedTask; }
+
+        await runner.RunIntakeAsync(
+            ["hardware", "usb", "displays", "device-sensors", "drive-self-test", "gpu-memory", "ethernet", "usb-port", "keyboard", "video-output"],
+            WaitInteractive);
+
+        Assert.Equal(
+            [ModuleSlugs.Osquery, ModuleSlugs.UsbPorts, ModuleSlugs.Displays, ModuleSlugs.DeviceSensors, ModuleSlugs.DriveSelfTest, ModuleSlugs.GpuMemory],
+            ran.ToArray());
+        // Keyboard first, then the other guided steps in their own order; the video output check has no module here, so it's skipped.
+        Assert.Equal(["keyboard", "usb-port", "ethernet"], waited);
+        Assert.Equal(["video-output"], runner.SkippedItemIds);
+        Assert.Equal(runner.RunItemIds.Count, runner.CompletedItems);
+        Assert.Equal(runner.TotalSteps, runner.CompletedSteps);
+
+        var snap = HardwareQaCertificate.Capture(store, "BENCH-ADDED-01");
+        foreach (var id in new[] { "usb", "displays", "device-sensors", "drive-self-test", "gpu-memory" })
+            Assert.Equal(DiagnosticStatus.Ok, snap.Items.Single(i => i.Id == id).Status);
+        Assert.Equal("Stress tests", snap.Items.Single(i => i.Id == "gpu-memory").Group);
+        Assert.Equal("Hardware & health", snap.Items.Single(i => i.Id == "usb").Group);
+    }
+
+    [Fact]
+    public async Task BenchQaRunner_GuidedStepEndsWhenItsCheckHasAResult_OrWhenSkipped()
+    {
+        var store = new ResultStore();
+        var diag = new DiagnosticsService(store, [
+            new OnDemandFakeModule(ModuleSlugs.DisplayOutputCheck, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DisplayOutputCheck))),
+            new OnDemandFakeModule(ModuleSlugs.UsbPortCheck, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.UsbPortCheck))),
+        ]);
+        var runner = new BenchQaRunner(diag, store);
+
+        var run = runner.StartBenchQaAsync(["usb-port", "video-output"]);
+        await WaitUntil(() => runner.WaitingFor == "usb-port");
+        // Skip: the run goes on to the next step without a USB port result.
+        runner.SkipWaiting();
+        await WaitUntil(() => runner.WaitingFor == "video-output");
+        Assert.True(runner.IsRunning);
+        Assert.Equal(DiagnosticStatus.NotRun, store.Get(ModuleSlugs.UsbPortCheck).Status);
+
+        // The check done on the Interactive tests page ends the wait.
+        await diag.RunAsync(ModuleSlugs.DisplayOutputCheck);
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(runner.IsRunning);
+        Assert.Null(runner.WaitingFor);
+        Assert.Equal(2, runner.CompletedItems);
+    }
+
+    [Fact]
+    public void HardwareQaCertificate_ListsAddedItemsOnlyOnceTheyRan_AndCouldntRunIsNotANote()
+    {
+        var store = new ResultStore();
+        var before = HardwareQaCertificate.Capture(store, "BENCH-ADDED-02");
+        foreach (var id in new[] { "usb", "displays", "device-sensors", "drive-self-test", "cooling", "gpu-memory", "pointer", "charger", "usb-port", "video-output", "ethernet" })
+            Assert.DoesNotContain(before.Items, i => i.Id == id);
+
+        foreach (var slug in new[] { ModuleSlugs.Osquery, ModuleSlugs.BatteryPower, ModuleSlugs.DriveHealth, ModuleSlugs.CpuStress, ModuleSlugs.UsbPorts })
+            store.Set(FakeModule.Ok(slug));
+        store.Set(ChargerReplug.ToResult(new(ReplugOutcome.NotApplicable, null, null, null, null)));
+        var physical = new PhysicalBenchQaSnapshot(PointerOutcome: PhysicalCheckOutcome.Passed, PointerSummary: "Touchpad: 5 of 5 steps passed");
+
+        var snap = HardwareQaCertificate.Capture(store, "BENCH-ADDED-02", physicalQa: physical);
+        Assert.Equal(DiagnosticStatus.Ok, snap.Items.Single(i => i.Id == "usb").Status);
+        var charger = snap.Items.Single(i => i.Id == "charger");
+        Assert.Equal(DiagnosticStatus.NotRun, charger.Status);
+        Assert.Contains("no battery", charger.Summary);
+        var pointer = snap.Items.Single(i => i.Id == "pointer");
+        Assert.Equal(DiagnosticStatus.Ok, pointer.Status);
+        Assert.Equal("Touchpad: 5 of 5 steps passed", pointer.Summary);
+        Assert.Equal(HardwareQaVerdict.CertifiedPass, snap.Verdict);
+        Assert.DoesNotContain(snap.Items, i => i.Id == "displays");
+    }
 }

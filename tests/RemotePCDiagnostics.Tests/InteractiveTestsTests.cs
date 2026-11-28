@@ -171,7 +171,9 @@ public class InteractiveTestsTests
         Assert.Contains(HardwareQaCertificate.Groups.SelectMany(g => g.Items), i => i.Id == "display" && i.Label.Contains("display", StringComparison.OrdinalIgnoreCase));
 
         // PhysicalBenchQaCard renders only while the run waits on a person check (the run owns that wait, so it survives leaving the page)
-        Assert.Contains("@if (waitingFor is { Length: > 0 })", content);
+        Assert.Contains("@if (waitingFor is \"keyboard\" or \"display\")", content);
+        // The other guided steps (pointer, charger, USB port, video output, Ethernet) get their own card with Skip
+        Assert.Contains("data-testid=\"qa-guided-skip\"", content);
         Assert.Contains("FilterSection=\"@waitingFor\"", content);
         Assert.DoesNotContain("\n<PhysicalBenchQaCard Service=\"ActivePhysicalQa\" />", content);
 
