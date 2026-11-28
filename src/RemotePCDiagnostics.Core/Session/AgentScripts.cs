@@ -64,6 +64,11 @@ public static class AgentScripts
     /// read-only surface scan of one physical disk (<see cref="Storage.AgentDiskScans"/>). Prints the scan's status as JSON.
     /// </summary>
     public const string DiskReadScan = "disk_read_scan";
+    /// <summary>
+    /// Args: "list"; "status" or "abort" and a disk number; or "start", a disk number and "short" or "extended". The drive's own
+    /// self-test (<see cref="Storage.AgentDriveSelfTest"/>); prints <see cref="Storage.SelfTestAnswer"/> JSON.
+    /// </summary>
+    public const string DriveSelfTest = "drive_selftest";
 
     public const string RebootTask = "reboot";
     public const string WorkflowTask = "workflow";
@@ -187,9 +192,24 @@ public static class AgentScripts
             case DiskReadScan:
                 return Storage.DiskReadScanAction.Parse(a) is { } scan ? Native(scan) : Refuse("That isn't a disk surface scan this app runs.");
 
+            case DriveSelfTest:
+                return DriveSelfTestPlan(a) is { } selfTest ? Native(selfTest) : Refuse("That isn't a drive self-test request.");
+
             default:
                 return Refuse($"Unknown script '{request.Name}'.");
         }
+    }
+
+    /// <summary>The self-test request in <paramref name="a"/>, or null when it isn't exactly one this app sends.</summary>
+    private static Storage.DriveSelfTestAction? DriveSelfTestPlan(IReadOnlyList<string> a)
+    {
+        if (a.Count == 0 || !Storage.AgentDriveSelfTest.IsVerb(a[0])) return null;
+        var verb = a[0];
+        if (verb == "list") return a.Count == 1 ? new(verb, null, null) : null;
+        if (a.Count < 2 || !Storage.AgentDriveSelfTest.IsDisk(a[1], out var disk)) return null;
+        if (verb == "start")
+            return a.Count == 3 && Storage.AgentDriveSelfTest.ParseKind(a[2]) is { } kind ? new(verb, disk, kind) : null;
+        return a.Count == 2 ? new(verb, disk, null) : null;
     }
 
     public static string? TaskName(string? kind) => kind switch

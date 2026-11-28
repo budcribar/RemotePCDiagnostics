@@ -1,0 +1,124 @@
+@using System.Text.Json
+@using RemotePCDiagnostics.Core.Storage
+@* The drive self-test's choices before it starts: Short or Extended, which drives, and each drive's own estimate. The run itself starts
+   from the card's Run button like any on-demand scan. Browser agents read the same state from selftest-data. *@
+<div class="card selftest-options" data-testid="selftest-options" data-mode="@ModeArg(Module.Mode)">
+    <fieldset class="selftest-mode" disabled="@Disabled">
+        <legend>Which test</legend>
+        <label>
+            <input type="radio" name="selftest-mode" data-testid="selftest-mode-short" checked="@(Module.Mode == SelfTestKind.Short)"
+                   @onchange="() => SetMode(SelfTestKind.Short)" />
+            Short <span class="meta">(about @ShortEstimate)</span>
+        </label>
+        <label>
+            <input type="radio" name="selftest-mode" data-testid="selftest-mode-extended" checked="@(Module.Mode == SelfTestKind.Extended)"
+                   @onchange="() => SetMode(SelfTestKind.Extended)" />
+            Extended <span class="meta">(@ExtendedEstimate; reads the whole drive)</span>
+        </label>
+    </fieldset>
+    @if (_loading && _drives is null)
+    {
+        <p class="meta" role="status" data-testid="selftest-loading">Reading the drives…</p>
+    }
+    else if (Module.LastPreviewError is { } why && (_drives is null || _drives.Count == 0))
+    {
+        <p class="meta" data-testid="selftest-preview-error">@why</p>
+    }
+    else if (_drives is { Count: > 0 } drives)
+    {
+        <table class="selftest-drives" data-testid="selftest-drives">
+            <thead><tr><th>Test</th><th>Drive</th><th>Bus</th><th>Estimated time</th><th>Last self-test</th></tr></thead>
+            <tbody>
+                @foreach (var d in drives)
+                {
+                    var drive = d;
+                    <tr data-testid="selftest-drive" data-disk="@drive.Disk" data-supported="@(drive.Supported ? "true" : "false")">
+                        <td>
+                            <input type="checkbox" data-testid="selftest-disk-@drive.Disk" aria-label="@($"Test {drive.Label}")"
+                                   checked="@(drive.Supported && IsChosen(drive.Disk))" disabled="@(Disabled || !drive.Supported)"
+                                   @onchange="e => Choose(drive.Disk, e.Value is true)" />
+                        </td>
+                        <td>@drive.Label</td>
+                        <td>@drive.Bus</td>
+                        <td>
+                            @if (!drive.Supported) { <span>Not supported: @drive.Unsupported</span> }
+                            else if (drive.IsRunning) { <span>A self-test is running (@(drive.PercentDone ?? 0)% done); Run follows it</span> }
+                            else { <span>@(drive.MinutesFor(Module.Mode) is { } m ? "about " + DriveSelfTestModule.FormatMinutes(m) : "not reported")</span> }
+                        </td>
+                        <td>@(drive.Log.FirstOrDefault() is { } last ? $"{last.TestName}: {SelfTestDecoder.Describe(last.Outcome)}" : "None in the drive's log")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p class="meta">Keep the PC on while it runs: the app keeps it and its disks awake and puts the power plan back afterwards. Cancel stops the test on the drive.</p>
+    }
+    <AgentData TestId="selftest-data" CheckId="@Module.Name" Json="@DataJson()" />
+</div>
+
+@code {
+    [Parameter, EditorRequired] public DriveSelfTestModule Module { get; set; } = default!;
+    /// <summary>True while a run is going: the choices are fixed until it ends.</summary>
+    [Parameter] public bool Disabled { get; set; }
+
+    private IReadOnlyList<SelfTestDriveState>? _drives;
+    private bool _loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _drives = Module.LastDrives;
+        _loading = true;
+        try { _drives = await Module.PreviewAsync(CancellationToken.None); }
+        catch (Exception) { /* the preview is a convenience; the run reads the drives again */ }
+        finally { _loading = false; }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (Module.LastDrives is { } latest) _drives = latest;
+    }
+
+    private bool IsChosen(int disk) => Module.Disks is null || Module.Disks.Contains(disk);
+
+    private void SetMode(SelfTestKind kind) { if (!Disabled) Module.Mode = kind; }
+
+    private void Choose(int disk, bool on)
+    {
+        if (Disabled || _drives is null) return;
+        var chosen = _drives.Where(d => d.Supported && (d.Disk == disk ? on : IsChosen(d.Disk))).Select(d => d.Disk).ToHashSet();
+        // Every supported drive chosen is the default (null): drives added later are tested too.
+        Module.Disks = chosen.Count == _drives.Count(d => d.Supported) ? null : chosen;
+    }
+
+    private string ShortEstimate => Estimate(SelfTestKind.Short) ?? "2 min";
+    private string ExtendedEstimate => Estimate(SelfTestKind.Extended) is { } e ? "about " + e : "the drive's own time, often an hour or more";
+
+    private string? Estimate(SelfTestKind kind)
+    {
+        var minutes = (_drives ?? []).Where(d => d.Supported && IsChosen(d.Disk)).Select(d => d.MinutesFor(kind)).Where(m => m is not null).Select(m => m!.Value).ToList();
+        return minutes.Count == 0 ? null : DriveSelfTestModule.FormatMinutes(minutes.Max());
+    }
+
+    private static string ModeArg(SelfTestKind kind) => AgentDriveSelfTest.KindArg(kind);
+
+    private string DataJson() => JsonSerializer.Serialize(new
+    {
+        schema = 1,
+        mode = ModeArg(Module.Mode),
+        disks = Module.Disks?.OrderBy(d => d).ToList(),
+        error = Module.LastPreviewError,
+        drives = (_drives ?? []).Select(d => new
+        {
+            disk = d.Disk,
+            model = d.Model,
+            bus = d.Bus,
+            supported = d.Supported,
+            unsupported = d.Unsupported,
+            chosen = d.Supported && IsChosen(d.Disk),
+            shortMinutes = d.ShortMinutes,
+            extendedMinutes = d.ExtendedMinutes,
+            running = d.IsRunning,
+            percentDone = d.PercentDone,
+            lastResult = d.Log.FirstOrDefault() is { } last ? SelfTestDecoder.Describe(last.Outcome) : null,
+        }),
+    });
+}

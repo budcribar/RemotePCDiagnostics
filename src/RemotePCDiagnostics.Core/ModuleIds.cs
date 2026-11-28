@@ -83,6 +83,10 @@ public static class ModuleIds
     public static readonly Guid WindowsMaintenance = new("f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41");
     /// <summary>Slug <c>DiskSurfaceScan</c>.</summary>
     public static readonly Guid DiskSurfaceScan = new("46272fdc-6e61-4e3b-bf6f-bec95e0be7eb");
+    /// <summary>Slug <c>DriveSelfTest</c>.</summary>
+    public static readonly Guid DriveSelfTest = new("84f91bee-422b-4ffb-baba-1665b5c2cab7");
+    /// <summary>Slug <c>GpuMemory</c>.</summary>
+    public static readonly Guid GpuMemory = new("fe79a8ac-1fca-4933-9ae8-f8016d4ba216");
 
     /// <summary>Every built-in id with its slug (the module's Name). Includes modules that are not registered on every build.</summary>
     public static IReadOnlyDictionary<Guid, string> BuiltIn { get; } = new Dictionary<Guid, string>
@@ -125,6 +129,8 @@ public static class ModuleIds
         [EthernetPort] = ModuleSlugs.EthernetPort,
         [ChargerReplug] = ModuleSlugs.ChargerReplug,
         [DiskSurfaceScan] = ModuleSlugs.DiskSurfaceScan,
+        [DriveSelfTest] = ModuleSlugs.DriveSelfTest,
+        [GpuMemory] = ModuleSlugs.GpuMemory,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -183,4 +189,8 @@ public static class ModuleSlugs
     public const string ChargerReplug = "ChargerReplug";
     /// <summary>The read-only raw disk surface scan (one run per physical disk, through the Agent).</summary>
     public const string DiskSurfaceScan = "DiskSurfaceScan";
+    /// <summary>The drive's own short or extended self-test (ATA SMART, NVMe Device Self-test), through the Agent.</summary>
+    public const string DriveSelfTest = "DriveSelfTest";
+    /// <summary>The graphics memory (VRAM) test: patterns written and checked in each graphics chip's memory.</summary>
+    public const string GpuMemory = "GpuMemory";
 }

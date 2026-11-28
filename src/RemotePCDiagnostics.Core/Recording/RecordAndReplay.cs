@@ -1,3 +1,4 @@
+using System.Text.Json;
 using RemotePCDiagnostics.Core.DataSources;
 using RemotePCDiagnostics.Core.Osquery;
 
@@ -100,6 +101,17 @@ public sealed class RecordingRegistrySource(IRegistrySource inner, CallRecorder 
     }
 }
 
+/// <summary>Passes each drive self-test request to the Agent and records the answer.</summary>
+public sealed class RecordingDriveSelfTestSource(Storage.IDriveSelfTestSource inner, CallRecorder recorder) : Storage.IDriveSelfTestSource
+{
+    public async Task<Storage.SelfTestReply> RunAsync(IReadOnlyList<string> args, CancellationToken ct)
+    {
+        var r = await inner.RunAsync(args, ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromSelfTest(args, r));
+        return r;
+    }
+}
+
 /// <summary>Passes each boot memory test request to the Agent and records the answer.</summary>
 public sealed class RecordingMemoryDiagnosticSource(Stress.IMemoryDiagnosticSource inner, CallRecorder recorder) : Stress.IMemoryDiagnosticSource
 {
@@ -108,6 +120,62 @@ public sealed class RecordingMemoryDiagnosticSource(Stress.IMemoryDiagnosticSour
         var r = await inner.RunAsync(args, ct).ConfigureAwait(false);
         recorder.Add(RecordedCall.FromMemoryDiagnostic(args, r));
         return r;
+    }
+}
+
+/// <summary>
+/// Passes the graphics memory test to the real chips and records what they answered: the adapter list, each allocation, and every
+/// dispatch that found wrong words or lost the device, keyed by its block and its number on that block. A run makes thousands of clean
+/// dispatches; they aren't kept, and replay answers a dispatch with nothing recorded as clean.
+/// </summary>
+public sealed class RecordingGpuMemorySource(GpuMemory.IGpuMemorySource inner, CallRecorder recorder) : GpuMemory.IGpuMemorySource
+{
+    public IReadOnlyList<GpuMemory.GpuMemoryAdapter> ListAdapters()
+    {
+        var list = inner.ListAdapters();
+        recorder.Add(RecordedCall.FromGpuMemory(RecordingReplay.GpuMemoryList, JsonSerializer.Serialize(list)));
+        return list;
+    }
+
+    public GpuMemory.IGpuMemoryDevice Open(string adapterId)
+    {
+        try { return new Device(inner.Open(adapterId), recorder); }
+        catch (Exception ex)
+        {
+            recorder.Add(RecordedCall.FromGpuMemory(RecordingReplay.GpuMemoryQuery(adapterId, "open"), null, ex.Message));
+            throw;
+        }
+    }
+
+    private sealed class Device(GpuMemory.IGpuMemoryDevice inner, CallRecorder recorder) : GpuMemory.IGpuMemoryDevice
+    {
+        private readonly Dictionary<int, int> _runs = [];
+        public GpuMemory.GpuMemoryAdapter Adapter => inner.Adapter;
+        public IReadOnlyList<long> Blocks => inner.Blocks;
+
+        public bool TryAllocateBlock(long bytes)
+        {
+            var ok = inner.TryAllocateBlock(bytes);
+            recorder.Add(RecordedCall.FromGpuMemory(RecordingReplay.GpuMemoryQuery(Adapter.Id, "allocate"), ok ? "true" : "false"));
+            return ok;
+        }
+
+        public GpuMemory.GpuBlockResult Run(int block, GpuMemory.GpuMemoryOp op, GpuMemory.GpuMemoryPattern pattern, uint seed, bool inverted, uint baseWord)
+        {
+            var n = _runs[block] = _runs.GetValueOrDefault(block) + 1;
+            var key = RecordingReplay.GpuMemoryRun(Adapter.Id, block, n);
+            GpuMemory.GpuBlockResult r;
+            try { r = inner.Run(block, op, pattern, seed, inverted, baseWord); }
+            catch (Stress.GpuDeviceLostException ex)
+            {
+                recorder.Add(RecordedCall.FromGpuMemory(key, null, RecordingReplay.GpuLostPrefix + ex.Message));
+                throw;
+            }
+            if (r.Errors > 0) recorder.Add(RecordedCall.FromGpuMemory(key, JsonSerializer.Serialize(r)));
+            return r;
+        }
+
+        public void Dispose() => inner.Dispose();
     }
 }
 
@@ -173,9 +241,17 @@ public sealed class RecordingReplay
     public Stress.IMemoryDiagnosticSource MemoryDiagnostic => new ReplayMemoryDiagnostic(this);
     /// <summary>The surface scan's recorded answers: a repeated status question gets the next one, then the last again.</summary>
     public Storage.IDiskScanSource DiskScans => new ReplayDiskScans(this);
+    public Storage.IDriveSelfTestSource SelfTest => new ReplaySelfTest(this);
+    public GpuMemory.IGpuMemorySource GpuMemorySource => new ReplayGpuMemory(this);
 
     /// <summary>The report file recorded under <paramref name="name"/>; null when it wasn't made or isn't in the recording.</summary>
     public string? FileText(string name) => Answer(FileKey(name), $"file {name}") is { Error: null } c ? c.StdOut : null;
+
+    /// <summary>The next recorded answer to <paramref name="key"/> without taking it, or null (not counted as a miss).</summary>
+    private RecordedCall? Peek(string key)
+    {
+        lock (_byKey) return _byKey.TryGetValue(key, out var q) && q.Count > 0 ? q.Peek() : null;
+    }
 
     /// <summary>The same question asked twice gets the recorded answers in order, and the last one again after that.</summary>
     private RecordedCall? Answer(string key, string description)
@@ -202,6 +278,8 @@ public sealed class RecordingReplay
         RecordedCall.AlertsKind => AlertsKey(c.Query ?? ""),
         RecordedCall.MemoryDiagnosticKind => MemoryDiagnosticKey(c.Query ?? ""),
         RecordedCall.DiskScanKind => DiskScanKey(c.Query ?? ""),
+        RecordedCall.SelfTestKind => SelfTestKey(c.Query ?? ""),
+        RecordedCall.GpuMemoryKind => GpuMemoryKey(c.Query ?? ""),
         _ => ProcessKey(c.File ?? "", c.Args ?? []),
     };
 
@@ -213,6 +291,13 @@ public sealed class RecordingReplay
     public static string AlertsKey(string reading) => "alerts\n" + reading;
     public static string MemoryDiagnosticKey(string request) => "memdiag\n" + request;
     public static string DiskScanKey(string request) => "diskscan\n" + request;
+    public static string SelfTestKey(string request) => "selftest\n" + request;
+    public static string GpuMemoryKey(string query) => "gpumemory\n" + query;
+    public const string GpuMemoryList = "list";
+    public const string GpuLostPrefix = "lost: ";
+    public static string GpuMemoryQuery(string adapterId, string what) => adapterId + "\n" + what;
+    public static string GpuMemoryRun(string adapterId, int block, int n) => GpuMemoryQuery(adapterId, "run") + "\n" + block.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        + "\n" + n.ToString(System.Globalization.CultureInfo.InvariantCulture);
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
     /// <remarks>WQL ignores case, and a path in a query is spelled as Windows gave it (C:\WINDOWS on one PC, C:\Windows on another).</remarks>
     public static string WmiKey(string ns, string wql) => "wmi\n" + ns.ToLowerInvariant() + "\n" + wql.ToLowerInvariant();
@@ -279,11 +364,66 @@ public sealed class RecordingReplay
             Task.FromResult(replay.Answer(AlertsKey(reading), $"alerts {reading}")?.ToWmiResult() ?? Core.Alerts.AlertReadings.Failed(reading, "Not in the recording."));
     }
 
+    /// <summary>A request asked again (status while a test runs) gets the recorded answers in order, then the last one again.</summary>
+    private sealed class ReplaySelfTest(RecordingReplay replay) : Storage.IDriveSelfTestSource
+    {
+        public Task<Storage.SelfTestReply> RunAsync(IReadOnlyList<string> args, CancellationToken ct)
+        {
+            var request = string.Join(' ', args);
+            return Task.FromResult(replay.Answer(SelfTestKey(request), $"selftest {request}")?.ToSelfTestReply()
+                                   ?? Storage.SelfTestReply.Failed("Not in the recording."));
+        }
+    }
+
     private sealed class ReplayDiskScans(RecordingReplay replay) : Storage.IDiskScanSource
     {
         public Task<Storage.DiskScanAnswer> SendAsync(Storage.DiskScanRequest request, CancellationToken ct) =>
             Task.FromResult(replay.Answer(DiskScanKey(request.Key), $"diskscan {request.Key}")?.ToDiskScanAnswer()
                             ?? new Storage.DiskScanAnswer(null, "Not in the recording."));
+    }
+
+    /// <summary>The recorded chips; each allocation and dispatch gets the recorded answers in order, then the last one again. A chip
+    /// with nothing recorded for a request fails it as a missing answer (a "no more memory" or a thrown error).</summary>
+    private sealed class ReplayGpuMemory(RecordingReplay replay) : GpuMemory.IGpuMemorySource
+    {
+        public IReadOnlyList<GpuMemory.GpuMemoryAdapter> ListAdapters() =>
+            replay.Answer(GpuMemoryKey(GpuMemoryList), "gpumemory list") is { StdOut: { } json }
+                ? JsonSerializer.Deserialize<List<GpuMemory.GpuMemoryAdapter>>(json) ?? []
+                : [];
+
+        public GpuMemory.IGpuMemoryDevice Open(string adapterId)
+        {
+            var adapter = ListAdapters().FirstOrDefault(a => a.Id == adapterId) ?? throw new InvalidOperationException($"adapter {adapterId} is not in the recording");
+            if (replay.Peek(GpuMemoryKey(GpuMemoryQuery(adapterId, "open"))) is { Error: { } error }) throw new InvalidOperationException(error);
+            return new Device(replay, adapter);
+        }
+
+        private sealed class Device(RecordingReplay replay, GpuMemory.GpuMemoryAdapter adapter) : GpuMemory.IGpuMemoryDevice
+        {
+            private readonly List<long> _blocks = [];
+            public GpuMemory.GpuMemoryAdapter Adapter => adapter;
+            public IReadOnlyList<long> Blocks => _blocks;
+
+            public bool TryAllocateBlock(long bytes)
+            {
+                var ok = replay.Answer(GpuMemoryKey(GpuMemoryQuery(adapter.Id, "allocate")), $"gpumemory {adapter.Id} allocate") is { StdOut: "true" };
+                if (ok) _blocks.Add(bytes);
+                return ok;
+            }
+
+            private readonly Dictionary<int, int> _runs = [];
+
+            /// <summary>A dispatch the recording holds nothing for was clean (only faulty ones are kept).</summary>
+            public GpuMemory.GpuBlockResult Run(int block, GpuMemory.GpuMemoryOp op, GpuMemory.GpuMemoryPattern pattern, uint seed, bool inverted, uint baseWord)
+            {
+                var n = _runs[block] = _runs.GetValueOrDefault(block) + 1;
+                var c = replay.Peek(GpuMemoryKey(GpuMemoryRun(adapter.Id, block, n)));
+                if (c?.Error is { } e && e.StartsWith(GpuLostPrefix, StringComparison.Ordinal)) throw new Stress.GpuDeviceLostException(e[GpuLostPrefix.Length..]);
+                return c?.StdOut is { } json ? JsonSerializer.Deserialize<GpuMemory.GpuBlockResult>(json) ?? GpuMemory.GpuBlockResult.Clean : GpuMemory.GpuBlockResult.Clean;
+            }
+
+            public void Dispose() { }
+        }
     }
 
     private sealed class ReplayLauncher(RecordingReplay replay) : IProcessLauncher
