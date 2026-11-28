@@ -26,9 +26,30 @@ jobs:
           SOURCE_TAG: ${{ inputs.source_tag }}
           TARGET_TAG: ${{ inputs.target_tag }}
         run: |
+          set -euo pipefail
+          # The CI build being promoted, e.g. "Build version: `1.2.0-ci.652.1`". The RPCD updater reads this line to order the
+          # release against CI builds: every CI build of 1.2.0 is versioned 1.2.0, so the bare tag can't say which is newer.
+          build_line() {
+            gh release view "$1" --repo "$GITHUB_REPOSITORY" --json body --jq '.body' | grep -m1 -oE 'Build version: `[^`]+`' || true
+          }
+          build="$(build_line "${SOURCE_TAG}")"
           mkdir -p /tmp/assets
-          echo "Downloading assets from ${SOURCE_TAG}..."
+          echo "Downloading assets from ${SOURCE_TAG} (${build:-no build version})..."
           gh release download "${SOURCE_TAG}" -D /tmp/assets --repo "$GITHUB_REPOSITORY"
+          if [ "$(build_line "${SOURCE_TAG}")" != "${build}" ]; then
+            echo "::error::${SOURCE_TAG} was republished while its assets were downloading. Nothing was uploaded. Run this again."
+            exit 1
+          fi
           echo "Uploading assets to ${TARGET_TAG}..."
           gh release upload "${TARGET_TAG}" /tmp/assets/* --clobber --repo "$GITHUB_REPOSITORY"
           echo "Assets uploaded successfully."
+          if [ -z "${build}" ]; then
+            echo "::warning::${SOURCE_TAG} names no build version, so RPCD can't tell whether ${TARGET_TAG} is newer than a CI build."
+            exit 0
+          fi
+          # Replace any earlier Build version line and put this one first.
+          gh release view "${TARGET_TAG}" --repo "$GITHUB_REPOSITORY" --json body --jq '.body' \
+            | grep -vE '^Build version: `' | sed '/./,$!d' > /tmp/notes-rest.md || true
+          { printf '%s\n\n' "${build}"; cat /tmp/notes-rest.md; } > /tmp/notes.md
+          gh release edit "${TARGET_TAG}" --repo "$GITHUB_REPOSITORY" --notes-file /tmp/notes.md
+          echo "${TARGET_TAG} notes now start with: ${build}"

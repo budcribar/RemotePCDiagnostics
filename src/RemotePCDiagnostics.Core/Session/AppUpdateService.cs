@@ -93,6 +93,13 @@ public static class AppVersionComparer
             ? AppUpdateChannel.Prerelease
             : AppUpdateChannel.Stable;
 
+    /// <summary>
+    /// True when <paramref name="candidate"/> is a later build than <paramref name="installed"/>. Null when they can't be
+    /// ordered: either is not an RPCD version, or one is a CI build and the other names no CI run for the same version
+    /// (<c>1.2.0</c> against <c>1.2.0-ci.1729.1</c>). That pair is not SemVer: every CI build keeps the version until it is
+    /// bumped, before and after the release, and a release is one of those CI builds promoted. Release 1.2.0 is build
+    /// 1.2.0-ci.652.1, so ordering the release first would replace later CI builds with an older one.
+    /// </summary>
     public static bool? IsNewer(string? candidate, string? installed)
     {
         if (Parse(candidate) is not { } latest || Parse(installed) is not { } current)
@@ -107,6 +114,9 @@ public static class AppVersionComparer
 
         return (latestRun, latest.Attempt).CompareTo((currentRun, current.Attempt)) > 0;
     }
+
+    /// <summary>True for a CI build such as <c>1.2.0-ci.1729.1</c>, which names the run it was built in.</summary>
+    public static bool IsCiBuild(string? value) => Parse(value) is { } parsed && parsed.Run is not null;
 
     /// <summary>
     /// The comparable build identity: no leading <c>v</c>, no <c>+commit</c> metadata.

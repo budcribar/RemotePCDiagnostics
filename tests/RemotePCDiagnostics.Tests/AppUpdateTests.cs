@@ -28,8 +28,32 @@ public class AppUpdateTests
     [InlineData("1.2.0-ci.700.1", "1.2.0-ci.724.1", false)]
     [InlineData("1.2.0-ci.800.1", "1.2.0", null)]
     [InlineData(null, "1.2.0", null)]
+    // Runs and attempts compare as numbers, not text.
+    [InlineData("1.2.0-ci.1000.1", "1.2.0-ci.999.1", true)]
+    [InlineData("1.2.0-ci.999.1", "1.2.0-ci.1000.1", false)]
+    [InlineData("1.2.0-ci.1729.10", "1.2.0-ci.1729.9", true)]
+    [InlineData("1.2.0-ci.1730.1", "1.2.0-ci.1729.2", true)]
+    // A higher version wins whatever the build: a CI build can be newer than a release and older than the next one.
+    [InlineData("1.2.1-ci.5.1", "1.2.0", true)]
+    [InlineData("1.2.0-ci.1729.1", "1.1.9", true)]
+    [InlineData("1.2.1", "1.2.0-ci.1729.1", true)]
+    [InlineData("1.2.0", "1.2.1-ci.5.1", false)]
+    // The release names no build, and CI builds of 1.2.0 come before and after it (release 1.2.0 is 1.2.0-ci.652.1).
+    [InlineData("1.2.0", "1.2.0-ci.1729.1", null)]
+    [InlineData("v1.2.0", "1.2.0-ci.1729.1+b482b4e", null)]
+    [InlineData("1.2.0-ci.652.1", "1.2.0-ci.1729.1", false)]
     public void Version_comparison_handles_semver_and_ci_builds(string? candidate, string? installed, bool? expected) =>
         Assert.Equal(expected, AppVersionComparer.IsNewer(candidate, installed));
+
+    [Theory]
+    [InlineData("1.2.0-ci.1729.1", true)]
+    [InlineData("v1.2.0-ci.1729.1+b482b4e", true)]
+    [InlineData("1.2.0", false)]
+    [InlineData("1.2.0-local", false)]
+    [InlineData("not a version", false)]
+    [InlineData(null, false)]
+    public void Only_a_version_with_a_ci_run_is_a_ci_build(string? value, bool expected) =>
+        Assert.Equal(expected, AppVersionComparer.IsCiBuild(value));
 
     [Theory]
     [InlineData("https://github.com/budcribar/RemotePCDiagnostics/releases/download/v1.3.0/RemotePCDiagnostics-Setup-1.3.0-win-x64.exe", true)]

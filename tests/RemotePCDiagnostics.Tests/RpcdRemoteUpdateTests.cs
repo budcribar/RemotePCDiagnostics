@@ -328,6 +328,61 @@ public class RpcdRemoteUpdateTests
     }
 
     [Fact]
+    public async Task A_ci_build_is_not_replaced_by_a_stable_release_that_does_not_name_its_build()
+    {
+        // Release 1.2.0's notes name no build, and it was promoted from build 652: installing it over 1729 would go back.
+        var installer = new Installer();
+        var installed = "1.2.0-ci.1729.1";
+        var session = await RunAsync(installed, "1.2.0", null, installer, readBack: installed, channel: "stable", nameBuild: false);
+
+        Assert.Equal(0, installer.Calls);
+        var status = session.Current(null, installed, DateTimeOffset.UtcNow);
+        Assert.Equal(RpcdUpdateStages.Refused, status!.Stage);
+        Assert.True(status.Terminal);
+        Assert.Equal(installed, status.OldVersion);
+        Assert.Equal("1.2.0", status.NewVersion);
+        Assert.Contains("does not say which build it is", status.Error);
+        Assert.Contains("Nothing was installed", status.Error);
+        Assert.Contains("prerelease channel", status.Error);
+        Assert.DoesNotContain("Cannot tell", status.Error);
+    }
+
+    [Fact]
+    public async Task A_ci_build_newer_than_the_promoted_stable_build_is_already_up_to_date()
+    {
+        var installer = new Installer();
+        var installed = "1.2.0-ci.1729.1";
+        var session = await RunAsync(installed, "1.2.0-ci.652.1", null, installer, readBack: installed, channel: "stable");
+
+        Assert.Equal(0, installer.Calls);
+        var status = session.Current(null, installed, DateTimeOffset.UtcNow);
+        Assert.Equal(RpcdUpdateStages.AlreadyUpToDate, status!.Stage);
+        Assert.Equal("RPCD 1.2.0-ci.1729.1 is newer than the published 1.2.0-ci.652.1.", status.Error);
+    }
+
+    [Fact]
+    public async Task A_ci_build_older_than_the_promoted_stable_build_installs_it()
+    {
+        var installer = new Installer { ExitCode = 0 };
+        var session = await RunAsync("1.2.0-ci.600.1", "1.2.0-ci.652.1", null, installer, readBack: "1.2.0-ci.652.1", channel: "stable");
+
+        Assert.Equal(1, installer.Calls);
+        var status = session.Current(null, "1.2.0-ci.652.1", DateTimeOffset.UtcNow);
+        Assert.Equal(RpcdUpdateStages.Succeeded, status!.Stage);
+        Assert.Equal("1.2.0-ci.652.1", status.NewVersion);
+    }
+
+    [Fact]
+    public void A_promoted_release_takes_its_build_from_the_notes_and_otherwise_from_the_file_name()
+    {
+        var promoted = ReleaseJson("1.2.0-ci.652.1", includeSha: true, testShopOnly: false, exeUrl: null, hash: "");
+        Assert.Equal("1.2.0-ci.652.1", RpcdGitHubRelease.Parse(promoted, "v1.2.0").Choice!.Version);
+
+        var unnamed = ReleaseJson("1.2.0", includeSha: true, testShopOnly: false, exeUrl: null, hash: "", nameBuild: false);
+        Assert.Equal("1.2.0", RpcdGitHubRelease.Parse(unnamed, "v1.2.0").Choice!.Version);
+    }
+
+    [Fact]
     public void Release_parse_selects_the_base_version_agent_msi_from_the_same_release()
     {
         var setup = "RemotePCDiagnostics-Setup-1.2.0-win-x64.exe";
@@ -740,14 +795,16 @@ public class RpcdRemoteUpdateTests
         string? agentBefore = null,
         string? agentAfter = null,
         bool includeAgentMsi = false,
-        bool badAgentHash = false)
+        bool badAgentHash = false,
+        string channel = "prerelease",
+        bool nameBuild = true)
     {
         var payload = Encoding.UTF8.GetBytes("official-installer");
         var hash = badHash ? new string('a', 64) : Convert.ToHexStringLower(SHA256.HashData(payload));
         var msiPayload = Encoding.UTF8.GetBytes("official-agent-msi");
         var msiHash = badAgentHash ? new string('b', 64) : Convert.ToHexStringLower(SHA256.HashData(msiPayload));
         var msiName = "RemotePCDiagnostics.Agent-" + releaseVersion + "-win-x64.msi";
-        var body = ReleaseJson(releaseVersion, includeSha, testShopOnly, exeUrl, hash, includeAgentMsi, msiName);
+        var body = ReleaseJson(releaseVersion, includeSha, testShopOnly, exeUrl, hash, includeAgentMsi, msiName, nameBuild);
         using var http = new HttpClient(new Stub(req =>
         {
             var url = req.RequestUri!.AbsoluteUri;
@@ -775,8 +832,8 @@ public class RpcdRemoteUpdateTests
         var now = DateTimeOffset.UtcNow;
         var staging = directory ?? TempDir();
         var agentUpdated = false;
-        Assert.True(session.TryBegin(new RpcdUpdateRequest("prerelease", explicitVersion, true), now, out _));
-        await session.ExecuteAsync(new RpcdUpdateRequest("prerelease", explicitVersion, true), new RpcdUpdateRun
+        Assert.True(session.TryBegin(new RpcdUpdateRequest(channel, explicitVersion, true), now, out _));
+        await session.ExecuteAsync(new RpcdUpdateRequest(channel, explicitVersion, true), new RpcdUpdateRun
         {
             Http = http,
             InstalledVersion = installed,
@@ -799,7 +856,8 @@ public class RpcdRemoteUpdateTests
         return session;
     }
 
-    private static string ReleaseJson(string version, bool includeSha, bool testShopOnly, string? exeUrl, string hash, bool includeAgentMsi = false, string? msiName = null)
+    /// <param name="nameBuild">False: notes like the stable 1.2.0 release, which name no build, so the version comes from the file name.</param>
+    private static string ReleaseJson(string version, bool includeSha, bool testShopOnly, string? exeUrl, string hash, bool includeAgentMsi = false, string? msiName = null, bool nameBuild = true)
     {
         var name = testShopOnly ? "RemotePCDiagnostics-TestShop-Setup-1.2.0-win-x64.exe" : ExeName;
         var url = exeUrl ?? "https://github.com/budcribar/RemotePCDiagnostics/releases/download/prerelease/" + name;
@@ -814,8 +872,9 @@ public class RpcdRemoteUpdateTests
             assets.Append(',').Append(Asset(msiName + ".sha256", msiUrl + ".sha256"));
         }
         _ = hash;
-        return "{\"tag_name\":\"prerelease\",\"prerelease\":true,\"html_url\":\"https://github.com/budcribar/RemotePCDiagnostics/releases/tag/prerelease\",\"body\":\"Build version: `"
-            + version + "`\\n\",\"assets\":[" + assets + "]}";
+        var notes = nameBuild ? "Build version: `" + version + "`\\n" : "Official release of Remote PC Diagnostics " + version + ".";
+        return "{\"tag_name\":\"prerelease\",\"prerelease\":true,\"html_url\":\"https://github.com/budcribar/RemotePCDiagnostics/releases/tag/prerelease\",\"body\":\""
+            + notes + "\",\"assets\":[" + assets + "]}";
     }
 
     private static string Asset(string name, string url) =>
