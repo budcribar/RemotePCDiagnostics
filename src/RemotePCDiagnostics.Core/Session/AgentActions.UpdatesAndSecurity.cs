@@ -37,6 +37,9 @@ public sealed partial class WindowsAgentNativeOps
             case Cooling.CoolingModesAction cooling:
                 result = Cooling.AgentCoolingModesHost.Run(cooling);
                 break;
+            case Battery.BatteryDrainPowerAction drain:
+                result = Battery.AgentBatteryDrainPower.Windows().Run(drain);
+                break;
         }
     }
 }

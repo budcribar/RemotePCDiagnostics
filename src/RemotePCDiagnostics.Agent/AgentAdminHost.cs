@@ -173,6 +173,7 @@ internal static class AgentAdminHost
 
                 var machineTweaks = OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null;
                 StartDevBenchmarkSweep(machineTweaks, log);
+                RemotePCDiagnostics.Core.Battery.AgentBatteryDrainPower.RecoverAtStart(log);
                 using var updater = NewUpdater(log);
 
                 var launcher = new SystemProcessLauncher();
@@ -282,6 +283,7 @@ internal static class AgentAdminHost
                 {
                     var machineTweaks = OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null;
                     StartDevBenchmarkSweep(machineTweaks, log);
+                    RemotePCDiagnostics.Core.Battery.AgentBatteryDrainPower.RecoverAtStart(log);
                     using var updater = NewUpdater(log);
                     var serverOptions = new AdminPipeServerOptions
                     {

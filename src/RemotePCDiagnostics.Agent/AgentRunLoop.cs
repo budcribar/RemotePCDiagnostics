@@ -30,6 +30,8 @@ internal static class AgentRunLoop
         if (OperatingSystem.IsWindows()) RemotePCDiagnostics.Core.Storage.AgentDriveSelfTestHost.RecoverAtStart(RemotePCDiagnostics.Core.Logging.AppLoggerFactory.From(log).CreateLogger("DriveSelfTest"));
         // The Windows boot memory test ran at this boot (or was dropped): put back the test mix it was scheduled with.
         if (OperatingSystem.IsWindows()) RemotePCDiagnostics.Core.Stress.AgentMemoryDiagnosticHost.RecoverAtStart(RemotePCDiagnostics.Core.Logging.AppLoggerFactory.From(log).CreateLogger("MemoryDiagnostic"));
+        // A battery drain test whose app went away (or whose PC restarted) left the power plan changed: put it back.
+        RemotePCDiagnostics.Core.Battery.AgentBatteryDrainPower.RecoverAtStart(RemotePCDiagnostics.Core.Logging.AppLoggerFactory.From(log).CreateLogger("BatteryDrain"));
         // An in-app update may have replaced this service mid-way (Setup's Agent MSI step): bring the session's app back.
         // A cooling test that was switching thermal modes when the PC restarted or the Agent stopped: put the modes back.
         if (OperatingSystem.IsWindows()) RemotePCDiagnostics.Core.Cooling.AgentCoolingModesHost.RecoverAtStart(RemotePCDiagnostics.Core.Logging.AppLoggerFactory.From(log).CreateLogger("Cooling"));

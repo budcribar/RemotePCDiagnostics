@@ -89,6 +89,8 @@ public static class ModuleIds
     public static readonly Guid GpuMemory = new("fe79a8ac-1fca-4933-9ae8-f8016d4ba216");
     /// <summary>Slug <c>Cooling</c>.</summary>
     public static readonly Guid Cooling = new("adda2b29-4378-44da-b7ef-64376b0da30f");
+    /// <summary>Slug <c>BatteryDrain</c>.</summary>
+    public static readonly Guid BatteryDrain = new("32ea07c3-6c63-4453-a03e-7d778b74b308");
 
     /// <summary>Every built-in id with its slug (the module's Name). Includes modules that are not registered on every build.</summary>
     public static IReadOnlyDictionary<Guid, string> BuiltIn { get; } = new Dictionary<Guid, string>
@@ -134,6 +136,7 @@ public static class ModuleIds
         [DriveSelfTest] = ModuleSlugs.DriveSelfTest,
         [GpuMemory] = ModuleSlugs.GpuMemory,
         [Cooling] = ModuleSlugs.Cooling,
+        [BatteryDrain] = ModuleSlugs.BatteryDrain,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -198,4 +201,6 @@ public static class ModuleSlugs
     public const string GpuMemory = "GpuMemory";
     /// <summary>The cooling test: heat at low load, fan response under CPU load, and thermal mode switching (Agent).</summary>
     public const string Cooling = "Cooling";
+    /// <summary>The guided battery drain and runtime measurement (on battery only, through the Agent's power settings).</summary>
+    public const string BatteryDrain = "BatteryDrain";
 }

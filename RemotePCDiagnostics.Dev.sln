@@ -121,6 +121,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Sound", "Sound", "{ED22798C
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules.Sound", "src\Modules\Sound\RemotePCDiagnostics.Modules.Sound.csproj", "{0F01E4B7-4F1A-4129-8ECC-E60330A0A694}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules.BatteryDrain", "src\Modules\BatteryDrain\RemotePCDiagnostics.Modules.BatteryDrain.csproj", "{F2BC3615-51C3-4718-AB76-D1D0AC71C896}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -731,6 +733,18 @@ Global
 		{0F01E4B7-4F1A-4129-8ECC-E60330A0A694}.Release|x64.Build.0 = Release|Any CPU
 		{0F01E4B7-4F1A-4129-8ECC-E60330A0A694}.Release|x86.ActiveCfg = Release|Any CPU
 		{0F01E4B7-4F1A-4129-8ECC-E60330A0A694}.Release|x86.Build.0 = Release|Any CPU
+		{F2BC3615-51C3-4718-AB76-D1D0AC71C896}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F2BC3615-51C3-4718-AB76-D1D0AC71C896}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F2BC3615-51C3-4718-AB76-D1D0AC71C896}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F2BC3615-51C3-4718-AB76-D1D0AC71C896}.Debug|x64.Build.0 = Debug|Any CPU
+		{F2BC3615-51C3-4718-AB76-D1D0AC71C896}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{F2BC3615-51C3-4718-AB76-D1D0AC71C896}.Debug|x86.Build.0 = Debug|Any CPU
+		{F2BC3615-51C3-4718-AB76-D1D0AC71C896}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F2BC3615-51C3-4718-AB76-D1D0AC71C896}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F2BC3615-51C3-4718-AB76-D1D0AC71C896}.Release|x64.ActiveCfg = Release|Any CPU
+		{F2BC3615-51C3-4718-AB76-D1D0AC71C896}.Release|x64.Build.0 = Release|Any CPU
+		{F2BC3615-51C3-4718-AB76-D1D0AC71C896}.Release|x86.ActiveCfg = Release|Any CPU
+		{F2BC3615-51C3-4718-AB76-D1D0AC71C896}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -790,5 +804,6 @@ Global
 		{EFE7B9BA-F3A6-4842-A322-641B70328BA5} = {FF787A49-A8C1-5AEA-722A-D1B55891734D}
 		{ED22798C-C543-4429-AF05-A1E53BAE5E9D} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
 		{0F01E4B7-4F1A-4129-8ECC-E60330A0A694} = {ED22798C-C543-4429-AF05-A1E53BAE5E9D}
+		{F2BC3615-51C3-4718-AB76-D1D0AC71C896} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
 	EndGlobalSection
 EndGlobal

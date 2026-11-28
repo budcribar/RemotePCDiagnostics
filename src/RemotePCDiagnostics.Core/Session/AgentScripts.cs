@@ -72,6 +72,11 @@ public static class AgentScripts
     /// <summary>Args: "list"; "set", "windows" or "maker" and the mode's id; or "restore". Windows' power mode and the PC maker's thermal
     /// profile for the cooling test (<see cref="Cooling.AgentCoolingModes"/>); prints <see cref="Cooling.CoolingModesAnswer"/> JSON.</summary>
     public const string CoolingModes = "cooling_modes";
+    /// <summary>
+    /// Args: "apply", "renew", "restore", "shutdown" or "status". The battery drain test's power settings and its shutdown at 5 %
+    /// (<see cref="Battery.AgentBatteryDrainPower"/>); prints <see cref="Battery.BatteryDrainPowerAnswer"/> JSON.
+    /// </summary>
+    public const string BatteryDrainPower = "battery_drain_power";
 
     public const string RebootTask = "reboot";
     public const string WorkflowTask = "workflow";
@@ -199,6 +204,10 @@ public static class AgentScripts
                 return DriveSelfTestPlan(a) is { } selfTest ? Native(selfTest) : Refuse("That isn't a drive self-test request.");
             case CoolingModes:
                 return Cooling.CoolingModesAction.Parse(a) is { } cooling ? Native(cooling) : Refuse("That isn't a thermal mode request this app sends.");
+
+            case BatteryDrainPower:
+                return a.Count == 1 && Battery.BatteryDrainPowerAction.IsVerb(Arg(0))
+                    ? Native(new Battery.BatteryDrainPowerAction(Arg(0)!)) : Refuse("That isn't a battery drain test request.");
 
             default:
                 return Refuse($"Unknown script '{request.Name}'.");
