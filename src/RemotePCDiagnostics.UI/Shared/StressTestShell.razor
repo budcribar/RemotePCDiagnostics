@@ -1,0 +1,178 @@
+@using System.Globalization
+@using RemotePCDiagnostics.Core.Stress
+@typeparam TReport where TReport : class
+@*
+    One layout for every stress test page, so they all look the same: the toolbar (icon, title, the test's own choices, how long it
+    runs, Start or Stop), the description, the status line, and then either the progress bar with the Progress card and the test's own
+    live cards, or the result card with the test's own result cards. The page keeps its logic (start, stop, timing) in StressPageBase,
+    or IStressTestPage, and passes only what differs: its choices, cards and wording.
+
+    It renders no element of its own around its parts: the Checks & Tests detail pane and the dashboard style the toolbar and the
+    status line as direct children of the pane.
+*@
+@{
+    var r = Page.Result;
+    var running = r.Status == DiagnosticStatus.Running;
+    var locked = running || Page.IsBlocked;
+    var progress = running ? Page.Progress : null;
+    var report = running ? null : Report;
+}
+<CascadingValue Name="@StressCard.PrefixName" Value="Prefix" IsFixed="true">
+<div class="toolbar">
+    <span class="icon-badge page-icon"><Icon Name="@Icon" Size="20" /></span><h1 data-testid="@Id("title")">@Title</h1>
+    @Options
+    @if (DurationChoices is { Count: > 0 } choices)
+    {
+        <label class="meta">@DurationLabel
+            <select data-testid="@Id("duration")" disabled="@locked" @onchange="SetDuration">
+                @foreach (var d in choices)
+                {
+                    <option value="@Seconds(d)" selected="@(d == Page.Duration)">@DurationText(d)</option>
+                }
+            </select>
+        </label>
+    }
+    @if (Page.ShowStop)
+    {
+        <button data-testid="@Id(StopId)" @attributes="CancelMarker" @onclick="Page.Stop">Stop</button>
+    }
+    else
+    {
+        <button data-testid="@Id("start")" @attributes="RunMarker" @onclick="Page.Start" disabled="@(locked || !Page.CanStart)">Start</button>
+    }
+</div>
+<p class="meta" data-testid="@Id("intro")">@Description @DescriptionExtra</p>
+
+<p data-testid="@Id("status")" class="status-line @(running ? "is-running" : "")">
+    <span class="@StoreAwareComponent.DotClass(r.Status)"></span>
+    <span>@(r.Status switch { DiagnosticStatus.NotRun => NotRunText, DiagnosticStatus.Running => RunningText, _ => r.Message })</span>
+    @if (running)
+    {
+        <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span>
+    }
+</p>
+@Notices
+
+@if (running)
+{
+    @if (progress is { Fraction: null })
+    {
+        <div class="run-progress run-progress-indeterminate" data-testid="@Id(ProgressId)" aria-hidden="true"><div></div></div>
+    }
+    else
+    {
+        <div class="progress run-progress" data-testid="@Id(ProgressId)"><div style="width:@Percent(progress?.Fraction ?? 0)%"></div></div>
+    }
+    <div class="cards">
+        <div class="card is-running card-with-visual" data-testid="@Id(ProgressCardId)">
+            <div class="card-main">
+                <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                <div class="headline">@(progress?.Headline ?? "Getting ready…")</div>
+                <CardList Items="progress?.Facts" />
+                @if (progress?.Problem is { Length: > 0 } problem)
+                {
+                    <div class="meta error-text">@problem</div>
+                }
+            </div>
+            <TestRunningVisual Slug="@r.ModuleName" TestId="@Id("visual")" />
+        </div>
+        @LiveCards
+    </div>
+    @LiveFooter
+}
+else if (report is not null)
+{
+    <div class="cards">
+        @if (Explanation is not null)
+        {
+            <StressCard Id="result" Title="@((report as IStressReport)?.Headline ?? r.Message)" Tone="@StressCard.ToneOf(r.Status)"
+                        Headline="@Explanation(report)" Facts="ResultFacts(report, r)" />
+        }
+        @if (ReportCards is not null)
+        {
+            @ReportCards(report)
+        }
+    </div>
+    @if (ReportFooter is not null)
+    {
+        @ReportFooter(report)
+    }
+}
+@ChildContent
+</CascadingValue>
+
+@code {
+    /// <summary>The page this lays out: its result, state, run length and Start/Stop.</summary>
+    [Parameter, EditorRequired] public IStressTestPage Page { get; set; } = default!;
+    /// <summary>The start of every data-testid on the page ("cpustress" gives cpustress-title, cpustress-start, …).</summary>
+    [Parameter, EditorRequired] public string Prefix { get; set; } = "";
+    [Parameter, EditorRequired] public string Icon { get; set; } = "";
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    /// <summary>What the test does, in a sentence or two under the toolbar.</summary>
+    [Parameter] public string? Description { get; set; }
+    /// <summary>More of the description that changes with the page's state (the memory test's planned size).</summary>
+    [Parameter] public RenderFragment? DescriptionExtra { get; set; }
+
+    /// <summary>The test's own choices in the toolbar, before the run length (drive, test size, mode).</summary>
+    [Parameter] public RenderFragment? Options { get; set; }
+    /// <summary>The run length choices. None: no run length select.</summary>
+    [Parameter] public IReadOnlyList<TimeSpan>? DurationChoices { get; set; }
+    [Parameter] public string DurationLabel { get; set; } = "Run for";
+
+    /// <summary>Notices and extra status lines under the status line (no drive to test, the drive health check).</summary>
+    [Parameter] public RenderFragment? Notices { get; set; }
+    /// <summary>The test's own cards while it runs, after the Progress card (temperatures, answers checked, delay).</summary>
+    [Parameter] public RenderFragment? LiveCards { get; set; }
+    /// <summary>Under the live cards (the network test's chart).</summary>
+    [Parameter] public RenderFragment? LiveFooter { get; set; }
+
+    /// <summary>The last run's report. Null: nothing to show yet (the result cards are hidden while it runs).</summary>
+    [Parameter] public TReport? Report { get; set; }
+    /// <summary>The result card's sentence. Null: no result card (the page shows only its own result cards).</summary>
+    [Parameter] public Func<TReport, string>? Explanation { get; set; }
+    /// <summary>The result card's facts; "Finished …" is added after them.</summary>
+    [Parameter] public Func<TReport, IEnumerable<string?>>? Facts { get; set; }
+    /// <summary>The test's own result cards, after the result card.</summary>
+    [Parameter] public RenderFragment<TReport>? ReportCards { get; set; }
+    /// <summary>Under the result cards (the network test's chart, the NPU workload table).</summary>
+    [Parameter] public RenderFragment<TReport>? ReportFooter { get; set; }
+    /// <summary>Always shown last (the memory test's Windows boot memory test).</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    [Parameter] public string NotRunText { get; set; } = "Not run. Press Start when you're ready.";
+    [Parameter] public string RunningText { get; set; } = "Running…";
+
+    /// <summary>The ends of a few data-testids that some pages already used before they shared this layout.</summary>
+    [Parameter] public string StopId { get; set; } = "stop";
+    [Parameter] public string ProgressId { get; set; } = "progress";
+    [Parameter] public string ProgressCardId { get; set; } = "live-progress";
+    /// <summary>Set: Start and Stop also carry the generic run-check and cancel-check markers for this check ID.</summary>
+    [Parameter] public string? CheckId { get; set; }
+
+    private string Id(string end) => $"{Prefix}-{end}";
+
+    private IReadOnlyDictionary<string, object> RunMarker => Marker("run-check");
+    private IReadOnlyDictionary<string, object> CancelMarker => Marker("cancel-check");
+
+    private IReadOnlyDictionary<string, object> Marker(string action) => CheckId is null
+        ? NoAttributes
+        : new Dictionary<string, object> { ["data-action"] = action, ["data-check-id"] = CheckId };
+
+    private static readonly IReadOnlyDictionary<string, object> NoAttributes = new Dictionary<string, object>();
+
+    private IEnumerable<string?> ResultFacts(TReport report, DiagnosticResult r) =>
+        [.. Facts?.Invoke(report) ?? Enumerable.Empty<string?>(), $"Finished {r.Timestamp.ToLocalTime():g}"];
+
+    private void SetDuration(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var s)) Page.SetDuration(TimeSpan.FromSeconds(s));
+    }
+
+    private static string Seconds(TimeSpan d) => ((int)d.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+    private static string Percent(double fraction) => (Math.Clamp(fraction, 0, 1) * 100).ToString("0.#", CultureInfo.InvariantCulture);
+
+    /// <summary>"30 seconds", "1 minute", "5 minutes".</summary>
+    public static string DurationText(TimeSpan d) => d < TimeSpan.FromMinutes(1)
+        ? $"{(int)d.TotalSeconds} seconds"
+        : d == TimeSpan.FromMinutes(1) ? "1 minute" : $"{d.TotalMinutes:0} minutes";
+}

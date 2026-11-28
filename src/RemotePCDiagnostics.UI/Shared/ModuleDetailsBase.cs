@@ -1,4 +1,3 @@
-using System.Globalization;
 using Microsoft.AspNetCore.Components;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Audio;
@@ -26,13 +25,59 @@ public abstract class ModuleDetailsBase : StoreAwareComponent
     protected Task RunModuleAsync() => DiagnosticModule is { } m ? Diagnostics.RunAsync(m.Name) : Task.CompletedTask;
 }
 
-/// <summary>Shared lifecycle, progress subscription, duration selector, and Start/Stop controls for the 5 stress test pages.</summary>
-public abstract class StressPageBase<TModule, TProgress, TReport> : ModuleDetailsBase
+/// <summary>What <see cref="StressTestShell{TReport}"/> reads from its page: the test's result and state, its run length, and Start/Stop.</summary>
+public interface IStressTestPage
+{
+    /// <summary>The test's latest result (not run before its first run).</summary>
+    DiagnosticResult Result { get; }
+    /// <summary>Something else keeps this test from starting now (another stress test or the stress run): its choices and Start are locked.</summary>
+    bool IsBlocked { get; }
+    /// <summary>Stop shows in place of Start: this test runs, or a stress run that includes it does.</summary>
+    bool ShowStop { get; }
+    /// <summary>Start can be pressed once nothing else runs (false: the test has nothing to test, such as no drive).</summary>
+    bool CanStart { get; }
+    /// <summary>How long the next run takes.</summary>
+    TimeSpan Duration { get; }
+    /// <summary>The Progress card while the test runs (null before its first report).</summary>
+    LiveProgress? Progress { get; }
+    void SetDuration(TimeSpan duration);
+    void Start();
+    void Stop();
+}
+
+/// <summary>Shared lifecycle, progress subscription, run length, and Start/Stop for the 5 stress test pages. Their look is
+/// <see cref="StressTestShell{TReport}"/>.</summary>
+public abstract class StressPageBase<TModule, TProgress, TReport> : ModuleDetailsBase, IStressTestPage
     where TModule : StressModuleBase<TProgress, TReport>
     where TProgress : class
+    where TReport : class
 {
     protected TModule? Module => DiagnosticModule as TModule;
     protected TimeSpan _duration = TimeSpan.FromMinutes(1);
+
+    /// <summary>The test's latest result.</summary>
+    protected DiagnosticResult Result => Store.Get(DiagnosticModule?.Name ?? "");
+    protected bool Running => Result.Status == DiagnosticStatus.Running;
+    /// <summary>Another stress test or the stress run is going.</summary>
+    protected bool OtherBusy => Diagnostics.IsAnyStressRunning && !Running;
+    /// <summary>The page's choices can't change now: this test or another one runs.</summary>
+    protected bool Locked => Running || OtherBusy;
+    /// <summary>The last run's report (for a test that runs once per device, the one the result names).</summary>
+    protected TReport? Report => Result.Report() as TReport;
+    /// <summary>The current run's live readings (null when it isn't running or before its first report).</summary>
+    protected TProgress? Progress => Running ? Module?.LastProgress : null;
+    /// <summary>Whether Start can be pressed once nothing else runs.</summary>
+    protected virtual bool CanStart => Module is not null;
+
+    DiagnosticResult IStressTestPage.Result => Result;
+    bool IStressTestPage.IsBlocked => OtherBusy;
+    bool IStressTestPage.ShowStop => Running || Diagnostics.IsStressSuiteRunning;
+    bool IStressTestPage.CanStart => CanStart;
+    TimeSpan IStressTestPage.Duration => _duration;
+    LiveProgress? IStressTestPage.Progress => Running ? Module?.LiveProgress : null;
+    void IStressTestPage.SetDuration(TimeSpan duration) => _duration = duration;
+    void IStressTestPage.Start() => Start();
+    void IStressTestPage.Stop() => Stop();
 
     protected override void OnInitialized()
     {
@@ -56,14 +101,9 @@ public abstract class StressPageBase<TModule, TProgress, TReport> : ModuleDetail
         _ = InvokeAsync(StateHasChanged);
     }
 
-    protected void SetDuration(ChangeEventArgs e)
-    {
-        if (double.TryParse(e.Value?.ToString(), CultureInfo.InvariantCulture, out var min)) _duration = TimeSpan.FromMinutes(min);
-    }
-
     protected void Start()
     {
-        if (Module is not { } m || Diagnostics.IsRunning(m.Name) || Diagnostics.IsAnyStressRunning) return;
+        if (Module is not { } m || Diagnostics.IsRunning(m.Name) || Diagnostics.IsAnyStressRunning || !CanStart) return;
         ApplyToModule(m);
         _ = Diagnostics.RunAsync(m.Name);
     }
@@ -74,8 +114,7 @@ public abstract class StressPageBase<TModule, TProgress, TReport> : ModuleDetail
         Module?.Stop();
     }
 
-    protected static string Minutes(TimeSpan d) => d == TimeSpan.FromMinutes(1) ? "1 minute" : $"{d.TotalMinutes:0} minutes";
-    protected static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
+    protected static string Clock(TimeSpan t) => LiveProgress.Clock(t);
 
     public override void Dispose()
     {

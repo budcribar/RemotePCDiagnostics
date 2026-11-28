@@ -1,0 +1,26 @@
+@* The temperature card every stress test shows while it runs, and the fan card when the PC reports a fan. The same wording on every
+   page: the reading, "—" until the first reading, "Not available on this PC" without sensors, "Not reported on this PC" when the sensors
+   don't cover this part. The dot is green with a reading and turns to a warning within 8 °C of a known limit. *@
+<StressCard Id="live-temp" Title="@Title" Tone="@Tone" Headline="@Reading" Note="@LimitNote" />
+@if (FanRpm is { } rpm)
+{
+    <StressCard Id="live-fan" Title="Fan speed" Headline="@($"{rpm:0} RPM")" />
+}
+
+@code {
+    /// <summary>"CPU temperature", "Drive temperature".</summary>
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public double? TemperatureC { get; set; }
+    /// <summary>Whether the PC has temperature sensors at all. Null: no reading yet.</summary>
+    [Parameter] public bool? SensorsAvailable { get; set; }
+    /// <summary>The temperature the test stops at, when known.</summary>
+    [Parameter] public double? LimitC { get; set; }
+    [Parameter] public double? FanRpm { get; set; }
+
+    private string Reading => TemperatureC is { } t ? $"{t:0}°C"
+        : SensorsAvailable switch { null => "—", false => "Not available on this PC", true => "Not reported on this PC" };
+
+    private string Tone => TemperatureC is not { } t ? "neutral" : LimitC is { } c && t >= c - 8 ? "warning" : "ok";
+
+    private string LimitNote => LimitC is { } c ? $"Stops by itself at {c:0}°C" : "Stops by itself if anything gets too hot";
+}

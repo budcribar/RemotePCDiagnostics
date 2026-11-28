@@ -1,91 +1,78 @@
 @using RemotePCDiagnostics.Core.Npu
 @inherits ModuleDetailsBase
-@* On-demand NPU test: finds NPUs (PnP + DXCore), checks the driver, and runs a short bounded workload on each one. Fully automatic. *@
-@{
-    var m = (DiagnosticModule as NpuTestModule);
-}
-@if (m is null)
+@implements IStressTestPage
+@* On-demand NPU test: finds NPUs (PnP + DXCore), checks the driver, and runs a short bounded workload on each one. Fully automatic.
+   It isn't part of the stress run, so it takes the stress test layout through IStressTestPage instead of StressPageBase. *@
+@if (Npu is not { } m)
 {
     @* Hidden when no NPU was found (DetectAsync): a direct link lands here instead of on a broken page. *@
     <p class="meta" data-testid="npu-none">@(Diagnostics.IsDetectingHardware ? "Looking for an NPU…" : "No NPU detected on this machine.")</p>
 }
 else
 {
-    var r = Store.Get(m.Name);
-    var rep = r.Report() as NpuTestReport; // one result per NPU, combined into one report
-    var running = r.Status == DiagnosticStatus.Running;
-    var suiteBusy = Diagnostics.IsStressSuiteRunning;
-    <div class="toolbar toolbar-grouped">
-        <span class="icon-badge page-icon"><Icon Name="chip" Size="20" /></span><h1 data-testid="npu-title">@m.DisplayName</h1>
-        @if (running) { <button data-testid="npu-cancel" data-action="cancel-check" data-check-id="@m.Name" @onclick="m.Cancel">Cancel</button> }
-        else { <button data-testid="npu-start" data-action="run-check" data-check-id="@m.Name" disabled="@suiteBusy" @onclick="() => Start(m)">@(r.Status == DiagnosticStatus.NotRun ? "Start" : "Run again")</button> }
-    </div>
-    <p class="meta" data-testid="npu-intro">Checks the NPU (AI accelerator) and its driver, and runs a short workload on it. PCs without one are skipped, not failed.</p>
-    <div class="toolbar">
-        <label class="meta">Length
-            <select data-testid="npu-duration" disabled="@running" @onchange="e => { if (int.TryParse(e.Value?.ToString(), out var s)) m.Settings.Duration = TimeSpan.FromSeconds(s); }">
-                @foreach (var d in NpuTestModule.DurationChoices)
-                {
-                    <option value="@((int)d.TotalSeconds)" selected="@(d == m.Settings.Duration)">@((int)d.TotalSeconds) s</option>
-                }
-            </select>
-        </label>
-        <button class="btn-small" data-testid="npu-refresh-devices" disabled="@running" @onclick="() => LoadDevices(m)">Refresh devices</button>
-    </div>
-    <p data-testid="npu-status" class="@(running ? "status-line is-running" : r.Status == DiagnosticStatus.Error && rep is null ? "status-line error-text" : "status-line")">
-        <span class="@DotClass(r.Status)"></span>
-        <span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run. Press Start to begin.", DiagnosticStatus.Running => "Testing the NPU…", _ => r.Message })</span>
-        @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
-    </p>
-    @if (running)
-    {
-        <div class="run-progress run-progress-indeterminate" data-testid="npu-run-progress" aria-hidden="true"><div></div></div>
-        <div class="cards">
-            <div class="card is-running card-with-visual" data-testid="npu-live-progress">
-                <div class="card-main">
-                    <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-                    <div class="headline">Testing the NPU…</div>
-                    <div class="meta">@((int)m.Settings.Duration.TotalSeconds) s matrix-multiply workload</div>
-                </div>
-                <TestRunningVisual Slug="@m.Name" TestId="npu-visual" />
-            </div>
-        </div>
-    }
-    @if (!running && rep?.Notice is { } notice) { <p class="notice" data-testid="npu-notice">@notice</p> }
-    @if (!running && rep is { Devices.Count: > 0 })
-    {
-        <div class="cards">
-            @foreach (var d in rep.Devices) { @DeviceCard(d) }
-        </div>
-        <table class="detail" data-testid="npu-table">
-            <tr><th>Workload</th><td>@rep.MatrixSize × @rep.MatrixSize float32 matrix multiply, @((int)rep.Budget.TotalSeconds) s</td></tr>
-            <tr><th>CPU reference</th><td>@(rep.Devices.FirstOrDefault()?.CpuAverageMs is { } c ? $"{RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(c)} ms per multiply (one core)" : "–")</td></tr>
-        </table>
-    }
-    else if (!running && rep is null)
-    {
-        <table class="detail" data-testid="npu-devices">
-            <tr><th>NPUs found</th><td>@(_devices.Count == 0 ? "None" : string.Join(", ", _devices.Select(d => d.Name)))</td></tr>
-        </table>
-    }
+    <StressTestShell TReport="NpuTestReport" Page="this" Prefix="npu" Icon="chip" Title="@m.DisplayName" CheckId="@m.Name"
+                     StopId="cancel" ProgressId="run-progress"
+                     Description="Checks the NPU (AI accelerator) and its driver, and runs a short workload on it. PCs without one are skipped, not failed."
+                     DurationChoices="NpuTestModule.DurationChoices" Report="@(Report is { Devices.Count: > 0 } shown ? shown : null)">
+        <Options>
+            <button class="btn-small" data-testid="npu-refresh-devices" disabled="@Running" @onclick="() => LoadDevices(m)">Refresh devices</button>
+        </Options>
+        <Notices>
+            @if (!Running && Report?.Notice is { } notice)
+            {
+                <p class="notice" data-testid="npu-notice">@notice</p>
+            }
+        </Notices>
+        <ReportCards Context="rep">
+            @foreach (var d in rep.Devices)
+            {
+                <StressCard Id="card" Title="@d.Device.Name" Tone="@DeviceTone(d.Verdict)"
+                            Headline="@(d.Gflops is { } g ? $"{g:0.0} GFLOPS" : VerdictHeading(d.Verdict))" Facts="DeviceFacts(d)" />
+            }
+        </ReportCards>
+        <ReportFooter Context="rep">
+            <table class="detail" data-testid="npu-table">
+                <tr><th>Workload</th><td>@rep.MatrixSize × @rep.MatrixSize float32 matrix multiply, @((int)rep.Budget.TotalSeconds) s</td></tr>
+                <tr><th>CPU reference</th><td>@(rep.Devices.FirstOrDefault()?.CpuAverageMs is { } c ? $"{RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(c)} ms per multiply (one core)" : "–")</td></tr>
+            </table>
+        </ReportFooter>
+        <ChildContent>
+            @if (!Running && Report is null)
+            {
+                <table class="detail" data-testid="npu-devices">
+                    <tr><th>NPUs found</th><td>@(_devices.Count == 0 ? "None" : string.Join(", ", _devices.Select(d => d.Name)))</td></tr>
+                </table>
+            }
+        </ChildContent>
+    </StressTestShell>
 }
 
 @code {
     private IReadOnlyList<NpuDevice> _devices = [];
 
+    private NpuTestModule? Npu => DiagnosticModule as NpuTestModule;
+    private DiagnosticResult Result => Store.Get(Npu?.Name ?? "");
+    private bool Running => Result.Status == DiagnosticStatus.Running;
+    /// <summary>The last run's report: one result per NPU, combined into one report.</summary>
+    private NpuTestReport? Report => Result.Report() as NpuTestReport;
+
+    DiagnosticResult IStressTestPage.Result => Result;
+    bool IStressTestPage.IsBlocked => Diagnostics.IsStressSuiteRunning;
+    bool IStressTestPage.ShowStop => Running;
+    bool IStressTestPage.CanStart => Npu is not null;
+    TimeSpan IStressTestPage.Duration => Npu?.Settings.Duration ?? TimeSpan.Zero;
+    RemotePCDiagnostics.Core.Stress.LiveProgress? IStressTestPage.Progress => Npu is { } m ? new("Testing the NPU…", null, [$"{(int)m.Settings.Duration.TotalSeconds} s matrix-multiply workload"]) : null;
+    void IStressTestPage.SetDuration(TimeSpan duration) { if (Npu is { } m) m.Settings.Duration = duration; }
+    void IStressTestPage.Start() { if (Npu is { } m && !Diagnostics.IsStressSuiteRunning) _ = Diagnostics.RunAsync(m.Name); }
+    void IStressTestPage.Stop() => Npu?.Cancel();
+
     protected override void OnInitialized()
     {
         base.OnInitialized();
-        if ((DiagnosticModule as NpuTestModule) is { } m) _ = Task.Run(() => LoadDevices(m));
+        if (Npu is { } m) _ = Task.Run(() => LoadDevices(m));
     }
 
     private void LoadDevices(NpuTestModule m) { _devices = m.Devices(); _ = InvokeAsync(StateHasChanged); }
-
-    private void Start(NpuTestModule m)
-    {
-        if (Diagnostics.IsStressSuiteRunning) return;
-        _ = Diagnostics.RunAsync(m.Name);
-    }
 
     private static string VerdictHeading(NpuVerdict v) => v switch
     {
@@ -101,13 +88,15 @@ else
         _ => v.ToString(),
     };
 
-    private static RenderFragment DeviceCard(NpuDeviceReport d) => __builder =>
-    {
-        var dot = NpuTestModule.StatusOf(d.Verdict) switch { DiagnosticStatus.Ok => "ok", DiagnosticStatus.Warning => "warning", _ => "error" };
-        <div class="card" data-testid="npu-card">
-            <div class="card-head"><span class="dot dot-@dot"></span><strong>@d.Device.Name</strong></div>
-            <div class="headline">@(d.Gflops is { } g ? $"{g:0.0} GFLOPS" : VerdictHeading(d.Verdict))</div>
-            <CardList Items="@([ d.Device.Vendor, $"Driver {d.Device.DriverVersion ?? "unknown"}", d.Device.ProblemCode is { } c ? NpuDetection.ProblemText(c) : d.Device.Status ?? "status unknown", d.AverageMs is { } avg ? $"{d.Iterations} runs · {RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(avg)} ms each · first {(d.FirstRunMs is { } first ? RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(first) : "—")} ms{(d.MaxAbsError is { } e ? $" · max error {e:0.##e+0}" : "")}" : null, d.Adapter is { } a ? $"Ran on: {a}" : null, d.Message ])" />
-        </div>
-    };
+    private static string DeviceTone(NpuVerdict v) => NpuTestModule.StatusOf(v) switch { DiagnosticStatus.Ok => "ok", DiagnosticStatus.Warning => "warning", _ => "error" };
+
+    private static IEnumerable<string?> DeviceFacts(NpuDeviceReport d) =>
+    [
+        d.Device.Vendor,
+        $"Driver {d.Device.DriverVersion ?? "unknown"}",
+        d.Device.ProblemCode is { } c ? NpuDetection.ProblemText(c) : d.Device.Status ?? "status unknown",
+        d.AverageMs is { } avg ? $"{d.Iterations} runs · {RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(avg)} ms each · first {(d.FirstRunMs is { } first ? RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(first) : "—")} ms{(d.MaxAbsError is { } e ? $" · max error {e:0.##e+0}" : "")}" : null,
+        d.Adapter is { } a ? $"Ran on: {a}" : null,
+        d.Message,
+    ];
 }

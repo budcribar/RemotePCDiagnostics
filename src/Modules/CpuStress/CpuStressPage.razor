@@ -1,78 +1,15 @@
 @using RemotePCDiagnostics.Core.Stress
 @inherits StressPageBase<CpuStressModule, CpuStressProgress, CpuStressReport>
-@{
-    var r = Store.Get(CpuStressModule.ModuleName);
-    var running = r.Status == DiagnosticStatus.Running;
-    var otherBusy = Diagnostics.IsAnyStressRunning && !running;
-    var report = r.Payload as CpuStressReport;
-    var p = running ? Module?.LastProgress : null;
-}
-<div class="toolbar">
-    <span class="icon-badge page-icon"><Icon Name="cpu" Size="20" /></span><h1 data-testid="cpustress-title">CPU stress test</h1>
-    <label class="meta">Run for
-        <select data-testid="cpustress-duration" disabled="@(running || otherBusy)" @onchange="SetDuration">
-            @foreach (var d in CpuStressOptions.DurationChoices)
-            {
-                <option value="@d.TotalMinutes" selected="@(d == _duration)">@Minutes(d)</option>
-            }
-        </select>
-    </label>
-    @if (running || Diagnostics.IsStressSuiteRunning)
-    {
-        <button data-testid="cpustress-stop" @onclick="Stop">Stop</button>
-    }
-    else
-    {
-        <button data-testid="cpustress-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
-    }
-</div>
-<p class="meta">Runs every processor core at full load and checks the answers. The PC may get loud and slow. Stops if it gets too hot.</p>
-
-<p data-testid="cpustress-status" class="status-line @(running ? "is-running" : "")">
-    <span class="@DotClass(r.Status)"></span>
-    @(r.Status switch { DiagnosticStatus.NotRun => "Not run. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
-    @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
-</p>
-
-@if (running)
-{
-    <div class="progress run-progress" data-testid="cpustress-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
-    <div class="cards">
-        <div class="card is-running card-with-visual" data-testid="cpustress-live-time">
-            <div class="card-main">
-                <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-                <div class="headline">@(p is null ? "Starting…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
-            </div>
-            <TestRunningVisual Slug="@CpuStressModule.ModuleName" TestId="cpustress-visual" />
-        </div>
-        <div class="card" data-testid="cpustress-live-temp">
-            <div class="card-head"><span class="@TempDot(p)"></span><strong>CPU temperature</strong></div>
-            <div class="headline">@(p?.CpuTemperatureC is { } t ? $"{t:0}°C" : p is { SensorsAvailable: false } ? "Not available on this PC" : "—")</div>
-            @if (p?.CpuCriticalC is { } c) { <div class="meta">Stops automatically at @c.ToString("0")°C</div> }
-        </div>
-        @if (p?.FanRpm is not null)
-        {
-        <div class="card" data-testid="cpustress-live-fan">
-            <div class="card-head"><span class="dot dot-neutral"></span><strong>Fan speed</strong></div>
-            <div class="headline">@($"{p.FanRpm:0} RPM")</div>
-        </div>
-        }
-    </div>
-}
-else if (report is not null)
-{
-    <div class="cards">
-        <div class="card" data-testid="cpustress-result">
-            <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
-            <div class="headline">@report.Explanation</div>
-            <CardList Items="@([ $"Ran for {Clock(report.Ran)} on {report.Threads} processor threads", report.MaxCpuTemperatureC is { } mt ? $"Hottest {mt:0}°C" : null, $"Finished {r.Timestamp.ToLocalTime():g}" ])" />
-
-        </div>
-    </div>
-}
+<StressTestShell TReport="CpuStressReport" Page="this" Prefix="cpustress" Icon="cpu" Title="CPU stress test" ProgressCardId="live-time"
+                 Description="Runs every processor core at full load and checks the answers. The PC may get loud and slow. Stops if it gets too hot."
+                 DurationChoices="CpuStressOptions.DurationChoices" Report="Report" Explanation="r => r.Explanation" Facts="Facts">
+    <LiveCards>
+        <StressSensorCards Title="CPU temperature" TemperatureC="Progress?.CpuTemperatureC" SensorsAvailable="Progress?.SensorsAvailable"
+                           LimitC="Progress?.CpuCriticalC" FanRpm="Progress?.FanRpm" />
+    </LiveCards>
+</StressTestShell>
 
 @code {
-    private static string TempDot(CpuStressProgress? p) => p?.CpuTemperatureC is not { } t ? "dot dot-neutral"
-        : p.CpuCriticalC is { } c && t >= c - 8 ? "dot dot-warning" : "dot dot-ok";
+    private static IEnumerable<string?> Facts(CpuStressReport r) =>
+        [$"Ran for {Clock(r.Ran)} on {r.Threads} processor threads", r.MaxCpuTemperatureC is { } mt ? $"Hottest {mt:0}°C" : null];
 }
-

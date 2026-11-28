@@ -1,90 +1,27 @@
 @using RemotePCDiagnostics.Core.Stress
 @using RemotePCDiagnostics.Core.Osquery
 @inherits StressPageBase<MemoryTestModule, MemoryTestProgress, MemoryTestReport>
-@{
-    var r = Store.Get(MemoryTestModule.ModuleName);
-    var running = r.Status == DiagnosticStatus.Running;
-    var otherBusy = Diagnostics.IsAnyStressRunning && !running;
-    var report = r.Payload as MemoryTestReport;
-    var p = running ? Module?.LastProgress : null;
-    var planned = running ? null : Module?.PlannedBytes(_mode);
-}
-<div class="toolbar">
-    <span class="icon-badge page-icon"><Icon Name="mem" Size="20" /></span><h1 data-testid="memtest-title">Memory test</h1>
-    <label class="meta">Test
-        <select data-testid="memtest-mode" disabled="@(running || otherBusy)" @onchange="SetMode">
-            <option value="Quick" selected="@(_mode == MemoryTestMode.Quick)">Quick (a small part of memory)</option>
-            <option value="Full" selected="@(_mode == MemoryTestMode.Full)">Full (as much memory as is safe)</option>
-        </select>
-    </label>
-    <label class="meta">Run for
-        <select data-testid="memtest-duration" disabled="@(running || otherBusy)" @onchange="SetDuration">
-            @foreach (var d in MemoryTestOptions.DurationChoices)
-            {
-                <option value="@d.TotalMinutes" selected="@(d == _duration)">@Minutes(d)</option>
-            }
-        </select>
-    </label>
-    @if (running || Diagnostics.IsStressSuiteRunning)
-    {
-        <button data-testid="memtest-stop" @onclick="Stop">Stop</button>
-    }
-    else
-    {
-        <button data-testid="memtest-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
-    }
-</div>
-<p class="meta">Writes patterns to memory and reads them back to find faulty spots. Other programs keep working.
-    @if (!running) { <span data-testid="memtest-plan">@(planned is { } pb ? $"This test will check about {HardwareInventory.FormatBytes(pb)} of memory." : "There isn't enough free memory to run this test right now. Close some programs and try again.")</span> }
-</p>
-
-<p data-testid="memtest-status" class="status-line @(running ? "is-running" : "")">
-    <span class="@DotClass(r.Status)"></span>
-    @(r.Status switch { DiagnosticStatus.NotRun => "Not run. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
-    @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
-</p>
-
-@if (running)
-{
-    <div class="progress run-progress" data-testid="memtest-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
-    <div class="cards">
-        <div class="card is-running card-with-visual" data-testid="memtest-live-progress">
-            <div class="card-main">
-                <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-                <div class="headline">@(p is null ? "Getting ready…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
-                @if (p is not null)
-                {
-                    <CardList Text="@($"Testing {HardwareInventory.FormatBytes(p.TestBytes)} · {(p.Pass == 1 ? "1 full round done" : $"{p.Pass} full rounds done")}")" />
-                    @if (p.Errors > 0) { <div class="meta error-text">Problems found so far: @p.Errors.ToString("N0")</div> }
-                }
-            </div>
-            <TestRunningVisual Slug="@MemoryTestModule.ModuleName" TestId="memtest-visual" />
-        </div>
-        <div class="card" data-testid="memtest-live-temp">
-            <div class="card-head"><span class="dot dot-neutral"></span><strong>CPU temperature</strong></div>
-            <div class="headline">@(p?.CpuTemperatureC is { } t ? $"{t:0}°C" : p is { SensorsAvailable: false } ? "Not available on this PC" : "—")</div>
-            <div class="meta">The test stops by itself if anything gets too hot</div>
-        </div>
-        @if (p?.FanRpm is not null)
+<StressTestShell TReport="MemoryTestReport" Page="this" Prefix="memtest" Icon="mem" Title="Memory test"
+                 Description="Writes patterns to memory and reads them back to find faulty spots. Other programs keep working."
+                 DurationChoices="MemoryTestOptions.DurationChoices" Report="Report" Explanation="r => r.Explanation" Facts="Facts">
+    <Options>
+        <label class="meta">Test
+            <select data-testid="memtest-mode" disabled="@Locked" @onchange="SetMode">
+                <option value="Quick" selected="@(_mode == MemoryTestMode.Quick)">Quick (a small part of memory)</option>
+                <option value="Full" selected="@(_mode == MemoryTestMode.Full)">Full (as much memory as is safe)</option>
+            </select>
+        </label>
+    </Options>
+    <DescriptionExtra>
+        @if (!Running)
         {
-        <div class="card" data-testid="memtest-live-fan">
-            <div class="card-head"><span class="dot dot-neutral"></span><strong>Fan speed</strong></div>
-            <div class="headline">@($"{p.FanRpm:0} RPM")</div>
-        </div>
+            <span data-testid="memtest-plan">@(Module?.PlannedBytes(_mode) is { } pb ? $"This test will check about {HardwareInventory.FormatBytes(pb)} of memory." : "There isn't enough free memory to run this test right now. Close some programs and try again.")</span>
         }
-    </div>
-}
-else if (report is not null)
-{
-    <div class="cards">
-        <div class="card" data-testid="memtest-result">
-            <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
-            <div class="headline">@report.Explanation</div>
-            <CardList Items="@([ report.Mode == MemoryTestMode.Quick ? "Quick test" : "Full test", report.TestBytes > 0 ? $"{HardwareInventory.FormatBytes(report.TestBytes)} checked" : null, report.Passes > 0 ? (report.Passes == 1 ? "1 round" : $"{report.Passes} rounds") : null, report.MaxCpuTemperatureC is { } mt ? $"Hottest {mt:0}°C" : null, $"Finished {r.Timestamp.ToLocalTime():g}" ])" />
-
-        </div>
-    </div>
-}
+    </DescriptionExtra>
+    <LiveCards>
+        <StressSensorCards Title="CPU temperature" TemperatureC="Progress?.CpuTemperatureC" SensorsAvailable="Progress?.SensorsAvailable" FanRpm="Progress?.FanRpm" />
+    </LiveCards>
+</StressTestShell>
 
 @{
     var off = Module?.Offline;
@@ -136,7 +73,7 @@ else if (report is not null)
                 </label>
                 @if (!_offlineConfirm)
                 {
-                    <button class="btn" data-testid="memdiag-schedule" disabled="@(_offlineBusy || running)" @onclick="() => _offlineConfirm = true">Schedule the boot test…</button>
+                    <button class="btn" data-testid="memdiag-schedule" disabled="@(_offlineBusy || Running)" @onclick="() => _offlineConfirm = true">Schedule the boot test…</button>
                 }
             </div>
             @if (_offlineConfirm)
@@ -165,7 +102,7 @@ else if (report is not null)
     {
         @if (!_confirm)
         {
-            <button class="btn" data-testid="memtest-mdsched" @onclick="() => { _confirm = true; _launchMessage = null; }" disabled="@running">Open Windows Memory Diagnostic…</button>
+            <button class="btn" data-testid="memtest-mdsched" @onclick="() => { _confirm = true; _launchMessage = null; }" disabled="@Running">Open Windows Memory Diagnostic…</button>
         }
         else
         {
@@ -181,6 +118,14 @@ else if (report is not null)
 
 @code {
     private static readonly TimeSpan OfflinePollInterval = TimeSpan.FromSeconds(15);
+
+    private static IEnumerable<string?> Facts(MemoryTestReport r) =>
+    [
+        r.Mode == MemoryTestMode.Quick ? "Quick test" : "Full test",
+        r.TestBytes > 0 ? $"{HardwareInventory.FormatBytes(r.TestBytes)} checked" : null,
+        r.Passes > 0 ? (r.Passes == 1 ? "1 round" : $"{r.Passes} rounds") : null,
+        r.MaxCpuTemperatureC is { } mt ? $"Hottest {mt:0}°C" : null,
+    ];
 
     private MemoryTestMode _mode = MemoryTestMode.Quick;
     private bool _confirm;

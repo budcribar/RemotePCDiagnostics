@@ -229,7 +229,9 @@ try {
 
   await page.getByTestId('nav-about').click();
   await page.getByTestId('about-title').waitFor({ state: 'visible', timeout: 15_000 });
-  const buildVersion = await page.getByTestId('about-version').innerText();
+  // The full version (with +commit) is on data-rpcd-version; the text drops the +commit since the Git commit row shows it.
+  const aboutVersion = page.getByTestId('about-version');
+  const buildVersion = (await aboutVersion.getAttribute('data-rpcd-version')) || await aboutVersion.innerText();
   if (!/^\d+\.\d+\.\d+-(local|ci\.)/.test(buildVersion)) throw new Error(`Missing build identity: ${buildVersion}`);
   if (process.env.GITHUB_SHA && !buildVersion.includes(process.env.GITHUB_SHA)) throw new Error(`Wrong Git revision: ${buildVersion}`);
   if (process.env.GITHUB_RUN_NUMBER && !buildVersion.includes(`-ci.${process.env.GITHUB_RUN_NUMBER}.1`)) throw new Error(`Wrong CI build: ${buildVersion}`);

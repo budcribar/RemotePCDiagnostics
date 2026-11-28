@@ -1,84 +1,29 @@
 @using RemotePCDiagnostics.Core.Stress
 @inherits StressPageBase<GpuStressModule, GpuStressProgress, GpuStressReport>
-@{
-    var r = Store.Get(GpuStressModule.ModuleName);
-    var running = r.Status == DiagnosticStatus.Running;
-    var otherBusy = Diagnostics.IsAnyStressRunning && !running;
-    var report = r.Report() as GpuStressReport; // one result per GPU: the worst one (or the one you stopped)
-    var p = running ? Module?.LastProgress : null;
-}
-<div class="toolbar">
-    <span class="icon-badge page-icon"><Icon Name="gpu" Size="20" /></span><h1 data-testid="gpustress-title">GPU stress test</h1>
-    <label class="meta">Run for
-        <select data-testid="gpustress-duration" disabled="@(running || otherBusy)" @onchange="SetDuration">
-            @foreach (var d in GpuStressOptions.DurationChoices)
-            {
-                <option value="@d.TotalMinutes" selected="@(d == _duration)">@Minutes(d)</option>
-            }
-        </select>
-    </label>
-    @if (running || Diagnostics.IsStressSuiteRunning)
-    {
-        <button data-testid="gpustress-stop" @onclick="Stop">Stop</button>
-    }
-    else
-    {
-        <button data-testid="gpustress-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
-    }
-</div>
-<p class="meta">Runs the graphics chip at full load and checks every answer. The PC may get warm and loud. Stops if it gets too hot.</p>
-
-<p data-testid="gpustress-status" class="status-line @(running ? "is-running" : "")">
-    <span class="@DotClass(r.Status)"></span>
-    @(r.Status switch { DiagnosticStatus.NotRun => "Not run. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
-    @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
-</p>
-
-@if (running)
-{
-    <div class="progress run-progress" data-testid="gpustress-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
-    <div class="cards">
-        <div class="card is-running card-with-visual" data-testid="gpustress-live-progress">
-            <div class="card-main">
-                <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-                <div class="headline">@(p is null ? "Getting ready…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
-                <div class="meta">@(p?.AdapterName ?? "")</div>
-            </div>
-            <TestRunningVisual Slug="@GpuStressModule.ModuleName" TestId="gpustress-visual" />
-        </div>
-        <div class="card" data-testid="gpustress-live-checks">
-            <div class="card-head"><span class="@(p is { Mismatches: > 0 } ? "dot dot-error" : "dot dot-ok")"></span><strong>Answers checked</strong></div>
-            <div class="headline">@(p is null ? "—" : p.Mismatches == 0 ? $"{p.ValuesChecked:N0} correct" : $"{p.Mismatches:N0} wrong")</div>
-            <div class="meta">@(p?.BillionOpsPerSecond is { } g ? $"Working at {g:0.0} billion steps per second" : "")</div>
-        </div>
-        <div class="card" data-testid="gpustress-live-temp">
-            <div class="card-head"><span class="dot dot-neutral"></span><strong>Graphics temperature</strong></div>
-            <div class="headline">@(p?.GpuTemperatureC is { } t ? $"{t:0}°C" : "Not reported on this PC")</div>
-            <CardList Text="@($"{(p?.FanRpm is { } fr ? $"Fan {fr:0} RPM · " : "")}Stops by itself if anything gets too hot")" />
-        </div>
-    </div>
-}
-else if (report is not null)
-{
-    <div class="cards">
-        <div class="card" data-testid="gpustress-result">
-            <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
-            <div class="headline">@report.Explanation</div>
-            <CardList Items="@([ report.AdapterName, $"Ran for {Clock(report.Ran)}", $"Finished {r.Timestamp.ToLocalTime():g}" ])" />
-        </div>
+@* One result per GPU: the report is the worst one (or the one you stopped). *@
+<StressTestShell TReport="GpuStressReport" Page="this" Prefix="gpustress" Icon="gpu" Title="GPU stress test"
+                 Description="Runs the graphics chip at full load and checks every answer. The PC may get warm and loud. Stops if it gets too hot."
+                 DurationChoices="GpuStressOptions.DurationChoices" Report="Report" Explanation="r => r.Explanation" Facts="Facts">
+    <LiveCards>
+        @{ var p = Progress; }
+        <StressCard Id="live-checks" Title="Answers checked" Tone="@(p is null ? "neutral" : p.Mismatches > 0 ? "error" : "ok")"
+                    Headline="@(p is null ? "—" : p.Mismatches == 0 ? $"{p.ValuesChecked:N0} correct" : $"{p.Mismatches:N0} wrong")"
+                    Note="@(p?.BillionOpsPerSecond is { } g ? $"Working at {g:0.0} billion steps per second" : null)" />
+        <StressSensorCards Title="Graphics temperature" TemperatureC="p?.GpuTemperatureC" SensorsAvailable="p?.SensorsAvailable" FanRpm="p?.FanRpm" />
+    </LiveCards>
+    <ReportCards Context="report">
         @if (report.Batches > 0)
         {
-            <div class="card" data-testid="gpustress-card-checks">
-                <div class="card-head"><span class="@(report.Mismatches == 0 ? "dot dot-ok" : "dot dot-error")"></span><strong>Answers checked</strong></div>
-                <div class="headline">@(report.Mismatches == 0 ? $"{report.ValuesChecked:N0} correct" : $"{report.Mismatches:N0} wrong out of {report.ValuesChecked:N0}")</div>
-                <div class="meta">@(report.BillionOpsPerSecond is { } g ? $"Last speed {g:0.0} billion steps per second" : "")</div>
-            </div>
-            <div class="card" data-testid="gpustress-card-temp">
-                <div class="card-head"><span class="dot dot-neutral"></span><strong>Hottest graphics temperature</strong></div>
-                <div class="headline">@(report.MaxGpuTemperatureC is { } t ? $"{t:0}°C" : "Not reported on this PC")</div>
-                <div class="meta">Many laptops with built-in graphics don't report this</div>
-            </div>
+            <StressCard Id="card-checks" Title="Answers checked" Tone="@(report.Mismatches == 0 ? "ok" : "error")"
+                        Headline="@(report.Mismatches == 0 ? $"{report.ValuesChecked:N0} correct" : $"{report.Mismatches:N0} wrong out of {report.ValuesChecked:N0}")"
+                        Note="@(report.BillionOpsPerSecond is { } g ? $"Last speed {g:0.0} billion steps per second" : null)" />
+            <StressCard Id="card-temp" Title="Hottest graphics temperature"
+                        Headline="@(report.MaxGpuTemperatureC is { } t ? $"{t:0}°C" : "Not reported on this PC")"
+                        Note="Many laptops with built-in graphics don't report this" />
         }
-    </div>
-}
+    </ReportCards>
+</StressTestShell>
 
+@code {
+    private static IEnumerable<string?> Facts(GpuStressReport r) => [r.AdapterName, $"Ran for {Clock(r.Ran)}"];
+}
