@@ -38,6 +38,10 @@ public interface IHostQueries
     /// signed-in user's session; no administrator rights needed).</summary>
     Task<Audio.AudioState> ReadAudioStateAsync(CancellationToken ct = default) =>
         Task.FromResult(Audio.AudioState.Unavailable("This host can't read audio devices."));
+    /// <summary><c>usb.tree</c>: the USB controllers, hubs, ports and devices, read in the app with configuration manager and the hub driver
+    /// (no administrator rights needed).</summary>
+    Task<Usb.UsbSnapshot> ReadUsbTreeAsync(CancellationToken ct = default) =>
+        Task.FromResult(Usb.UsbSnapshot.Unavailable("This host can't read USB devices."));
 }
 
 /// <summary>The capability names a module lists in module.json, and the limits the app holds every query to.</summary>
@@ -51,9 +55,10 @@ public static class HostCapabilities
     public const string WmiQuery = "wmi.query";
     public const string PackagesList = "packages.list";
     public const string AudioState = "audio.state";
+    public const string UsbTree = "usb.tree";
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
-        { SensorsRead, StorageDrives, StorageRetrims, EventLogQuery, EventReviews, WmiQuery, PackagesList, AudioState };
+        { SensorsRead, StorageDrives, StorageRetrims, EventLogQuery, EventReviews, WmiQuery, PackagesList, AudioState, UsbTree };
 
     /// <summary>The logs <c>eventlog.query</c> reads (never Security).</summary>
     public static readonly IReadOnlySet<string> AllowedLogs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "System", "Application" };
@@ -87,6 +92,8 @@ public sealed record HostQueryBackend
     public DataSources.IPackageSource? Packages { get; init; }
     /// <summary>Core Audio, read in the app (the signed-in user's session).</summary>
     public Audio.IAudioStateSource? Audio { get; init; }
+    /// <summary>The USB tree, read in the app.</summary>
+    public Usb.IUsbTreeSource? Usb { get; init; }
     public Func<IReadOnlyCollection<string>> EventReviews { get; init; } = Areas.EventReviews.Read;
 }
 
@@ -182,6 +189,9 @@ public sealed class HostQueryServer(Func<HostQueryBackend?> backend, ILogger? lo
                 break;
             case HostCapabilities.AudioState:
                 value = await Need(backend.Audio).ReadAsync(ct).ConfigureAwait(false);
+                break;
+            case HostCapabilities.UsbTree:
+                value = await Need(backend.Usb).ReadAsync(ct).ConfigureAwait(false);
                 break;
             default:
                 throw new HostQueryException("badRequest", $"unknown capability {capability}");
@@ -286,6 +296,10 @@ public sealed class HostQueriesClient(Action<ModuleHostMessage> send) : IHostQue
     public async Task<Audio.AudioState> ReadAudioStateAsync(CancellationToken ct = default) =>
         await QueryAsync<Audio.AudioState?>(HostCapabilities.AudioState, null, ct).ConfigureAwait(false)
         ?? Audio.AudioState.Unavailable("The app didn't return the audio devices.");
+
+    public async Task<Usb.UsbSnapshot> ReadUsbTreeAsync(CancellationToken ct = default) =>
+        await QueryAsync<Usb.UsbSnapshot?>(HostCapabilities.UsbTree, null, ct).ConfigureAwait(false)
+        ?? Usb.UsbSnapshot.Unavailable("The app didn't return the USB devices.");
 }
 
 /// <summary>Sensors through the app (<c>sensors.read</c>), for the Temperatures &amp; fans module in user mode.</summary>

@@ -1,0 +1,12 @@
+{
+  "id": "b6237a7b-102a-4a68-8553-0fed276ef946",
+  "slug": "UsbPorts",
+  "displayName": "USB ports & devices",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.UsbPorts.UsbPortsPlugin",
+  "needsAdmin": false,
+  // Out of process (the module host): the USB tree is read by the app (usb.tree), the System log by the app (eventlog.query), and the
+  // PC maker's BIOS settings through the app to the Agent (wmi.query), as in process.
+  "capabilities": [ "usb.tree", "eventlog.query", "wmi.query" ],
+  "hasUi": false
+}

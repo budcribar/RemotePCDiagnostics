@@ -1,0 +1,11 @@
+{
+  "id": "3f0c2b8e-5d71-4a9e-b6c4-2e8d9a7f1c35",
+  "slug": "WifiConnect",
+  "displayName": "Wi-Fi connect test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.WifiConnect.WifiConnectPlugin",
+  "needsAdmin": false,
+  // Its controls live on the Interactive tests page.
+  "hasUi": false,
+  "inProcessOnly": "the Interactive tests page hands it the picked network and password"
+}

@@ -78,4 +78,16 @@ public class InteractiveExportTests
             Assert.False(string.IsNullOrWhiteSpace(Test(doc.RootElement, id).GetProperty("reportIf").GetString()), id);
         Assert.Contains("AZERTY", Test(doc.RootElement, "keyboard").GetProperty("reportIf").GetString());
     }
+
+    [Fact]
+    public void Cancelled_charger_test_reports_cancelled()
+    {
+        var page = new InteractiveExport.PageState("charger", ["charger"], false, false, false, false);
+        var cancelled = new DiagnosticResult(ModuleSlugs.ChargerReplug, DiagnosticStatus.Warning, "The charger replug test was cancelled.", At) { Cancelled = true };
+
+        using var doc = JsonDocument.Parse(InteractiveExport.ToJson(page, new PhysicalBenchQaSnapshot(), NotRun("Webcam"), NotRun("SpeakerToMic"), NotRun("MicToSpeaker"), charger: cancelled));
+        var charger = Test(doc.RootElement, "charger");
+        Assert.Equal("cancelled", charger.GetProperty("state").GetString());
+        Assert.Equal("cancelled", charger.GetProperty("result").GetString());
+    }
 }

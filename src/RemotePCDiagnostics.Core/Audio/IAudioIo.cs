@@ -74,6 +74,16 @@ public sealed record PlayChannelRequest(string? OutputId, float[] Tone, int Samp
 
 public sealed record MonitorResult(int SampleRate, bool RawMicApplied, bool StoppedEarly, string? Note = null);
 
+/// <summary>Records <paramref name="Duration"/> from one microphone as apps hear it (shared mode, Windows effects on, mute and level as they are).</summary>
+/// <param name="OnLevel">Called with each block's level in dBFS (RMS), for a live meter; may be null.</param>
+public sealed record RecordRequest(string? InputId, TimeSpan Duration, Action<double>? OnLevel = null);
+
+/// <summary>A mono recording.</summary>
+public sealed record RecordResult(float[] Samples, int SampleRate);
+
+/// <summary>Plays mono <paramref name="Samples"/> on every channel of the output, without changing mute or volume.</summary>
+public sealed record PlaySamplesRequest(string? OutputId, float[] Samples, int SampleRate);
+
 /// <summary>Audio hardware access (Host: NAudio/WASAPI). Implementations never show OS dialogs and honour cancellation.</summary>
 public interface IAudioIo
 {
@@ -86,6 +96,10 @@ public interface IAudioIo
     Task<MonitorResult> MonitorAsync(MonitorRequest request, CancellationToken ct);
     /// <summary>Plays the tone on the left or right channel only, without changing mute or volume; returns the device's channel count.</summary>
     Task<int> PlayOnChannelAsync(PlayChannelRequest request, CancellationToken ct) => throw new AudioDeviceException("Playing a test sound isn't supported here.");
+    /// <summary>Records one microphone for the per-device test, without changing its mute or level.</summary>
+    Task<RecordResult> RecordAsync(RecordRequest request, CancellationToken ct) => throw new AudioDeviceException("Recording isn't supported here.");
+    /// <summary>Plays a recording back (the per-device test's Play back), without changing mute or volume.</summary>
+    Task PlaySamplesAsync(PlaySamplesRequest request, CancellationToken ct) => throw new AudioDeviceException("Playing a recording isn't supported here.");
 }
 
 /// <summary>No audio hardware (CI, non-Windows): every test reports "no device".</summary>

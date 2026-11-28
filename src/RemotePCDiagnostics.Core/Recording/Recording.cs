@@ -89,9 +89,37 @@ public sealed record RecordedCall
     public const string AntivirusKind = "antivirus";
     /// <summary>Core Audio's endpoints and sessions (<see cref="Audio.AudioState"/>), kept as JSON in <see cref="StdOut"/>.</summary>
     public const string AudioKind = "audio";
+    /// <summary>The Wi-Fi radio and scan (<see cref="Areas.WifiRadioReading"/>, network names scrubbed), kept as JSON in <see cref="StdOut"/>.</summary>
+    public const string WifiKind = "wifi";
+    /// <summary>The USB tree (<see cref="Usb.UsbSnapshot"/>), kept as JSON in <see cref="StdOut"/>.</summary>
+    public const string UsbKind = "usb";
     public const string FileKind = "file";
     /// <summary>What the Agent's alerts read (<see cref="Alerts.IAlertReadings"/>): events and levels, kept as rows like WMI.</summary>
     public const string AlertsKind = "alerts";
+    /// <summary>One boot memory test request to the Agent (<see cref="Stress.IMemoryDiagnosticSource"/>): <see cref="Query"/> is the request
+    /// ("status"), <see cref="StdOut"/> the Agent's JSON answer, <see cref="Error"/> why there was none (<see cref="TimedOut"/> marks "no Agent").</summary>
+    public const string MemoryDiagnosticKind = "memdiag";
+    /// <summary>
+    /// The Agent's answers to the disk surface scan (<see cref="Storage.IDiskScanSource"/>): <see cref="Query"/> is the request
+    /// ("start 0 quick 0", "status 0"), <see cref="StdOut"/> the status JSON, <see cref="ExitCode"/> 2 when the Agent was missing.
+    /// </summary>
+    public const string DiskScanKind = "diskscan";
+    /// <summary>One drive self-test request to the Agent (<see cref="Storage.IDriveSelfTestSource"/>): <see cref="Query"/> is the request
+    /// ("status 0"), <see cref="StdOut"/> the Agent's JSON answer, <see cref="Error"/> why there was none.</summary>
+    public const string SelfTestKind = "selftest";
+    /// <summary>The graphics memory test's chips and answers (<see cref="GpuMemory.IGpuMemorySource"/>): <see cref="Query"/> says which
+    /// ("list", or the adapter id and "allocate" or "run"), <see cref="StdOut"/> holds the answer as JSON, <see cref="Error"/> why there was
+    /// none ("lost: …" for a driver reset).</summary>
+    public const string GpuMemoryKind = "gpumemory";
+    /// <summary>
+    /// The cooling test's readings (<see cref="Cooling.ICoolingSource"/>): <see cref="Query"/> is "sample" (a temperature, load and fan
+    /// sample, JSON in <see cref="StdOut"/>, replayed in order) or the Agent's thermal mode request ("list", "set windows ID", "restore"),
+    /// with its answer JSON in <see cref="StdOut"/>, <see cref="Error"/> and <see cref="ExitCode"/> 2 when the Agent was missing.
+    /// </summary>
+    public const string CoolingKind = "cooling";
+    /// <summary>The video playback test's clip, decoders, engine loads, processes and media sessions (<see cref="VideoPlayback.IVideoPlaybackSource"/>):
+    /// <see cref="Query"/> says which (<see cref="VideoPlaybackKeys"/>), <see cref="StdOut"/> holds the answer as JSON, <see cref="Error"/> why there was none.</summary>
+    public const string VideoKind = "video";
 
     public string Kind { get; init; } = "";
 
@@ -139,11 +167,53 @@ public sealed record RecordedCall
 
     public static RecordedCall FromAlerts(WmiQueryResult r) => FromWmi(r) with { Kind = AlertsKind };
 
+    public static RecordedCall FromDiskScan(Storage.DiskScanRequest request, Storage.DiskScanAnswer a) => new()
+    {
+        Kind = DiskScanKind, Query = request.Key, StdOut = a.Status?.ToJson(), Error = a.Error, ExitCode = a.NeedsAgent ? 2 : a.Status is null ? 1 : 0,
+    };
+
+    public Storage.DiskScanAnswer ToDiskScanAnswer() =>
+        new(Storage.DiskScanStatus.Parse(StdOut), Error, NeedsAgent: ExitCode == 2);
+    public const string CoolingSampleQuery = "sample";
+
+    public static RecordedCall FromCoolingSample(Cooling.CoolingReading r) => new() { Kind = CoolingKind, Query = CoolingSampleQuery, StdOut = r.ToJson() };
+
+    public static RecordedCall FromCoolingModes(IReadOnlyList<string> args, Cooling.CoolingModesReply r) => new()
+    {
+        Kind = CoolingKind, Query = string.Join(' ', args), StdOut = r.Answer?.ToJson(), Error = r.Error, ExitCode = r.NoAgent ? 2 : r.Ok ? 0 : 1,
+    };
+
+    public Cooling.CoolingModesReply ToCoolingModesReply() =>
+        Cooling.CoolingModesAnswer.Parse(StdOut) is { } a ? new(a, null) : new(null, Error ?? "Not in the recording.", NoAgent: ExitCode == 2);
+
     public static RecordedCall FromAudio(Audio.AudioState s) => new() { Kind = AudioKind, StdOut = s.ToJson(), Error = s.Error };
+
+    public static RecordedCall FromSelfTest(IReadOnlyList<string> args, Storage.SelfTestReply r) => new()
+    {
+        Kind = SelfTestKind, Query = string.Join(' ', args), StdOut = r.Answer?.ToJson(), Error = r.Error, TimedOut = r.NoAgent ? true : null,
+    };
+
+    /// <summary>The self-test answer this call holds (<see cref="TimedOut"/> marks "no Agent" for these calls).</summary>
+    public Storage.SelfTestReply ToSelfTestReply() =>
+        Storage.SelfTestAnswer.Parse(StdOut) is { } answer && Error is null ? new(answer, null)
+            : Storage.SelfTestReply.Failed(Error ?? "The answer couldn't be read.", noAgent: TimedOut == true);
+
+    public static RecordedCall FromMemoryDiagnostic(IReadOnlyList<string> args, Stress.MemoryDiagnosticReply r) => new()
+    {
+        Kind = MemoryDiagnosticKind, Query = string.Join(' ', args), StdOut = r.Answer?.ToJson(), Error = r.Error, TimedOut = r.NoAgent ? true : null,
+    };
+
+    public Stress.MemoryDiagnosticReply ToMemoryDiagnosticReply() =>
+        Error is null && Stress.MemoryDiagnosticAnswer.Parse(StdOut) is { } answer ? new(answer, null)
+            : Stress.MemoryDiagnosticReply.Failed(Error ?? "The answer couldn't be read.", noAgent: TimedOut == true);
+    public static RecordedCall FromWifi(Areas.WifiRadioReading r) => new() { Kind = WifiKind, StdOut = r.Scrubbed().ToJson(), Error = r.Error };
+    public static RecordedCall FromGpuMemory(string query, string? json, string? error = null) => new() { Kind = GpuMemoryKind, Query = query, StdOut = json, Error = error };
+    public static RecordedCall FromVideo(string query, string? json, string? error = null) => new() { Kind = VideoKind, Query = query, StdOut = json, Error = error };
+    public static RecordedCall FromUsb(Usb.UsbSnapshot s) => new() { Kind = UsbKind, StdOut = s.ToJson(), Error = s.Error };
 
     /// <summary>Kept as rows, like WMI (WMI, registry, the package list, antivirus products).</summary>
     public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind or AntivirusKind;
 
     /// <summary>Short text naming the call, for test messages.</summary>
-    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind == AudioKind ? "audio" : $"{File} {string.Join(' ', Args ?? [])}";
+    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind is AudioKind or WifiKind or UsbKind ? Kind : Kind == DiskScanKind ? $"diskscan {Query}" : Kind == SelfTestKind ? $"selftest {Query}" : Kind == MemoryDiagnosticKind ? $"memdiag {Query}" : Kind == CoolingKind ? $"cooling {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
 }

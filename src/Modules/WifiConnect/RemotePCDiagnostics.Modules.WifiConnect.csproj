@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Wi-Fi connect test (join a network, ping, go back): a module that ships with the app (see src/Modules/Directory.Build.props). -->
+</Project>

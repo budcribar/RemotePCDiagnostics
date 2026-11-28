@@ -20,6 +20,8 @@ public interface IBatteryPowerSource
     Task<PowerPolicySnapshot?> ReadPowerPolicyAsync(CancellationToken ct) => Task.FromResult<PowerPolicySnapshot?>(null);
     /// <summary>HP's battery charging BIOS settings (empty on other PCs, or without the Agent: HP's WMI provider needs administrator rights).</summary>
     Task<IReadOnlyList<Battery.HpBatterySetting>> ReadHpChargeSettingsAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<Battery.HpBatterySetting>>([]);
+    /// <summary>The charger's devices and power events (<see cref="ChargerCheck"/>), or null when this source can't read them.</summary>
+    Task<ChargerReading?> ReadChargerAsync(CancellationToken ct) => Task.FromResult<ChargerReading?>(null);
 }
 
 /// <summary>Where DriveHealth reads the drives from (see <see cref="IBatteryPowerSource"/> for which one the app uses).</summary>
@@ -33,12 +35,17 @@ public interface IDriveSource
 public sealed record DriveList(IReadOnlyList<DriveHealth> Drives, string? Notice = null);
 
 /// <param name="isHp">Whether this PC is an HP, so HP's battery settings are asked for (default: the SMBIOS manufacturer in the registry).</param>
-public sealed class WmiBatteryPowerSource(IWmiSource wmi, Func<PowerPolicySnapshot?>? readPowerPolicy = null, ILogger? log = null, Func<bool>? isHp = null) : IBatteryPowerSource
+/// <param name="isLenovo">Whether this PC is a Lenovo, so Lenovo's battery information is asked for (default: the SMBIOS manufacturer).</param>
+/// <param name="events">Where the charger's power events are read from (<see cref="ChargerCheck"/>); null reads only the charger's devices.</param>
+public sealed class WmiBatteryPowerSource(IWmiSource wmi, Func<PowerPolicySnapshot?>? readPowerPolicy = null, ILogger? log = null, Func<bool>? isHp = null,
+    Func<bool>? isLenovo = null, WindowsEventLog? events = null) : IBatteryPowerSource
 {
     public const string PowerPlanNamespace = @"root\cimv2\power";
     public const string ActivePlanSql = "SELECT ElementName FROM Win32_PowerPlan WHERE IsActive = TRUE";
 
-    public Task<IReadOnlyList<BatteryStatus>?> ReadBatteriesAsync(CancellationToken ct) => BatteryReader.ReadWmiAsync(wmi, ct);
+    private readonly Lazy<bool> _lenovo = new(isLenovo ?? BatteryCondition.IsLenovoPc);
+
+    public Task<IReadOnlyList<BatteryStatus>?> ReadBatteriesAsync(CancellationToken ct) => BatteryReader.ReadWmiAsync(wmi, _lenovo.Value, ct);
 
     public async Task<string?> ReadActivePlanAsync(CancellationToken ct)
     {
@@ -54,6 +61,8 @@ public sealed class WmiBatteryPowerSource(IWmiSource wmi, Func<PowerPolicySnapsh
 
     public Task<IReadOnlyList<Battery.HpBatterySetting>> ReadHpChargeSettingsAsync(CancellationToken ct) =>
         (isHp ?? Battery.HpBatteryCharge.IsHpPc)() ? Battery.HpBatteryCharge.ReadAsync(wmi, ct) : Task.FromResult<IReadOnlyList<Battery.HpBatterySetting>>([]);
+
+    public async Task<ChargerReading?> ReadChargerAsync(CancellationToken ct) => await ChargerCheck.ReadAsync(wmi, events, ct).ConfigureAwait(false);
 }
 
 public sealed class WmiDriveSource(IWmiSource wmi) : IDriveSource
@@ -78,6 +87,7 @@ public sealed class AgentOrFallbackBatteryPowerSource(Session.IElevatedCommandBr
     public Task<ProcessorPerformanceSample?> ReadProcessorPerformanceAsync(CancellationToken ct) => Current.ReadProcessorPerformanceAsync(ct);
     public Task<PowerPolicySnapshot?> ReadPowerPolicyAsync(CancellationToken ct) => Current.ReadPowerPolicyAsync(ct);
     public Task<IReadOnlyList<Battery.HpBatterySetting>> ReadHpChargeSettingsAsync(CancellationToken ct) => Current.ReadHpChargeSettingsAsync(ct);
+    public Task<ChargerReading?> ReadChargerAsync(CancellationToken ct) => Current.ReadChargerAsync(ct);
 }
 
 /// <inheritdoc cref="AgentOrFallbackBatteryPowerSource"/>
@@ -127,7 +137,8 @@ public static class ReaderRegistration
     /// <summary>Store apps come from <see cref="IPackageSource"/> when the app registers one (the Windows package API); otherwise none.</summary>
     public static IServiceCollection AddReaders(this IServiceCollection services) => services
         .TryAddPackages()
-        .AddSingleton<IBatteryPowerSource>(sp => new WmiBatteryPowerSource(sp.GetRequiredService<IWmiSource>()))
+        .AddSingleton<IBatteryPowerSource>(sp => new WmiBatteryPowerSource(sp.GetRequiredService<IWmiSource>(),
+            events: new WindowsEventLog(sp.GetRequiredService<SystemCommandRunner>(), moduleName: ModuleSlugs.BatteryPower)))
         .AddSingleton<IDriveSource>(sp => new WmiDriveSource(sp.GetRequiredService<IWmiSource>()))
         .AddSingleton<IHardwareInventorySource>(sp => new WmiHardwareInventorySource(sp.GetRequiredService<IWmiSource>()))
         .AddSingleton<IServiceSource>(sp => new WmiServiceSource(sp.GetRequiredService<IWmiSource>()))

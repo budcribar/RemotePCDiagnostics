@@ -1,0 +1,21 @@
+@using RemotePCDiagnostics.Core.VideoPlayback
+@* − count + for the video playback test's streams. Works before a run and while it runs (the run adds or removes streams within a second). *@
+<span class="vplay-stepper">
+    <button type="button" data-testid="videoplayback-remove-stream" aria-label="One stream fewer" disabled="@(Disabled || Module.Streams <= VideoPlaybackOptions.MinStreams)"
+            @onclick="() => Step(-1)">−</button>
+    <strong data-testid="videoplayback-streams">@Module.Streams</strong>
+    <button type="button" data-testid="videoplayback-add-stream" aria-label="One stream more" disabled="@(Disabled || Module.Streams >= VideoPlaybackOptions.MaxStreams)"
+            @onclick="() => Step(1)">+</button>
+</span>
+
+@code {
+    [Parameter, EditorRequired] public VideoPlaybackModule Module { get; set; } = default!;
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+
+    private Task Step(int delta)
+    {
+        Module.Streams += delta;
+        return Changed.InvokeAsync();
+    }
+}
