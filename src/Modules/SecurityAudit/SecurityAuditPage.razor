@@ -130,6 +130,8 @@ else
             @if (hasFilters) { <button class="btn-small" data-testid="audit-filter-clear" @onclick="ClearFilters">Clear filters</button> }
             <span class="meta">@rows.Count of @visible.Count</span>
         </div>
+        @* Its own horizontal scroll on a phone: seven columns are wider than the screen, and the page itself never scrolls sideways. *@
+        <div class="table-scroll" data-testid="audit-table-scroll">
         <table class="detail grid sticky-head sortable" data-testid="audit-table">
             <tr>
                 @foreach (var (col, title) in AuditSort.Columns)
@@ -148,6 +150,7 @@ else
                 </tr>
             }
         </table>
+        </div>
         @if (rows.Count == 0) { <p class="meta" data-testid="audit-empty">No settings match these filters.</p> }
 
         @if (_open is { } o)
