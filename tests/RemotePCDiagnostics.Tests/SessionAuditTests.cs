@@ -116,4 +116,42 @@ public class SessionAuditTests
         });
         Assert.Null(ex);
     }
+
+    [Fact]
+    public void Remote_user_in_control_is_known_for_a_restart()
+    {
+        var audit = New();
+        audit.Started(false);
+        audit.Update([Owner(true), Page("r")]);
+        Assert.False(audit.RemoteUserHadControl);              // joined, not yet given control
+        audit.Update([Owner(false), Page("r", true)]);
+        Assert.True(audit.RemoteUserHadControl);               // pressing Restart now gives control back
+        audit.Update([Owner(true), Page("r")]);
+        Assert.False(audit.RemoteUserHadControl);              // the person at the PC took it back: that sticks
+    }
+
+    [Fact]
+    public void Remote_user_whose_page_left_in_control_keeps_it_for_a_short_while()
+    {
+        var now = DateTimeOffset.Parse("2026-11-28T15:20:00Z");
+        var audit = new SessionAudit(_log.Add, () => now);
+        audit.Started(false);
+        audit.Update([Owner(true), Page("r")]);
+        audit.Update([Owner(false), Page("r", true)]);
+        audit.Update([Owner(true)]);                           // browser refreshed: the page left, control fell back
+        audit.Update([Owner(true), Page("r2")]);               // and its new page joined
+        Assert.True(audit.RemoteUserHadControl);
+        now += SessionAudit.ControlLeftGrace + TimeSpan.FromSeconds(1);
+        Assert.False(audit.RemoteUserHadControl);
+    }
+
+    [Fact]
+    public void Ending_the_session_forgets_who_had_control()
+    {
+        var audit = New();
+        audit.Started(false);
+        audit.Update([Owner(false), Page("r", true)]);
+        audit.Ended("");
+        Assert.False(audit.RemoteUserHadControl);
+    }
 }

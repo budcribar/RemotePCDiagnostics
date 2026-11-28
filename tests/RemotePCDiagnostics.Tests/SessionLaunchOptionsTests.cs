@@ -295,4 +295,34 @@ public class SessionLaunchOptionsTests
         var cmdLocalAdmin = SessionLaunchOptions.BuildResumeCommandLine(@"C:\App\RemotePCDiagnostics.Host.exe", SessionMode.Local, null, Guid.Empty, admin: true);
         Assert.Contains(" --admin ", cmdLocalAdmin);
     }
+
+    [Fact]
+    public void RestartArguments_GiveControlBack_WhenTheRemoteUserHadIt()
+    {
+        var server = new Uri("https://remoteblazorwebview.com:34544/");
+        var id = Guid.NewGuid();
+        var args = SessionLaunchOptions.RestartArguments(server, id, group: "test-shop", admin: true, giveControl: true);
+
+        Assert.Contains(SessionLaunchOptions.GiveControlArg, args);
+        Assert.True(SessionLaunchOptions.IsRestartCommandLine(args));
+        var parsed = SessionLaunchOptions.Parse(args);
+        Assert.Equal(SessionMode.Remote, parsed.Mode);
+        Assert.Equal(id, parsed.Id);
+        Assert.True(parsed.GiveControl);
+        Assert.False(parsed.Unattended); // still a supervised session
+
+        Assert.DoesNotContain(SessionLaunchOptions.GiveControlArg, SessionLaunchOptions.RestartArguments(server, id));
+        Assert.False(SessionLaunchOptions.Parse(SessionLaunchOptions.RestartArguments(server, id)).GiveControl);
+        // Unattended already gives control on joining.
+        Assert.DoesNotContain(SessionLaunchOptions.GiveControlArg, SessionLaunchOptions.RestartArguments(server, id, unattended: true, giveControl: true));
+    }
+
+    [Fact]
+    public void GiveControl_IsOnlyTakenByARestartedRemoteCopy()
+    {
+        var id = Guid.NewGuid();
+        Assert.False(SessionLaunchOptions.Parse(["-u=https://x.example", $"-i={id}", SessionLaunchOptions.GiveControlArg]).GiveControl);
+        Assert.False(SessionLaunchOptions.Parse([SessionLaunchOptions.GiveControlArg, SessionLaunchOptions.RestartedArg]).GiveControl);
+        Assert.True(SessionLaunchOptions.Parse(["-u=https://x.example", $"-i={id}", SessionLaunchOptions.GiveControlArg, SessionLaunchOptions.RestartedArg]).GiveControl);
+    }
 }
