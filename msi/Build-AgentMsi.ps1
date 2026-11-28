@@ -127,6 +127,9 @@ if ($MsiSizeBytes -lt 5MB) {
     throw "MSI package '$DestMsi' is unexpectedly small ($MsiSizeBytes bytes); expected embedded self-contained $Rid agent."
 }
 
+# Signed before hashing so the .sha256 describes the published (signed) MSI. A no-op without signing secrets.
+& (Join-Path $RepoRoot 'installer/Sign-ReleaseFile.ps1') -Path $DestMsi
+
 $Hash = (Get-FileHash -LiteralPath $DestMsi -Algorithm SHA256).Hash.ToLowerInvariant()
 $ShaFile = "$DestMsi.sha256"
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)

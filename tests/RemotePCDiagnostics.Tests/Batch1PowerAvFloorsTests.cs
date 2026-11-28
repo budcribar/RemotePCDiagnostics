@@ -98,7 +98,7 @@ public sealed class Batch1PowerAvFloorsTests
     }
 
     [Fact]
-    public async Task BatteryPower_DischargingOnAc_ConfirmedInTwoSamples_Warns()
+    public async Task BatteryPower_DischargingOnAc_ConfirmedInTwoSamples_FailsTheCharger()
     {
         var draining = new BatteryStatus("BAT1", "Dell", "LiP", "AC Power", 65, 60000, 55000, 80,
             PowerOnline: true, IsCharging: false, IsDischarging: true, DischargeRateMw: 14500);
@@ -113,10 +113,14 @@ public sealed class Batch1PowerAvFloorsTests
 
         Assert.Equal(1, delays);
         Assert.Equal(2, src.BatteryReads);
-        Assert.Equal(DiagnosticStatus.Warning, res.Status);
+        // The battery card warns; the charger card fails it ("Too small": the PC runs from its battery while plugged in).
+        Assert.Equal(DiagnosticStatus.Error, res.Status);
         var batCard = report.Cards.Single(c => c.Id == "battery");
         Assert.Equal(AreaLevel.Warning, batCard.Level);
         Assert.Contains("discharging", batCard.Headline, StringComparison.OrdinalIgnoreCase);
+        var charger = report.Cards.Single(c => c.Id == ChargerCheck.CardId);
+        Assert.Equal(AreaLevel.Error, charger.Level);
+        Assert.Equal("Too small", charger.Headline);
     }
 
     [Fact]

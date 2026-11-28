@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Ethernet port test (cable to the network, or a loopback plug): a module that ships with the app (see src/Modules/Directory.Build.props). -->
+</Project>

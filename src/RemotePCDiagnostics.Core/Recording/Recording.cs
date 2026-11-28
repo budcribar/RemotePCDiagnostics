@@ -89,6 +89,8 @@ public sealed record RecordedCall
     public const string AntivirusKind = "antivirus";
     /// <summary>Core Audio's endpoints and sessions (<see cref="Audio.AudioState"/>), kept as JSON in <see cref="StdOut"/>.</summary>
     public const string AudioKind = "audio";
+    /// <summary>The Wi-Fi radio and scan (<see cref="Areas.WifiRadioReading"/>, network names scrubbed), kept as JSON in <see cref="StdOut"/>.</summary>
+    public const string WifiKind = "wifi";
     public const string FileKind = "file";
     /// <summary>What the Agent's alerts read (<see cref="Alerts.IAlertReadings"/>): events and levels, kept as rows like WMI.</summary>
     public const string AlertsKind = "alerts";
@@ -154,9 +156,11 @@ public sealed record RecordedCall
 
     public static RecordedCall FromAudio(Audio.AudioState s) => new() { Kind = AudioKind, StdOut = s.ToJson(), Error = s.Error };
 
+    public static RecordedCall FromWifi(Areas.WifiRadioReading r) => new() { Kind = WifiKind, StdOut = r.Scrubbed().ToJson(), Error = r.Error };
+
     /// <summary>Kept as rows, like WMI (WMI, registry, the package list, antivirus products).</summary>
     public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind or AntivirusKind;
 
     /// <summary>Short text naming the call, for test messages.</summary>
-    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind == AudioKind ? "audio" : Kind == DiskScanKind ? $"diskscan {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
+    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind is AudioKind or WifiKind ? Kind : Kind == DiskScanKind ? $"diskscan {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
 }

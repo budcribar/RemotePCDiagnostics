@@ -120,6 +120,10 @@ public static class HostServices
             sp.GetRequiredService<IMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(), L<UndoService>(), logEvent));
         // Audio tests (speaker→mic, mic→speaker): on-demand only, own pages, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioIo>(_ => new WasapiAudioIo(L<WasapiAudioIo>()));
+        // The Wi-Fi connect test changes the app's own Wi-Fi connection and reads the Interactive tests page's picks, so it runs in the app.
+        services.AddSingleton<RemotePCDiagnostics.Core.Areas.IWifiConnector>(_ => new RemotePCDiagnostics.Core.Areas.WlanConnector());
+        // The Ethernet port test reads the Interactive tests page's picks (port, cable or loopback plug), so it runs in the app.
+        services.AddSingleton<RemotePCDiagnostics.Core.Areas.IEthernetPortIo>(_ => new RemotePCDiagnostics.Core.Areas.SystemEthernetPortIo());
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(_ => new WasapiAudioStateSource(L<WasapiAudioStateSource>()));
         // Disk surface scan: the Agent reads the raw disk (admin); the app only asks it to start, report and stop.
         services.AddSingleton<RemotePCDiagnostics.Core.Storage.IDiskScanSource>(sp => new RemotePCDiagnostics.Core.Storage.AgentDiskScanSource(sp.GetRequiredService<SystemCommandRunner>()));
