@@ -102,6 +102,10 @@ public sealed record RecordedCall
     /// <summary>One drive self-test request to the Agent (<see cref="Storage.IDriveSelfTestSource"/>): <see cref="Query"/> is the request
     /// ("status 0"), <see cref="StdOut"/> the Agent's JSON answer, <see cref="Error"/> why there was none.</summary>
     public const string SelfTestKind = "selftest";
+    /// <summary>The graphics memory test's chips and answers (<see cref="GpuMemory.IGpuMemorySource"/>): <see cref="Query"/> says which
+    /// ("list", or the adapter id and "allocate" or "run"), <see cref="StdOut"/> holds the answer as JSON, <see cref="Error"/> why there was
+    /// none ("lost: …" for a driver reset).</summary>
+    public const string GpuMemoryKind = "gpumemory";
 
     public string Kind { get; init; } = "";
 
@@ -170,6 +174,7 @@ public sealed record RecordedCall
             : Storage.SelfTestReply.Failed(Error ?? "The answer couldn't be read.", noAgent: TimedOut == true);
 
     public static RecordedCall FromWifi(Areas.WifiRadioReading r) => new() { Kind = WifiKind, StdOut = r.Scrubbed().ToJson(), Error = r.Error };
+    public static RecordedCall FromGpuMemory(string query, string? json, string? error = null) => new() { Kind = GpuMemoryKind, Query = query, StdOut = json, Error = error };
 
     /// <summary>Kept as rows, like WMI (WMI, registry, the package list, antivirus products).</summary>
     public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind or AntivirusKind;

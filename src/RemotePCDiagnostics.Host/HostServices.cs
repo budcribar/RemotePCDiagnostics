@@ -133,6 +133,8 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(L<WindowsNpuIo>()));
         // GPU stress test: Direct3D 11 compute devices.
         services.AddSingleton<IGpuDeviceFactory>(_ => new RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory(L<RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory>()));
+        // Graphics memory (VRAM) test: Direct3D 11 compute over the graphics chips' memory. Registered here so RPCD_LOG / RPCD_REPLAY can record and replay it.
+        services.AddSingleton<RemotePCDiagnostics.Core.GpuMemory.IGpuMemorySource>(_ => new RemotePCDiagnostics.Host.Gpu.D3D11GpuMemorySource(L<RemotePCDiagnostics.Host.Gpu.D3D11GpuMemorySource>()));
         // Webcam test: cameras through Windows MediaCapture (a preview window only at the PC itself).
         services.AddSingleton<RemotePCDiagnostics.Core.Webcam.IWebcamIo>(_ => new MediaCaptureWebcamIo(L<MediaCaptureWebcamIo>(), showPreview: session.Mode == SessionMode.Local));
         // Vendor-independent BIOS update orchestrator, probes, and all 9 built-in vendor providers (additional providers register via AddBiosUpdateProvider<T>).
