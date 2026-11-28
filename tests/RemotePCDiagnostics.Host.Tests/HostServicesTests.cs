@@ -74,7 +74,7 @@ public class HostServicesTests
             Assert.Empty(duplicates);
             // DiagnosticsService throws on a duplicate name, so resolving it proves the registered set is consistent.
             var diag = provider.GetRequiredService<DiagnosticsService>();
-            Assert.Equal([ModuleSlugs.CpuStress, ModuleSlugs.MemoryTest, ModuleSlugs.DiskSpeed, ModuleSlugs.GpuStress, ModuleSlugs.NetworkTest], diag.StressOrder);
+            Assert.Equal([ModuleSlugs.CpuStress, ModuleSlugs.MemoryTest, ModuleSlugs.DiskSpeed, ModuleSlugs.GpuStress, ModuleSlugs.GpuMemory, ModuleSlugs.NetworkTest], diag.StressOrder);
             // Every registered module uses its permanent built-in id, and its name is the slug that id was given.
             foreach (var m in modules)
             {
