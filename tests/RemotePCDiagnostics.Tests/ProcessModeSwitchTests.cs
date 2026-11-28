@@ -81,6 +81,8 @@ public sealed class ProcessModeSwitchTests : IDisposable
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Audio.IAudioIo>());
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Webcam.IWebcamIo>());
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Npu.INpuIo>());
+        services.AddSingleton(Stub<RemotePCDiagnostics.Core.Areas.IWifiConnector>());
+        services.AddSingleton(Stub<RemotePCDiagnostics.Core.Areas.IEthernetPortIo>());
         services.AddSingleton(Stub<IRetrimHistory>());
     }
 
