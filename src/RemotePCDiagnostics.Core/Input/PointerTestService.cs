@@ -403,14 +403,17 @@ public sealed class PointerTestService : IDisposable
         if (_gate.OtherDevice.Id is not { } id) return null;
         _knownDevices ??= Devices();
         var known = _knownDevices.FirstOrDefault(d => d.Id == id);
-        if (known is null)
+        // A device plugged in after the list was read: read it again, once per device (listing devices is slow, and a device that
+        // isn't listed, such as a virtual one, would otherwise be looked up on every change).
+        if (known is null && _unlistedDevices.Add(id))
         {
-            // A device plugged in after the list was read.
             _knownDevices = Devices();
             known = _knownDevices.FirstOrDefault(d => d.Id == id);
         }
         return known;
     }
+
+    private readonly HashSet<string> _unlistedDevices = [];
 
     private PointerTestSnapshot Fresh() => new() { InputVerified = _gate.Verified, UnverifiedReason = _gate.Verified ? null : _gate.UnverifiedReason };
 

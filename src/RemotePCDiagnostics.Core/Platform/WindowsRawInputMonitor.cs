@@ -18,6 +18,10 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
     private readonly Dictionary<nint, bool> _buttonDown = [];
     private static readonly TimeSpan PtpMouseWindow = TimeSpan.FromMilliseconds(250);
     private DateTimeOffset _lastPtpAt;
+    // A gaming or wireless mouse reports up to 1000 times a second (more on some); one move per device every MoveInterval is
+    // plenty to back up page events, so the rest are dropped here. Only the monitor's own thread touches this.
+    private static readonly long MoveIntervalTicks = TimeSpan.FromMilliseconds(16).Ticks;
+    private readonly Dictionary<nint, long> _lastMove = [];
     private DeviceInfo? _lastPtpDevice;
     private int _leases;
     private Thread? _thread;
@@ -228,7 +232,7 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
                 var id = injected ? null : device!.EntryId;
                 var kind = injected ? (PointerDeviceKind?)null : device!.Kind;
                 var isPrecisionTouchpad = !injected && device is { Kind: PointerDeviceKind.Touchpad, Precision: true };
-                if (dx != 0 || dy != 0) Raise(new PhysicalInputEvent(now, PhysicalInputKind.Move, id, kind, injected));
+                if ((dx != 0 || dy != 0) && MoveDue(header->Device, now)) Raise(new PhysicalInputEvent(now, PhysicalInputKind.Move, id, kind, injected));
                 // For a Precision Touchpad, real physical presses come from OnDigitizerReport (HID button page 0x09);
                 // RIM_TYPEMOUSE button flags are synthesized for taps too and would falsely mark a tap as a press.
                 if (!isPrecisionTouchpad)
@@ -281,7 +285,7 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
                 contacts = Math.Max(contacts, tips);
             }
             if (contacts > 0) Raise(new PhysicalInputEvent(now, PhysicalInputKind.Contacts, injected ? null : d.EntryId, d.Kind, injected, Value: contacts));
-            else if (d.Kind == PointerDeviceKind.Pen && inRange) Raise(new PhysicalInputEvent(now, PhysicalInputKind.Move, injected ? null : d.EntryId, d.Kind, injected));
+            else if (d.Kind == PointerDeviceKind.Pen && inRange && MoveDue(handle, now)) Raise(new PhysicalInputEvent(now, PhysicalInputKind.Move, injected ? null : d.EntryId, d.Kind, injected));
 
             if (d.Kind != PointerDeviceKind.Touchpad) return;
             usageCount = 16;
@@ -295,6 +299,14 @@ public sealed unsafe class WindowsRawInputMonitor : IPhysicalInputMonitor, IDisp
             if (pressed && !was)
                 Raise(new PhysicalInputEvent(now, PhysicalInputKind.ButtonDown, injected ? null : d.EntryId, d.Kind, injected, PointerButton.Left));
         }
+    }
+
+    private bool MoveDue(nint device, DateTimeOffset now)
+    {
+        var at = now.UtcTicks;
+        if (_lastMove.TryGetValue(device, out var last) && at - last < MoveIntervalTicks) return false;
+        _lastMove[device] = at;
+        return true;
     }
 
     private static int Ticks(short data) => data == 0 ? 0 : data / 120 != 0 ? data / 120 : Math.Sign(data);

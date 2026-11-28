@@ -585,6 +585,27 @@ public class PointerTestPageTests : BunitContext
     }
 
     [Fact]
+    public void A_keyboard_layout_picked_after_leaving_the_keys_sticks()
+    {
+        var hw = new FakePhysicalInput(Mouse);
+        var page = Render(hw, new PointerTestService(hw), new PhysicalBenchQaService(), "keyboard");
+        var toggle = () => page.Find("[data-testid='keyboard-capture-toggle']").TextContent;
+        Assert.Contains("Capturing keys", toggle());
+
+        // Clicking the layout list takes focus from the keys; the page then re-renders before the choice is made.
+        page.Find("[data-testid='keyboard-test-zone']").Blur();
+        page.Render();
+        Assert.DoesNotContain("Capturing keys", toggle());
+
+        var select = page.Find("[data-testid='keyboard-layout']");
+        var other = select.QuerySelectorAll("option").Select(o => o.GetAttribute("value")).Skip(1).First();
+        select.Change(other);
+        page.Render();
+        Assert.Equal(other, page.Find("[data-testid='keyboard-layout']").GetAttribute("value"));
+        Assert.Contains("Capturing keys", toggle());
+    }
+
+    [Fact]
     public void Keys_the_keyboard_did_not_press_are_not_counted()
     {
         var hw = new FakePhysicalInput(Mouse);
