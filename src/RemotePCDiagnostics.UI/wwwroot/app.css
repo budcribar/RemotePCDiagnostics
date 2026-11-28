@@ -1780,3 +1780,13 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
 .sc-step-text { flex: 1; min-width: 0; }
 .sc-step-text b { color: var(--text-strong); }
 .sc-step-text .meta { margin: 2px 0 0; }
+
+/* Battery drain & runtime test: the load choice, the shutdown confirmation and the live readings (BatteryDrainPanel). */
+.drain-options { margin: 8px 0 12px; display: flex; flex-direction: column; gap: 10px; }
+.drain-mode { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.drain-mode legend { font-weight: 600; color: var(--text-strong); margin-bottom: 4px; }
+.drain-mode label, .drain-confirm { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.drain-confirm { font-weight: 600; color: var(--text-strong); }
+.drain-live { border-top: 1px solid var(--border); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.drain-figures { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.drain-figures b { color: var(--text-strong); }

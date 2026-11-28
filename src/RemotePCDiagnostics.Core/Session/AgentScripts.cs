@@ -54,6 +54,11 @@ public static class AgentScripts
     public const string HpBatteryRead = "hp_battery_read";
     /// <summary>Args: the setting's name and the value to set (the Agent checks the setting lists it).</summary>
     public const string HpBatterySet = "hp_battery_set";
+    /// <summary>
+    /// Args: "apply", "renew", "restore", "shutdown" or "status". The battery drain test's power settings and its shutdown at 5 %
+    /// (<see cref="Battery.AgentBatteryDrainPower"/>); prints <see cref="Battery.BatteryDrainPowerAnswer"/> JSON.
+    /// </summary>
+    public const string BatteryDrainPower = "battery_drain_power";
 
     public const string RebootTask = "reboot";
     public const string WorkflowTask = "workflow";
@@ -167,6 +172,10 @@ public static class AgentScripts
             case HpBatterySet:
                 return a.Count == 2 && Battery.HpBatteryCharge.IsSetting(Arg(0)) && Battery.HpBatteryCharge.IsValue(Arg(1))
                     ? Native(new Battery.HpBatterySetAction(Arg(0)!, Arg(1)!)) : Refuse("That isn't an HP battery setting this app changes.");
+
+            case BatteryDrainPower:
+                return a.Count == 1 && Battery.BatteryDrainPowerAction.IsVerb(Arg(0))
+                    ? Native(new Battery.BatteryDrainPowerAction(Arg(0)!)) : Refuse("That isn't a battery drain test request.");
 
             default:
                 return Refuse($"Unknown script '{request.Name}'.");
