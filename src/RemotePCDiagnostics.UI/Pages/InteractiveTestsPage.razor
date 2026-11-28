@@ -33,16 +33,19 @@
     var wfResult = Store.Get(ModuleSlugs.WifiConnect);
     var wfRep = wfResult.Payload as WifiConnectReport;
     var wfRunning = wfResult.Status == DiagnosticStatus.Running;
+    var ethResult = Store.Get(ModuleSlugs.EthernetPort);
+    var ethRep = ethResult.Payload as EthernetPortReport;
+    var ethRunning = ethResult.Status == DiagnosticStatus.Running;
 
     var kbSnap = ActivePhysicalQa.Current;
-    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning || scRunning || wfRunning;
+    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning || scRunning || wfRunning || ethRunning;
 
     var allSelected = _selected.Count == AllTestIds.Length;
     var mixedSelected = _selected.Count > 0 && _selected.Count < AllTestIds.Length;
 }
 
 <div class="ct-page">
-    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), wfResult)" />
+    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), wfResult, ethResult)" />
     <div class="toolbar">
         <span class="icon-badge page-icon"><Icon Name="eye" Size="20" /></span>
         <h1 data-rpcd-page="interactive" data-rpcd-contract="@BrowserContract.Interactive" data-testid="interactive-title">Interactive tests</h1>
@@ -290,6 +293,32 @@
                         </div>
                         <div class="ct-row-side">
                             <span class="chip chip-@wfChip" data-testid="interactive-status-wifi">@wfLabel</span>
+                        </div>
+                    </div>
+
+                    @* 8. Ethernet port: cable to the network, or a loopback plug *@
+                    @{
+                        var ethIsSel = _selectedTestId == "ethernet";
+                        var ethNa = ethRep?.RunEnd == RunEnd.CouldNotRun;
+                        var ethChip = ethNa ? "na" : OutcomeChip(ethResult.Status);
+                        var ethLabel = ethNa ? "Not run" : OutcomeLabel(ethResult.Status);
+                        var ethSummary = ethResult.Status == DiagnosticStatus.NotRun ? "Test a wired port with a cable or a loopback plug" : ethResult.Message;
+                    }
+                    <div class="ct-row @(ethIsSel ? "selected" : "") @(ethRunning ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(ethIsSel ? "true" : "false")"
+                         data-testid="interactive-row-ethernet" @onclick='() => SelectTest("ethernet")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("ethernet") ? "true" : "false")"
+                                aria-label="Include Ethernet port test"
+                                data-testid="interactive-check-ethernet"
+                                @onclick='() => ToggleItem("ethernet")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("ethernet") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@(ethNa ? "na" : DotKind(ethResult.Status))"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">Ethernet port</div>
+                            <div class="ct-row-summary meta" title="@ethSummary">@ethSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@ethChip" data-testid="interactive-status-ethernet">@ethLabel</span>
                         </div>
                     </div>
                 </div>
@@ -831,6 +860,76 @@
                     }
                 </div>
             }
+            else if (_selectedTestId == "ethernet")
+            {
+                var ethNaPane = ethRep?.RunEnd == RunEnd.CouldNotRun;
+                <div class="phys-qa-pane" data-testid="interactive-ethernet-pane">
+                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                        <strong>Ethernet port</strong>
+                        <span class="chip chip-@(ethNaPane ? "na" : OutcomeChip(ethResult.Status))" data-testid="ethernet-status-chip">@(ethNaPane ? "Not run" : OutcomeLabel(ethResult.Status))</span>
+                        @if (ethRunning)
+                        {
+                            <button type="button" class="btn-small" data-testid="ethernet-cancel-btn" @onclick="CancelEthernet">Cancel</button>
+                        }
+                    </div>
+                    <p class="meta" style="margin-top: 0">
+                        Pick the port and what you'll plug in, then press Start. RPCD waits up to @EthernetPort.LinkWindow.TotalMinutes.ToString("0") minutes for it.
+                        With a cable to the network it pings this PC's own address and the DHCP server and checks the speed and duplex. With a loopback plug
+                        it sends @EthernetPort.LoopbackFrames test frames and checks they come back on the same port. Nothing on the PC is changed.
+                    </p>
+                    @if (_ethDropsSession)
+                    {
+                        <p class="notice" data-testid="ethernet-session-warning">This PC reaches the internet only through this port, so unplugging its cable drops a remote session until the cable is back in.</p>
+                    }
+                    <div class="toolbar" style="flex-wrap: wrap; gap: 8px">
+                        <select data-testid="ethernet-port-select" aria-label="Port to test" disabled="@ethRunning" @onchange="e => PickEthernet(e.Value?.ToString())">
+                            @if (_ethPorts.Count == 0)
+                            {
+                                <option value="">@(_ethLoading ? "Finding ports…" : "No wired network port found")</option>
+                            }
+                            @foreach (var p in _ethPorts)
+                            {
+                                <option value="@p.Name" selected="@(p.Name == EthernetPicked?.Name)">@($"{p.Name} · {p.Description}{(p.Connected == true ? " · cable in" : p.Connected == false ? " · nothing plugged in" : "")}")</option>
+                            }
+                        </select>
+                        <select data-testid="ethernet-mode-select" aria-label="What is plugged in" disabled="@ethRunning" @onchange="OnEthernetModeChange">
+                            <option value="network" selected="@(_ethMode == EthernetPortMode.Network)">Cable to network</option>
+                            <option value="loopback" selected="@(_ethMode == EthernetPortMode.Loopback)">Loopback plug</option>
+                        </select>
+                        <button type="button" class="btn-small" data-testid="ethernet-refresh-btn" disabled="@(ethRunning || _ethLoading)" @onclick="LoadEthernetPortsAsync">Refresh ports</button>
+                    </div>
+                    <div class="toolbar">
+                        <button type="button" class="btn-small btn-primary" data-testid="ethernet-start-btn"
+                                disabled="@(ethRunning || Diagnostics.IsStressSuiteRunning || EthernetPicked is null || _isRemoteDisplay)"
+                                title="@(_isRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                                @onclick="StartEthernetAsync">
+                            ▶ @(ethResult.Status == DiagnosticStatus.NotRun ? "Start port test" : "Run again")
+                        </button>
+                    </div>
+                    @if (ethRunning)
+                    {
+                        <p class="notice" data-testid="ethernet-step" aria-live="polite"><b>@ethResult.Message</b></p>
+                    }
+                    else
+                    {
+                        <p data-testid="ethernet-status" class="status-line"><span class="@DotClass(ethResult.Status)"></span><span>@(ethResult.Status == DiagnosticStatus.NotRun ? "Not run. Pick the port and press Start port test." : ethResult.Message)</span></p>
+                    }
+                    @if (!ethRunning && ethRep is { } er && !ethNaPane)
+                    {
+                        <ul class="meta" data-testid="ethernet-measured">
+                            <li data-testid="ethernet-link">Link: @EthernetLinkText(er)</li>
+                            @foreach (var p in er.Pings)
+                            {
+                                <li data-testid="ethernet-ping">@p.Target: @p.Replies of @p.Sent replies</li>
+                            }
+                            @if (er.FramesSent is { } fs)
+                            {
+                                <li data-testid="ethernet-frames">Test frames: @fs sent, @er.FramesCountedOut counted out, @er.FramesCountedIn counted back in</li>
+                            }
+                        </ul>
+                    }
+                </div>
+            }
         </section>
     </div>
 </div>
@@ -839,8 +938,8 @@
     private readonly PhysicalBenchQaService _fallbackPhysicalQa = new();
     private PhysicalBenchQaService ActivePhysicalQa => App.PhysicalQa ?? _fallbackPhysicalQa;
 
-    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "wifi"];
-    private readonly HashSet<string> _selected = new(["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "wifi"], StringComparer.OrdinalIgnoreCase);
+    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "wifi", "ethernet"];
+    private readonly HashSet<string> _selected = new(["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "wifi", "ethernet"], StringComparer.OrdinalIgnoreCase);
 
     // The Wi-Fi connect pane: the last scan's networks, the one picked (null = the network the PC is on), and the typed password.
     private IReadOnlyList<WifiNetworkSeen> _wifiNetworks = [];
@@ -856,6 +955,16 @@
 
     private static string WifiOptionText(WifiNetworkSeen n) =>
         $"{(n.Ssid.Length > 0 ? n.Ssid : "(hidden)")} · {n.Security} · {WifiRadio.FormatRssi(n.Rssi)}{(n.Connected ? " · connected" : n.HasProfile ? " · saved" : "")}";
+
+    // The Ethernet port pane: the wired ports, the one picked (null = the first), and what is plugged in.
+    private IReadOnlyList<EthernetPortChoice> _ethPorts = [];
+    private string? _ethPicked;
+    private EthernetPortMode _ethMode;
+    private bool _ethLoading;
+    private bool _ethLoaded;
+    private bool _ethDropsSession;
+
+    private EthernetPortChoice? EthernetPicked => _ethPorts.FirstOrDefault(p => p.Name == _ethPicked) ?? _ethPorts.FirstOrDefault();
 
     /// <summary>Opens a test's pane from a link ("interactive?test=soundcheck"); help=cant-hear also opens the Can't hear sound list.</summary>
     [SupplyParameterFromQuery(Name = "test")] public string? TestQuery { get; set; }
@@ -884,11 +993,12 @@
 
     /// <summary>The page's state for browser agents (interactive-data): measured evidence and person-entered verdicts kept apart.</summary>
     private string InteractiveJson(RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaSnapshot kb, DiagnosticResult cam, DiagnosticResult s2m, DiagnosticResult m2s,
-        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, DiagnosticResult wifi) =>
+        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, DiagnosticResult wifi, DiagnosticResult ethernet) =>
         InteractiveExport.ToJson(
             new InteractiveExport.PageState(_selectedTestId, _selected, _isBatchRunning, _isRemoteDisplay, Session.Mode == SessionMode.Remote || _hasRemoteSession, _technicianHasControl),
             kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help, wifi,
-            new InteractiveExport.WifiPane(_wifiNetworks, WifiPicked?.Ssid, _wifiPassword.Length > 0, _wifiDropsSession, _wifiScanning));
+            new InteractiveExport.WifiPane(_wifiNetworks, WifiPicked?.Ssid, _wifiPassword.Length > 0, _wifiDropsSession, _wifiScanning),
+            ethernet, new InteractiveExport.EthernetPane(_ethPorts, EthernetPicked?.Name, _ethMode, _ethDropsSession, _ethLoading));
 
     private IReadOnlyList<AudioDevice> _outputs = [];
     private IReadOnlyList<AudioDevice> _inputs = [];
@@ -910,6 +1020,7 @@
     private bool _hasRemoteSession;
     private bool _technicianHasControl;
     private bool _isBatchRunning;
+    private bool _disposed;
     private CancellationTokenSource? _batchCts;
 
     protected override void OnInitialized()
@@ -917,6 +1028,7 @@
         base.OnInitialized();
         LoadDevices();
         if (TestQuery is { Length: > 0 } t && AllTestIds.Contains(t, StringComparer.OrdinalIgnoreCase)) _selectedTestId = t.ToLowerInvariant();
+        if (_selectedTestId == "ethernet") _ = LoadEthernetPortsAsync();
         if (_selectedTestId == "soundcheck" && HelpQuery == "cant-hear") _ = OpenCantHearAsync();
         if (_selectedTestId == "wifi") _ = ScanWifiAsync();
     }
@@ -950,6 +1062,7 @@
 
     public override void Dispose()
     {
+        _disposed = true;
         base.Dispose();
         _batchCts?.Cancel();
         _interactiveWaitTcs?.TrySetCanceled();
@@ -967,6 +1080,7 @@
     {
         _selectedTestId = id;
         if (id == "wifi" && !_wifiScanned) _ = ScanWifiAsync();
+        if (id == "ethernet" && !_ethLoaded) _ = LoadEthernetPortsAsync();
     }
 
     private IWifiConnectModule? GetWifiModule() =>
@@ -996,6 +1110,29 @@
         }
     }
 
+    private IEthernetPortModule? GetEthernetModule() =>
+        Diagnostics.Modules.OfType<IEthernetPortModule>().FirstOrDefault()
+        ?? (Diagnostics.Catalog.Find(ModuleSlugs.EthernetPort) is { } d ? Diagnostics.Catalog.ModuleFor(d.Id) as IEthernetPortModule : null);
+
+    private async Task LoadEthernetPortsAsync()
+    {
+        if (_disposed || _ethLoading || GetEthernetModule() is not { } m) return;
+        _ethLoading = true;
+        _ethLoaded = true;
+        if (!_disposed) await InvokeAsync(() => { if (!_disposed) StateHasChanged(); });
+        try
+        {
+            _ethPorts = await m.ListPortsAsync(CancellationToken.None);
+            _ethDropsSession = EthernetPicked is { Connected: true } p && m.DropsSession(p.Name);
+        }
+        catch (Exception) { _ethPorts = []; }
+        finally
+        {
+            _ethLoading = false;
+            if (!_disposed) await InvokeAsync(() => { if (!_disposed) StateHasChanged(); });
+        }
+    }
+
     private void PickWifi(string? ssid)
     {
         _wifiPickedSsid = string.IsNullOrEmpty(ssid) ? null : ssid;
@@ -1017,6 +1154,36 @@
     }
 
     private void CancelWifi() => (GetWifiModule() as OnDemandModuleBase)?.Cancel();
+
+    private void PickEthernet(string? name)
+    {
+        _ethPicked = string.IsNullOrEmpty(name) ? null : name;
+        _ethDropsSession = EthernetPicked is { Connected: true } p && GetEthernetModule()?.DropsSession(p.Name) == true;
+    }
+
+    private async Task StartEthernetAsync()
+    {
+        if (Diagnostics.IsStressSuiteRunning || _isRemoteDisplay || _disposed) return;
+        if (!_ethLoaded) await LoadEthernetPortsAsync();
+        if (_disposed) return;
+        if (GetEthernetModule() is { } m)
+        {
+            m.Settings.Adapter = EthernetPicked?.Name;
+            m.Settings.Mode = _ethMode;
+        }
+        await Diagnostics.RunAsync(ModuleSlugs.EthernetPort);
+        if (!_disposed && _selectedTestId == "ethernet") await LoadEthernetPortsAsync();
+    }
+
+    private void OnEthernetModeChange(ChangeEventArgs e) =>
+        _ethMode = string.Equals(e.Value?.ToString(), "loopback", StringComparison.Ordinal) ? EthernetPortMode.Loopback : EthernetPortMode.Network;
+
+    private static string EthernetLinkText(EthernetPortReport r) =>
+        (r.SpeedBps is { } sp ? NetworkAdapter.FormatSpeed(sp) : "up")
+        + (r.FullDuplex switch { true => ", full duplex", false => ", half duplex", _ => "" })
+        + (r.LinkWaitSeconds is { } lw && lw > 1 ? $" (came up after {lw:0} s)" : "");
+
+    private void CancelEthernet() => (GetEthernetModule() as OnDemandModuleBase)?.Cancel();
 
     private void ToggleItem(string id)
     {
@@ -1126,6 +1293,9 @@
                     case "wifi":
                         await StartWifiAsync();
                         break;
+                    case "ethernet":
+                        await StartEthernetAsync();
+                        break;
                 }
             }
         }
@@ -1148,6 +1318,7 @@
         CancelMicToSpeaker();
         CancelSoundCheck();
         CancelWifi();
+        CancelEthernet();
         Diagnostics.CancelStressSuite();
     }
 

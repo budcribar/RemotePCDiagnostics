@@ -33,12 +33,16 @@ public static class InteractiveExport
     private static string? T(string? v) => AreaReportExport.Text(v, AreaReportExport.MaxTextLength);
 
     public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
-        ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane), Json);
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
+        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane), Json);
 
     /// <summary>The Wi-Fi connect pane: the networks its picker lists, the one picked, and whether starting drops a remote session.</summary>
     /// <param name="PasswordTyped">Whether a password is typed (never the password itself).</param>
     public sealed record WifiPane(IReadOnlyList<WifiNetworkSeen> Networks, string? PickedSsid, bool PasswordTyped, bool DropsRemoteSession, bool Scanning);
+
+    /// <summary>The Ethernet port pane: the wired ports its picker lists, the one picked, the mode, whether starting drops a remote session, and whether ports are still loading.</summary>
+    public sealed record EthernetPane(IReadOnlyList<EthernetPortChoice> Ports, string? PickedPort, EthernetPortMode Mode, bool DropsRemoteSession, bool Loading = false);
 
     /// <summary>The Sound check pane's helper lists: what it shows and why (Can't hear sound, or only one side heard).</summary>
     /// <param name="Mode">"cant-hear", "one-side" or null when no list shows.</param>
@@ -46,7 +50,8 @@ public static class InteractiveExport
     public sealed record SoundCheckHelp(string? Mode, bool Reading, IReadOnlyList<SoundCheckStep> Steps, bool ServicesOk);
 
     public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
-        ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null) => new
+        ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
+        DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -65,6 +70,7 @@ public static class InteractiveExport
             MicToSpeakerTest(page, micToSpeaker),
             SoundCheckTest(page, soundCheck ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.SoundCheck), false), help),
             WifiTest(page, wifi ?? DiagnosticResult.NotRun(ModuleSlugs.WifiConnect), wifiPane),
+            EthernetTest(page, ethernet ?? DiagnosticResult.NotRun(ModuleSlugs.EthernetPort), ethernetPane),
         },
     };
 
@@ -261,6 +267,56 @@ public static class InteractiveExport
         };
     }
 
+    /// <summary>The Ethernet port test: measured only (link, speed, duplex, pings or loopback frames), with no verdict a person enters.</summary>
+    private static object EthernetTest(PageState page, DiagnosticResult r, EthernetPane? pane)
+    {
+        var rep = r.Payload as EthernetPortReport;
+        return new
+        {
+            id = "ethernet",
+            name = "Ethernet port",
+            @checked = page.CheckedTestIds.Contains("ethernet"),
+            open = page.SelectedTestId == "ethernet",
+            // While running it waits for the person to plug the cable or the loopback plug in (step says which, and the seconds left).
+            state = r.Status == DiagnosticStatus.Running ? "running" : rep is not null || r.Status == DiagnosticStatus.Error ? "done" : "waiting-for-person",
+            runId = r.RunId,
+            step = r.Status == DiagnosticStatus.Running ? T(r.Message) : null,
+            loading = pane?.Loading,
+            ports = pane?.Ports.Select(p => new { name = V(p.Name), adapter = V(p.Description), cablePluggedIn = p.Connected }).ToList(),
+            pickedPort = V(pane?.PickedPort),
+            mode = pane is null ? null : pane.Mode == EthernetPortMode.Loopback ? "loopback" : "network",
+            // Unplugging this port drops the remote session (it is the PC's only way out) until the cable is back in.
+            dropsRemoteSession = pane?.DropsRemoteSession,
+            measured = rep is null ? null : new
+            {
+                outcome = rep.Outcome.ToString(),
+                mode = rep.Mode == EthernetPortMode.Loopback ? "loopback" : "network",
+                port = V(rep.Adapter),
+                adapter = V(rep.Description),
+                linkWaitSeconds = rep.LinkWaitSeconds,
+                speedMbps = rep.SpeedBps is { } b ? b / 1_000_000 : (long?)null,
+                fullDuplex = rep.FullDuplex,
+                gigabitCapable = rep.GigabitCapable,
+                gotDhcpAddress = rep.GotDhcpAddress,
+                pings = rep.Pings.Select(p => new { target = p.Target, sent = p.Sent, replies = p.Replies }).ToList(),
+                framesSent = rep.FramesSent,
+                framesCountedOut = rep.FramesCountedOut,
+                framesCountedIn = rep.FramesCountedIn,
+            },
+            result = r.Status == DiagnosticStatus.Running ? null
+                : rep is null ? (r.Status == DiagnosticStatus.Error ? "failed" : null)
+                : rep.RunEnd == RunEnd.CouldNotRun ? "not-applicable"
+                : r.Status switch { DiagnosticStatus.Ok => "passed", DiagnosticStatus.Error => "failed", _ => "warning" },
+            message = T(r.Message),
+            instructions = "The person picks the port and what is plugged in: Cable to network, or Loopback plug (a plug that wires the port's "
+                + "send pins to its receive pins). After Start, RPCD waits up to " + $"{EthernetPort.LinkWindow.TotalMinutes:0}" + " minutes for the "
+                + "cable or plug to be plugged in, then pings the PC's own address and the DHCP server and reads speed and duplex (cable), or "
+                + $"sends {EthernetPort.LoopbackFrames} test frames and checks they come back (loopback). When dropsRemoteSession is true, unplugging "
+                + "the cable drops the remote session until it is back in. RPCD decides the result.",
+            reportIf = ReportIf.Ethernet,
+        };
+    }
+
     /// <summary>
     /// When an agent coaching a test should report a learning (Admin's report_learning tool): the test's instructions or screen did not
     /// match what the person has. One line each, written for the agent, not the person.
@@ -323,6 +379,8 @@ public static class InteractiveExport
     {
         public const string Wifi = "The person's network is not listed, the test says it couldn't connect although the password is right and "
             + "other devices connect, or the PC didn't go back to its original network.";
+        public const string Ethernet = "The person's wired port is not listed, the link never comes up although the cable works on another "
+            + "PC, or the loopback test fails with a plug that passes on another PC.";
         public const string Keyboard = "The person's keyboard does not match any layout offered (for example AZERTY, Japanese, a compact "
             + "laptop or a keyboard with extra keys), keys they press do not light up, or they cannot find a key the test asks for.";
         public const string Display = "The full-screen test does not open on the screen the person is using, does not cover it, cannot be "
