@@ -89,12 +89,19 @@ public sealed record RecordedCall
     public const string AntivirusKind = "antivirus";
     /// <summary>Core Audio's endpoints and sessions (<see cref="Audio.AudioState"/>), kept as JSON in <see cref="StdOut"/>.</summary>
     public const string AudioKind = "audio";
+    /// <summary>The Wi-Fi radio and scan (<see cref="Areas.WifiRadioReading"/>, network names scrubbed), kept as JSON in <see cref="StdOut"/>.</summary>
+    public const string WifiKind = "wifi";
     public const string FileKind = "file";
     /// <summary>What the Agent's alerts read (<see cref="Alerts.IAlertReadings"/>): events and levels, kept as rows like WMI.</summary>
     public const string AlertsKind = "alerts";
     /// <summary>One boot memory test request to the Agent (<see cref="Stress.IMemoryDiagnosticSource"/>): <see cref="Query"/> is the request
     /// ("status"), <see cref="StdOut"/> the Agent's JSON answer, <see cref="Error"/> why there was none (<see cref="TimedOut"/> marks "no Agent").</summary>
     public const string MemoryDiagnosticKind = "memdiag";
+    /// <summary>
+    /// The Agent's answers to the disk surface scan (<see cref="Storage.IDiskScanSource"/>): <see cref="Query"/> is the request
+    /// ("start 0 quick 0", "status 0"), <see cref="StdOut"/> the status JSON, <see cref="ExitCode"/> 2 when the Agent was missing.
+    /// </summary>
+    public const string DiskScanKind = "diskscan";
 
     public string Kind { get; init; } = "";
 
@@ -142,6 +149,14 @@ public sealed record RecordedCall
 
     public static RecordedCall FromAlerts(WmiQueryResult r) => FromWmi(r) with { Kind = AlertsKind };
 
+    public static RecordedCall FromDiskScan(Storage.DiskScanRequest request, Storage.DiskScanAnswer a) => new()
+    {
+        Kind = DiskScanKind, Query = request.Key, StdOut = a.Status?.ToJson(), Error = a.Error, ExitCode = a.NeedsAgent ? 2 : a.Status is null ? 1 : 0,
+    };
+
+    public Storage.DiskScanAnswer ToDiskScanAnswer() =>
+        new(Storage.DiskScanStatus.Parse(StdOut), Error, NeedsAgent: ExitCode == 2);
+
     public static RecordedCall FromAudio(Audio.AudioState s) => new() { Kind = AudioKind, StdOut = s.ToJson(), Error = s.Error };
 
     public static RecordedCall FromMemoryDiagnostic(IReadOnlyList<string> args, Stress.MemoryDiagnosticReply r) => new()
@@ -152,10 +167,11 @@ public sealed record RecordedCall
     public Stress.MemoryDiagnosticReply ToMemoryDiagnosticReply() =>
         Error is null && Stress.MemoryDiagnosticAnswer.Parse(StdOut) is { } answer ? new(answer, null)
             : Stress.MemoryDiagnosticReply.Failed(Error ?? "The answer couldn't be read.", noAgent: TimedOut == true);
+    public static RecordedCall FromWifi(Areas.WifiRadioReading r) => new() { Kind = WifiKind, StdOut = r.Scrubbed().ToJson(), Error = r.Error };
 
     /// <summary>Kept as rows, like WMI (WMI, registry, the package list, antivirus products).</summary>
     public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind or AntivirusKind;
 
     /// <summary>Short text naming the call, for test messages.</summary>
-    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind == AudioKind ? "audio" : Kind == MemoryDiagnosticKind ? $"memdiag {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
+    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind is AudioKind or WifiKind ? Kind : Kind == DiskScanKind ? $"diskscan {Query}" : Kind == MemoryDiagnosticKind ? $"memdiag {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
 }

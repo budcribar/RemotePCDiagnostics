@@ -31,6 +31,9 @@ public sealed partial class WindowsAgentNativeOps
             case Stress.MemoryDiagnosticAction memdiag:
                 result = Stress.AgentMemoryDiagnosticHost.Run(memdiag);
                 break;
+            case Storage.DiskReadScanAction scan:
+                result = Storage.AgentDiskScans.Windows.Run(scan);
+                break;
         }
     }
 }

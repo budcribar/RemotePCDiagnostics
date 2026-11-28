@@ -1,0 +1,11 @@
+{
+  "id": "6f2cda7d-0f7b-456c-a0dc-dedd9582c069",
+  "slug": "EthernetPort",
+  "displayName": "Ethernet port test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.EthernetPort.EthernetPortPlugin",
+  "needsAdmin": false,
+  // Its controls live on the Interactive tests page.
+  "hasUi": false,
+  "inProcessOnly": "the Interactive tests page hands it the picked port and mode"
+}

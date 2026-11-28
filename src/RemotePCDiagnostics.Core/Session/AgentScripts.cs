@@ -59,6 +59,11 @@ public static class AgentScripts
     /// (<see cref="Stress.AgentMemoryDiagnostic"/>); prints <see cref="Stress.MemoryDiagnosticAnswer"/> JSON.
     /// </summary>
     public const string MemoryDiagnostic = "memory_diagnostic";
+    /// <summary>
+    /// Args: "start", disk number, "quick" or "full", time limit in minutes (0 for none); or "status"/"stop" and the disk number. The
+    /// read-only surface scan of one physical disk (<see cref="Storage.AgentDiskScans"/>). Prints the scan's status as JSON.
+    /// </summary>
+    public const string DiskReadScan = "disk_read_scan";
 
     public const string RebootTask = "reboot";
     public const string WorkflowTask = "workflow";
@@ -179,6 +184,8 @@ public static class AgentScripts
                     return a.Count == 2 && Stress.AgentMemoryDiagnostic.ParseMix(Arg(1)) is { } mix
                         ? Native(new Stress.MemoryDiagnosticAction("schedule", mix)) : Refuse("Choose the standard or extended test.");
                 return a.Count == 1 ? Native(new Stress.MemoryDiagnosticAction(Arg(0)!, null)) : Refuse("That isn't a memory test request.");
+            case DiskReadScan:
+                return Storage.DiskReadScanAction.Parse(a) is { } scan ? Native(scan) : Refuse("That isn't a disk surface scan this app runs.");
 
             default:
                 return Refuse($"Unknown script '{request.Name}'.");

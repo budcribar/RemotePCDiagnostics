@@ -46,6 +46,10 @@ public class ModuleIdsTests
         ["Sound"] = "56dea360-0bd7-4230-b072-0d54d91e90e4",
         ["WindowsMaintenance"] = "f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41",
         ["SoundCheck"] = "b81b0a57-43d2-4ad4-8572-1480fbe6cf0f",
+        ["WifiConnect"] = "3f0c2b8e-5d71-4a9e-b6c4-2e8d9a7f1c35",
+        ["EthernetPort"] = "6f2cda7d-0f7b-456c-a0dc-dedd9582c069",
+        ["ChargerReplug"] = "6e740559-6220-4ea6-b09b-303928f1982f",
+        ["DiskSurfaceScan"] = "46272fdc-6e61-4e3b-bf6f-bec95e0be7eb",
     };
 
     [Fact]

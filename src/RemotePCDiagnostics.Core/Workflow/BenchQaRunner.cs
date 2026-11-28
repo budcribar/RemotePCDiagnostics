@@ -85,6 +85,16 @@ public sealed class BenchQaRunner(
     public double ItemProgressFraction =>
         RunItemIds.Count == 0 ? 0.0 : Math.Clamp((double)CompletedItems / RunItemIds.Count, 0.0, 1.0);
 
+    /// <summary>
+    /// The person check the run is waiting on ("keyboard" or "display"), or null. Every automated check has finished by then, so the page
+    /// shows what needs attention and its fixes, and <see cref="RerunAsync"/> can re-check a fixed item without stopping the run.
+    /// </summary>
+    public string? WaitingFor { get; private set; }
+
+    /// <summary>True while a re-check started during a person check (<see cref="WaitingFor"/>) is running.</summary>
+    public bool IsRecheckRunning => Volatile.Read(ref _recheckRunning) == 1;
+    private int _recheckRunning;
+
     public event Action? Changed;
 
     public Task StartBenchQaAsync(
@@ -363,10 +373,7 @@ public sealed class BenchQaRunner(
                 token.ThrowIfCancellationRequested();
                 Status = "Physical keyboard check: verify key switches & simultaneous rollover…";
                 Raise();
-                if (waitInteractive is not null)
-                {
-                    await waitInteractive("keyboard", token).ConfigureAwait(false);
-                }
+                await WaitForPersonAsync("keyboard", waitInteractive, token).ConfigureAwait(false);
                 MarkItemDone("keyboard", raise: false);
                 CompletedSteps++;
                 Raise();
@@ -378,10 +385,7 @@ public sealed class BenchQaRunner(
                 token.ThrowIfCancellationRequested();
                 Status = "Physical display check: inspect color uniformity, dead pixels & touch…";
                 Raise();
-                if (waitInteractive is not null)
-                {
-                    await waitInteractive("display", token).ConfigureAwait(false);
-                }
+                await WaitForPersonAsync("display", waitInteractive, token).ConfigureAwait(false);
                 MarkItemDone("display", raise: false);
                 CompletedSteps++;
                 Raise();
@@ -445,14 +449,20 @@ public sealed class BenchQaRunner(
     /// <summary>
     /// Runs the checks behind <paramref name="itemIds"/> again (normally the ones that failed), then saves the certificate again. The
     /// security audit re-checks only the settings that failed or warned; stress tests run as the short guarded pass, as in the QA check.
-    /// Does nothing while a QA check or another re-run is running.
+    /// While a QA check only waits on the person (<see cref="WaitingFor"/>), re-checks these items beside it instead; otherwise does
+    /// nothing while a QA check or another re-run is running.
     /// </summary>
     public Task RerunAsync(IReadOnlyCollection<string> itemIds, CancellationToken ct = default) => Task.Run(() => RerunCoreAsync(itemIds, ct), ct);
 
     private async Task RerunCoreAsync(IReadOnlyCollection<string> itemIds, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(itemIds);
-        if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return;
+        if (Interlocked.CompareExchange(ref _running, 1, 0) != 0)
+        {
+            // A QA check is running. Once it only waits on the person (keyboard, display), re-check the fixed items beside it.
+            if (WaitingFor is not null) await RecheckWhileWaitingAsync(itemIds, ct).ConfigureAwait(false);
+            return;
+        }
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         lock (_gate) _cts = cts;
         var token = cts.Token;
@@ -473,10 +483,7 @@ public sealed class BenchQaRunner(
             foreach (var slug in others)
             {
                 token.ThrowIfCancellationRequested();
-                if (slug == ModuleSlugs.SecurityAudit
-                    && diag.Catalog.ModuleFor(ModuleIds.SecurityAudit) is Security.SecurityAuditModule audit
-                    && store.Get(slug).Payload is Security.SecurityAuditReport rep && rep.NeedsAttention.Count > 0)
-                    audit.RecheckOnNextRun(rep.NeedsAttention.Select(f => f.Id));
+                PrepareRecheck(slug);
                 Status = $"Re-running {diag.Catalog.DisplayName(slug)}…";
                 Raise();
                 await RunModuleSafeAsync(slug, token).ConfigureAwait(false);
@@ -517,6 +524,92 @@ public sealed class BenchQaRunner(
             lock (_gate) _cts = null;
             Volatile.Write(ref _running, 0);
             Raise();
+        }
+    }
+
+    /// <summary>
+    /// Runs the checks behind <paramref name="itemIds"/> again while the QA check waits on the person, without touching its progress.
+    /// Stress tests are left out (they would heat the PC while someone types on it); the certificate is saved when the QA check ends.
+    /// </summary>
+    private async Task RecheckWhileWaitingAsync(IReadOnlyCollection<string> itemIds, CancellationToken ct)
+    {
+        if (Interlocked.CompareExchange(ref _recheckRunning, 1, 0) != 0) return;
+        try
+        {
+            var slugs = itemIds.SelectMany(SlugsForItem).Where(diag.CanRun)
+                .Where(s => !StressItemToSlug.Values.Contains(s, StringComparer.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            log.Info($"[bench-qa] Re-check while waiting on {WaitingFor}: {string.Join(", ", itemIds)} -> {string.Join(", ", slugs)}");
+            Raise();
+            foreach (var slug in slugs)
+            {
+                ct.ThrowIfCancellationRequested();
+                PrepareRecheck(slug);
+                await RunModuleSafeAsync(slug, ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            log.Warn($"[bench-qa] Re-check failed: {ex}");
+        }
+        finally
+        {
+            Volatile.Write(ref _recheckRunning, 0);
+            Raise();
+        }
+    }
+
+    /// <summary>The security audit re-checks only the settings that failed or warned, not all 400.</summary>
+    private void PrepareRecheck(string slug)
+    {
+        if (slug == ModuleSlugs.SecurityAudit
+            && diag.Catalog.ModuleFor(ModuleIds.SecurityAudit) is Security.SecurityAuditModule audit
+            && store.Get(slug).Payload is Security.SecurityAuditReport rep && rep.NeedsAttention.Count > 0)
+            audit.RecheckOnNextRun(rep.NeedsAttention.Select(f => f.Id));
+    }
+
+    /// <summary>
+    /// Waits for the person to finish the keyboard or display check. The run owns this wait, not the page: leaving the QA page (to fix a
+    /// failed item on its own page, say) doesn't stop the run, and coming back shows the check still waiting.
+    /// </summary>
+    private async Task WaitForPersonAsync(string section, Func<string, CancellationToken, Task>? waitInteractive, CancellationToken token)
+    {
+        WaitingFor = section;
+        Raise();
+        try
+        {
+            if (waitInteractive is not null) await waitInteractive(section, token).ConfigureAwait(false);
+            else if (physicalQa is not null) await WaitForOutcomeAsync(physicalQa, section, token).ConfigureAwait(false);
+        }
+        finally
+        {
+            WaitingFor = null;
+        }
+    }
+
+    /// <summary>Done when the check has an outcome that is new since the wait began (set again, or changed).</summary>
+    private static async Task WaitForOutcomeAsync(PhysicalBenchQaService qa, string section, CancellationToken token)
+    {
+        static PhysicalCheckOutcome Outcome(PhysicalBenchQaSnapshot s, string section) => section == "keyboard" ? s.KeyboardOutcome : s.DisplayOutcome;
+        var startUtc = DateTimeOffset.UtcNow;
+        var initial = Outcome(qa.Current, section);
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnChanged()
+        {
+            var snap = qa.Current;
+            var now = Outcome(snap, section);
+            if (now != PhysicalCheckOutcome.NotRun && (snap.UpdatedUtc >= startUtc || now != initial)) done.TrySetResult();
+        }
+        qa.Changed += OnChanged;
+        try
+        {
+            using var reg = token.Register(() => done.TrySetCanceled(token));
+            await done.Task.ConfigureAwait(false);
+        }
+        finally
+        {
+            qa.Changed -= OnChanged;
         }
     }
 
