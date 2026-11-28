@@ -1,0 +1,140 @@
+@using System.Text.Json
+@using RemotePCDiagnostics.Core.Battery
+@implements IDisposable
+@* The battery drain test's choices and live readings on the Checks page. Before a run: the mode, the shutdown confirmation and the battery
+   now. During a run: the state line, what has been measured so far and the confirmation (it can be given until the run reaches 15 %).
+   Browser agents read the same, plus every 30 s reading, from batterydrain-data (docs/agent-guides/browser-contract.md). *@
+<div class="card drain-options" data-testid="batterydrain-options" data-mode="@BatteryDrainReport.ModeArg(Module.Mode)"
+     data-confirmed="@(Module.ShutdownConfirmed ? "true" : "false")" data-state="@State">
+    @if (_leftover is { } left)
+    {
+        <div class="notice" data-testid="batterydrain-leftover">
+            <strong>@(left.End == BatteryDrainEnd.PcShutOff ? "The PC turned off during the last drain" : "The app closed during the last drain")</strong>
+            at @(left.Log.Samples.LastOrDefault()?.Percent?.ToString() ?? "?") %. Run the test to record that run's result; run it again for a new drain.
+        </div>
+    }
+    <fieldset class="drain-mode" disabled="@(Running || Disabled)">
+        <legend>Load</legend>
+        <label>
+            <input type="radio" name="batterydrain-mode" data-testid="batterydrain-mode-max" checked="@(Module.Mode == BatteryDrainMode.MaxLoad)"
+                   @onchange="() => SetMode(BatteryDrainMode.MaxLoad)" />
+            Maximum load <span class="meta">(every core and some memory busy, the screen on: about 1 to 2 hours)</span>
+        </label>
+        <label>
+            <input type="radio" name="batterydrain-mode" data-testid="batterydrain-mode-balanced" checked="@(Module.Mode == BatteryDrainMode.Balanced)"
+                   @onchange="() => SetMode(BatteryDrainMode.Balanced)" />
+            Balanced <span class="meta">(a light load; the PC can be used meanwhile: up to about 4 hours)</span>
+        </label>
+    </fieldset>
+    <label class="drain-confirm">
+        <input type="checkbox" data-testid="batterydrain-confirm" checked="@Module.ShutdownConfirmed" @onchange="SetConfirmed" />
+        Work is saved: shut the PC down at @BatteryDrainLimits.StopAtPercent %
+    </label>
+    <p class="meta">Runs on battery only: unplug the charger first. For the run the Agent keeps the PC from sleeping, dimming or turning
+        off the screen, and puts those settings back afterwards. Without the confirmation above the run stops at
+        @BatteryDrainLimits.ConfirmByPercent % and nothing shuts down. Plugging the charger in pauses it for up to
+        @((int)BatteryDrainLimits.ResumeWindow.TotalMinutes) minutes. Start from a full charge for the best measurement.</p>
+    @if (Module.Live is { } live)
+    {
+        var m = live.Measure;
+        var last = live.Samples[^1];
+        <div class="drain-live" data-testid="batterydrain-live" role="status">
+            <div><strong>@live.Message</strong></div>
+            <div class="drain-figures">
+                <span>Charge <b>@(last.Percent?.ToString() ?? "–") %</b></span>
+                <span>On battery <b>@BatteryDrainReport.Duration(m.BatterySeconds)</b></span>
+                <span>Delivered <b>@BatteryDrainReport.Wh(m.DeliveredMWh)</b></span>
+                @if (m.AverageWatts is { } w) { <span>Average <b>@w.ToString("0.0") W</b></span> }
+                @if (last.VoltageMv is { } v) { <span>Voltage <b>@((v / 1000.0).ToString("0.00")) V</b></span> }
+            </div>
+            @if (!Module.ShutdownConfirmed)
+            {
+                <p class="meta" data-testid="batterydrain-confirm-hint">Save your work and tick the box above, or the run stops at @BatteryDrainLimits.ConfirmByPercent %.</p>
+            }
+        </div>
+    }
+    else if (_reading is { } r)
+    {
+        <p class="meta" data-testid="batterydrain-battery">
+            @(r.OnAc ? $"Plugged in at {r.PercentOrComputed} %: unplug the charger to start." : $"On battery at {r.PercentOrComputed} %.")
+            @if (r.FullChargeMWh is { } full) { <span> Full charge reported: @BatteryDrainReport.Wh(full).</span> }
+        </p>
+    }
+    else if (_read)
+    {
+        <p class="meta" data-testid="batterydrain-battery">Windows reports no battery on this PC.</p>
+    }
+    <AgentData TestId="batterydrain-data" CheckId="@Module.Name" Json="@DataJson()" />
+</div>
+
+@code {
+    [Parameter, EditorRequired] public BatteryDrainModule Module { get; set; } = default!;
+    /// <summary>The check is running (the mode is fixed; the confirmation can still be given).</summary>
+    [Parameter] public bool Running { get; set; }
+    /// <summary>Another run blocks starting this one.</summary>
+    [Parameter] public bool Disabled { get; set; }
+
+    private BatteryDrainReading? _reading;
+    private bool _read;
+    private (BatteryDrainRunLog Log, BatteryDrainEnd End)? _leftover;
+
+    private string State => Module.Live?.State ?? (Running ? "starting" : "idle");
+
+    protected override async Task OnInitializedAsync()
+    {
+        Module.LiveChanged += OnLive;
+        _leftover = Module.Leftover();
+        try { _reading = await Module.ReadNowAsync(CancellationToken.None); }
+        catch (Exception) { /* the reading is a convenience; the run reads the battery again */ }
+        _read = true;
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!Running) _leftover = Module.Leftover();
+    }
+
+    private void OnLive(object? sender, EventArgs e) => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Module.LiveChanged -= OnLive;
+
+    private void SetMode(BatteryDrainMode mode) { if (!Running && !Disabled) Module.Mode = mode; }
+
+    private void SetConfirmed(ChangeEventArgs e) => Module.ShutdownConfirmed = e.Value is true || (e.Value as string) is "true" or "on";
+
+    private string DataJson()
+    {
+        var samples = Module.Live?.Samples ?? Module.LastSamples ?? [];
+        var m = BatteryDrainMeasure.From(samples);
+        return JsonSerializer.Serialize(new
+        {
+            schema = 1,
+            mode = BatteryDrainReport.ModeArg(Module.Mode),
+            shutdownConfirmed = Module.ShutdownConfirmed,
+            state = State,
+            paused = Module.Live?.Paused ?? false,
+            message = Module.Live?.Message,
+            stopAtPercent = BatteryDrainLimits.StopAtPercent,
+            confirmByPercent = BatteryDrainLimits.ConfirmByPercent,
+            // False until the first battery reading came back: battery null then means "not read yet", not "no battery".
+            batteryRead = _read,
+            battery = _reading is { } r ? new { onBattery = !r.OnAc, percent = r.PercentOrComputed, remainingMWh = r.RemainingMWh, fullChargeMWh = r.FullChargeMWh } : null,
+            leftover = _leftover is { } left ? new { end = left.End.ToString(), percent = left.Log.Samples.LastOrDefault()?.Percent, startedUtc = left.Log.StartedUtc } : null,
+            measured = samples.Count == 0 ? null : new
+            {
+                startPercent = m.StartPercent,
+                endPercent = m.EndPercent,
+                percentDrained = m.PercentDrained,
+                batterySeconds = Math.Round(m.BatterySeconds),
+                pausedSeconds = Math.Round(m.PausedSeconds),
+                deliveredWh = Math.Round(m.DeliveredMWh / 1000.0, 2),
+                reportedFullWh = m.ReportedFullMWh is { } f ? Math.Round(f / 1000.0, 2) : (double?)null,
+                projectedFullWh = m.ProjectedFullMWh is { } p ? Math.Round(p / 1000.0, 2) : (double?)null,
+                deliveredPercent = m.DeliveredRatio is { } ratio ? Math.Round(ratio * 100, 1) : (double?)null,
+                gaugeOffPercent = m.GaugeOffPercent is { } off ? Math.Round(off, 1) : (double?)null,
+                averageWatts = m.AverageWatts is { } w ? Math.Round(w, 2) : (double?)null,
+            },
+            samples = samples.Select(s => new { s = s.Seconds, ac = s.OnAc, pct = s.Percent, mwh = s.RemainingMWh, mw = s.DischargeMw, mv = s.VoltageMv }),
+        });
+    }
+}

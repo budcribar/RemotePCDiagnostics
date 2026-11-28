@@ -1,0 +1,14 @@
+{
+  "id": "adda2b29-4378-44da-b7ef-64376b0da30f",
+  "slug": "Cooling",
+  "displayName": "Cooling test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.Cooling.CoolingPlugin",
+  // Runs as the signed-in user: the temperatures come from the app's hardware monitor (like Temperatures & fans), and switching
+  // thermal modes goes to the Agent (cooling_modes), which has the rights it needs.
+  "needsAdmin": false,
+  "hasUi": true,
+  "outOfProcess": false,
+  "detailsReplaceReport": false,
+  "inProcessOnly": "it reads temperatures and fans through the app's hardware monitor and loads the CPU in the app"
+}

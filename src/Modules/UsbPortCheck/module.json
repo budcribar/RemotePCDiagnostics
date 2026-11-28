@@ -1,0 +1,11 @@
+{
+  "id": "1b68970d-8ec7-45ee-bc39-bc88bca9de77",
+  "slug": "UsbPortCheck",
+  "displayName": "USB port check",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.UsbPortCheck.UsbPortCheckPlugin",
+  "needsAdmin": false,
+  // Its controls live on the Interactive tests page, which follows the run live.
+  "hasUi": false,
+  "inProcessOnly": "the Interactive tests page follows its run live"
+}

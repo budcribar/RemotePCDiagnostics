@@ -2,9 +2,13 @@ using RemotePCDiagnostics.Core.Sensors;
 
 namespace RemotePCDiagnostics.Core.Stress;
 
-/// <summary>On-demand memory test. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
+/// <summary>
+/// On-demand memory test. Never auto-runs and is excluded from Run All; runs only when the user presses Start. <see cref="Offline"/> is
+/// the Windows boot memory test (scheduled through the Agent, result read from the System log), reported on the same page.
+/// </summary>
 public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher launcher, ISensorProvider sensors,
-    IWindowsMemoryDiagnosticLauncher? windowsDiagnostic = null, ILogger? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<MemoryTestProgress, MemoryTestReport>(log), IStressSuiteModule
+    IWindowsMemoryDiagnosticLauncher? windowsDiagnostic = null, ILogger? log = null, Func<IStressClock>? clockFactory = null,
+    OfflineMemoryDiagnostic? offline = null) : StressModuleBase<MemoryTestProgress, MemoryTestReport>(log), IStressSuiteModule
 {
     public const string ModuleName = ModuleSlugs.MemoryTest;
     public override string Name => ModuleName;
@@ -24,6 +28,8 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
     protected override TimeSpan DefaultDuration => MemoryTestOptions.DefaultDuration(MemoryTestMode.Quick);
     public MemoryTestOptions? Options { get; set; }
     public bool CanLaunchWindowsDiagnostic => windowsDiagnostic is not null;
+    /// <summary>The Windows boot memory test; null where the app has none (tests that build the module alone).</summary>
+    public OfflineMemoryDiagnostic? Offline => offline;
 
     /// <summary>Planned test size for a mode right now (null = not enough free memory).</summary>
     public long? PlannedBytes(MemoryTestMode mode)
