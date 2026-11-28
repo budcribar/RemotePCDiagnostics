@@ -37,7 +37,7 @@ public sealed class D3D11GpuDeviceFactory(ILogger? log = null, int threadCount =
         }
     }
 
-    private static GpuAdapterInfo Info(AdapterDescription1 d) => new(d.Description, GpuAdapterKind.Hardware, (long)d.DedicatedVideoMemory, (uint)d.VendorId);
+    private static GpuAdapterInfo Info(AdapterDescription1 d) => new(d.Description, GpuAdapterKind.Hardware, (long)(ulong)d.DedicatedVideoMemory, (uint)d.VendorId);
 
     /// <summary>Opens the hardware adapter whose <see cref="GpuAdapterInfo.Id"/> is <paramref name="adapterId"/>.</summary>
     public GpuOpenResult Open(string adapterId)
@@ -89,7 +89,7 @@ public sealed class D3D11GpuDeviceFactory(ILogger? log = null, int threadCount =
                     if (soft) { sawSoftware = true; continue; }
                     try
                     {
-                        var info = new GpuAdapterInfo(d.Description, GpuAdapterKind.Hardware, (long)d.DedicatedVideoMemory, d.VendorId);
+                        var info = new GpuAdapterInfo(d.Description, GpuAdapterKind.Hardware, (long)(ulong)d.DedicatedVideoMemory, d.VendorId);
                         return GpuOpenResult.Ok(new D3D11GpuDevice(adapter, info, threadCount, log));
                     }
                     catch (Exception ex)

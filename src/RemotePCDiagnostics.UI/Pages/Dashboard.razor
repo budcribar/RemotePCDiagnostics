@@ -35,7 +35,7 @@
 
     var problems = enabledResults
         .Where(x => x.Result.Status is DiagnosticStatus.Error or DiagnosticStatus.Warning
-                    && !x.Result.Cancelled && !CheckEnableRules.IsTurnedOff(x.Result))
+                    && !x.Result.Cancelled && !CheckEnableRules.IsTurnedOff(x.Result) && !CheckRows.IsCouldNotRun(x.Result))
         .OrderBy(x => x.Result.Status == DiagnosticStatus.Error ? 0 : 1)
         .ToList();
     // Only a finished, good result counts as passed: a check stopped before it finished (or not run yet) didn't pass.
@@ -48,7 +48,7 @@
         Diagnostics.Modules.Select(m =>
         {
             var r = Store.Get(m.Name);
-            return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled, CheckEnableRules.IsTurnedOff(r));
+            return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled, CheckEnableRules.IsTurnedOff(r), CheckRows.IsCouldNotRun(r));
         }),
         Diagnostics.LastStressSuiteProgress);
 
@@ -326,6 +326,11 @@
                                 @if (name == LibreHardwareMonitorModule.ModuleName)
                                 {
                                     <StatusChip Status="@(cpuTemp is null && !thBusy ? DiagnosticStatus.NotRun : th.Status)" Text="@(cpuTemp is null && !thBusy ? "No reading" : null)" />
+                                }
+                                else if (CheckRows.IsCouldNotRun(r))
+                                {
+                                    @* No verdict (e.g. the test couldn't start): not a hardware problem, so no red "Problem" pill. *@
+                                    <StatusChip Status="DiagnosticStatus.NotRun" Text="@CouldNotRun.OutcomeText" TestId="@($"dash-chip-couldnotrun-{name.ToLowerInvariant()}")" />
                                 }
                                 else
                                 {

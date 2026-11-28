@@ -30,6 +30,17 @@ public class DashboardSummaryTests
     }
 
     [Fact]
+    public void CouldNotRun_IsNotAProblem()
+    {
+        // The graphics memory test that couldn't list the chips reached no verdict: not "1 thing to look at" in red.
+        var sum = DashboardSummary.Build([
+            Check("EventLog", "Windows error log", DiagnosticStatus.Warning),
+            new BannerModule("GpuMemory", "Graphics memory (VRAM) test", true, false, DiagnosticStatus.Error, "couldn't be listed", CouldNotRun: true)], null);
+        Assert.Equal("EventLog", Assert.Single(sum.Problems).Name);
+        Assert.False(sum.HasError);
+    }
+
+    [Fact]
     public void SingleProblem_IsSingular()
     {
         var sum = DashboardSummary.Build([Check("EventLog", "Windows error log", DiagnosticStatus.Warning), Check("Crashes", "App crashes", DiagnosticStatus.Ok)], null);
