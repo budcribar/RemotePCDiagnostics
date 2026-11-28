@@ -738,22 +738,34 @@
             el.style.position = el.style.left = el.style.top = el.style.width = '';
         }, 0);
     };
+    // The app is zoomed on large screens (.app { zoom }), and an ancestor may be transformed, so a CSS left/top is not the same as a
+    // screen position. Measure how the box's left/top map to where it shows (shown = scale * css + offset) and invert that.
+    const calibrate = el => {
+        el.style.left = '0px'; el.style.top = '0px';
+        const a = el.getBoundingClientRect();
+        el.style.left = '100px'; el.style.top = '100px';
+        const b = el.getBoundingClientRect();
+        const sx = (b.left - a.left) / 100 || 1, sy = (b.top - a.top) / 100 || 1;
+        return { sx, sy, ox: a.left, oy: a.top };
+    };
+    const place = (x, y) => {
+        drag.el.style.left = ((x - drag.dx - drag.map.ox) / drag.map.sx) + 'px';
+        drag.el.style.top = ((y - drag.dy - drag.map.oy) / drag.map.sy) + 'px';
+    };
     document.addEventListener('pointerdown', e => {
         const el = e.target instanceof Element ? e.target.closest('.ptr-box') : null;
         if (!el || drag) return;
         const r = el.getBoundingClientRect();
-        drag = { el, id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top };
+        el.style.width = el.offsetWidth + 'px';
         el.classList.add('ptr-dragging');
-        el.style.width = r.width + 'px';
         el.style.position = 'fixed';
-        el.style.left = r.left + 'px';
-        el.style.top = r.top + 'px';
+        drag = { el, id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top, map: calibrate(el) };
+        place(e.clientX, e.clientY);
     }, true);
     document.addEventListener('pointermove', e => {
         if (!drag || e.pointerId !== drag.id) return;
         if (!drag.el.isConnected) { drag = null; return; }
-        drag.el.style.left = (e.clientX - drag.dx) + 'px';
-        drag.el.style.top = (e.clientY - drag.dy) + 'px';
+        place(e.clientX, e.clientY);
     }, true);
     document.addEventListener('pointerup', e => { if (drag && e.pointerId === drag.id) end(); }, true);
     document.addEventListener('pointercancel', e => { if (drag && e.pointerId === drag.id) end(); }, true);
