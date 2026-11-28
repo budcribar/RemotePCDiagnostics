@@ -74,8 +74,9 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     ("Programs & updates (WMI + registry)", new ProgramsModule(new WmiProgramsSource(wmi, registry, packages))),
     ("Programs & updates (legacy: osquery)", new ProgramsModule(new OsqueryProgramsSource(osquery))),
     // Without netsh and the event logs (Wi-Fi and event names hold the network's name and its router's address) and offline (no probes or DNS timing).
-    // The Wi-Fi radio and scan are recorded scrubbed (see RecordingWifiRadioSource).
-    ("Network (WMI + registry)", new NetworkModule(new WmiNetworkSource(wmi, registry), includeWifiAndIpConfig: true, offline: true, radio: wifi)),
+    // The Wi-Fi radio and scan are recorded scrubbed (see RecordingWifiRadioSource); the adapter hardware card's WMI answers are recorded offline.
+    ("Network (WMI + registry)", new NetworkModule(new WmiNetworkSource(wmi, registry), includeWifiAndIpConfig: true, offline: true,
+        radio: wifi, hardware: new WmiNicHardwareSource(wmi))),
     ("Network (legacy: osquery + PowerShell)", new NetworkModule(new OsqueryNetworkSource(osquery, commands), includeWifiAndIpConfig: true, offline: true)),
     ("Security essentials (WMI + registry + tpmtool)", new SecurityEssentialsModule(new WmiSecurityEssentialsSource(wmi, registry, commands, antivirus))),
     ("Security essentials (legacy: PowerShell + tpmtool)", new SecurityEssentialsModule(new PowerShellSecurityEssentialsSource(commands))),

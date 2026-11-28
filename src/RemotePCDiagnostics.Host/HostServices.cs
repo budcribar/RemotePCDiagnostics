@@ -122,6 +122,8 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioIo>(_ => new WasapiAudioIo(L<WasapiAudioIo>()));
         // The Wi-Fi connect test changes the app's own Wi-Fi connection and reads the Interactive tests page's picks, so it runs in the app.
         services.AddSingleton<RemotePCDiagnostics.Core.Areas.IWifiConnector>(_ => new RemotePCDiagnostics.Core.Areas.WlanConnector());
+        // The Ethernet port test reads the Interactive tests page's picks (port, cable or loopback plug), so it runs in the app.
+        services.AddSingleton<RemotePCDiagnostics.Core.Areas.IEthernetPortIo>(_ => new RemotePCDiagnostics.Core.Areas.SystemEthernetPortIo());
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(_ => new WasapiAudioStateSource(L<WasapiAudioStateSource>()));
         // NPU test: on-demand only, own page, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(L<WindowsNpuIo>()));

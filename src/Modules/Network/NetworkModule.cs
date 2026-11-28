@@ -11,8 +11,10 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// recordings and their replays.
 /// </summary>
 /// <param name="radio">The Wi-Fi radio and a fresh scan (<see cref="WifiRadio"/>'s cards); null leaves them out.</param>
+/// <param name="hardware">The adapter hardware card's readings (<see cref="NicHardware"/>); null leaves the card out.</param>
+/// <param name="linkProbe">Pings of each connected wired adapter's own address and DHCP server; not used <paramref name="offline"/>.</param>
 public sealed class NetworkModule(INetworkSource source, SystemCommandRunner? commands = null, bool includeWifiAndIpConfig = false, DnsSpeedTest? dnsTest = null,
-    ILogger? log = null, bool offline = false, IWifiRadioSource? radio = null) : AreaModuleBase(log ?? commands?.Log)
+    ILogger? log = null, bool offline = false, IWifiRadioSource? radio = null, INicHardwareSource? hardware = null, INicLinkProbe? linkProbe = null) : AreaModuleBase(log ?? commands?.Log)
 {
     public const string ModuleName = ModuleSlugs.Network;
     public override string Name => ModuleName;
@@ -27,9 +29,10 @@ public sealed class NetworkModule(INetworkSource source, SystemCommandRunner? co
         var total = includeWifiAndIpConfig ? 4 : 1;
         progress.ReportStep(1, total, "Checking network adapters…");
         if (await source.ReadAdaptersAsync(ct).ConfigureAwait(false) is not { } adapters) return AreaReport.Failed(FailedMessage);
+        var hardwareCard = ReadHardwareCardAsync(ct);
         var baseReport = Build(adapters);
         if (!includeWifiAndIpConfig)
-            return baseReport;
+            return WithHardware(baseReport, await hardwareCard.ConfigureAwait(false));
 
         progress.ReportStep(2, total, "Checking Wi-Fi signal and IP configuration…");
         var connectedAdapters = ConnectedCount(adapters);
@@ -73,7 +76,43 @@ public sealed class NetworkModule(INetworkSource source, SystemCommandRunner? co
         // A radio or scan problem leads the summary: it is the Wi-Fi card itself, not the network.
         if (radioList.Where(c => c.Level is AreaLevel.Warning or AreaLevel.Error).OrderByDescending(c => c.Level).FirstOrDefault() is { Headline.Length: > 0 } radioProblem)
             combinedSummary = $"{radioProblem.Headline} · {combinedSummary}";
-        return new(combinedCards, combinedSummary, combinedStatus);
+        return WithHardware(new(combinedCards, combinedSummary, combinedStatus), await hardwareCard.ConfigureAwait(false));
+    }
+
+    /// <summary>The report with the adapter hardware card after the adapters' own cards; a hardware problem leads the summary.</summary>
+    private static AreaReport WithHardware(AreaReport report, AreaCard? card)
+    {
+        if (card is null) return report;
+        var cards = report.Cards.ToList();
+        var lastNic = cards.FindLastIndex(c => c.Id.StartsWith("nic", StringComparison.Ordinal));
+        cards.Insert(lastNic < 0 ? cards.Count : lastNic + 1, card);
+        var summary = card.Level is AreaLevel.Warning or AreaLevel.Error ? $"{card.Headline} · {report.Summary}" : report.Summary;
+        var status = AreaReport.Worst(cards.Select(c => c.ErrorText is not null ? AreaLevel.Warning : c.Level));
+        return report with { Cards = cards, Summary = summary, Status = (DiagnosticStatus)Math.Max((int)status, (int)report.Status) };
+    }
+
+    /// <summary>The adapter hardware card, with live pings of each connected wired adapter unless offline; null without a hardware source.</summary>
+    private async Task<AreaCard?> ReadHardwareCardAsync(CancellationToken ct)
+    {
+        if (hardware is null) return null;
+        NicHardwareSnapshot? snapshot;
+        try { snapshot = await hardware.ReadAsync(ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"{Name}: adapter hardware not read: {ex.Message}"); return null; }
+        if (snapshot is null) return null;
+        Dictionary<string, IReadOnlyList<NicPing>>? pings = null;
+        var probe = offline ? null : linkProbe ?? new NicLinkProbe();
+        if (probe is not null)
+        {
+            pings = new(StringComparer.OrdinalIgnoreCase);
+            foreach (var a in snapshot.Adapters.Where(a => a.Medium == NicMedium.Ethernet && a.Connected == true))
+            {
+                try { pings[a.Name] = await probe.ProbeAsync(a.Name, ct).ConfigureAwait(false); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"{Name}: pings on {a.Name} failed: {ex.Message}"); }
+            }
+        }
+        var card = NicHardware.Build(snapshot, pings);
+        Log($"{Name}: adapter hardware: {snapshot.Adapters.Count} adapter(s), devices={snapshot.Devices?.Count}, irqs={snapshot.InterruptsRead}, level={card?.Level}");
+        return card;
     }
 
     private static async Task<AreaCard?> Nullable(Task<AreaCard> card) => await card.ConfigureAwait(false);
