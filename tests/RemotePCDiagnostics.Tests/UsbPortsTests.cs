@@ -103,6 +103,42 @@ public class UsbPortsTests
         Assert.Equal("Running below its speed", Card(r, "devices").Rows.Single(x => x.Key == Stick).Values[4]);
     }
 
+    private const string Dock2 = @"USB\VID_17EF&PID_A392\5&2B3C4D5E&0&13";
+
+    /// <summary>The dock's USB 2 half: a USB 2 hub on root port 13 (the companion of port 3), reporting the dock as SuperSpeed capable.</summary>
+    private static UsbSnapshot WithDockUsb2Half(bool usb3HalfPresent, string? containerId = "{dock}")
+    {
+        var tree = Laptop();
+        var nodes = tree.Nodes.ToList();
+        var root = nodes.Single(n => n.Id == Root);
+        var ports = root.Ports!.Select(p => p.Number == 3 ? p with { CompanionPort = 13 } : p).ToList();
+        ports.Add(Port(13, speed: UsbSpeed.High, ssCap: true, atSs: false, hub: true) with { CompanionPort = 3 });
+        nodes[nodes.IndexOf(root)] = root with { Ports = ports };
+        if (!usb3HalfPresent) nodes.RemoveAll(n => n.Id is Dock or Nic or DockAudio);
+        nodes.Add(new(Dock2, Root, UsbNodeKind.Hub, "Generic USB Hub", "USB", "17EF", "A392", Port: 13, ContainerId: containerId, Ports: [Port(1, UsbPortStatus.NoDevice, UsbSpeed.Unknown)], HubType: 2));
+        return new UsbSnapshot(nodes);
+    }
+
+    [Theory]
+    [InlineData("{dock}")]
+    [InlineData(null)] // no container ID: the companion port still pairs the two halves
+    public void The_usb2_half_of_a_usb3_hub_is_not_a_slow_link(string? containerId)
+    {
+        var r = Build(WithDockUsb2Half(usb3HalfPresent: true, containerId));
+        Assert.Equal(AreaLevel.Ok, Card(r, "speed").Level);
+        Assert.Empty(Card(r, "speed").Rows);
+        Assert.Equal("Working", Card(r, "devices").Rows.Single(x => x.Key == Dock2).Values[4]);
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+    }
+
+    [Fact]
+    public void A_usb3_hub_whose_usb3_half_is_missing_is_still_a_slow_link()
+    {
+        var r = Build(WithDockUsb2Half(usb3HalfPresent: false));
+        Assert.Equal(AreaLevel.Warning, Card(r, "speed").Level);
+        Assert.Equal("Generic USB Hub", Assert.Single(Card(r, "speed").Rows).Values[0]);
+    }
+
     [Fact]
     public void Failed_port_without_a_device_shows_as_its_own_row()
     {

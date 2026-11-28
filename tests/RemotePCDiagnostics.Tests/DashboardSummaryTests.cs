@@ -30,6 +30,17 @@ public class DashboardSummaryTests
     }
 
     [Fact]
+    public void CouldNotRun_IsNotAProblem()
+    {
+        // The graphics memory test that couldn't list the chips reached no verdict: not "1 thing to look at" in red.
+        var sum = DashboardSummary.Build([
+            Check("EventLog", "Windows error log", DiagnosticStatus.Warning),
+            new BannerModule("GpuMemory", "Graphics memory (VRAM) test", true, false, DiagnosticStatus.Error, "couldn't be listed", CouldNotRun: true)], null);
+        Assert.Equal("EventLog", Assert.Single(sum.Problems).Name);
+        Assert.False(sum.HasError);
+    }
+
+    [Fact]
     public void SingleProblem_IsSingular()
     {
         var sum = DashboardSummary.Build([Check("EventLog", "Windows error log", DiagnosticStatus.Warning), Check("Crashes", "App crashes", DiagnosticStatus.Ok)], null);
@@ -108,5 +119,17 @@ public class DashboardSummaryTests
         Assert.Equal(0, sum.StressNotRunCount);
         Assert.False(sum.AuditNotRun);
         Assert.Empty(sum.Problems);
+    }
+
+    [Fact]
+    public void StressNotRunCount_CountsOnlyTheStressPageList_WhenGiven()
+    {
+        var mods = new List<BannerModule>([.. AllStress(), new("Webcam", "Webcam test", true, false, DiagnosticStatus.NotRun),
+            new("DiskSurfaceScan", "Disk surface scan", true, false, DiagnosticStatus.NotRun), Audit()]);
+        Assert.Equal(5, DashboardSummary.Build(mods, null).StressNotRunCount);
+        var sum = DashboardSummary.Build(mods, null, ["CpuStress", "MemoryTest", "GpuStress", "diskSurfaceScan"]);
+        Assert.Equal(4, sum.StressNotRunCount);
+        Assert.Equal("On-demand tests not run: 4 (stress tests and disk surface scan)", sum.StressNotRunNote);
+        Assert.True(sum.AuditNotRun);
     }
 }

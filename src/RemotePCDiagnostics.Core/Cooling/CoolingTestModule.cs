@@ -225,10 +225,16 @@ public sealed class CoolingTestModule(
             return new(CoolingJudge.ModesCard, title, AreaLevel.Warning, "Couldn't read the thermal modes: " + listed.Error, "", columns, []);
 
         var rows = new List<AreaRow>();
-        var failed = new List<string>();
+        var failed = new List<string>();      // a mode that was refused, or read back as another, on a setting that does switch
+        var stuck = new List<string>();       // a setting that took none of its modes: it reads the same whatever is set
         var switched = 0;
+        var tookTotal = 0;                    // modes that changed a setting (not the one it already had)
         var notes = new List<string>();
-        foreach (var group in listed.Answer!.Groups)
+        var groups = listed.Answer!.Groups;
+        var windows = groups.FirstOrDefault(g => g.Kind == CoolingModes.WindowsKind && g.Options.Count > 0);
+        // The other settings as each Windows power mode left them: one that changes with it follows the Windows power mode.
+        var seenWithWindows = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var group in groups)
         {
             if (group.Options.Count == 0)
             {
@@ -237,49 +243,81 @@ public sealed class CoolingTestModule(
             }
             var original = group.Current;
             rows.Add(new(AreaLevel.Neutral, [group.Title, group.NameOf(original), "Was set before the test"]));
+            if (group.Kind != CoolingModes.WindowsKind && windows is not null
+                && windows.Options.FirstOrDefault(o => o.Id == WindowsPowerMode.Balanced.ToString()) is { } balanced)
+            {
+                // Some makers tie their profile to the Windows power mode; with Windows on Balanced the profile is free to change.
+                touched();
+                var w = await source.ModesAsync([CoolingModesAction.Set, CoolingModes.WindowsKind, balanced.Id], ct).ConfigureAwait(false);
+                if (w.Ok && w.Answer!.SetError is null)
+                    rows.Add(new(AreaLevel.Neutral, [windows.Title, balanced.Name, $"Set first, so the {group.Title} isn't held by Best performance"]));
+            }
+            var took = 0;
+            var groupFailed = new List<(string Option, string Why, AreaRow Row)>();
             foreach (var option in group.Options)
             {
                 touched();
                 var r = await source.ModesAsync([CoolingModesAction.Set, group.Kind, option.Id], ct).ConfigureAwait(false);
                 var back = r.Answer?.Group(group.Kind)?.Current;
+                if (group.Kind == CoolingModes.WindowsKind && r.Answer is { } after)
+                    foreach (var other in after.Groups.Where(g => g.Kind != group.Kind && g.Current is not null))
+                        (seenWithWindows.TryGetValue(other.Kind, out var seen) ? seen : seenWithWindows[other.Kind] = new(StringComparer.OrdinalIgnoreCase)).Add(other.Current!);
                 if (!r.Ok || r.Answer!.SetError is not null)
                 {
                     var why = r.Error ?? r.Answer!.SetError!;
-                    rows.Add(new(AreaLevel.Error, [group.Title, option.Name, "Couldn't set: " + why]));
-                    failed.Add($"{option.Name} ({why})");
+                    groupFailed.Add((option.Name, why, new(AreaLevel.Warning, [group.Title, option.Name, "Couldn't set: " + why])));
                 }
                 else if (!string.Equals(back, option.Id, StringComparison.OrdinalIgnoreCase))
-                {
-                    rows.Add(new(AreaLevel.Error, [group.Title, option.Name, $"Didn't read back as set: reads {group.NameOf(back)}"]));
-                    failed.Add($"{option.Name} (reads {group.NameOf(back)})");
-                }
+                    groupFailed.Add((option.Name, $"reads {group.NameOf(back)}", new(AreaLevel.Warning, [group.Title, option.Name, $"Didn't read back as set: reads {group.NameOf(back)}"])));
                 else
                 {
-                    rows.Add(new(AreaLevel.Ok, [group.Title, option.Name, "Set and read back"]));
+                    rows.Add(new(AreaLevel.Ok, [group.Title, option.Name, string.Equals(option.Id, original, StringComparison.OrdinalIgnoreCase) ? "Already set" : "Set and read back"]));
                     switched++;
+                    if (!string.Equals(option.Id, original, StringComparison.OrdinalIgnoreCase)) took++;
                 }
                 await clk.DelayAsync(TimeSpan.FromMilliseconds(500), ct).ConfigureAwait(false);
             }
+            tookTotal += took;
+            if (groupFailed.Count > 0 && took == 0)
+            {
+                // Nothing but the mode it already had: the setting doesn't switch from Windows here. Not a cooling fault.
+                stuck.Add($"{group.Title} stays at {group.NameOf(original)}");
+                rows.AddRange(groupFailed.Select(f => f.Row with { Level = AreaLevel.Neutral }));
+            }
+            else
+            {
+                rows.AddRange(groupFailed.Select(f => f.Row));
+                failed.AddRange(groupFailed.Select(f => $"{f.Option} ({f.Why})"));
+            }
         }
+        foreach (var (kind, seen) in seenWithWindows)
+            if (seen.Count > 1 && groups.FirstOrDefault(g => g.Kind == kind) is { } follower)
+                notes.Add($"The {follower.Title} changed with the Windows power mode ({string.Join(", ", seen.Select(follower.NameOf))}), so it follows that setting.");
 
         var restored = true;
-        if (switched + failed.Count > 0)
+        if (switched + failed.Count + stuck.Count > 0)
         {
             restored = await RestoreAsync().ConfigureAwait(false);
             onRestored();
             rows.Add(new(restored ? AreaLevel.Ok : AreaLevel.Warning, ["All", "Before the test", restored ? "Put back" : "Couldn't be put back; the Agent tries again when it next starts"]));
         }
         if (!restored) notes.Add("The modes in use before the test couldn't all be put back. Check Settings, System, Power (Power mode) and the maker's app.");
+        if (stuck.Count > 0)
+            notes.Add("A setting that reads the same whatever is set is either held by the maker's service (or the Windows power mode) or its firmware accepts the request without acting on it. That says nothing about the cooling itself.");
 
-        var meta = string.Join(" · ", listed.Answer.Groups.Select(g => $"{g.Title}: {g.NameOf(g.Current)}"));
+        var meta = string.Join(" · ", groups.Select(g => $"{g.Title}: {g.NameOf(g.Current)}").Concat(stuck.Select(x => "Not switchable here: " + x)));
+        var note = notes.Count > 0 ? string.Join(" ", notes) : null;
+        // A mode that won't switch is worth a look (firmware, the maker's app), but it isn't a cooling fault: a warning at most.
         if (failed.Count > 0)
-            return new(CoolingJudge.ModesCard, title, AreaLevel.Error, "Profile won't set: " + string.Join(", ", failed), meta, columns, rows,
+            return new(CoolingJudge.ModesCard, title, AreaLevel.Warning, "Profile won't set: " + string.Join(", ", failed), meta, columns, rows,
                 Note: string.Join(" ", ["A thermal mode that won't set (or reads back as another) points to the maker's firmware or its service. Update the BIOS and the maker's app.", .. notes]), PreserveRowOrder: true);
-        if (switched == 0)
-            return new(CoolingJudge.ModesCard, title, AreaLevel.Neutral, "Not supported: no thermal mode on this PC can be switched from Windows", meta, columns, rows, PreserveRowOrder: true);
+        if (tookTotal == 0)
+            return new(CoolingJudge.ModesCard, title, AreaLevel.Neutral,
+                stuck.Count > 0 ? "Not switchable here: " + string.Join("; ", stuck) + " whatever is set" : "Not supported: no thermal mode on this PC can be switched from Windows",
+                meta, columns, rows, Note: note, PreserveRowOrder: true);
         return new(CoolingJudge.ModesCard, title, restored ? AreaLevel.Ok : AreaLevel.Warning,
-            $"Passed: {AreaModuleBase.Plural(switched, "mode")} set and read back{(restored ? ", then put back" : "; the old modes couldn't all be put back")}", meta, columns, rows,
-            Note: notes.Count > 0 ? string.Join(" ", notes) : null, PreserveRowOrder: true);
+            $"Passed: {AreaModuleBase.Plural(tookTotal, "mode")} switched and read back{(restored ? ", then put back" : "; the old modes couldn't all be put back")}", meta, columns, rows,
+            Note: note, PreserveRowOrder: true);
     }
 
     private async Task<bool> RestoreAsync()
@@ -305,7 +343,8 @@ public sealed class CoolingTestModule(
             metrics.Add(new("cooling.idle-cpu", "CPU temperature at low load", Math.Round(it), "°C", MetricTrend.LowerIsBetter));
         if (load.Where(s => s.CpuC is not null).Select(s => s.CpuC!.Value).DefaultIfEmpty(double.NaN).Max() is var lt && !double.IsNaN(lt))
             metrics.Add(new("cooling.load-cpu", "Hottest CPU temperature under load", Math.Round(lt), "°C", MetricTrend.LowerIsBetter));
-        return new AreaReport(cards, summary, status) { KeyMetrics = metrics.Count > 0 ? metrics : null };
+        // The summary keeps the whole verdict; the cards show it as a short label with the sentence in their list.
+        return new AreaReport(cards.Select(CoolingJudge.Compact).ToList(), summary, status) { KeyMetrics = metrics.Count > 0 ? metrics : null };
     }
 
     private static string Clock(double seconds)

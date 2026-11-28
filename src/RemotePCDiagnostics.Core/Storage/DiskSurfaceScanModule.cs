@@ -62,7 +62,7 @@ public sealed class AgentDiskScanSource(SystemCommandRunner commands) : IDiskSca
 /// disk, keyed like Drive health so History lines the two up.
 /// </summary>
 public sealed class DiskSurfaceScanModule(IWmiSource wmi, IDiskScanSource scans, ILogger? log = null, TimeSpan? pollEvery = null)
-    : AreaModuleBase(log), IPerDeviceModule, IInstanceSummary, ICancellableScan
+    : AreaModuleBase(log), IDiagnosticModule, IPerDeviceModule, IInstanceSummary, ICancellableScan // IDiagnosticModule relisted so IncludeInRunAll below reimplements it
 {
     public const string ModuleName = ModuleSlugs.DiskSurfaceScan;
     public override string Name => ModuleName;

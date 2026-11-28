@@ -320,7 +320,9 @@ button:disabled { opacity: 1; color: var(--text-muted); background: var(--surfac
 a.btn-small { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-weight: 600; text-decoration: none; cursor: pointer; transition: background-color .15s, border-color .15s, box-shadow .15s, color .15s; }
 a.btn-small:hover { border-color: var(--accent); color: var(--accent); }
 [data-theme="light"] .btn-small { color: #1d4ed8; }
-.status-line .status-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* The message after the dot takes the rest of the row and wraps inside it, so a long message never
+   pushes itself onto a line of its own below the dot (flex-wrap only moves badges and buttons). */
+.status-line .status-text, .status-line > .dot + span { flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; }
 .status-line .status-action { margin-left: auto; flex: none; }
 
 /* Toolbars on test pages: controls wrap as labelled groups. */
@@ -440,6 +442,9 @@ body.ct-resizing { user-select: none; cursor: col-resize; }
 .ct-group-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .ct-group-line h2 { margin: 0; font-size: 18px; }
 .ct-group-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+/* Short/Extended length switch: shrinks to the list pane, and each label wraps onto two lines rather than running into the detail pane. */
+.ct-mode-switch { flex: 0 1 auto; max-width: 100%; min-width: 0; height: auto; min-height: 30px; border-radius: 16px; }
+.ct-mode-switch button { flex: 1 1 auto; min-width: 0; height: auto; min-height: 24px; padding: 4px 10px; white-space: normal; line-height: 1.2; text-align: center; border-radius: 13px; }
 .ct-chevron { width: 26px; height: 26px; padding: 0; flex: none; }
 .ct-check { width: 20px; height: 20px; padding: 0; flex: none; font-size: 12px; line-height: 1; border-radius: 5px; margin-top: 3px; }
 .ct-check[aria-checked="true"], .ct-check[aria-checked="mixed"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }

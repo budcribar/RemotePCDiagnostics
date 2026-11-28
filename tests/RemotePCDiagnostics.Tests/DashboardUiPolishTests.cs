@@ -63,6 +63,36 @@ public class DashboardUiPolishTests : BunitContext
         Assert.Contains("1 / 2 passed", cut.Find("[data-testid='dashboard-verdict-pill']").TextContent);
     }
 
+    private sealed class FakeOnDemand(string name) : IDiagnosticModule
+    {
+        public string Name => name;
+        public Guid Id => TestIds.For(name);
+        public bool IncludeInRunAll => false;
+        public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
+        public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);
+        public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default) => Task.FromResult(FakeModule.Ok(name));
+    }
+
+    /// <summary>Bud, Nov 28: the Dashboard said "Stress tests: 18 not run" while the Stress tests page listed 8. The tile counted every
+    /// on-demand module, the interactive tests too; it now counts only what the Stress tests page lists.</summary>
+    [Fact]
+    public void Dashboard_StressTile_CountsOnlyTheStressTestsPage()
+    {
+        var store = new ResultStore();
+        RegisterDashboardServices(store,
+            new FakeModule(ModuleSlugs.DriveHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DriveHealth))),
+            new FakeStressModule(ModuleSlugs.CpuStress, "CPU"),
+            new FakeOnDemand(ModuleSlugs.DiskSurfaceScan),
+            new FakeOnDemand(ModuleSlugs.Webcam),        // Interactive tests page
+            new FakeOnDemand(ModuleSlugs.SoundCheck));   // Interactive tests page
+
+        var stressPage = Services.GetRequiredService<ChecksScreenState>().Modules(CheckGroup.Stress).Select(m => m.Name).ToList();
+        Assert.Equal([ModuleSlugs.CpuStress, ModuleSlugs.DiskSurfaceScan], stressPage);
+
+        var cut = Render<Dashboard>();
+        Assert.Equal("2 not run", cut.Find("[data-testid='dashboard-tool-stress'] strong").TextContent.Trim());
+    }
+
     [Fact]
     public void Dashboard_Card_ExpandsInPlace_WithInlineRefreshButton()
     {
@@ -77,6 +107,25 @@ public class DashboardUiPolishTests : BunitContext
         cut.Find("[data-testid='dashboard-card-drivehealth'] .dash-card-head").Click();
         Assert.NotNull(cut.Find("[data-testid='dashboard-card-details-drivehealth']"));
         Assert.NotNull(cut.Find("[data-testid='dashboard-card-refresh-drivehealth']"));
+    }
+
+    /// <summary>VH1: the graphics memory test couldn't list the chips (a software failure) and the card showed a red "Problem".</summary>
+    [Fact]
+    public void Dashboard_CouldNotRun_ShowsGreyPill_AndIsNotAnError()
+    {
+        var store = new ResultStore();
+        var drive = new FakeModule(ModuleSlugs.DriveHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DriveHealth)));
+        RegisterDashboardServices(store, drive);
+        var report = new RemotePCDiagnostics.Core.Areas.AreaReport([], "The test couldn't start", DiagnosticStatus.Error) { CouldNotRunReason = "The test couldn't start" };
+        store.Set(new DiagnosticResult(ModuleSlugs.DriveHealth, DiagnosticStatus.Error, report.Summary, DateTimeOffset.Now, report));
+
+        var dash = Render<Dashboard>();
+        var chip = dash.Find("[data-testid='dashboard-card-drivehealth'] .chip");
+        Assert.Equal("Couldn't run", chip.TextContent.Trim());
+        Assert.DoesNotContain("chip-err", chip.ClassName);
+
+        var nav = Render<NavRail>();
+        Assert.Empty(nav.FindAll("[data-testid='nav-checks-errors']"));
     }
 
     [Fact]

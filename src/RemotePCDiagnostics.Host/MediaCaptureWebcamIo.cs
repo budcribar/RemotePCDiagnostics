@@ -26,6 +26,7 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
         var list = new List<WebcamDevice>();
         // IR cameras (Windows Hello) live in frame source groups, not always in the video capture class: each one is its own entry.
         var irDeviceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var irCandidates = new List<WebcamIrCandidate>();
         try
         {
             foreach (var g in MediaFrameSourceGroup.FindAllAsync().AsTask().GetAwaiter().GetResult())
@@ -37,11 +38,17 @@ public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview =
                         && string.Equals(i.DeviceInformation?.Id, devId, StringComparison.OrdinalIgnoreCase)))
                     irDeviceIds.Add(devId);
                 var panel = ir.DeviceInformation?.EnclosureLocation is { } e && e.Panel != Panel.Unknown;
-                list.Add(new WebcamDevice(WebcamDevice.InfraredPrefix + g.Id, g.DisplayName, WebcamDevice.GuessBus(ir.DeviceInformation?.Id ?? g.Id, panel),
-                    WebcamKind.Infrared));
+                var dev = new WebcamDevice(WebcamDevice.InfraredPrefix + g.Id, g.DisplayName, WebcamDevice.GuessBus(ir.DeviceInformation?.Id ?? g.Id, panel),
+                    WebcamKind.Infrared);
+                var sensor = ir.DeviceInformation?.Id ?? WebcamIrSources.DevicePathOf(ir.Id);
+                Log($"IR source group '{g.DisplayName}' sources={g.SourceInfos.Count} sensor={sensor} panel={panel}");
+                irCandidates.Add(new WebcamIrCandidate(dev, sensor, g.SourceInfos.Count, panel,
+                    g.SourceInfos.Any(i => i.SourceKind == MediaFrameSourceKind.Color)));
             }
         }
         catch (Exception ex) { Log($"IR source groups: {ex.Message}"); }
+        // The same Hello sensor shows up in several groups: one entry per sensor.
+        list.AddRange(WebcamIrSources.Distinct(irCandidates));
         try
         {
             var all = DeviceInformation.FindAllAsync(DeviceClass.VideoCapture).AsTask().GetAwaiter().GetResult();

@@ -21,6 +21,10 @@ public static class CheckRows
         },
     };
 
+    /// <summary>A finished check that reached no verdict ("Couldn't run", e.g. the chips couldn't be listed): not a hardware problem,
+    /// so the Dashboard and the nav badges don't count it as an error or a warning.</summary>
+    public static bool IsCouldNotRun(DiagnosticResult r) => KindOf(r) == RowKind.CouldNotRun;
+
     private static bool IsCancelled(DiagnosticResult r) => ResultEventLogger.IsCancelled(r) || Cancellation.IsCancelled(r);
 
     public static string Text(RowKind k) => k switch
@@ -201,7 +205,10 @@ public sealed class ChecksScreenState
 
     public IReadOnlyList<IDiagnosticModule> ChecksModules => GetChecksModules();
 
-    private IReadOnlyList<IDiagnosticModule> GetChecksModules() => _diag.Modules.Where(m => m.IncludeInRunAll).ToList();
+    /// <remarks>A module the catalog puts on a page of its own (Interactive tests, Security audit) is never listed here, even when the
+    /// module itself still answers IncludeInRunAll true through <see cref="IDiagnosticModule"/>.</remarks>
+    private IReadOnlyList<IDiagnosticModule> GetChecksModules() =>
+        _diag.Modules.Where(m => m.IncludeInRunAll && _diag.Catalog.Get(m.Id)?.Page is null).ToList();
 
     private static readonly HashSet<string> ExcludedFromStress = new(StringComparer.OrdinalIgnoreCase)
     {

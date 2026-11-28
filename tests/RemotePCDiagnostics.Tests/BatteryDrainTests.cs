@@ -1,3 +1,4 @@
+using System.Text.Json;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Battery;
@@ -469,5 +470,61 @@ public sealed class BatteryDrainTests : IDisposable
         Assert.Equal("Windows said no.", failed.Error);
         Assert.True(AgentBatteryDrainSource.Read(new(0, new BatteryDrainPowerAnswer(true, []).ToJson(), "")).Ok);
         Assert.False(AgentBatteryDrainSource.Read(null).Ok);
+    }
+
+    // ---- Interactive tests page (the person unplugs the charger, so it is an interactive test)
+
+    [Fact]
+    public void It_is_an_interactive_test_not_a_stress_or_checks_page_test()
+    {
+        var d = BuiltInModules.Descriptors.Single(x => x.Slug == ModuleSlugs.BatteryDrain);
+        Assert.Equal("interactive", d.Page);
+        Assert.False(d.OnStressPage);
+    }
+
+    [Fact]
+    public void Interactive_data_has_the_drain_test_running_with_its_choices_and_never_checked()
+    {
+        var at = DateTimeOffset.Now;
+        InteractiveExport.ModuleState NotRun(string slug) => new(new DiagnosticResult(slug, DiagnosticStatus.NotRun, "", at), false);
+        BatteryDrainSample S(double sec, int pct, long mwh) => new(at.AddSeconds(sec), sec, false, pct, mwh, 50_000, 20_000, 11_500);
+        var live = new BatteryDrainLive(BatteryDrainMode.Balanced, "running", "Draining at 90 %.", false, [S(0, 100, 50_000), S(1800, 90, 45_000)]);
+        var running = new DiagnosticResult(ModuleSlugs.BatteryDrain, DiagnosticStatus.Running, "Draining", at);
+        var page = new InteractiveExport.PageState("batterydrain", ["keyboard"], false, false, false, false);
+
+        using var doc = JsonDocument.Parse(InteractiveExport.ToJson(page, new Core.Workflow.PhysicalBenchQaSnapshot(), NotRun("Webcam"), NotRun("SpeakerToMic"),
+            NotRun("MicToSpeaker"), batteryDrain: new(running, BatteryDrainMode.Balanced, true, live)));
+        var t = doc.RootElement.GetProperty("tests").EnumerateArray().Single(x => x.GetProperty("id").GetString() == "batterydrain");
+        Assert.True(t.GetProperty("open").GetBoolean());
+        Assert.False(t.GetProperty("checked").GetBoolean());
+        Assert.Equal("running", t.GetProperty("state").GetString());
+        Assert.Equal("balanced", t.GetProperty("mode").GetString());
+        Assert.True(t.GetProperty("shutdownConfirmed").GetBoolean());
+        Assert.Equal("Draining at 90 %.", t.GetProperty("step").GetString());
+        Assert.Equal(90, t.GetProperty("measured").GetProperty("percent").GetInt32());
+        Assert.Equal(100, t.GetProperty("measured").GetProperty("startPercent").GetInt32());
+        Assert.Contains("unplug the charger", t.GetProperty("instructions").GetString());
+        Assert.False(string.IsNullOrEmpty(t.GetProperty("reportIf").GetString()));
+
+        // Not run yet: waiting for the person, nothing measured.
+        using var idle = JsonDocument.Parse(InteractiveExport.ToJson(page, new Core.Workflow.PhysicalBenchQaSnapshot(), NotRun("Webcam"), NotRun("SpeakerToMic"), NotRun("MicToSpeaker")));
+        var i = idle.RootElement.GetProperty("tests").EnumerateArray().Single(x => x.GetProperty("id").GetString() == "batterydrain");
+        Assert.Equal("waiting-for-person", i.GetProperty("state").GetString());
+        Assert.False(i.TryGetProperty("measured", out _));
+    }
+
+    [Fact]
+    public void The_Interactive_tests_page_has_the_drain_row_and_pane_but_Run_selected_never_starts_it()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "RemotePCDiagnostics.sln"))) root = root.Parent;
+        var page = File.ReadAllText(Path.Combine(root!.FullName, "src", "RemotePCDiagnostics.UI", "Pages", "InteractiveTestsPage.razor"));
+        Assert.Contains("data-testid=\"interactive-row-batterydrain\"", page);
+        Assert.Contains("<BatteryDrainPanel Module=\"drain\"", page);
+        Assert.Contains("data-testid=\"batterydrain-start-btn\"", page);
+        var allIds = page[page.IndexOf("AllTestIds = [", StringComparison.Ordinal)..];
+        Assert.DoesNotContain("\"batterydrain\"", allIds[..allIds.IndexOf(']')]);
+        var checks = File.ReadAllText(Path.Combine(root.FullName, "src", "RemotePCDiagnostics.UI", "Pages", "ChecksPage.razor"));
+        Assert.DoesNotContain("BatteryDrainPanel", checks);
     }
 }

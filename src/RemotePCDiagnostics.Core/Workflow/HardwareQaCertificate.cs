@@ -29,7 +29,9 @@ public sealed record HardwareQaItem(
     DiagnosticStatus Status,
     string Summary,
     bool Cancelled = false,
-    string Group = "");
+    string Group = "",
+    /// <summary>The check ran but reached no verdict on this PC (Couldn't run, Not applicable): shown with its reason, not left out.</summary>
+    bool Ran = false);
 
 public sealed record HardwareQaSnapshot(
     string CertificateId,
@@ -72,6 +74,11 @@ public static class HardwareQaCertificate
             new("smart", "Storage S.M.A.R.T. health", DefaultSelected: true),
             new("sensors", "Thermal & cooling sensors", DefaultSelected: true),
             new("stability", "Crash & WHEA hardware log (30d)", DefaultSelected: true),
+            new("usb", "USB ports & devices", DefaultSelected: true),
+            new("displays", "Displays & video outputs", DefaultSelected: true),
+            new("device-sensors", "Motion, light & presence sensors", DefaultSelected: true),
+            new("drive-self-test", "Drive self-test (short)", DefaultSelected: true),
+            new("cooling", "Cooling test (quick)", DefaultSelected: false),
         ]),
         new("stress", "Stress tests",
         [
@@ -79,6 +86,7 @@ public static class HardwareQaCertificate
             new("ram-test", "Memory (RAM) verification", DefaultSelected: true),
             new("disk-speed", "Storage read/write verification", DefaultSelected: true),
             new("gpu-stress", "Graphics (GPU) stress verification", DefaultSelected: true),
+            new("gpu-memory", "Graphics memory (VRAM) quick test", DefaultSelected: true),
         ]),
         new("peripherals", "Audio, camera & interactive I/O",
         [
@@ -86,6 +94,12 @@ public static class HardwareQaCertificate
             new("webcam", "Camera frame & exposure check", DefaultSelected: true),
             new("keyboard", "Physical keyboard matrix & rollover check", DefaultSelected: false),
             new("display", "Physical display dead-pixel & touch check", DefaultSelected: false),
+            // Guided steps: someone at the bench does each one. The QA page turns the pointer test on by default on PCs with a battery.
+            new("pointer", "Mouse, touchpad & touchscreen test", DefaultSelected: false),
+            new("charger", "Charger replug test (unplug, plug back in)", DefaultSelected: false),
+            new("usb-port", "USB port check (plug a USB stick into each port)", DefaultSelected: false),
+            new("video-output", "Video output check (plug a monitor into each port)", DefaultSelected: false),
+            new("ethernet", "Ethernet port test (cable or loopback plug)", DefaultSelected: false),
         ]),
         new("windows-security", "Windows & security",
         [
@@ -103,9 +117,9 @@ public static class HardwareQaCertificate
 
     public static string GroupLabelFor(string itemId) => itemId switch
     {
-        "hardware" or "battery" or "smart" or "sensors" or "stability" => "Hardware & health",
-        "cpu-stress" or "ram-test" or "disk-speed" or "gpu-stress" => "Stress tests",
-        "audio" or "webcam" or "keyboard" or "display" or "npu" => "Audio, camera & interactive I/O",
+        "hardware" or "battery" or "smart" or "sensors" or "stability" or "usb" or "displays" or "device-sensors" or "drive-self-test" or "cooling" => "Hardware & health",
+        "cpu-stress" or "ram-test" or "disk-speed" or "gpu-stress" or "gpu-memory" => "Stress tests",
+        "audio" or "webcam" or "keyboard" or "display" or "npu" or "pointer" or "charger" or "usb-port" or "video-output" or "ethernet" => "Audio, camera & interactive I/O",
         "drivers" or "integrity" or "security" => "Windows & security",
         _ => "",
     };
@@ -178,6 +192,24 @@ public static class HardwareQaCertificate
             BuildKeyboardItem(physicalQa),
             BuildDisplayItem(physicalQa),
         };
+
+        // The checks added to the QA page later appear only once they have a result, so a certificate from a run without them
+        // doesn't list a row of "not run" items.
+        var hardwareIndex = items.FindIndex(i => i.Id == "stability") + 1;
+        items.InsertRange(hardwareIndex, RanOnly(
+            BuildAddedItem("usb", "USB ports & devices", store.Get(ModuleSlugs.UsbPorts)),
+            BuildAddedItem("displays", "Displays & video outputs", store.Get(ModuleSlugs.Displays)),
+            BuildAddedItem("device-sensors", "Motion, light & presence sensors", store.Get(ModuleSlugs.DeviceSensors)),
+            BuildAddedItem("drive-self-test", "Drive self-test", store.Get(ModuleSlugs.DriveSelfTest)),
+            BuildAddedItem("cooling", "Cooling test", store.Get(ModuleSlugs.Cooling))));
+        items.InsertRange(items.FindIndex(i => i.Id == "gpu-stress") + 1, RanOnly(
+            BuildAddedItem("gpu-memory", "Graphics memory (VRAM) test", store.Get(ModuleSlugs.GpuMemory))));
+        items.InsertRange(items.FindIndex(i => i.Id == "display") + 1, RanOnly(
+            BuildPointerItem(physicalQa),
+            BuildAddedItem("charger", "Charger replug test", store.Get(ModuleSlugs.ChargerReplug)),
+            BuildAddedItem("usb-port", "USB port check", store.Get(ModuleSlugs.UsbPortCheck)),
+            BuildAddedItem("video-output", "Video output check", store.Get(ModuleSlugs.DisplayOutputCheck)),
+            BuildAddedItem("ethernet", "Ethernet port test", store.Get(ModuleSlugs.EthernetPort))));
 
         var npu = store.Get(ModuleSlugs.NpuTest);
         if (includeNpuWhenNotRun || npu.Status != DiagnosticStatus.NotRun)
@@ -625,6 +657,31 @@ public static class HardwareQaCertificate
         return parts.Count == 0
             ? "No BSODs, unexpected power losses, or WHEA hardware errors"
             : string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// A later QA item: like <see cref="BuildAreaItem"/>, but "Couldn't run" or not on this PC (no battery for the charger test, no
+    /// sensors) is not a hardware problem, so it isn't a note on the certificate either.
+    /// </summary>
+    private static HardwareQaItem BuildAddedItem(string id, string label, DiagnosticResult r)
+    {
+        if (r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running) && !CheckEnableRules.IsTurnedOff(r) && CheckRows.IsCouldNotRun(r))
+            return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, string.IsNullOrWhiteSpace(r.Message) ? "Couldn't run on this PC" : r.Message, Ran: true);
+        return BuildAreaItem(id, label, r);
+    }
+
+    /// <summary>Leaves out items that never ran (see <see cref="HardwareQaItem.Ran"/>).</summary>
+    private static IEnumerable<HardwareQaItem> RanOnly(params HardwareQaItem[] items) =>
+        items.Where(i => i.Ran || i.Status != DiagnosticStatus.NotRun);
+
+    private static HardwareQaItem BuildPointerItem(PhysicalBenchQaSnapshot? qa)
+    {
+        const string id = "pointer";
+        const string label = "Mouse, touchpad & touchscreen test";
+        var status = MapPhysicalOutcome(qa?.PointerOutcome ?? PhysicalCheckOutcome.NotRun);
+        var summary = !string.IsNullOrWhiteSpace(qa?.PointerSummary) ? qa.PointerSummary.Trim()
+            : status == DiagnosticStatus.NotRun ? "Not run (interactive bench check)" : status == DiagnosticStatus.Ok ? "Verified by technician" : "Failed";
+        return new HardwareQaItem(id, label, status, summary);
     }
 
     private static HardwareQaItem BuildKeyboardItem(PhysicalBenchQaSnapshot? qa)

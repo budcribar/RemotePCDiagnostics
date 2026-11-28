@@ -26,7 +26,10 @@ public sealed record PhysicalBenchQaSnapshot(
     IReadOnlyList<Display.DisplayScreenResult>? DisplayScreens = null,
     Display.BlankScreenOutcome BlankScreen = Display.BlankScreenOutcome.NotRun,
     /// <summary>Why the screen off and on check couldn't run (with <see cref="Display.BlankScreenOutcome.NotSupported"/>).</summary>
-    string? BlankScreenReason = null)
+    string? BlankScreenReason = null,
+    /// <summary>The mouse, touchpad and touchscreen test a QA run waited on (see Input.PointerTestService), and its one-line result.</summary>
+    PhysicalCheckOutcome PointerOutcome = PhysicalCheckOutcome.NotRun,
+    string? PointerSummary = null)
 {
     /// <summary>Replaces (or adds) one screen's display result, keeping the order screens were tested in.</summary>
     public PhysicalBenchQaSnapshot WithScreen(Display.DisplayScreenResult screen)
@@ -43,7 +46,8 @@ public sealed record PhysicalBenchQaSnapshot(
         || UniqueKeysPressed > 0
         || SolidColorsInspected > 0
         || DisplayScreens is { Count: > 0 }
-        || BlankScreen != Display.BlankScreenOutcome.NotRun;
+        || BlankScreen != Display.BlankScreenOutcome.NotRun
+        || PointerOutcome != PhysicalCheckOutcome.NotRun;
 }
 
 /// <summary>

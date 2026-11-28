@@ -162,6 +162,11 @@ public static class WebcamVerdicts
     public const int MinFramesForFrozen = 3;
     /// <summary>Effective frame rate below this = warning.</summary>
     public const double MinFps = 10;
+    /// <summary>
+    /// The same for an IR (Windows Hello) camera. These run slowly by design (often 15 fps or less) and many strobe their IR light, so
+    /// only every other frame arrives or is lit: 7 fps is normal. Below this the sensor is struggling.
+    /// </summary>
+    public const double MinIrFps = 3;
     /// <summary>Average brightness below this (but not black) = too dark warning.</summary>
     public const double DarkMean = 40;
     public const double OverexposedFractionLimit = 0.5;
@@ -173,7 +178,7 @@ public static class WebcamVerdicts
         if (s.Frames == 0) return WebcamVerdict.NoFrames;
         if (s.BlackFraction >= BlackFractionLimit) return WebcamVerdict.AllBlack;
         if (s.Frames >= MinFramesForFrozen && s.FrozenFraction >= FrozenFractionLimit) return WebcamVerdict.Frozen;
-        if (s.Fps < MinFps) return WebcamVerdict.LowFps;
+        if (s.Fps < (kind == WebcamKind.Infrared ? MinIrFps : MinFps)) return WebcamVerdict.LowFps;
         if (s.Stalls > 0) return WebcamVerdict.Stalled;
         if (kind == WebcamKind.Infrared) return WebcamVerdict.Pass;
         if (s.OverexposedFraction >= OverexposedFractionLimit) return WebcamVerdict.Overexposed;
@@ -239,6 +244,8 @@ public static class WebcamVerdicts
         var text = r.Verdict switch
         {
             WebcamVerdict.Pass when r.Kind == WebcamKind.Infrared => $"Passed: the IR camera delivered a live picture ({r.Stats.Fps:0.#} frames per second).",
+            WebcamVerdict.LowFps when r.Kind == WebcamKind.Infrared =>
+                $"The IR camera works, but its frame rate is very low ({r.Stats.Fps:0.#} fps, under {MinIrFps:0} even for an IR camera). Update the camera driver if Windows Hello face sign-in is slow.",
             WebcamVerdict.AllBlack when r.Kind == WebcamKind.Infrared => "The IR camera sent only black frames: its IR light may not be working, or the lens is covered.",
             WebcamVerdict.FewerFormats when r.Capability is { } c =>
                 $"The camera works, but its best format is {c.MaxWidth}×{c.MaxHeight} although its name says {c.ClassName}. It is likely using the generic Windows driver: install the camera driver from the PC maker.",

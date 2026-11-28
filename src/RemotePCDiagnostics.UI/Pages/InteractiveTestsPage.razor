@@ -8,6 +8,7 @@
 @using RemotePCDiagnostics.Core.Input
 @using RemotePCDiagnostics.Core.Display
 @using RemotePCDiagnostics.Core.DeviceSensors
+@using RemotePCDiagnostics.Core.Battery
 @inherits StoreAwareComponent
 @inject ISessionContext Session
 @inject IJSRuntime JS
@@ -32,6 +33,9 @@
     var chResult = Store.Get(ModuleSlugs.ChargerReplug);
     var chRep = chResult.Payload as ChargerReplugReport;
     var chRunning = chResult.Status == DiagnosticStatus.Running;
+    var bdResult = Store.Get(ModuleSlugs.BatteryDrain);
+    var bdRunning = bdResult.Status == DiagnosticStatus.Running;
+    var bdModule = GetBatteryDrainModule();
     var soundResult = Store.Get(ModuleSlugs.Sound);
     var soundRep = soundResult.Report() as AreaReport;
     var soundReading = soundResult.Status == DiagnosticStatus.Running;
@@ -77,7 +81,7 @@
 }
 
 <div class="ct-page">
-    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), wfResult, ethResult, chResult, usbResult, usbModule?.Live, adResult, adBusyId, dvResult, dvModule?.Live, senSnap)" />
+    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), wfResult, ethResult, chResult, usbResult, usbModule?.Live, adResult, adBusyId, dvResult, dvModule?.Live, senSnap, bdResult, bdModule)" />
     <div class="toolbar">
         <span class="icon-badge page-icon"><Icon Name="eye" Size="20" /></span>
         <h1 data-rpcd-page="interactive" data-rpcd-contract="@BrowserContract.Interactive" data-testid="interactive-title">Interactive tests</h1>
@@ -353,6 +357,29 @@
                         </div>
                         <div class="ct-row-side">
                             <span class="chip chip-@chChip" data-testid="interactive-status-charger">@chLabel</span>
+                        </div>
+                    </div>
+
+                    @* Battery drain & runtime: unplug the charger, then RPCD drains the battery for hours. Never part of Run selected. *@
+                    @{
+                        var bdIsSel = _selectedTestId == "batterydrain";
+                        var bdChip = OutcomeChip(bdResult.Status);
+                        var bdLabel = OutcomeLabel(bdResult.Status);
+                        var bdSummary = bdRunning ? bdModule?.Live?.Message ?? bdResult.Message
+                            : bdResult.Status == DiagnosticStatus.NotRun ? "Unplug the charger; measures what the battery really delivers (1 to 4 hours)" : bdResult.Message;
+                    }
+                    <div class="ct-row @(bdIsSel ? "selected" : "") @(bdRunning ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(bdIsSel ? "true" : "false")"
+                         data-testid="interactive-row-batterydrain" @onclick='() => SelectTest("batterydrain")'>
+                        <button class="ct-check" role="checkbox" aria-checked="false" disabled
+                                aria-label="Battery drain runs on its own, not with Run selected" title="Runs on its own (it takes hours), not with Run selected"
+                                data-testid="interactive-check-batterydrain" @onclick:stopPropagation="true"></button>
+                        <span class="dot dot-@(bdRunning ? "running" : DotKind(bdResult.Status))"></span>
+                        <div class="ct-row-main">
+                            <div class="ct-row-name">Battery drain &amp; runtime</div>
+                            <div class="ct-row-summary meta" title="@bdSummary">@bdSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@(bdRunning ? "run" : bdChip)" data-testid="interactive-status-batterydrain">@bdLabel</span>
                         </div>
                     </div>
 
@@ -1018,6 +1045,38 @@
                     }
                 </div>
             }
+            else if (_selectedTestId == "batterydrain")
+            {
+                <div class="phys-qa-pane" data-testid="interactive-batterydrain-pane">
+                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                        <strong>Battery drain &amp; runtime</strong>
+                        <span class="chip chip-@(bdRunning ? "run" : OutcomeChip(bdResult.Status))" data-testid="batterydrain-status-chip">@OutcomeLabel(bdResult.Status)</span>
+                        @if (bdRunning)
+                        {
+                            <button type="button" class="btn-small" data-testid="batterydrain-cancel-btn" @onclick="CancelBatteryDrain">Cancel</button>
+                        }
+                    </div>
+                    <p class="meta" style="margin-top: 0">
+                        Unplug the charger, pick the load, tick the box once your work is saved, then press Start. RPCD drains the battery and
+                        measures what it really delivers against what it reports. Other tests can still be run meanwhile.
+                    </p>
+                    @if (bdModule is { } drain)
+                    {
+                        <BatteryDrainPanel Module="drain" Running="@bdRunning" Disabled="@(!bdRunning && (Diagnostics.IsStressSuiteRunning || _isRemoteDisplay))" />
+                    }
+                    <div class="toolbar">
+                        <button type="button" class="btn-small btn-primary" data-testid="batterydrain-start-btn"
+                                disabled="@(bdRunning || bdModule is null || Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)"
+                                title="@(_isRemoteDisplay ? "The person at the PC has to unplug the charger and save their work" : null)" @onclick="StartBatteryDrainAsync">
+                            ▶ @(bdResult.Status == DiagnosticStatus.NotRun ? "Start drain test" : "Run again")
+                        </button>
+                    </div>
+                    @if (!bdRunning)
+                    {
+                        <p data-testid="batterydrain-status" class="status-line"><span class="@DotClass(bdResult.Status)"></span><span>@(bdResult.Status == DiagnosticStatus.NotRun ? "Not run. Unplug the charger and press Start drain test." : bdResult.Message)</span></p>
+                    }
+                </div>
+            }
             else if (_selectedTestId == "wifi")
             {
                 var wfNaPane = wfRep?.RunEnd == RunEnd.CouldNotRun;
@@ -1466,6 +1525,8 @@
     private bool RemoteSessionActive => Session.Mode == SessionMode.Remote || _hasRemoteSession;
 
     private static readonly string[] AllTestIds = ["keyboard", "display", "pointer", "webcam", "speakertomic", "mictospeaker", "soundcheck", "charger", "wifi", "ethernet", "usbports", "audiodevices", "displayoutputs", "devicesensors"];
+    /// <summary>Tests with a pane but never part of Run selected: the battery drain takes hours.</summary>
+    private static readonly string[] PaneOnlyTestIds = ["batterydrain"];
     private readonly HashSet<string> _selected = new(AllTestIds, StringComparer.OrdinalIgnoreCase);
 
     // The Wi-Fi connect pane: the last scan's networks, the one picked (null = the network the PC is on), and the typed password.
@@ -1526,14 +1587,16 @@
 
     /// <summary>The page's state for browser agents (interactive-data): measured evidence and person-entered verdicts kept apart.</summary>
     private string InteractiveJson(RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaSnapshot kb, DiagnosticResult cam, DiagnosticResult s2m, DiagnosticResult m2s,
-        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, DiagnosticResult wifi, DiagnosticResult ethernet, DiagnosticResult charger, DiagnosticResult usb, UsbPortCheckReport? usbLive, DiagnosticResult ad, string? adBusyId, DiagnosticResult dv, DisplayOutputCheckReport? dvLive, SensorTestSnapshot sensors) =>
+        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, DiagnosticResult wifi, DiagnosticResult ethernet, DiagnosticResult charger, DiagnosticResult usb, UsbPortCheckReport? usbLive, DiagnosticResult ad, string? adBusyId, DiagnosticResult dv, DisplayOutputCheckReport? dvLive, SensorTestSnapshot sensors,
+        DiagnosticResult drain, BatteryDrainModule? drainModule) =>
         InteractiveExport.ToJson(
             new InteractiveExport.PageState(_selectedTestId, _selected, _isBatchRunning, _isRemoteDisplay, Session.Mode == SessionMode.Remote || _hasRemoteSession, _technicianHasControl),
             kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help, wifi,
             new InteractiveExport.WifiPane(_wifiNetworks, WifiPicked?.Ssid, _wifiPassword.Length > 0, _wifiDropsSession, _wifiScanning),
             ethernet, new InteractiveExport.EthernetPane(_ethPorts, EthernetPicked?.Name, _ethMode, _ethDropsSession, _ethLoading), charger,
             new InteractiveExport.UsbPortCheckState(PersonState(usb), usbLive ?? UsbPortCheckReport.Empty), PersonState(ad), adBusyId, ActivePointerTest.Current,
-            new InteractiveExport.DisplayOutputCheckState(PersonState(dv), dvLive ?? DisplayOutputCheckReport.Empty), sensors);
+            new InteractiveExport.DisplayOutputCheckState(PersonState(dv), dvLive ?? DisplayOutputCheckReport.Empty), sensors,
+            new InteractiveExport.BatteryDrainState(drain, drainModule?.Mode ?? BatteryDrainMode.MaxLoad, drainModule?.ShutdownConfirmed ?? false, drainModule?.Live));
 
     private IReadOnlyList<AudioDevice> _outputs = [];
     private IReadOnlyList<AudioDevice> _inputs = [];
@@ -1570,7 +1633,7 @@
         if (GetDisplayOutputCheckModule() is { } dvCheck) dvCheck.Changed += OnDisplayOutputCheckChanged;
         // The row's chip and interactive-data follow the Sensor test as it runs.
         ActiveSensorTest.Changed += OnSensorTestChanged;
-        if (TestQuery is { Length: > 0 } t && AllTestIds.Contains(t, StringComparer.OrdinalIgnoreCase)) _selectedTestId = t.ToLowerInvariant();
+        if (TestQuery is { Length: > 0 } t && (AllTestIds.Contains(t, StringComparer.OrdinalIgnoreCase) || PaneOnlyTestIds.Contains(t, StringComparer.OrdinalIgnoreCase))) _selectedTestId = t.ToLowerInvariant();
         if (_selectedTestId == "ethernet") _ = LoadEthernetPortsAsync();
         if (_selectedTestId == "soundcheck" && HelpQuery == "cant-hear") _ = OpenCantHearAsync();
         if (_selectedTestId == "wifi") _ = ScanWifiAsync();
@@ -2168,6 +2231,19 @@
     }
 
     private void CancelCharger() => GetChargerModule()?.Cancel();
+
+    private BatteryDrainModule? GetBatteryDrainModule() =>
+        Diagnostics.Modules.OfType<BatteryDrainModule>().FirstOrDefault()
+        ?? (Diagnostics.Catalog.Find(ModuleSlugs.BatteryDrain) is { } d ? Diagnostics.Catalog.ModuleFor(d.Id) as BatteryDrainModule : null);
+
+    /// <summary>Starts the drain test (hours long). Not awaited by anything else on the page, so the other tests stay usable meanwhile.</summary>
+    private async Task StartBatteryDrainAsync()
+    {
+        if (Diagnostics.IsStressSuiteRunning || _isRemoteDisplay || GetBatteryDrainModule() is null) return;
+        await Diagnostics.RunAsync(ModuleSlugs.BatteryDrain);
+    }
+
+    private void CancelBatteryDrain() => GetBatteryDrainModule()?.Cancel();
 
     /// <summary>Records what the person heard. Only one side opens the balance list; Nothing opens Can't hear sound.</summary>
     private async Task AnswerSoundCheckAsync(SoundCheckAnswer answer)

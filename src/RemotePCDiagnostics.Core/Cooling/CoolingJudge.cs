@@ -116,7 +116,7 @@ public static class CoolingJudge
             return new(IdleCard, title, AreaLevel.Error, $"Hot at low load: above {C(limit)} for {Secs(hotFor)} while the CPU was under {Pct(r.LowLoadPercent)} busy (hottest {C(hottest)})",
                 meta, columns, rows, Note: "A CPU this hot without work points to cooling: blocked vents, dust in the fan or heatsink, a fan that doesn't spin, or dried thermal paste.");
         if (typical is null)
-            return new(IdleCard, title, AreaLevel.Warning, $"The CPU stayed busy the whole time (average {Pct(avgLoad)}), so its low-load heat couldn't be judged; close other apps and run it again",
+            return new(IdleCard, title, AreaLevel.Warning, $"Too busy to judge: the CPU stayed busy the whole time (average {Pct(avgLoad)}), so its low-load heat couldn't be judged; close other apps and run it again",
                 meta, columns, rows, Note: note);
         if (hotSamples > 0 || typical >= limit - r.WarmMarginC)
             return new(IdleCard, title, AreaLevel.Warning, $"Runs warm at low load: typically {C(typical.Value)}, limit {C(limit)}" + (hotSamples > 0 ? $"; above it for {Secs(hotFor)}" : ""),
@@ -162,7 +162,8 @@ public static class CoolingJudge
             if (stoppedAtC is { } stopNoFan)
                 return new(FansCard, title, AreaLevel.Warning, $"Runs hot under load: the CPU reached {C(stopNoFan)} and the load was stopped early (no fan readings were reported)",
                     meta, columns, rows, Note: "The cooling couldn't keep up with a full load. Clean the vents and heatsink, check the thermal paste, and listen for the fan.");
-            return new(FansCard, title, AreaLevel.Warning, $"No fan readings: this PC reports no fan speed, so the fan response can't be checked ({heat})",
+            // Many laptops (ARM ones especially) don't report fan speed at all: that's a missing sensor, not a cooling fault.
+            return new(FansCard, title, AreaLevel.Neutral, $"No fan readings: this PC reports no fan speed, so the fan response can't be checked ({heat})",
                 meta, columns, rows, Note: "Listen for the fan getting louder under load, or check it in the maker's own tool or BIOS.");
         }
 
@@ -184,7 +185,7 @@ public static class CoolingJudge
             return new(FansCard, title, AreaLevel.Error, $"Fan not responding: it stayed at about {Rpm(loadPeakFan)} while {heat}", meta, columns, rows,
                 Note: "The fan didn't speed up for the heat. It may be failing, or the PC's fan control isn't working. Check the maker's BIOS fan settings, then the fan.");
         if (!rose && !hasTemp)
-            return new(FansCard, title, AreaLevel.Warning, $"Fans didn't speed up under load (about {Rpm(loadPeakFan)}), and no CPU temperature was readable to compare", meta, columns, rows);
+            return new(FansCard, title, AreaLevel.Warning, $"Fans didn't speed up: about {Rpm(loadPeakFan)} under load, and no CPU temperature was readable to compare", meta, columns, rows);
         if (!rose)
         {
             if (stoppedAtC is { } stopFlat)
@@ -198,7 +199,7 @@ public static class CoolingJudge
             return new(FansCard, title, AreaLevel.Warning, $"Runs hot under load: {fanText}, but the CPU reached {C(s2)} and the load was stopped early", meta, columns, rows,
                 Note: "The fans respond, but the cooling can't keep up with a full load. Clean the vents and heatsink; check the thermal paste.");
         if (endRise is { } rise && rise > r.SettledRiseC && climbed)
-            return new(FansCard, title, AreaLevel.Warning, $"{Cap(fanText)}, but the CPU was still heating at the end of the load (+{rise.ToString("0.#", CultureInfo.InvariantCulture)} °C in the last {Secs(r.SettleSeconds)})",
+            return new(FansCard, title, AreaLevel.Warning, $"Still heating: {fanText}, but the CPU hadn't leveled off by the end of the load (+{rise.ToString("0.#", CultureInfo.InvariantCulture)} °C in the last {Secs(r.SettleSeconds)})",
                 meta, columns, rows, Note: "Healthy cooling levels the temperature off within a minute or so of full load.");
         var levelText = double.IsNaN(peakTemp) ? "" : $" and the CPU leveled off at {C(peakTemp)}";
         return new(FansCard, title, AreaLevel.Ok, $"Passed: {fanText}{levelText}", meta, columns, rows);
@@ -232,7 +233,7 @@ public static class CoolingJudge
         }
         var hottest = samples.Where(s => s.CpuC is not null).Select(s => s.CpuC!.Value).DefaultIfEmpty(double.NaN).Max();
         return new(SamplesCard, "Temperature and load", AreaLevel.Neutral,
-            double.IsNaN(hottest) ? $"{samples.Count} samples, no CPU temperature" : $"{samples.Count} samples, hottest {C(hottest)}",
+            double.IsNaN(hottest) ? $"No CPU temperature: {samples.Count} samples" : $"Hottest {C(hottest)}: {samples.Count} samples",
             $"One row every {stride} s: CPU °C, CPU load %, fastest fan RPM", ["Seconds", "Phase", "CPU °C", "CPU load %", "Fan RPM"], rows,
             PreserveRowOrder: true);
     }
@@ -247,4 +248,26 @@ public static class CoolingJudge
     internal static AreaRow Row(AreaLevel level, string measure, string value) => new(level, [measure, value]);
 
     private static string Cap(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
+
+    /// <summary>The whole verdict of a <see cref="Compact"/> card again ("label: sentence").</summary>
+    public static string Verdict(AreaCard c)
+    {
+        var first = c.Meta.Split(" · ")[0];
+        return c.Headline.Length <= MaxLabel && first.Length > 0 && !c.Headline.Contains(": ", StringComparison.Ordinal) ? $"{c.Headline}: {first}" : c.Headline;
+    }
+
+    /// <summary>The longest verdict label <see cref="Compact"/> keeps as a card's headline.</summary>
+    public const int MaxLabel = 40;
+
+    /// <summary>
+    /// The card as the page shows it: the headline is the short verdict before the first ": " ("Hot at low load", "Passed") and the
+    /// sentence after it leads the meta list, so a card's big headline text stays a few words, like the other checks' cards.
+    /// </summary>
+    public static AreaCard Compact(AreaCard c)
+    {
+        var i = c.Headline.IndexOf(": ", StringComparison.Ordinal);
+        if (i <= 0 || i > MaxLabel) return c;
+        var detail = c.Headline[(i + 2)..].Trim(); // the card list capitalizes it
+        return c with { Headline = c.Headline[..i], Meta = string.IsNullOrWhiteSpace(c.Meta) ? detail : detail + " · " + c.Meta };
+    }
 }
