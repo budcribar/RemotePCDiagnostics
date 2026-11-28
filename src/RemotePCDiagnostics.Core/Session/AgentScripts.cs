@@ -55,6 +55,11 @@ public static class AgentScripts
     /// <summary>Args: the setting's name and the value to set (the Agent checks the setting lists it).</summary>
     public const string HpBatterySet = "hp_battery_set";
     /// <summary>
+    /// Args: "start", disk number, "quick" or "full", time limit in minutes (0 for none); or "status"/"stop" and the disk number. The
+    /// read-only surface scan of one physical disk (<see cref="Storage.AgentDiskScans"/>). Prints the scan's status as JSON.
+    /// </summary>
+    public const string DiskReadScan = "disk_read_scan";
+    /// <summary>
     /// Args: "list"; "status" or "abort" and a disk number; or "start", a disk number and "short" or "extended". The drive's own
     /// self-test (<see cref="Storage.AgentDriveSelfTest"/>); prints <see cref="Storage.SelfTestAnswer"/> JSON.
     /// </summary>
@@ -172,6 +177,9 @@ public static class AgentScripts
             case HpBatterySet:
                 return a.Count == 2 && Battery.HpBatteryCharge.IsSetting(Arg(0)) && Battery.HpBatteryCharge.IsValue(Arg(1))
                     ? Native(new Battery.HpBatterySetAction(Arg(0)!, Arg(1)!)) : Refuse("That isn't an HP battery setting this app changes.");
+
+            case DiskReadScan:
+                return Storage.DiskReadScanAction.Parse(a) is { } scan ? Native(scan) : Refuse("That isn't a disk surface scan this app runs.");
 
             case DriveSelfTest:
                 return DriveSelfTestPlan(a) is { } selfTest ? Native(selfTest) : Refuse("That isn't a drive self-test request.");

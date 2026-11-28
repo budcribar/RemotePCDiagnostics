@@ -8,12 +8,15 @@ namespace RemotePCDiagnostics.Core.Areas;
 public static class CheckKeyMetrics
 {
     /// <summary>Health falling (or capacity dropping) faster than normal is the early sign of a battery to replace.</summary>
-    public static IReadOnlyList<KeyMetric> Battery(BatteryStatus b)
+    /// <param name="index">Which battery: the first keeps the "battery.*" ids, a second one is "battery2.*" and so on.</param>
+    public static IReadOnlyList<KeyMetric> Battery(BatteryStatus b, int index = 0)
     {
         var list = new List<KeyMetric>();
-        if (b.HealthPercent is { } h) list.Add(new("battery.health", "Battery health", h, "%", MetricTrend.HigherIsBetter));
-        if (b.MaxCapacity is > 0) list.Add(new("battery.capacity", "Full charge capacity", b.MaxCapacity.Value, "mWh", MetricTrend.HigherIsBetter));
-        if (b.CycleCount is > 0) list.Add(new("battery.cycles", "Charge cycles", b.CycleCount.Value, ""));
+        var id = BatteryCondition.MetricPrefix(index);
+        var n = index == 0 ? "" : $"Battery {index + 1}: ";
+        if (b.HealthPercent is { } h) list.Add(new(id + "health", n + "Battery health", h, "%", MetricTrend.HigherIsBetter));
+        if (b.MaxCapacity is > 0) list.Add(new(id + "capacity", n + "Full charge capacity", b.MaxCapacity.Value, "mWh", MetricTrend.HigherIsBetter));
+        if (b.CycleCount is > 0) list.Add(new(id + "cycles", n + "Charge cycles", b.CycleCount.Value, ""));
         return list;
     }
 

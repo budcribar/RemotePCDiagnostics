@@ -57,6 +57,17 @@ public sealed class RecordingAlertReadings(Alerts.IAlertReadings inner, CallReco
     }
 }
 
+/// <summary>Passes each disk surface scan request to the Agent and records the answer.</summary>
+public sealed class RecordingDiskScanSource(Storage.IDiskScanSource inner, CallRecorder recorder) : Storage.IDiskScanSource
+{
+    public async Task<Storage.DiskScanAnswer> SendAsync(Storage.DiskScanRequest request, CancellationToken ct)
+    {
+        var a = await inner.SendAsync(request, ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromDiskScan(request, a));
+        return a;
+    }
+}
+
 /// <summary>Passes each Core Audio read to the real source and records the answer.</summary>
 public sealed class RecordingAudioStateSource(Audio.IAudioStateSource inner, CallRecorder recorder) : Audio.IAudioStateSource
 {
@@ -64,6 +75,17 @@ public sealed class RecordingAudioStateSource(Audio.IAudioStateSource inner, Cal
     {
         var r = await inner.ReadAsync(ct).ConfigureAwait(false);
         recorder.Add(RecordedCall.FromAudio(r));
+        return r;
+    }
+}
+
+/// <summary>Passes each Wi-Fi radio read to the real source and records the answer with network names scrubbed.</summary>
+public sealed class RecordingWifiRadioSource(Areas.IWifiRadioSource inner, CallRecorder recorder) : Areas.IWifiRadioSource
+{
+    public async Task<Areas.WifiRadioReading> ReadAsync(bool scan, CancellationToken ct)
+    {
+        var r = await inner.ReadAsync(scan, ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromWifi(r));
         return r;
     }
 }
@@ -145,8 +167,11 @@ public sealed class RecordingReplay
     public IPackageSource Packages => new ReplayPackages(this);
     public Security.IAntivirusProductSource AntivirusProducts => new ReplayAntivirusProducts(this);
     public Audio.IAudioStateSource Audio => new ReplayAudio(this);
+    public Areas.IWifiRadioSource Wifi => new ReplayWifi(this);
     public IProcessLauncher Launcher => new ReplayLauncher(this);
     public Alerts.IAlertReadings Alerts => new ReplayAlerts(this);
+    /// <summary>The surface scan's recorded answers: a repeated status question gets the next one, then the last again.</summary>
+    public Storage.IDiskScanSource DiskScans => new ReplayDiskScans(this);
     public Storage.IDriveSelfTestSource SelfTest => new ReplaySelfTest(this);
 
     /// <summary>The report file recorded under <paramref name="name"/>; null when it wasn't made or isn't in the recording.</summary>
@@ -172,8 +197,10 @@ public sealed class RecordingReplay
         RecordedCall.PackagesKind => PackagesKey,
         RecordedCall.AntivirusKind => AntivirusKey,
         RecordedCall.AudioKind => AudioKey,
+        RecordedCall.WifiKind => WifiKey,
         RecordedCall.FileKind => FileKey(c.File ?? ""),
         RecordedCall.AlertsKind => AlertsKey(c.Query ?? ""),
+        RecordedCall.DiskScanKind => DiskScanKey(c.Query ?? ""),
         RecordedCall.SelfTestKind => SelfTestKey(c.Query ?? ""),
         _ => ProcessKey(c.File ?? "", c.Args ?? []),
     };
@@ -181,8 +208,10 @@ public sealed class RecordingReplay
     public const string PackagesKey = "packages";
     public const string AntivirusKey = "antivirus";
     public const string AudioKey = "audio";
+    public const string WifiKey = "wifi";
     public static string FileKey(string name) => "file\n" + name;
     public static string AlertsKey(string reading) => "alerts\n" + reading;
+    public static string DiskScanKey(string request) => "diskscan\n" + request;
     public static string SelfTestKey(string request) => "selftest\n" + request;
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
     /// <remarks>WQL ignores case, and a path in a query is spelled as Windows gave it (C:\WINDOWS on one PC, C:\Windows on another).</remarks>
@@ -225,6 +254,14 @@ public sealed class RecordingReplay
                 : RemotePCDiagnostics.Core.Audio.AudioState.Unavailable("Not in the recording."));
     }
 
+    private sealed class ReplayWifi(RecordingReplay replay) : Areas.IWifiRadioSource
+    {
+        public Task<Areas.WifiRadioReading> ReadAsync(bool scan, CancellationToken ct) =>
+            Task.FromResult(replay.Answer(WifiKey, "wifi") is { } c
+                ? c.Error is { } e && c.StdOut is null ? Areas.WifiRadioReading.Unavailable(e) : Areas.WifiRadioReading.FromJson(c.StdOut)
+                : Areas.WifiRadioReading.Unavailable("Not in the recording."));
+    }
+
     /// <summary>The recorded events are replayed whatever the window asked for; the Agent drops the ones it has seen by record id.</summary>
     private sealed class ReplayAlerts(RecordingReplay replay) : Alerts.IAlertReadings
     {
@@ -241,6 +278,13 @@ public sealed class RecordingReplay
             return Task.FromResult(replay.Answer(SelfTestKey(request), $"selftest {request}")?.ToSelfTestReply()
                                    ?? Storage.SelfTestReply.Failed("Not in the recording."));
         }
+    }
+
+    private sealed class ReplayDiskScans(RecordingReplay replay) : Storage.IDiskScanSource
+    {
+        public Task<Storage.DiskScanAnswer> SendAsync(Storage.DiskScanRequest request, CancellationToken ct) =>
+            Task.FromResult(replay.Answer(DiskScanKey(request.Key), $"diskscan {request.Key}")?.ToDiskScanAnswer()
+                            ?? new Storage.DiskScanAnswer(null, "Not in the recording."));
     }
 
     private sealed class ReplayLauncher(RecordingReplay replay) : IProcessLauncher

@@ -1,0 +1,96 @@
+@using RemotePCDiagnostics.Core.Areas
+@using RemotePCDiagnostics.Core.Plugins
+@using RemotePCDiagnostics.Core.Storage
+@* Above the generic report: the next run's mode (and, for Full, its time limit), then each disk's surface map from the last run. The map
+   is the "Surface map" row of each disk's card, so Admin's report-data carries the same characters this draws. *@
+<div class="surface-scan" data-testid="surface-scan">
+    <div class="toolbar">
+        <label class="meta">Mode
+            <select data-testid="surface-scan-mode" disabled="@Running" @onchange="SetMode">
+                <option value="quick" selected="@(Module?.Mode != DiskScanMode.Full)">Quick (about a minute per disk)</option>
+                <option value="full" selected="@(Module?.Mode == DiskScanMode.Full)">Full (every block)</option>
+            </select>
+        </label>
+        @if (Module?.Mode == DiskScanMode.Full)
+        {
+            <label class="meta">Stop after
+                <select data-testid="surface-scan-limit" disabled="@Running" @onchange="SetLimit">
+                    @foreach (var m in DiskSurfaceScanModule.TimeLimitChoices)
+                    {
+                        <option value="@m" selected="@(m == Module.TimeLimitMinutes)">@(m == 0 ? "No limit" : m < 60 ? $"{m} minutes" : m == 60 ? "1 hour" : $"{m / 60} hours")</option>
+                    }
+                </select>
+            </label>
+        }
+    </div>
+    <p class="meta">Reads the disk's surface and never writes to it. Quick reads the first, middle and last sectors and 1,000 blocks spread over the
+        whole disk; Full reads every block in order. Blocks slower than 50 ms on an SSD (150 ms on a hard drive) count as slow. The PC stays
+        awake meanwhile, and the scan slows down on battery below 30 % or when the drive runs hot.</p>
+    @foreach (var card in Cards)
+    {
+        var map = card.Rows.FirstOrDefault(r => r.Key == DiskSurfaceScanModule.MapRowKey)?.Values.ElementAtOrDefault(1);
+        if (string.IsNullOrEmpty(map)) continue;
+        <div class="surface-map-block" data-testid="surface-map-@card.Id">
+            <div class="meta">@card.Title</div>
+            <div class="surface-map" role="img" aria-label="@Describe(map)" data-map="@map">
+                @for (var i = 0; i < map.Length; i++)
+                {
+                    var c = map[i];
+                    <span class="surface-bin @BinClass(c)" title="@($"{i}–{i + 1} % of the disk: {DiskSurfaceMap.Describe(c)}")"></span>
+                }
+            </div>
+            <div class="surface-legend meta">
+                <span><span class="surface-bin bin-ok"></span> read fine</span>
+                <span><span class="surface-bin bin-slow"></span> slow</span>
+                <span><span class="surface-bin bin-retried"></span> second try</span>
+                <span><span class="surface-bin bin-bad"></span> unreadable</span>
+                <span><span class="surface-bin bin-none"></span> not read</span>
+            </div>
+        </div>
+    }
+</div>
+<style>
+    .surface-map { display: grid; grid-template-columns: repeat(50, 1fr); gap: 2px; max-width: 640px; margin: 4px 0; }
+    .surface-bin { display: inline-block; min-width: 8px; height: 12px; border-radius: 2px; }
+    .surface-legend { display: flex; flex-wrap: wrap; gap: 12px; }
+    .surface-legend .surface-bin { width: 10px; vertical-align: middle; }
+    .bin-ok { background: var(--ok, #2e9d5b); }
+    .bin-slow { background: var(--warn, #d9a400); }
+    .bin-retried { background: #e07b00; }
+    .bin-bad { background: var(--err, #d23b3b); }
+    .bin-none { background: var(--border, #8884); }
+</style>
+
+@code {
+    [Parameter] public IDiagnosticModule? DiagnosticModule { get; set; }
+    [CascadingParameter(Name = ModuleDetails.LastResult)] public DiagnosticResult? LastResult { get; set; }
+
+    private DiskSurfaceScanModule? Module => DiagnosticModule as DiskSurfaceScanModule;
+    private bool Running => LastResult is { Status: DiagnosticStatus.Running };
+
+    private IReadOnlyList<AreaCard> Cards =>
+        LastResult is { Status: not (DiagnosticStatus.NotRun or DiagnosticStatus.Running) } r && r.Report() is AreaReport report ? report.Cards : [];
+
+    private void SetMode(ChangeEventArgs e)
+    {
+        if (Module is not null) Module.Mode = e.Value as string == "full" ? DiskScanMode.Full : DiskScanMode.Quick;
+    }
+
+    private void SetLimit(ChangeEventArgs e)
+    {
+        if (Module is not null && int.TryParse(e.Value as string, out var m)) Module.TimeLimitMinutes = m;
+    }
+
+    private static string BinClass(char c) => c switch
+    {
+        DiskSurfaceMap.Ok => "bin-ok", DiskSurfaceMap.Slow => "bin-slow", DiskSurfaceMap.Retried => "bin-retried",
+        DiskSurfaceMap.Unreadable => "bin-bad", _ => "bin-none",
+    };
+
+    private static string Describe(string map)
+    {
+        var bad = map.Count(c => c == DiskSurfaceMap.Unreadable);
+        var slow = map.Count(c => c is DiskSurfaceMap.Slow or DiskSurfaceMap.Retried);
+        return $"Surface map: {bad} of {map.Length} parts with unreadable blocks, {slow} with slow or retried blocks";
+    }
+}

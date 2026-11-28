@@ -89,9 +89,16 @@ public sealed record RecordedCall
     public const string AntivirusKind = "antivirus";
     /// <summary>Core Audio's endpoints and sessions (<see cref="Audio.AudioState"/>), kept as JSON in <see cref="StdOut"/>.</summary>
     public const string AudioKind = "audio";
+    /// <summary>The Wi-Fi radio and scan (<see cref="Areas.WifiRadioReading"/>, network names scrubbed), kept as JSON in <see cref="StdOut"/>.</summary>
+    public const string WifiKind = "wifi";
     public const string FileKind = "file";
     /// <summary>What the Agent's alerts read (<see cref="Alerts.IAlertReadings"/>): events and levels, kept as rows like WMI.</summary>
     public const string AlertsKind = "alerts";
+    /// <summary>
+    /// The Agent's answers to the disk surface scan (<see cref="Storage.IDiskScanSource"/>): <see cref="Query"/> is the request
+    /// ("start 0 quick 0", "status 0"), <see cref="StdOut"/> the status JSON, <see cref="ExitCode"/> 2 when the Agent was missing.
+    /// </summary>
+    public const string DiskScanKind = "diskscan";
     /// <summary>One drive self-test request to the Agent (<see cref="Storage.IDriveSelfTestSource"/>): <see cref="Query"/> is the request
     /// ("status 0"), <see cref="StdOut"/> the Agent's JSON answer, <see cref="Error"/> why there was none.</summary>
     public const string SelfTestKind = "selftest";
@@ -142,6 +149,14 @@ public sealed record RecordedCall
 
     public static RecordedCall FromAlerts(WmiQueryResult r) => FromWmi(r) with { Kind = AlertsKind };
 
+    public static RecordedCall FromDiskScan(Storage.DiskScanRequest request, Storage.DiskScanAnswer a) => new()
+    {
+        Kind = DiskScanKind, Query = request.Key, StdOut = a.Status?.ToJson(), Error = a.Error, ExitCode = a.NeedsAgent ? 2 : a.Status is null ? 1 : 0,
+    };
+
+    public Storage.DiskScanAnswer ToDiskScanAnswer() =>
+        new(Storage.DiskScanStatus.Parse(StdOut), Error, NeedsAgent: ExitCode == 2);
+
     public static RecordedCall FromAudio(Audio.AudioState s) => new() { Kind = AudioKind, StdOut = s.ToJson(), Error = s.Error };
 
     public static RecordedCall FromSelfTest(IReadOnlyList<string> args, Storage.SelfTestReply r) => new()
@@ -154,9 +169,11 @@ public sealed record RecordedCall
         Storage.SelfTestAnswer.Parse(StdOut) is { } answer && Error is null ? new(answer, null)
             : Storage.SelfTestReply.Failed(Error ?? "The answer couldn't be read.", noAgent: TimedOut == true);
 
+    public static RecordedCall FromWifi(Areas.WifiRadioReading r) => new() { Kind = WifiKind, StdOut = r.Scrubbed().ToJson(), Error = r.Error };
+
     /// <summary>Kept as rows, like WMI (WMI, registry, the package list, antivirus products).</summary>
     public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind or AntivirusKind;
 
     /// <summary>Short text naming the call, for test messages.</summary>
-    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind == AudioKind ? "audio" : Kind == SelfTestKind ? $"selftest {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
+    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : Kind is AudioKind or WifiKind ? Kind : Kind == DiskScanKind ? $"diskscan {Query}" : Kind == SelfTestKind ? $"selftest {Query}" : $"{File} {string.Join(' ', Args ?? [])}";
 }
