@@ -1,4 +1,5 @@
 @using RemotePCDiagnostics.Core.Webcam
+@using RemotePCDiagnostics.Core.Areas
 @inherits ModuleDetailsBase
 @* On-demand webcam test: opens the camera for a few seconds and checks the frames in memory (nothing is saved, shown or sent). *@
 @{
@@ -22,7 +23,7 @@ else
         @if (running) { <button data-testid="cam-cancel" @onclick="m.Cancel">Cancel</button> }
         else { <button data-testid="cam-start" disabled="@suiteBusy" @onclick="() => Start(m)">@(r.Status == DiagnosticStatus.NotRun ? "Start" : "Run again")</button> }
     </div>
-    <p class="meta" data-testid="cam-intro">Opens the camera for a few seconds (at most 1280×720, 30 fps) and checks the picture automatically: frame rate, stalls, brightness, contrast, black or frozen frames and overexposure. Local tests show a small live preview. Frames stay in memory on the PC being tested. The camera light will turn on briefly.</p>
+    <p class="meta" data-testid="cam-intro">Opens the camera for a few seconds (at most 1280×720, 30 fps) and checks the picture automatically: frame rate, stalls, brightness, contrast, black or frozen frames and overexposure. It also lists the formats and controls the camera offers, names the app holding a busy camera, and tests an IR (Windows Hello) camera on its own. Local tests show a small live preview. Frames stay in memory on the PC being tested. The camera light will turn on briefly.</p>
     <div class="toolbar">
         <label class="meta">Camera
             <select data-testid="cam-device" disabled="@running" @onchange="e => m.DeviceId = e.Value?.ToString() is { Length: > 0 } v ? v : null">
@@ -57,6 +58,11 @@ else
             <tr><th>Sharpness</th><td>@s.Sharpness.ToString("0.0")</td></tr>
         </table>
     }
+    @if (!running && rep is not null)
+    {
+        <WebcamReportDetails Report="rep" Prefix="cam" Fixes="App?.Remediation" AgentFixes="@(App?.AgentFixes == true)"
+                             OnAnswer="seen => Answer(r, seen)" OnHolderClosed="() => Start(m)" />
+    }
 }
 
 @code {
@@ -86,4 +92,13 @@ else
     }
 
     private static string Pct(double v) => (v * 100).ToString("0") + " %";
+
+    private AppServices? App => Services.GetService(typeof(AppServices)) as AppServices;
+
+    /// <summary>"Do you see yourself?": saved with the measured verdict on the result shown (the camera's own result, or the module's).</summary>
+    private void Answer(DiagnosticResult shown, bool seen)
+    {
+        var updated = WebcamVerdicts.WithPersonAnswer(shown, seen);
+        if (!ReferenceEquals(updated, shown)) WebcamVerdicts.SaveAnswer(Store, updated);
+    }
 }

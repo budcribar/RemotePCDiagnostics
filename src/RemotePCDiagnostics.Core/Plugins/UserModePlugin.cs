@@ -41,6 +41,12 @@ public static class UserModePlugin
         // Core Audio in the restricted module host isn't guaranteed, so a module that lists audio.state reads it through the app.
         if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.AudioState, StringComparer.Ordinal))
             services.AddSingleton<Audio.IAudioStateSource>(new Audio.HostAudioStateSource(hostQueries, log));
+        // The USB tree is read in the app too, so it's recorded with the app's other answers.
+        if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.UsbTree, StringComparer.Ordinal))
+            services.AddSingleton<Usb.IUsbTreeSource>(new Usb.HostUsbTreeSource(hostQueries, log));
+        // The display configuration is read in the app too (the module host has no desktop of its own), and recorded there.
+        if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.DisplayState, StringComparer.Ordinal))
+            services.AddSingleton<Display.IDisplaySource>(new Display.HostDisplaySource(hostQueries, log));
         // The sensors are read in the app too (the Sensor API in the signed-in user's session), and recorded there.
         if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.DeviceSensorsState, StringComparer.Ordinal))
             services.AddSingleton<DeviceSensors.IDeviceSensorSource>(new DeviceSensors.HostDeviceSensorSource(hostQueries, log));

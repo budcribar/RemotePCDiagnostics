@@ -16,6 +16,8 @@ public sealed class FaultingSources(FaultPlan plan)
     public IPackageSource Packages(IPackageSource inner) => new FaultingPackages(inner, plan);
     public Security.IAntivirusProductSource Antivirus(Security.IAntivirusProductSource inner) => new FaultingAntivirus(inner, plan);
     public Core.Audio.IAudioStateSource Audio(Core.Audio.IAudioStateSource inner) => new FaultingAudio(inner, plan);
+    public Core.Usb.IUsbTreeSource Usb(Core.Usb.IUsbTreeSource inner) => new FaultingUsb(inner, plan);
+    public Core.Display.IDisplaySource Display(Core.Display.IDisplaySource inner) => new FaultingDisplay(inner, plan);
     public Core.DeviceSensors.IDeviceSensorSource DeviceSensors(Core.DeviceSensors.IDeviceSensorSource inner) => new FaultingDeviceSensors(inner, plan);
     public IProcessLauncher Launcher(IProcessLauncher inner) => new FaultingLauncher(inner, plan);
     public Alerts.IAlertReadings Alerts(Alerts.IAlertReadings inner) => new FaultingAlerts(inner, plan);
@@ -85,6 +87,24 @@ public sealed class FaultingSources(FaultPlan plan)
         }
     }
 
+    private sealed class FaultingDisplay(Core.Display.IDisplaySource inner, FaultPlan plan) : Core.Display.IDisplaySource
+    {
+        public async Task<Core.Display.DisplaySnapshot> ReadAsync(CancellationToken ct = default)
+        {
+            if (plan.For(RecordedCall.DisplayKind, RecordingReplay.DisplayKey) is not { } rule)
+                return await inner.ReadAsync(ct).ConfigureAwait(false);
+            await FaultPlan.WaitAsync(rule, ct).ConfigureAwait(false);
+            var answer = await inner.ReadAsync(ct).ConfigureAwait(false);
+            if (plan.ErrorFor(rule) is { } error) return Core.Display.DisplaySnapshot.Unavailable(error);
+            return rule.Fault switch
+            {
+                Faults.Empty => answer with { Outputs = [] },
+                Faults.Garbage => Core.Display.DisplaySnapshot.FromJson(Faults.GarbageText),
+                _ => answer,
+            };
+        }
+    }
+
     private sealed class FaultingDeviceSensors(Core.DeviceSensors.IDeviceSensorSource inner, FaultPlan plan) : Core.DeviceSensors.IDeviceSensorSource
     {
         public async Task<Core.DeviceSensors.DeviceSensorSnapshot> ReadAsync(CancellationToken ct = default)
@@ -116,6 +136,24 @@ public sealed class FaultingSources(FaultPlan plan)
             {
                 Faults.Empty => answer with { Endpoints = [], Sessions = [] },
                 Faults.Garbage => Core.Audio.AudioState.FromJson(Faults.GarbageText),
+                _ => answer,
+            };
+        }
+    }
+
+    private sealed class FaultingUsb(Core.Usb.IUsbTreeSource inner, FaultPlan plan) : Core.Usb.IUsbTreeSource
+    {
+        public async Task<Core.Usb.UsbSnapshot> ReadAsync(CancellationToken ct = default)
+        {
+            if (plan.For(RecordedCall.UsbKind, RecordingReplay.UsbKey) is not { } rule)
+                return await inner.ReadAsync(ct).ConfigureAwait(false);
+            await FaultPlan.WaitAsync(rule, ct).ConfigureAwait(false);
+            var answer = await inner.ReadAsync(ct).ConfigureAwait(false);
+            if (plan.ErrorFor(rule) is { } error) return Core.Usb.UsbSnapshot.Unavailable(error);
+            return rule.Fault switch
+            {
+                Faults.Empty => answer with { Nodes = [] },
+                Faults.Garbage => Core.Usb.UsbSnapshot.FromJson(Faults.GarbageText),
                 _ => answer,
             };
         }

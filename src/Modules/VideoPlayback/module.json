@@ -1,0 +1,10 @@
+{
+  "id": "d0392e61-8686-4da4-aaa9-fb2808ed72a6",
+  "slug": "VideoPlayback",
+  "displayName": "Video playback test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.VideoPlayback.VideoPlaybackPlugin",
+  // Runs as the signed-in user: Media Foundation decoding and the GPU engine counters need no administrator rights.
+  "needsAdmin": false,
+  "outOfProcess": false
+}

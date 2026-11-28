@@ -39,7 +39,10 @@ public class ModuleIdsTests
         ["NpuTest"] = "85ffb9ea-fb21-4189-9714-5d58f7115237",
         ["SecurityEssentials"] = "61025d7b-f5ef-4286-82ff-df9a74834b39",
         ["DiskSpace"] = "9c7c4b12-5893-4e40-8ab7-7a2e379b3601",
+        ["DriveSelfTest"] = "84f91bee-422b-4ffb-baba-1665b5c2cab7",
         ["DuplicateFiles"] = "e22a8740-410a-4da5-a912-21ea7f7d195f",
+        ["GpuMemory"] = "fe79a8ac-1fca-4933-9ae8-f8016d4ba216",
+        ["VideoPlayback"] = "d0392e61-8686-4da4-aaa9-fb2808ed72a6",
         ["SleepWake"] = "d8665737-c11d-44ad-b1d3-72b14dcdaedd",
         ["DeveloperSetup"] = "c4e8a912-3f7b-4d61-9b5e-2e8f1a7c4d03",
         ["BiosFirmware"] = "7f3c9b2e-5d1a-4c8f-a6e0-9b4d2e1f8a3c",
@@ -48,6 +51,16 @@ public class ModuleIdsTests
         ["SoundCheck"] = "b81b0a57-43d2-4ad4-8572-1480fbe6cf0f",
         ["DeviceSensors"] = "07dc23a6-391f-4404-8151-a59781088800",
         ["WifiConnect"] = "3f0c2b8e-5d71-4a9e-b6c4-2e8d9a7f1c35",
+        ["EthernetPort"] = "6f2cda7d-0f7b-456c-a0dc-dedd9582c069",
+        ["ChargerReplug"] = "6e740559-6220-4ea6-b09b-303928f1982f",
+        ["DiskSurfaceScan"] = "46272fdc-6e61-4e3b-bf6f-bec95e0be7eb",
+        ["Cooling"] = "adda2b29-4378-44da-b7ef-64376b0da30f",
+        ["BatteryDrain"] = "32ea07c3-6c63-4453-a03e-7d778b74b308",
+        ["UsbPorts"] = "b6237a7b-102a-4a68-8553-0fed276ef946",
+        ["UsbPortCheck"] = "1b68970d-8ec7-45ee-bc39-bc88bca9de77",
+        ["AudioDevices"] = "0541d464-e4d7-4efe-8d0a-3b8357e4110e",
+        ["Displays"] = "5d0f3b6e-8a41-4c2e-9f7d-2b6a1e9c4d83",
+        ["DisplayOutputCheck"] = "a3e7c912-4f6b-4d58-b0a1-7e2d9c5f8b64",
     };
 
     [Fact]

@@ -6,7 +6,8 @@ namespace RemotePCDiagnostics.Modules.Webcam;
 public sealed class WebcamPlugin : IModulePlugin
 {
     public void Register(IServiceCollection services, IPluginContext context) =>
-        services.AddModule(context, sp => new WebcamTestModule(sp.GetRequiredService<IWebcamIo>(), sp.LoggerFor<WebcamTestModule>()),
+        services.AddModule(context, sp => new WebcamTestModule(sp.GetRequiredService<IWebcamIo>(), sp.LoggerFor<WebcamTestModule>(),
+            sp.GetService<RemotePCDiagnostics.Core.DataSources.IRegistrySource>()),
             ModuleIds.Webcam, typeof(WebcamTestPage));
 }
 

@@ -11,7 +11,7 @@ public static class AudioMath
 
     public static double MaxToneAmplitude => FromDbfs(MaxToneDbfs);
     public static double FromDbfs(double db) => Math.Pow(10, db / 20);
-    public static double ToDbfs(double linear) => linear <= 1e-6 ? SilenceDbfs : Math.Max(SilenceDbfs, 20 * Math.Log10(linear));
+    public static double ToDbfs(double linear) => !double.IsFinite(linear) || linear <= 1e-6 ? SilenceDbfs : Math.Max(SilenceDbfs, 20 * Math.Log10(linear));
 
     public static float ClampMonitorGain(float gain) => float.IsNaN(gain) ? 0 : Math.Clamp(gain, 0f, MaxMonitorGain);
 

@@ -79,6 +79,11 @@ public static class HostServices
             sp.GetService<IElevatedCommandBridge>(),
             L<LhmSensorProvider>(),
             isLocalProcessElevated: () => false));
+        // Cooling test: the same sensors as Temperatures & fans, Windows' CPU times, and the Agent for thermal modes. Registered here so
+        // RPCD_LOG / RPCD_REPLAY can record and replay it.
+        services.AddSingleton<RemotePCDiagnostics.Core.Cooling.ICoolingSource>(sp => new RemotePCDiagnostics.Core.Cooling.CoolingSource(
+            sp.GetRequiredService<ISensorProvider>(), new RemotePCDiagnostics.Core.Cooling.WindowsCpuLoadSource(), sp.GetRequiredService<SystemCommandRunner>(),
+            L<RemotePCDiagnostics.Core.Cooling.CoolingSource>()));
         services.AddSingleton(sp => new SystemCommandRunner(
             log: L<SystemCommandRunner>(),
             elevatedBridge: sp.GetRequiredService<IElevatedCommandBridge>(),
@@ -97,6 +102,10 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IDefenderConfig>(sp => sp.GetRequiredService<IMemorySystem>());
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IAppManagementSystem>(sp => sp.GetRequiredService<IMemorySystem>());
         // Last retrim per SSD volume: Windows' Defrag event 258 plus this app's own record (retrim.json), so Drive health only offers it when needed.
+        // Drive self-test: every request goes to the Agent (raw disk access). Registered here so RPCD_LOG / RPCD_REPLAY can record and replay it.
+        services.AddSingleton<RemotePCDiagnostics.Core.Storage.IDriveSelfTestSource>(sp => new RemotePCDiagnostics.Core.Storage.AgentDriveSelfTestSource(sp.GetRequiredService<SystemCommandRunner>()));
+        // Windows boot memory test: every request goes to the Agent (bcdedit). Registered here so RPCD_LOG / RPCD_REPLAY can record and replay it.
+        services.AddSingleton<RemotePCDiagnostics.Core.Stress.IMemoryDiagnosticSource>(sp => new RemotePCDiagnostics.Core.Stress.AgentMemoryDiagnosticSource(sp.GetRequiredService<SystemCommandRunner>()));
         services.AddSingleton(_ => new RetrimLog(RetrimLog.DefaultPath(), L<RetrimLog>()));
         services.AddSingleton<IRetrimHistory>(sp => new RetrimHistory(sp.GetRequiredService<RetrimLog>(), new WindowsRetrimEvents(L<WindowsRetrimEvents>()), L<RetrimHistory>()));
         services.AddSingleton<RemotePCDiagnostics.Core.Areas.IDriveHealthHistoryStore>(_ => new RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore(RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore.DefaultPath(), L<RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore>()));
@@ -122,7 +131,15 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioIo>(_ => new WasapiAudioIo(L<WasapiAudioIo>()));
         // The Wi-Fi connect test changes the app's own Wi-Fi connection and reads the Interactive tests page's picks, so it runs in the app.
         services.AddSingleton<RemotePCDiagnostics.Core.Areas.IWifiConnector>(_ => new RemotePCDiagnostics.Core.Areas.WlanConnector());
+        // The Ethernet port test reads the Interactive tests page's picks (port, cable or loopback plug), so it runs in the app.
+        services.AddSingleton<RemotePCDiagnostics.Core.Areas.IEthernetPortIo>(_ => new RemotePCDiagnostics.Core.Areas.SystemEthernetPortIo());
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(_ => new WasapiAudioStateSource(L<WasapiAudioStateSource>()));
+        // Disk surface scan: the Agent reads the raw disk (admin); the app only asks it to start, report and stop.
+        services.AddSingleton<RemotePCDiagnostics.Core.Storage.IDiskScanSource>(sp => new RemotePCDiagnostics.Core.Storage.AgentDiskScanSource(sp.GetRequiredService<SystemCommandRunner>()));
+        // The USB tree (configuration manager and the hub driver), read in the app: no administrator rights needed.
+        services.AddSingleton<RemotePCDiagnostics.Core.Usb.IUsbTreeSource>(_ => new RemotePCDiagnostics.Core.Usb.WindowsUsbTreeSource(L<RemotePCDiagnostics.Core.Usb.WindowsUsbTreeSource>()));
+        // The display configuration (QueryDisplayConfig, the monitors' EDID), read in the app: no administrator rights needed.
+        services.AddSingleton<RemotePCDiagnostics.Core.Display.IDisplaySource>(_ => new RemotePCDiagnostics.Core.Display.WindowsDisplaySource(L<RemotePCDiagnostics.Core.Display.WindowsDisplaySource>()));
         // Motion, light and presence sensors (the Windows Sensor API), read in the app: no administrator rights needed. The Sensor test on
         // the Interactive tests page polls them only while it runs.
         services.AddSingleton<RemotePCDiagnostics.Core.DeviceSensors.IDeviceSensorSource>(_ => new RemotePCDiagnostics.Core.DeviceSensors.WindowsDeviceSensorSource(L<RemotePCDiagnostics.Core.DeviceSensors.WindowsDeviceSensorSource>()));
@@ -131,6 +148,10 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(L<WindowsNpuIo>()));
         // GPU stress test: Direct3D 11 compute devices.
         services.AddSingleton<IGpuDeviceFactory>(_ => new RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory(L<RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory>()));
+        // Graphics memory (VRAM) test: Direct3D 11 compute over the graphics chips' memory. Registered here so RPCD_LOG / RPCD_REPLAY can record and replay it.
+        services.AddSingleton<RemotePCDiagnostics.Core.GpuMemory.IGpuMemorySource>(_ => new RemotePCDiagnostics.Host.Gpu.D3D11GpuMemorySource(L<RemotePCDiagnostics.Host.Gpu.D3D11GpuMemorySource>()));
+        // Video playback test: Media Foundation decoders on the bundled clip, GPU engine counters and media sessions. Registered here so RPCD_LOG / RPCD_REPLAY can record and replay it.
+        services.AddSingleton<RemotePCDiagnostics.Core.VideoPlayback.IVideoPlaybackSource>(_ => new RemotePCDiagnostics.Host.Video.MediaFoundationVideoSource(L<RemotePCDiagnostics.Host.Video.MediaFoundationVideoSource>()));
         // Webcam test: cameras through Windows MediaCapture (a preview window only at the PC itself).
         services.AddSingleton<RemotePCDiagnostics.Core.Webcam.IWebcamIo>(_ => new MediaCaptureWebcamIo(L<MediaCaptureWebcamIo>(), showPreview: session.Mode == SessionMode.Local));
         // Vendor-independent BIOS update orchestrator, probes, and all 9 built-in vendor providers (additional providers register via AddBiosUpdateProvider<T>).
@@ -231,6 +252,9 @@ public static class HostServices
             journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(),
             prefs: sp.GetRequiredService<RemotePCDiagnostics.Core.Preferences.PreferencesService>()));
         services.AddSingleton<RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaService>();
+        // Windows' own view of keyboard, mouse and touch input: interactive tests count only input from this PC's hardware.
+        services.AddSingleton<RemotePCDiagnostics.Core.Input.IPhysicalInputMonitor, RemotePCDiagnostics.Core.Platform.WindowsRawInputMonitor>();
+        services.AddSingleton(sp => new RemotePCDiagnostics.Core.Input.PointerTestService(sp.GetService<RemotePCDiagnostics.Core.Input.IPhysicalInputMonitor>()));
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Workflow.BenchQaRunner(
             sp.GetRequiredService<DiagnosticsService>(),
             sp.GetRequiredService<ResultStore>(),
@@ -243,6 +267,8 @@ public static class HostServices
         services.AddSingleton(sp => new DesktopSessionRelauncher(sp.GetRequiredService<ISessionContext>(), L<DesktopSessionRelauncher>()));
         services.AddSingleton<ISessionRelauncher>(sp => sp.GetRequiredService<DesktopSessionRelauncher>());
         services.AddSingleton<IFullscreenService, FullscreenService>();
+        // The display test's screens (each monitor) and its screen off and on check: the app's own window, no administrator rights.
+        services.AddSingleton<RemotePCDiagnostics.Core.Display.IScreenControl>(_ => new WindowsScreenControl(L<WindowsScreenControl>()));
         services.AddSingleton<IStoreUpdateBackend>(_ => new StoreAppUpdateBackend(L<StoreAppUpdateBackend>()));
         services.AddSingleton<IAppUpdateService>(sp => new AppUpdateService(
             installedVersion: AppBuildInfo.Version,
@@ -287,6 +313,9 @@ public static class HostServices
             sp.GetService<CheckSettingsService>(),
             sp.GetService<IBiosUpdateService>(),
             sp.GetService<RemotePCDiagnostics.Agent.Core.AgentModeMonitor>(),
+            sp.GetService<RemotePCDiagnostics.Core.Input.IPhysicalInputMonitor>(),
+            sp.GetService<RemotePCDiagnostics.Core.Input.PointerTestService>(),
+            sp.GetService<RemotePCDiagnostics.Core.Display.IScreenControl>(),
             SensorTest: sp.GetService<RemotePCDiagnostics.Core.DeviceSensors.DeviceSensorTestService>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
@@ -414,6 +443,8 @@ public sealed class HostQueryBackendSlot
             Wmi = sp.GetService<RemotePCDiagnostics.Core.DataSources.IWmiSource>(),
             Packages = sp.GetService<RemotePCDiagnostics.Core.DataSources.IPackageSource>(),
             Audio = sp.GetService<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(),
+            Usb = sp.GetService<RemotePCDiagnostics.Core.Usb.IUsbTreeSource>(),
+            Display = sp.GetService<RemotePCDiagnostics.Core.Display.IDisplaySource>(),
             DeviceSensors = sp.GetService<RemotePCDiagnostics.Core.DeviceSensors.IDeviceSensorSource>(),
         };
     }

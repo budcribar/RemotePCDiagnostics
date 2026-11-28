@@ -1,0 +1,10 @@
+{
+  "id": "6e740559-6220-4ea6-b09b-303928f1982f",
+  "slug": "ChargerReplug",
+  "displayName": "Charger replug test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.ChargerReplug.ChargerReplugPlugin",
+  "needsAdmin": false,
+  // Its controls live on the Interactive tests page.
+  "hasUi": false
+}

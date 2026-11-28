@@ -6,6 +6,8 @@
 // v9 (Nov 26): also records Security Center's antivirus list and WMI error probes (ErrorProbes), and WMI errors carry their code.
 // v10 (Nov 26): also records what the Agent's alerts read (the watched events of the last 30 days, free space, memory, power) and one
 // security audit run (HardeningKitty, as the Agent runs it), for the Agent's replay tests. The audit takes a few minutes.
+// v11 (Nov 27): also records the USB tree (configuration manager and the hub driver's port reads) for USB ports & devices.
+// Nov 27: also records the display configuration (video outputs, monitors and their EDID) for Displays & video outputs.
 // Nov 27: also records the motion, light and presence sensors (Sensor API) for Motion, light & presence sensors.
 //
 // Each check runs twice: once on the new WMI path and once on the old osquery / powercfg / PowerShell path, so the tests can check the two agree.
@@ -47,6 +49,10 @@ var commands = new SystemCommandRunner(launcher);
 var files = new FileRecorder(recorder);
 // Core Audio (endpoints, defaults, mute, volume, formats, app sessions), read as the app does in the signed-in user's session.
 var audio = new RecordingAudioStateSource(new RemotePCDiagnostics.Host.WasapiAudioStateSource(), recorder);
+// The USB tree (configuration manager and the hub driver), read as the app does.
+var usb = new RecordingUsbTreeSource(new RemotePCDiagnostics.Core.Usb.WindowsUsbTreeSource(), recorder);
+// The display configuration (QueryDisplayConfig and each monitor's EDID), read as the app does.
+var displays = new RecordingDisplaySource(new RemotePCDiagnostics.Core.Display.WindowsDisplaySource(), recorder);
 // The motion, light and presence sensors (the Windows Sensor API), read as the app does.
 var deviceSensors = new RecordingDeviceSensorSource(new RemotePCDiagnostics.Core.DeviceSensors.WindowsDeviceSensorSource(), recorder);
 // Security Center's antivirus list (third-party antivirus and Defender), as the app's Security essentials reads it.
@@ -77,8 +83,9 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     ("Programs & updates (WMI + registry)", new ProgramsModule(new WmiProgramsSource(wmi, registry, packages))),
     ("Programs & updates (legacy: osquery)", new ProgramsModule(new OsqueryProgramsSource(osquery))),
     // Without netsh and the event logs (Wi-Fi and event names hold the network's name and its router's address) and offline (no probes or DNS timing).
-    // The Wi-Fi radio and scan are recorded scrubbed (see RecordingWifiRadioSource).
-    ("Network (WMI + registry)", new NetworkModule(new WmiNetworkSource(wmi, registry), includeWifiAndIpConfig: true, offline: true, radio: wifi)),
+    // The Wi-Fi radio and scan are recorded scrubbed (see RecordingWifiRadioSource); the adapter hardware card's WMI answers are recorded offline.
+    ("Network (WMI + registry)", new NetworkModule(new WmiNetworkSource(wmi, registry), includeWifiAndIpConfig: true, offline: true,
+        radio: wifi, hardware: new WmiNicHardwareSource(wmi))),
     ("Network (legacy: osquery + PowerShell)", new NetworkModule(new OsqueryNetworkSource(osquery, commands), includeWifiAndIpConfig: true, offline: true)),
     ("Security essentials (WMI + registry + tpmtool)", new SecurityEssentialsModule(new WmiSecurityEssentialsSource(wmi, registry, commands, antivirus))),
     ("Security essentials (legacy: PowerShell + tpmtool)", new SecurityEssentialsModule(new PowerShellSecurityEssentialsSource(commands))),
@@ -95,6 +102,10 @@ var checks = new (string Label, IDiagnosticModule Module)[]
         batteryReport: new RecordedBatteryReport(files, new PowerCfgBatteryReport(new SystemCommandRunner())))),
     ("Sound (Core Audio + WMI + registry)", new RemotePCDiagnostics.Modules.Sound.SoundModule(audio, new WmiServiceSource(wmi),
         new WmiDeviceDriverSource(wmi), wmi, registry)),
+    // One tree read (no second read to watch for drops), the System log's USB errors, and the PC maker's BIOS port settings.
+    ("USB ports & devices (configuration manager + wevtutil + WMI)", new RemotePCDiagnostics.Modules.UsbPorts.UsbPortsModule(usb, commands, wmi, registry,
+        dropWatch: TimeSpan.Zero)),
+    ("Displays & video outputs (display configuration + wevtutil + WMI)", new RemotePCDiagnostics.Modules.Displays.DisplaysModule(displays, commands, wmi, registry)),
     ("Motion, light & presence sensors (Sensor API + WMI)", new RemotePCDiagnostics.Modules.DeviceSensors.DeviceSensorsModule(deviceSensors, wmi)),
 };
 foreach (var (label, module) in checks)

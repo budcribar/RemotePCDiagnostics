@@ -77,7 +77,14 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
         var plan = await source.ReadActivePlanAsync(ct).ConfigureAwait(false);
         var policy = await source.ReadPowerPolicyAsync(ct).ConfigureAwait(false);
         if (batteries is null && plan is null) return AreaReport.Failed(FailedMessage);
-        return Build(batteries, plan, confirmedDischargingOnAc, confirmedHeldBackOnAc, perf, policy, hp, condition);
+        ChargerReading? charger = null;
+        if (batteries is not { Count: 0 })
+        {
+            try { charger = await source.ReadChargerAsync(ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex) { LogWarn($"{Name}: charger readings unreadable: {ex.Message}"); }
+        }
+        return Build(batteries, plan, confirmedDischargingOnAc, confirmedHeldBackOnAc, perf, policy, hp, condition, charger);
     }
 
     /// <summary>
@@ -163,7 +170,8 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
         ProcessorPerformanceSample? processorPerf = null,
         PowerPolicySnapshot? policy = null,
         IReadOnlyList<Battery.HpBatterySetting>? hpCharge = null,
-        BatteryConditionInput? condition = null)
+        BatteryConditionInput? condition = null,
+        ChargerReading? charger = null)
     {
         if (batteries is null && powerPlan is null) return AreaReport.Failed("Couldn't read battery and power settings on this PC.");
         var cards = new List<AreaCard>();
@@ -248,6 +256,9 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
             Note: planNotes.Count > 0 ? string.Join(" ", planNotes) : null,
             Actions: planActions.Count > 0 ? planActions : null));
         if (ChargeLimitCard(hpCharge) is { } chargeCard) cards.Add(chargeCard);
+        var chargerCard = ChargerCheck.Card(batteries, charger, dischargingOnAc, heldBackOnAc, processorPerf);
+        cards.Add(chargerCard);
+        if (chargerCard.Level >= AreaLevel.Warning) parts.Add("charger " + chargerCard.Headline.ToLowerInvariant());
         if (!string.IsNullOrWhiteSpace(powerPlan)) parts.Add($"{planName} plan");
         if (heldBackOnAc) parts.Add("processor held back on AC");
 

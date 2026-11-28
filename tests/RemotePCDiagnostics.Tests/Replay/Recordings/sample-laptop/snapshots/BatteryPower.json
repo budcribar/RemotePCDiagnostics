@@ -129,6 +129,52 @@
           }
         ],
         "preserveRowOrder": false
+      },
+      {
+        "id": "charger",
+        "title": "Charger (AC adapter)",
+        "level": "Ok",
+        "headline": "OK",
+        "meta": "Charger connected and working",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Ok",
+            "values": [
+              "Charger state",
+              "OK"
+            ],
+            "key": "state"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Charger connected",
+              "Yes"
+            ],
+            "key": "connected"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Charging",
+              "No (battery full)"
+            ],
+            "key": "charging"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Rated wattage",
+              "Not reported by Windows"
+            ],
+            "key": "rated"
+          }
+        ],
+        "preserveRowOrder": true
       }
     ],
     "summary": "Battery health 91% · 100% charged · Balanced plan",
