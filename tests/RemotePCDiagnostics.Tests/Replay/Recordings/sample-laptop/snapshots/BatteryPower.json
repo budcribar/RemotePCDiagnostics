@@ -70,6 +70,34 @@
               "Chemistry",
               "LiP"
             ]
+          },
+          {
+            "level": "Ok",
+            "values": [
+              "Charging check",
+              "Fully charged (100%)"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Voltage",
+              "12.82 V (design 11.55 V)"
+            ]
+          },
+          {
+            "level": "Ok",
+            "values": [
+              "Fault states",
+              "None reported"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Serial number",
+              "<serial:5a5a5a>"
+            ]
           }
         ],
         "preserveRowOrder": false

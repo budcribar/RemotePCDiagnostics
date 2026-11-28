@@ -74,9 +74,12 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
         _faults?.FileAsync(name, () => Replay.FileText(name), ct) ?? Task.FromResult(Replay.FileText(name));
 
     /// <summary>The check as the app runs it (WMI, through the Agent).</summary>
-    public BatteryPowerModule BatteryPower() => new(new WmiBatteryPowerSource(Wmi, readPowerPolicy: () => null, isHp: () => false));
+    public BatteryPowerModule BatteryPower() => new(new WmiBatteryPowerSource(Wmi, readPowerPolicy: () => null, isHp: () => false, isLenovo: () => false),
+        delay: NoWait);
     /// <summary>The Store edition without an Agent (osquery and powercfg).</summary>
-    public BatteryPowerModule BatteryPowerOld() => new(new OsqueryBatteryPowerSource(Osquery, Commands));
+    public BatteryPowerModule BatteryPowerOld() => new(new OsqueryBatteryPowerSource(Osquery, Commands), delay: NoWait);
+    /// <summary>A recording answers the same every time, so waiting between readings only slows the test.</summary>
+    private static Task NoWait(TimeSpan _, CancellationToken __) => Task.CompletedTask;
 
     /// <summary>DriveHealth on WMI (in the app, the Agent's). The clock is the recording's, and nothing is saved.</summary>
     public DriveHealthModule DriveHealth() => Drives(new WmiDriveSource(Wmi));

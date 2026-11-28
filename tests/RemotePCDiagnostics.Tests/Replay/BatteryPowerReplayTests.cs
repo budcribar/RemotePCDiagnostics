@@ -16,6 +16,10 @@ public sealed class BatteryPowerReplayTests
     {
         var pc = new ReplayedPc(RecordingLibrary.Load(name));
         var result = await pc.BatteryPower().RefreshAsync(null, TestContext.Current.CancellationToken);
+        // The battery condition questions (#281) are newer than most recordings: a PC recorded before them is read without them.
+        string[] condition = [BatteryReader.StatusDetailSql, BatteryReader.IdentitySql, BatteryReader.TemperatureSql, BatteryReader.Win32Sql];
+        Assert.SkipWhen(pc.Replay.Misses.Count > 0 && pc.Replay.Misses.All(m => condition.Any(q => m.Contains(q, StringComparison.Ordinal))),
+            "Recorded before the battery condition test asked its questions: record this PC again.");
         Assert.Empty(pc.Replay.Misses);
         Snapshot.Match(RecordingLibrary.Folder(name), "BatteryPower", result);
     }
