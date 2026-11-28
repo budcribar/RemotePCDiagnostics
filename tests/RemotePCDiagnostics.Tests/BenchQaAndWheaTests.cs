@@ -505,6 +505,49 @@ public class BenchQaAndWheaTests
     }
 
     [Fact]
+    public async Task BenchQaRunner_WaitsOnThePersonItself_AndReChecksAFixedItemWithoutStoppingTheRun()
+    {
+        var store = new ResultStore();
+        var crashRuns = 0;
+        var diag = new DiagnosticsService(store,
+        [
+            new FakeModule(ModuleSlugs.Osquery, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.Osquery))),
+            new FakeModule(ModuleSlugs.Crashes, _ => { Interlocked.Increment(ref crashRuns); return Task.FromResult(FakeModule.Ok(ModuleSlugs.Crashes)); }),
+        ]);
+        var physicalQa = new PhysicalBenchQaService();
+        var runner = new BenchQaRunner(diag, store, physicalQa: physicalQa);
+
+        // No page callback: the run owns the wait, so closing the QA page can't stop it.
+        var run = runner.StartBenchQaAsync(["hardware", "stability", "keyboard"]);
+        await WaitUntil(() => runner.WaitingFor == "keyboard");
+        Assert.True(runner.IsRunning);
+        Assert.Equal(1, crashRuns);
+
+        // A fix made while the run waits: Re-run checks the item again beside the run.
+        await runner.RerunAsync(["stability"]);
+        Assert.Equal(2, crashRuns);
+        Assert.True(runner.IsRunning);
+        Assert.Equal("keyboard", runner.WaitingFor);
+        Assert.False(runner.IsRecheckRunning);
+
+        physicalQa.Update(s => s with { KeyboardOutcome = PhysicalCheckOutcome.Passed });
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(runner.IsRunning);
+        Assert.Null(runner.WaitingFor);
+        Assert.Equal(runner.TotalSteps, runner.CompletedSteps);
+    }
+
+    private static async Task WaitUntil(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException();
+            await Task.Delay(10);
+        }
+    }
+
+    [Fact]
     public async Task BenchQaRunner_CountsProgressInSelectedItems_AndListsTheOnesThatCantRun()
     {
         var store = new ResultStore();
