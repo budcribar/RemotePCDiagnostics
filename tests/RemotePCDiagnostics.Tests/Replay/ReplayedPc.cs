@@ -36,6 +36,7 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
     public Core.Security.IAntivirusProductSource AntivirusProducts => _faults?.Antivirus(Replay.AntivirusProducts) ?? Replay.AntivirusProducts;
     public Core.Audio.IAudioStateSource Audio => _faults?.Audio(Replay.Audio) ?? Replay.Audio;
     public Core.Usb.IUsbTreeSource Usb => _faults?.Usb(Replay.Usb) ?? Replay.Usb;
+    public Core.Display.IDisplaySource Display => _faults?.Display(Replay.Display) ?? Replay.Display;
     /// <summary>What the Agent's alerts read: the recorded events and levels (recorder v10 on).</summary>
     public Core.Alerts.IAlertReadings Alerts => _faults?.Alerts(Replay.Alerts) ?? Replay.Alerts;
     public bool HasAlerts => Has(c => c.Kind == RecordedCall.AlertsKind);
@@ -105,6 +106,9 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
     /// <summary>USB ports &amp; devices: the USB tree from the recording (recorder v11 on), the System log, and the BIOS settings from WMI.</summary>
     public Modules.UsbPorts.UsbPortsModule UsbPorts() => new(Usb, Commands, Wmi, Registry, dropWatch: TimeSpan.Zero);
     public bool HasUsb => Has(c => c.Kind == RecordedCall.UsbKind);
+    /// <summary>Displays &amp; video outputs: the display configuration from the recording, the System log, and the BIOS settings from WMI.</summary>
+    public Modules.Displays.DisplaysModule Displays() => new(Display, Commands, Wmi, Registry);
+    public bool HasDisplays => Has(c => c.Kind == RecordedCall.DisplayKind);
     public ServicesModule ServicesOld() => new(new OsqueryServiceSource(Osquery));
 
     /// <summary>Device Manager and drivers on WMI. Pending driver updates aren't recorded, so they aren't asked.</summary>

@@ -44,6 +44,9 @@ public static class UserModePlugin
         // The USB tree is read in the app too, so it's recorded with the app's other answers.
         if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.UsbTree, StringComparer.Ordinal))
             services.AddSingleton<Usb.IUsbTreeSource>(new Usb.HostUsbTreeSource(hostQueries, log));
+        // The display configuration is read in the app too (the module host has no desktop of its own), and recorded there.
+        if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.DisplayState, StringComparer.Ordinal))
+            services.AddSingleton<Display.IDisplaySource>(new Display.HostDisplaySource(hostQueries, log));
         plugin.Register(services, context);
         var sp = services.BuildServiceProvider();
         var modules = sp.GetServices<IDiagnosticModule>().ToList();

@@ -1,0 +1,12 @@
+{
+  "id": "5d0f3b6e-8a41-4c2e-9f7d-2b6a1e9c4d83",
+  "slug": "Displays",
+  "displayName": "Displays & video outputs",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.Displays.DisplaysPlugin",
+  "needsAdmin": false,
+  // Out of process (the module host): the display configuration is read by the app (display.state), the System log by the app
+  // (eventlog.query), and the PC maker's BIOS settings through the app to the Agent (wmi.query), as in process.
+  "capabilities": [ "display.state", "eventlog.query", "wmi.query" ],
+  "hasUi": false
+}

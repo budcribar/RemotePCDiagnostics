@@ -36,8 +36,11 @@ public static class InteractiveExport
     public static string ToJson(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
         DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null,
-        ModuleState? audioDevices = null, string? audioDevicesBusyId = null, PointerTestSnapshot? pointer = null) =>
-        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane, charger, usbPortCheck, audioDevices, audioDevicesBusyId, pointer), Json);
+        ModuleState? audioDevices = null, string? audioDevicesBusyId = null, PointerTestSnapshot? pointer = null, DisplayOutputCheckState? displayOutputs = null) =>
+        JsonSerializer.Serialize(Build(page, bench, webcam, speakerToMic, micToSpeaker, soundCheck, help, wifi, wifiPane, ethernet, ethernetPane, charger, usbPortCheck, audioDevices, audioDevicesBusyId, pointer, displayOutputs), Json);
+
+    /// <summary>The display output check's result and what it has seen so far in the watch that is running (the result is Running meanwhile).</summary>
+    public sealed record DisplayOutputCheckState(ModuleState Module, Display.DisplayOutputCheckReport Live);
 
     /// <summary>The USB port check's result and what it has seen so far in the watch that is running (the result is Running meanwhile).</summary>
     public sealed record UsbPortCheckState(ModuleState Module, Usb.UsbPortCheckReport Live);
@@ -57,7 +60,7 @@ public static class InteractiveExport
     public static object Build(PageState page, PhysicalBenchQaSnapshot bench, ModuleState webcam, ModuleState speakerToMic, ModuleState micToSpeaker,
         ModuleState? soundCheck = null, SoundCheckHelp? help = null, DiagnosticResult? wifi = null, WifiPane? wifiPane = null,
         DiagnosticResult? ethernet = null, EthernetPane? ethernetPane = null, DiagnosticResult? charger = null, UsbPortCheckState? usbPortCheck = null,
-        ModuleState? audioDevices = null, string? audioDevicesBusyId = null, PointerTestSnapshot? pointer = null) => new
+        ModuleState? audioDevices = null, string? audioDevicesBusyId = null, PointerTestSnapshot? pointer = null, DisplayOutputCheckState? displayOutputs = null) => new
     {
         schema = SchemaVersion,
         selectedTestId = page.SelectedTestId,
@@ -81,6 +84,8 @@ public static class InteractiveExport
             ChargerTest(page, charger ?? DiagnosticResult.NotRun(ModuleSlugs.ChargerReplug)),
             UsbPortCheckTest(page, usbPortCheck ?? new(new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.UsbPortCheck), false), Usb.UsbPortCheckReport.Empty)),
             AudioDevicesExport(page, audioDevices ?? new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.AudioDevices), false), audioDevicesBusyId),
+            DisplayOutputCheckTest(page, displayOutputs ?? new(new ModuleState(DiagnosticResult.NotRun(ModuleSlugs.DisplayOutputCheck), false),
+                Display.DisplayOutputCheckReport.Empty)),
         },
     };
 
@@ -618,6 +623,54 @@ public static class InteractiveExport
         };
     }
 
+    private static object DisplayOutputCheckTest(PageState page, DisplayOutputCheckState s)
+    {
+        var r = s.Module.Result;
+        var running = r.Status == DiagnosticStatus.Running;
+        var rep = running ? s.Live : r.Payload as Display.DisplayOutputCheckReport;
+        var answered = rep is not null && !rep.Watching && rep.Unanswered == 0 && (rep.Arrivals.Count > 0 || rep.NoSignal.Count > 0);
+        var done = answered || (s.Module.PersonEntered && (rep is null || rep.Unanswered == 0));
+        return new
+        {
+            id = "displayoutputs",
+            name = "Video output check",
+            @checked = page.CheckedTestIds.Contains("displayoutputs"),
+            open = page.SelectedTestId == "displayoutputs",
+            state = running ? "in-progress" : done ? "done"
+                : rep is not null ? "waiting-for-person-verdict" : "waiting-for-person",
+            runId = r.RunId,
+            measured = rep is null ? null : new
+            {
+                portsTested = rep.Arrivals.Count,
+                ports = rep.Arrivals.Select(a => new
+                {
+                    key = a.Key,
+                    monitor = V(a.Monitor),
+                    connector = V(a.Connector),
+                    graphics = V(a.Adapter),
+                    active = a.Active,
+                    mode = V(a.Mode),
+                    refreshHz = a.RefreshHz,
+                    edidProblem = V(a.EdidProblem),
+                    belowNative = a.BelowNative,
+                    unplugged = a.Unplugged,
+                    pictureAppeared = a.PictureAppeared,
+                }).ToList(),
+                noSignal = rep.NoSignal.Select(n => V(n.Port)).ToList(),
+                unanswered = rep.Unanswered,
+                notice = T(rep.Notice),
+            },
+            personOutcome = !running && done ? Person(r.Status) : null,
+            message = T(running ? Display.DisplayOutputCheck.Outcome(s.Live).Message : r.Message),
+            instructions = "Start watching, then the person plugs a monitor into each video port in turn (HDMI, DisplayPort, USB-C, VGA, the "
+                + "dock's). Each monitor shows with its connector, mode and whether its EDID is valid, and the person answers Did the picture "
+                + "appear? (Yes or No) for each. When nothing shows up at all on a port, they press Nothing appeared and name the port. Finish "
+                + "stops watching. Windows normally extends the desktop onto a new monitor by itself; one shown as not active is connected but "
+                + "gets no picture from Windows.",
+            reportIf = ReportIf.DisplayOutputCheck,
+        };
+    }
+
     public static class ReportIf
     {
         public const string Wifi = "The person's network is not listed, the test says it couldn't connect although the password is right and "
@@ -634,6 +687,8 @@ public static class InteractiveExport
             + "with what the person sees.";
         public const string SpeakerToMic = "The person's speaker or microphone is not listed, they hear the tone but it is not detected, or "
             + "the test cannot start.";
+        public const string DisplayOutputCheck = "A monitor the person plugs in doesn't show, shows on the wrong connector, or the "
+            + "picture appears although the check says the monitor isn't active.";
         public const string SoundCheck = "The person hears the chime on the wrong side, hears nothing although the Can't hear sound list is "
             + "empty, or the list shows a problem the person doesn't have.";
         public const string Charger = "The person unplugged or plugged in the charger but the test didn't see it, the battery charged but "

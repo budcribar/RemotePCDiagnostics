@@ -7,6 +7,7 @@
 // v10 (Nov 26): also records what the Agent's alerts read (the watched events of the last 30 days, free space, memory, power) and one
 // security audit run (HardeningKitty, as the Agent runs it), for the Agent's replay tests. The audit takes a few minutes.
 // v11 (Nov 27): also records the USB tree (configuration manager and the hub driver's port reads) for USB ports & devices.
+// Nov 27: also records the display configuration (video outputs, monitors and their EDID) for Displays & video outputs.
 //
 // Each check runs twice: once on the new WMI path and once on the old osquery / powercfg / PowerShell path, so the tests can check the two agree.
 
@@ -49,6 +50,8 @@ var files = new FileRecorder(recorder);
 var audio = new RecordingAudioStateSource(new RemotePCDiagnostics.Host.WasapiAudioStateSource(), recorder);
 // The USB tree (configuration manager and the hub driver), read as the app does.
 var usb = new RecordingUsbTreeSource(new RemotePCDiagnostics.Core.Usb.WindowsUsbTreeSource(), recorder);
+// The display configuration (QueryDisplayConfig and each monitor's EDID), read as the app does.
+var displays = new RecordingDisplaySource(new RemotePCDiagnostics.Core.Display.WindowsDisplaySource(), recorder);
 // Security Center's antivirus list (third-party antivirus and Defender), as the app's Security essentials reads it.
 // The Wi-Fi radio switches and a fresh scan (WLAN API), with network names replaced by "Network 1"… before they are kept.
 var wifi = new RecordingWifiRadioSource(new WlanRadioSource(), recorder);
@@ -99,6 +102,7 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     // One tree read (no second read to watch for drops), the System log's USB errors, and the PC maker's BIOS port settings.
     ("USB ports & devices (configuration manager + wevtutil + WMI)", new RemotePCDiagnostics.Modules.UsbPorts.UsbPortsModule(usb, commands, wmi, registry,
         dropWatch: TimeSpan.Zero)),
+    ("Displays & video outputs (display configuration + wevtutil + WMI)", new RemotePCDiagnostics.Modules.Displays.DisplaysModule(displays, commands, wmi, registry)),
 };
 foreach (var (label, module) in checks)
 {

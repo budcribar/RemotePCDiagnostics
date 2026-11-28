@@ -34,5 +34,6 @@
     <ProjectReference Include="..\..\src\Modules\SleepWake\RemotePCDiagnostics.Modules.SleepWake.csproj" />
     <ProjectReference Include="..\..\src\Modules\Sound\RemotePCDiagnostics.Modules.Sound.csproj" />
     <ProjectReference Include="..\..\src\Modules\UsbPorts\RemotePCDiagnostics.Modules.UsbPorts.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Displays\RemotePCDiagnostics.Modules.Displays.csproj" />
   </ItemGroup>
 </Project>

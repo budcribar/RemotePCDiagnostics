@@ -120,6 +120,17 @@ public sealed class RecordingUsbTreeSource(Usb.IUsbTreeSource inner, CallRecorde
     }
 }
 
+/// <summary>Passes each display configuration read to the real source and records the answer.</summary>
+public sealed class RecordingDisplaySource(Display.IDisplaySource inner, CallRecorder recorder) : Display.IDisplaySource
+{
+    public async Task<Display.DisplaySnapshot> ReadAsync(CancellationToken ct = default)
+    {
+        var r = await inner.ReadAsync(ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromDisplay(r));
+        return r;
+    }
+}
+
 public sealed class RecordingRegistrySource(IRegistrySource inner, CallRecorder recorder) : IRegistrySource
 {
     public async Task<WmiQueryResult> ReadAsync(RegistryRead read, CancellationToken ct = default)
@@ -266,6 +277,7 @@ public sealed class RecordingReplay
     public Audio.IAudioStateSource Audio => new ReplayAudio(this);
     public Areas.IWifiRadioSource Wifi => new ReplayWifi(this);
     public Usb.IUsbTreeSource Usb => new ReplayUsb(this);
+    public Display.IDisplaySource Display => new ReplayDisplay(this);
     public IProcessLauncher Launcher => new ReplayLauncher(this);
     public Alerts.IAlertReadings Alerts => new ReplayAlerts(this);
     public Stress.IMemoryDiagnosticSource MemoryDiagnostic => new ReplayMemoryDiagnostic(this);
@@ -321,6 +333,7 @@ public sealed class RecordingReplay
         RecordedCall.AudioKind => AudioKey,
         RecordedCall.WifiKind => WifiKey,
         RecordedCall.UsbKind => UsbKey,
+        RecordedCall.DisplayKind => DisplayKey,
         RecordedCall.FileKind => FileKey(c.File ?? ""),
         RecordedCall.AlertsKind => AlertsKey(c.Query ?? ""),
         RecordedCall.MemoryDiagnosticKind => MemoryDiagnosticKey(c.Query ?? ""),
@@ -337,6 +350,7 @@ public sealed class RecordingReplay
     public const string AudioKey = "audio";
     public const string WifiKey = "wifi";
     public const string UsbKey = "usb";
+    public const string DisplayKey = "display";
     public static string FileKey(string name) => "file\n" + name;
     public static string AlertsKey(string reading) => "alerts\n" + reading;
     public static string MemoryDiagnosticKey(string request) => "memdiag\n" + request;
@@ -381,6 +395,14 @@ public sealed class RecordingReplay
             Task.FromResult(replay.Answer(AntivirusKey, "antivirus") is { } c
                 ? Security.AntivirusInventoryResult.FromRecordedResult(c.ToWmiResult())
                 : Security.AntivirusInventoryResult.Unavailable("Not in the recording."));
+    }
+
+    private sealed class ReplayDisplay(RecordingReplay replay) : RemotePCDiagnostics.Core.Display.IDisplaySource
+    {
+        public Task<RemotePCDiagnostics.Core.Display.DisplaySnapshot> ReadAsync(CancellationToken ct = default) =>
+            Task.FromResult(replay.Answer(DisplayKey, "display") is { } c
+                ? c.Error is { } e && c.StdOut is null ? RemotePCDiagnostics.Core.Display.DisplaySnapshot.Unavailable(e) : RemotePCDiagnostics.Core.Display.DisplaySnapshot.FromJson(c.StdOut)
+                : RemotePCDiagnostics.Core.Display.DisplaySnapshot.Unavailable("Not in the recording."));
     }
 
     private sealed class ReplayAudio(RecordingReplay replay) : RemotePCDiagnostics.Core.Audio.IAudioStateSource

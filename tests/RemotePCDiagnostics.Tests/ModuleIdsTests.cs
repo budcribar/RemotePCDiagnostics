@@ -58,6 +58,8 @@ public class ModuleIdsTests
         ["UsbPorts"] = "b6237a7b-102a-4a68-8553-0fed276ef946",
         ["UsbPortCheck"] = "1b68970d-8ec7-45ee-bc39-bc88bca9de77",
         ["AudioDevices"] = "0541d464-e4d7-4efe-8d0a-3b8357e4110e",
+        ["Displays"] = "5d0f3b6e-8a41-4c2e-9f7d-2b6a1e9c4d83",
+        ["DisplayOutputCheck"] = "a3e7c912-4f6b-4d58-b0a1-7e2d9c5f8b64",
     };
 
     [Fact]

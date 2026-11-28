@@ -99,6 +99,10 @@ public static class ModuleIds
     public static readonly Guid UsbPorts = new("b6237a7b-102a-4a68-8553-0fed276ef946");
     /// <summary>Slug <c>UsbPortCheck</c>.</summary>
     public static readonly Guid UsbPortCheck = new("1b68970d-8ec7-45ee-bc39-bc88bca9de77");
+    /// <summary>Slug <c>Displays</c>.</summary>
+    public static readonly Guid Displays = new("5d0f3b6e-8a41-4c2e-9f7d-2b6a1e9c4d83");
+    /// <summary>Slug <c>DisplayOutputCheck</c>.</summary>
+    public static readonly Guid DisplayOutputCheck = new("a3e7c912-4f6b-4d58-b0a1-7e2d9c5f8b64");
 
     /// <summary>Every built-in id with its slug (the module's Name). Includes modules that are not registered on every build.</summary>
     public static IReadOnlyDictionary<Guid, string> BuiltIn { get; } = new Dictionary<Guid, string>
@@ -149,6 +153,8 @@ public static class ModuleIds
         [UsbPorts] = ModuleSlugs.UsbPorts,
         [UsbPortCheck] = ModuleSlugs.UsbPortCheck,
         [AudioDevices] = ModuleSlugs.AudioDevices,
+        [Displays] = ModuleSlugs.Displays,
+        [DisplayOutputCheck] = ModuleSlugs.DisplayOutputCheck,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -222,4 +228,8 @@ public static class ModuleSlugs
     public const string UsbPortCheck = "UsbPortCheck";
     /// <summary>The interactive per-device test: play every speaker, record every microphone (Interactive tests page).</summary>
     public const string AudioDevices = "AudioDevices";
+    /// <summary>Displays &amp; video outputs: monitors, connectors, modes, EDID, scaling, HDR, driver resets, BIOS-disabled outputs.</summary>
+    public const string Displays = "Displays";
+    /// <summary>The interactive video output check: plug a monitor into each video port in turn (Interactive tests page).</summary>
+    public const string DisplayOutputCheck = "DisplayOutputCheck";
 }

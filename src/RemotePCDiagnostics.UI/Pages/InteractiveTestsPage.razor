@@ -6,6 +6,7 @@
 @using RemotePCDiagnostics.Core.Areas
 @using RemotePCDiagnostics.Core.Usb
 @using RemotePCDiagnostics.Core.Input
+@using RemotePCDiagnostics.Core.Display
 @inherits StoreAwareComponent
 @inject ISessionContext Session
 @inject IJSRuntime JS
@@ -60,16 +61,21 @@
     var adDot = adWaiting ? "running" : DotKind(adResult.Status);
     var adLabel = adRunning ? "Running…" : adAnswer ? "Waiting for answer" : adWaiting ? "In progress" : OutcomeLabel(adResult.Status);
 
+    var dvResult = Store.Get(ModuleSlugs.DisplayOutputCheck);
+    var dvRunning = dvResult.Status == DiagnosticStatus.Running;
+    var dvModule = GetDisplayOutputCheckModule();
+    var dvRep = dvRunning ? dvModule?.Live : dvResult.Payload as DisplayOutputCheckReport;
+
     var kbSnap = ActivePhysicalQa.Current;
     var ptrSnap = ActivePointerTest.Current;
-    var anyRunning = _isBatchRunning || ptrSnap.Verdict == PointerTestVerdict.Running || camRunning || s2mRunning || m2sRunning || scRunning || wfRunning || ethRunning || chRunning || usbRunning || adRunning;
+    var anyRunning = _isBatchRunning || ptrSnap.Verdict == PointerTestVerdict.Running || camRunning || s2mRunning || m2sRunning || scRunning || wfRunning || ethRunning || chRunning || usbRunning || adRunning || dvRunning;
 
     var allSelected = _selected.Count == AllTestIds.Length;
     var mixedSelected = _selected.Count > 0 && _selected.Count < AllTestIds.Length;
 }
 
 <div class="ct-page">
-    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), wfResult, ethResult, chResult, usbResult, usbModule?.Live, adResult, adBusyId)" />
+    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), wfResult, ethResult, chResult, usbResult, usbModule?.Live, adResult, adBusyId, dvResult, dvModule?.Live)" />
     <div class="toolbar">
         <span class="icon-badge page-icon"><Icon Name="eye" Size="20" /></span>
         <h1 data-rpcd-page="interactive" data-rpcd-contract="@BrowserContract.Interactive" data-testid="interactive-title">Interactive tests</h1>
@@ -448,6 +454,34 @@
                         </div>
                         <div class="ct-row-side">
                             <span class="chip chip-@adChip" data-testid="interactive-status-audiodevices">@adLabel</span>
+                        </div>
+                    </div>
+
+                    @* 7. Video output check: plug a monitor into each video port in turn *@
+                    @{
+                        var dvIsSel = _selectedTestId == "displayoutputs";
+                        var dvWaiting = !dvRunning && dvRep is { Watching: false, Unanswered: > 0 };
+                        var dvChip = dvRunning || dvWaiting ? "run" : OutcomeChip(dvResult.Status);
+                        var dvDot = dvRunning || dvWaiting ? "running" : DotKind(dvResult.Status);
+                        var dvLabel = dvRunning ? "Watching…" : dvWaiting ? "Waiting for answer" : OutcomeLabel(dvResult.Status);
+                        var dvSummary = dvRunning && dvRep is not null ? DisplayOutputCheck.Outcome(dvRep).Message
+                            : dvResult.Status == DiagnosticStatus.NotRun ? "Plug a monitor into each video port and check the picture" : dvResult.Message;
+                    }
+                    <div class="ct-row @(dvIsSel ? "selected" : "") @(dvRunning ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(dvIsSel ? "true" : "false")"
+                         data-testid="interactive-row-displayoutputs" @onclick='() => SelectTest("displayoutputs")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("displayoutputs") ? "true" : "false")"
+                                aria-label="Include video output check"
+                                data-testid="interactive-check-displayoutputs"
+                                @onclick='() => ToggleItem("displayoutputs")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("displayoutputs") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@dvDot"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">Video output check</div>
+                            <div class="ct-row-summary meta" title="@dvSummary">@dvSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@dvChip" data-testid="interactive-status-displayoutputs">@dvLabel</span>
                         </div>
                     </div>
                 </div>
@@ -1285,6 +1319,102 @@
                     </div>
                 </div>
             }
+            else if (_selectedTestId == "displayoutputs")
+            {
+                var dvWaitingAnswer = !dvRunning && dvRep is { Watching: false, Unanswered: > 0 };
+                <div class="phys-qa-pane" data-testid="interactive-displayoutputs-pane">
+                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                        <strong>Video output check</strong>
+                        <span class="chip chip-@(dvRunning || dvWaitingAnswer ? "run" : OutcomeChip(dvResult.Status))" data-testid="displayoutputs-status-chip">
+                            @(dvRunning ? "Watching…" : dvWaitingAnswer ? "Waiting for answer" : OutcomeLabel(dvResult.Status))
+                        </span>
+                        @if (dvRunning)
+                        {
+                            <button type="button" class="btn-small btn-primary" data-testid="displayoutputs-finish-btn" @onclick="FinishDisplayOutputCheck">Finish</button>
+                            <button type="button" class="btn-small" data-testid="displayoutputs-cancel-btn" @onclick="CancelDisplayOutputCheck">Cancel</button>
+                        }
+                        else
+                        {
+                            <button type="button" class="btn-small btn-primary" data-testid="displayoutputs-start-btn"
+                                    disabled="@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay || dvModule is null)"
+                                    title="@(_isRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                                    @onclick="StartDisplayOutputCheckAsync">
+                                @(dvRep is null ? "Start watching" : "Start again")
+                            </button>
+                        }
+                    </div>
+                    <p class="meta" data-testid="displayoutputs-instructions">
+                        Plug a monitor into each video port in turn: HDMI, DisplayPort, USB-C, VGA and the ports on a dock. Each one shows below
+                        with its connector and mode as Windows finds it. Say whether the picture appeared on each, then press Finish.
+                    </p>
+                    <p data-testid="displayoutputs-status" class="@(dvRunning ? "status-line is-running" : "status-line")">
+                        <span class="@DotClass(dvRunning ? DiagnosticStatus.Running : dvResult.Status)"></span>
+                        <span>@(dvRunning && dvRep is not null ? DisplayOutputCheck.Outcome(dvRep).Message : dvResult.Status == DiagnosticStatus.NotRun ? "Not run. Press Start watching to begin." : dvResult.Message)</span>
+                        @if (dvRunning)
+                        {
+                            <span class="running-badge" data-testid="displayoutputs-running-badge"><span class="running-badge-dot"></span>Watching</span>
+                        }
+                    </p>
+                    @if (dvRep?.Notice is { } dvNotice) { <p class="notice" data-testid="displayoutputs-notice">@dvNotice</p> }
+                    @if (dvRep is { Arrivals.Count: > 0 })
+                    {
+                        <table class="detail" data-testid="displayoutputs-table">
+                            <thead><tr><th>Monitor</th><th>Connector</th><th>Graphics</th><th>Mode</th><th>Notes</th><th>Did the picture appear?</th></tr></thead>
+                            <tbody>
+                                @foreach (var a in dvRep.Arrivals)
+                                {
+                                    var notes = new List<string>();
+                                    if (!a.Active) notes.Add("Windows isn't showing anything on it");
+                                    if (a.EdidProblem is { } ep) notes.Add(ep);
+                                    if (a.BelowNative) notes.Add("Below its native resolution");
+                                    if (a.Flapping) notes.Add($"Dropped {a.Unplugged} times: check the cable");
+                                    <tr data-testid="displayoutputs-port" data-key="@a.Key" data-active="@(a.Active ? "true" : "false")"
+                                        data-picture="@(a.PictureAppeared switch { true => "yes", false => "no", _ => "" })">
+                                        <td>@a.Monitor</td>
+                                        <td>@a.Connector</td>
+                                        <td>@a.Adapter</td>
+                                        <td>@(a.Active ? $"{a.Mode} {Displays.Hz(a.RefreshHz)}".Trim() : "Not active")</td>
+                                        <td>@(notes.Count > 0 ? string.Join(" · ", notes) : "OK")</td>
+                                        <td>
+                                            @if (a.PictureAppeared is null)
+                                            {
+                                                <button type="button" class="btn-small btn-primary" data-testid="displayoutputs-answer-yes" @onclick="() => AnswerDisplayOutput(a.Key, true)">Yes</button>
+                                                <button type="button" class="btn-small" data-testid="displayoutputs-answer-no" @onclick="() => AnswerDisplayOutput(a.Key, false)">No</button>
+                                            }
+                                            else
+                                            {
+                                                <span>@(a.PictureAppeared == true ? "Yes" : "No")</span>
+                                                <button type="button" class="btn-link" data-testid="displayoutputs-answer-change" @onclick="() => AnswerDisplayOutput(a.Key, a.PictureAppeared != true)">Change</button>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                    @if (dvRep is { NoSignal.Count: > 0 })
+                    {
+                        <p class="notice" data-testid="displayoutputs-nosignal">
+                            Nothing appeared on: @string.Join(", ", dvRep.NoSignal.Select(n => n.Port))
+                        </p>
+                    }
+                    @if (dvRunning || dvRep is { Watching: false })
+                    {
+                        <div class="phys-qa-actions" data-testid="displayoutputs-nosignal-form">
+                            <label>
+                                Plugged in but nothing appeared?
+                                <input data-testid="displayoutputs-nosignal-port" value="@_noSignalPort" @oninput="e => _noSignalPort = e.Value?.ToString() ?? string.Empty"
+                                       maxlength="80" placeholder="Which port (for example: left HDMI)" />
+                            </label>
+                            <button type="button" class="btn-small" data-testid="displayoutputs-nosignal-btn" @onclick="ReportNoSignal">Nothing appeared</button>
+                            @if (!dvRunning)
+                            {
+                                <button type="button" class="btn-small" data-testid="displayoutputs-reset" @onclick="ResetDisplayOutputCheck">Reset</button>
+                            }
+                        </div>
+                    }
+                </div>
+            }
         </section>
     </div>
 </div>
@@ -1297,7 +1427,7 @@
     private PointerTestService ActivePointerTest => App.PointerTest ?? (_fallbackPointerTest ??= new PointerTestService(App.PhysicalInput));
     private bool RemoteSessionActive => Session.Mode == SessionMode.Remote || _hasRemoteSession;
 
-    private static readonly string[] AllTestIds = ["keyboard", "display", "pointer", "webcam", "speakertomic", "mictospeaker", "soundcheck", "charger", "wifi", "ethernet", "usbports", "audiodevices"];
+    private static readonly string[] AllTestIds = ["keyboard", "display", "pointer", "webcam", "speakertomic", "mictospeaker", "soundcheck", "charger", "wifi", "ethernet", "usbports", "audiodevices", "displayoutputs"];
     private readonly HashSet<string> _selected = new(AllTestIds, StringComparer.OrdinalIgnoreCase);
 
     // The Wi-Fi connect pane: the last scan's networks, the one picked (null = the network the PC is on), and the typed password.
@@ -1358,13 +1488,14 @@
 
     /// <summary>The page's state for browser agents (interactive-data): measured evidence and person-entered verdicts kept apart.</summary>
     private string InteractiveJson(RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaSnapshot kb, DiagnosticResult cam, DiagnosticResult s2m, DiagnosticResult m2s,
-        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, DiagnosticResult wifi, DiagnosticResult ethernet, DiagnosticResult charger, DiagnosticResult usb, UsbPortCheckReport? usbLive, DiagnosticResult ad, string? adBusyId) =>
+        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, DiagnosticResult wifi, DiagnosticResult ethernet, DiagnosticResult charger, DiagnosticResult usb, UsbPortCheckReport? usbLive, DiagnosticResult ad, string? adBusyId, DiagnosticResult dv, DisplayOutputCheckReport? dvLive) =>
         InteractiveExport.ToJson(
             new InteractiveExport.PageState(_selectedTestId, _selected, _isBatchRunning, _isRemoteDisplay, Session.Mode == SessionMode.Remote || _hasRemoteSession, _technicianHasControl),
             kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help, wifi,
             new InteractiveExport.WifiPane(_wifiNetworks, WifiPicked?.Ssid, _wifiPassword.Length > 0, _wifiDropsSession, _wifiScanning),
             ethernet, new InteractiveExport.EthernetPane(_ethPorts, EthernetPicked?.Name, _ethMode, _ethDropsSession, _ethLoading), charger,
-            new InteractiveExport.UsbPortCheckState(PersonState(usb), usbLive ?? UsbPortCheckReport.Empty), PersonState(ad), adBusyId, ActivePointerTest.Current);
+            new InteractiveExport.UsbPortCheckState(PersonState(usb), usbLive ?? UsbPortCheckReport.Empty), PersonState(ad), adBusyId, ActivePointerTest.Current,
+            new InteractiveExport.DisplayOutputCheckState(PersonState(dv), dvLive ?? DisplayOutputCheckReport.Empty));
 
     private IReadOnlyList<AudioDevice> _outputs = [];
     private IReadOnlyList<AudioDevice> _inputs = [];
@@ -1398,6 +1529,7 @@
         if (_usbPortCheckModule is not null) _usbPortCheckModule.Changed += OnUsbPortCheckChanged;
         // The row's chip and interactive-data follow the pointer test as it runs.
         ActivePointerTest.Changed += OnPointerTestChanged;
+        if (GetDisplayOutputCheckModule() is { } dvCheck) dvCheck.Changed += OnDisplayOutputCheckChanged;
         if (TestQuery is { Length: > 0 } t && AllTestIds.Contains(t, StringComparer.OrdinalIgnoreCase)) _selectedTestId = t.ToLowerInvariant();
         if (_selectedTestId == "ethernet") _ = LoadEthernetPortsAsync();
         if (_selectedTestId == "soundcheck" && HelpQuery == "cant-hear") _ = OpenCantHearAsync();
@@ -1460,6 +1592,7 @@
         ActivePointerTest.Changed -= OnPointerTestChanged;
         _fallbackPointerTest?.Dispose();
         _fallbackPointerTest = null;
+        if (GetDisplayOutputCheckModule() is { } dvCheck) dvCheck.Changed -= OnDisplayOutputCheckChanged;
         _batchCts?.Cancel();
         _interactiveWaitTcs?.TrySetCanceled();
         _batchCts?.Dispose();
@@ -1749,6 +1882,9 @@
                         // Lists the devices only: each one plays or records when the person presses its button.
                         await Diagnostics.RunAsync(ModuleSlugs.AudioDevices);
                         break;
+                    case "displayoutputs":
+                        await StartDisplayOutputCheckAsync();
+                        break;
                 }
             }
         }
@@ -1776,6 +1912,7 @@
         CancelEthernet();
         CancelUsbPortCheck();
         CancelAudioDevices();
+        CancelDisplayOutputCheck();
         Diagnostics.CancelStressSuite();
     }
 
@@ -1854,6 +1991,61 @@
     }
 
     private void ResetUsbPortCheck() => Store.Set(DiagnosticResult.NotRun(ModuleSlugs.UsbPortCheck));
+    private IDisplayOutputCheckModule? GetDisplayOutputCheckModule() =>
+        Diagnostics.Modules.OfType<IDisplayOutputCheckModule>().FirstOrDefault()
+        ?? (Diagnostics.Catalog.Find(ModuleSlugs.DisplayOutputCheck) is { } d ? Diagnostics.Catalog.ModuleFor(d.Id) as IDisplayOutputCheckModule : null);
+
+    private void OnDisplayOutputCheckChanged(object? sender, EventArgs e)
+    {
+        if (_disposed) return;
+        try { _ = InvokeAsync(() => { if (!_disposed) StateHasChanged(); }); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private string _noSignalPort = "";
+
+    /// <summary>Watches the display configuration until the person presses Finish; each monitor they plug in shows live with its connector.</summary>
+    private async Task StartDisplayOutputCheckAsync()
+    {
+        if (Diagnostics.IsStressSuiteRunning || _isRemoteDisplay) return;
+        _personResults.Remove(ModuleSlugs.DisplayOutputCheck);
+        _noSignalPort = "";
+        await Diagnostics.RunAsync(ModuleSlugs.DisplayOutputCheck);
+    }
+
+    private void FinishDisplayOutputCheck() => GetDisplayOutputCheckModule()?.Finish();
+
+    private void CancelDisplayOutputCheck() => GetDisplayOutputCheckModule()?.Cancel();
+
+    /// <summary>Records "Did the picture appear?" for one port: on the live watch while it runs, else on the finished result.</summary>
+    private void AnswerDisplayOutput(string key, bool pictureAppeared)
+    {
+        var latest = Store.Get(ModuleSlugs.DisplayOutputCheck);
+        if (latest.Status == DiagnosticStatus.Running) { GetDisplayOutputCheckModule()?.Answer(key, pictureAppeared); return; }
+        if (DisplayOutputCheck.Answer(latest, key, pictureAppeared) is not { } updated) return;
+        Store.Set(updated);
+        if (updated.Payload is DisplayOutputCheckReport { Unanswered: 0 })
+            _personResults[ModuleSlugs.DisplayOutputCheck] = updated;
+        else
+            _personResults.Remove(ModuleSlugs.DisplayOutputCheck);
+    }
+
+    /// <summary>Records a port where the person plugged a monitor in and nothing was seen at all.</summary>
+    private void ReportNoSignal()
+    {
+        var port = string.IsNullOrWhiteSpace(_noSignalPort) ? "A video port" : _noSignalPort.Trim();
+        _noSignalPort = "";
+        var latest = Store.Get(ModuleSlugs.DisplayOutputCheck);
+        if (latest.Status == DiagnosticStatus.Running) { GetDisplayOutputCheckModule()?.ReportNoSignal(port); return; }
+        if (DisplayOutputCheck.NoSignal(latest, port) is not { } updated) return;
+        Store.Set(updated);
+        if (updated.Payload is DisplayOutputCheckReport { Unanswered: 0 })
+            _personResults[ModuleSlugs.DisplayOutputCheck] = updated;
+        else
+            _personResults.Remove(ModuleSlugs.DisplayOutputCheck);
+    }
+
+    private void ResetDisplayOutputCheck() => Store.Set(DiagnosticResult.NotRun(ModuleSlugs.DisplayOutputCheck));
 
     private async Task StartSoundCheckAsync()
     {
