@@ -234,7 +234,7 @@ public sealed class ChecksScreenState
         var noAgent = HasAgent?.Invoke() == false;
         var listed = _diag.Modules.Select(m => (Module: m, Descriptor: _diag.Catalog.Get(m.Id)))
             .Where(x => x.Descriptor is { OnStressPage: true } && !ExcludedFromStress.Contains(x.Module.Name)
-                        && !(noAgent && x.Module is Areas.WindowsIntegrityModule)).ToList();
+                        && !(noAgent && (x.Descriptor.RequiresAgent || x.Module is Areas.WindowsIntegrityModule))).ToList();
         var stress = listed.Where(x => x.Descriptor!.Kind == ModuleKind.StressTest)
             .OrderBy(x => order.FindIndex(n => string.Equals(n, x.Module.Name, StringComparison.OrdinalIgnoreCase)) is var i and >= 0 ? i : int.MaxValue)
             .ThenBy(x => ModuleGroups.Rank(x.Descriptor!.Group)).ThenBy(x => x.Descriptor!.Order);

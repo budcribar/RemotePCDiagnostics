@@ -282,10 +282,12 @@ else if (report is not null)
         _ => "dot dot-neutral",
     };
 
-    private static string OfflineStatus(OfflineMemoryState s) => s.Phase switch
+    private bool NoAgent => RemotePCDiagnostics.Core.Session.AgentShopPillState.NoAgent(Services)();
+
+    private string OfflineStatus(OfflineMemoryState s) => s.Phase switch
     {
         OfflineMemoryPhase.Loading => "",
-        OfflineMemoryPhase.NeedsAgent => "Needs the Agent: scheduling the boot test needs administrator rights, which this app gets only through the Agent." + (s.Error is { Length: > 0 } e ? $" ({e})" : ""),
+        OfflineMemoryPhase.NeedsAgent => NoAgent ? "" : "Needs the Agent: scheduling the boot test needs administrator rights, which this app gets only through the Agent." + (s.Error is { Length: > 0 } e ? $" ({e})" : ""),
         OfflineMemoryPhase.Unavailable => "The boot memory test can't be scheduled on this PC: " + s.Error,
         OfflineMemoryPhase.Scheduled => $"Set to run the next time Windows restarts ({MixText(s.Agent?.Mix)}).",
         OfflineMemoryPhase.Restarting => $"The PC is restarting into the {MixText(s.Agent?.Mix)}.",

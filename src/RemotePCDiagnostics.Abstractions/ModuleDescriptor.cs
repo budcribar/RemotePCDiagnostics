@@ -53,6 +53,9 @@ public sealed record ModuleDescriptor(Guid Id, string Slug, string DisplayName, 
     /// <summary>The route of the module's own top-level page (the security audit), when it isn't listed on Checks or Stress tests.</summary>
     public string? Page { get; init; }
 
+    /// <summary>True when the module cannot do useful work without the elevated Agent (omitted when no Agent is installed, e.g. Store edition).</summary>
+    public bool RequiresAgent { get; init; }
+
     /// <summary>Listed on the Stress tests page: stress tests and on-demand tests without a page of their own.</summary>
     public bool OnStressPage => Kind != ModuleKind.Check && Page is null;
 }

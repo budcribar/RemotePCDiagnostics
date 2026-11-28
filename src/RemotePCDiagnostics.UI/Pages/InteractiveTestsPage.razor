@@ -368,14 +368,14 @@
                         </div>
                     </div>
 
-                    @* Battery drain & runtime: unplug the charger, then RPCD drains the battery for hours. Never part of Run selected. *@
-                    @{
+                    @* Battery drain & runtime: unplug the charger, then RPCD drains the battery for hours. Requires the Agent, so omitted on Store without Agent. *@
+                    @if (!App.NoAgent)
+                    {
                         var bdIsSel = _selectedTestId == "batterydrain";
                         var bdChip = OutcomeChip(bdResult.Status);
                         var bdLabel = OutcomeLabel(bdResult.Status);
                         var bdSummary = bdRunning ? bdModule?.Live?.Message ?? bdResult.Message
                             : bdResult.Status == DiagnosticStatus.NotRun ? "Unplug the charger; measures what the battery really delivers (1 to 4 hours)" : bdResult.Message;
-                    }
                     <div class="ct-row @(bdIsSel ? "selected" : "") @(bdRunning ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(bdIsSel ? "true" : "false")"
                          data-testid="interactive-row-batterydrain" @onclick='() => SelectTest("batterydrain")'>
                         <button class="ct-check" role="checkbox" aria-checked="false" disabled
@@ -390,6 +390,7 @@
                             <span class="chip chip-@(bdRunning ? "run" : bdChip)" data-testid="interactive-status-batterydrain">@bdLabel</span>
                         </div>
                     </div>
+                    }
 
                     @* 7. Sensor test: tilt, cover the light sensor, presence *@
                     @{

@@ -91,7 +91,7 @@
 
     <div class="bench-step @(stepIndex == 3 ? "is-active" : "is-todo")" data-testid="bench-step-results">
         <span class="bench-step-dot">4</span>
-        <span class="bench-step-text"><strong>Results</strong><span class="meta">Save, undo, or upload</span></span>
+        <span class="bench-step-text"><strong>Results</strong><span class="meta">@(Uploader.CanUpload || _isRemoteDisplay ? "Save, undo, or upload" : "Save or undo")</span></span>
     </div>
 </nav>
 

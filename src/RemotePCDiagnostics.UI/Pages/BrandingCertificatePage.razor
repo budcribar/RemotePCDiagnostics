@@ -300,7 +300,7 @@ else if (waitingFor is { Length: > 0 })
     }
     @if ((_savedCertPath ?? ActiveBenchQa.LastSavedCertificatePath) is { } shownCertPath)
     {
-        <p class="meta" data-testid="qa-saved-path">Saved: @shownCertPath (upload on your Admin portal to brand &amp; host, or press Ctrl+P in a browser to print).</p>
+        <p class="meta" data-testid="qa-saved-path">Saved: @shownCertPath (@(_isRemoteDisplay ? "upload on your Admin portal to brand & host, or press Ctrl+P in a browser to print" : "press Ctrl+P in a browser to print")).</p>
     }
     else if (_saveError is not null)
     {
