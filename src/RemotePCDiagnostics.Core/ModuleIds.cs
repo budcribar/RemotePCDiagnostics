@@ -73,6 +73,10 @@ public static class ModuleIds
     public static readonly Guid Sound = new("56dea360-0bd7-4230-b072-0d54d91e90e4");
     /// <summary>Slug <c>SoundCheck</c>.</summary>
     public static readonly Guid SoundCheck = new("b81b0a57-43d2-4ad4-8572-1480fbe6cf0f");
+    /// <summary>Slug <c>WifiConnect</c>.</summary>
+    public static readonly Guid WifiConnect = new("3f0c2b8e-5d71-4a9e-b6c4-2e8d9a7f1c35");
+    /// <summary>Slug <c>EthernetPort</c>.</summary>
+    public static readonly Guid EthernetPort = new("6f2cda7d-0f7b-456c-a0dc-dedd9582c069");
     /// <summary>Slug <c>ChargerReplug</c>.</summary>
     public static readonly Guid ChargerReplug = new("6e740559-6220-4ea6-b09b-303928f1982f");
     /// <summary>Slug <c>WindowsMaintenance</c>.</summary>
@@ -115,6 +119,8 @@ public static class ModuleIds
         [Sound] = ModuleSlugs.Sound,
         [WindowsMaintenance] = ModuleSlugs.WindowsMaintenance,
         [SoundCheck] = ModuleSlugs.SoundCheck,
+        [WifiConnect] = ModuleSlugs.WifiConnect,
+        [EthernetPort] = ModuleSlugs.EthernetPort,
         [ChargerReplug] = ModuleSlugs.ChargerReplug,
     };
 
@@ -166,6 +172,10 @@ public static class ModuleSlugs
     public const string WindowsMaintenance = "WindowsMaintenance";
     /// <summary>The interactive left/right test sound and the "Can't hear sound" helper (Interactive tests page).</summary>
     public const string SoundCheck = "SoundCheck";
+    /// <summary>The interactive Wi-Fi connect, ping and restore test (Interactive tests page).</summary>
+    public const string WifiConnect = "WifiConnect";
+    /// <summary>The interactive wired port test: cable to the network, or a loopback plug (Interactive tests page).</summary>
+    public const string EthernetPort = "EthernetPort";
     /// <summary>The interactive charger unplug and replug test (Interactive tests page).</summary>
     public const string ChargerReplug = "ChargerReplug";
 }
