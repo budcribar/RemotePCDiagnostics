@@ -486,12 +486,20 @@ public class DashboardUiPolishTests : BunitContext
         DiagnosticResult Result(bool reviewed) =>
             new DiagnosticResult<AreaReport>(ModuleSlugs.Crashes, DiagnosticStatus.Warning, "1 crash", DateTimeOffset.Now, Report(reviewed));
         var refreshes = new List<TaskCompletionSource<DiagnosticResult>>();
+        var started = new SemaphoreSlim(0);
         var crashMod = new FakeModule(ModuleSlugs.Crashes, _ =>
         {
             var gate = new TaskCompletionSource<DiagnosticResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             lock (refreshes) refreshes.Add(gate);
+            started.Release();
             return gate.Task;
         });
+        // A refresh starting doesn't render anything, and WaitForAssertion only checks again on a render, so wait for the module itself.
+        void WaitForRefreshes(int count)
+        {
+            Assert.True(started.Wait(TimeSpan.FromSeconds(10)), $"Refresh {count} never started.");
+            lock (refreshes) Assert.Equal(count, refreshes.Count);
+        }
         RegisterDashboardServices(store, crashMod);
         store.Set(Result(reviewed: false));
 
@@ -505,7 +513,7 @@ public class DashboardUiPolishTests : BunitContext
             // The check's refresh (which reads every event log again) hasn't finished, and the row has already moved.
             Assert.Empty(cut.FindAll("[data-testid='area-drawer-crashes'] tr.row-expandable"));
             Assert.Equal("Show reviewed", cut.Find("[data-testid='area-show-reviewed']").TextContent.Trim());
-            cut.WaitForAssertion(() => Assert.Single(refreshes));
+            WaitForRefreshes(1);
             refreshes[0].SetResult(Result(reviewed: true));
             var diagnostics = Services.GetRequiredService<DiagnosticsService>();
             cut.WaitForAssertion(() => Assert.False(diagnostics.IsRunning(ModuleSlugs.Crashes)));
@@ -520,7 +528,7 @@ public class DashboardUiPolishTests : BunitContext
 
             Assert.Empty(cut.FindAll("[data-testid='area-show-reviewed']"));
             Assert.Single(cut.FindAll("[data-testid='area-drawer-crashes'] tr.row-expandable"));
-            cut.WaitForAssertion(() => Assert.Equal(2, refreshes.Count));
+            WaitForRefreshes(2);
             refreshes[1].SetResult(Result(reviewed: false));
             cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='area-drawer-crashes'] tr.row-expandable")));
         }
