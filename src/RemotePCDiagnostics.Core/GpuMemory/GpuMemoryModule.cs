@@ -8,15 +8,16 @@ namespace RemotePCDiagnostics.Core.GpuMemory;
 /// <summary>
 /// Graphics memory (VRAM) test: writes and checks patterns in each graphics chip's memory with a compute shader, Quick (walking ones and
 /// zeros, address in address, random, about 1.5 minutes per chip) or Extended (those plus moving inversions, repeated for about 10 minutes
-/// per chip). One card per graphics chip, tested one after the other. An on-demand scan: never part of Run all, cancelled with Cancel.
-/// It runs in the app (no administrator rights) and offscreen, so it works from a remote session.
+/// per chip). One card per graphics chip, tested one after the other. Never part of Run all; cancelled with Cancel. It is a stress test
+/// too: the stress suite runs it after the GPU stress test, Quick in the short run and Extended in the long run, with the suite's time per
+/// test shared by the chips. It runs in the app (no administrator rights) and offscreen, so it works from a remote session.
 /// </summary>
 public sealed class GpuMemoryModule(
     IGpuMemorySource source,
     ISensorProvider? sensors = null,
     ILogger? log = null,
     Func<IStressClock>? clockFactory = null,
-    GpuMemoryOptions? options = null) : AreaModuleBase(log), IDiagnosticModule, ICancellableScan // relisted so IncludeInRunAll below reimplements it
+    GpuMemoryOptions? options = null) : AreaModuleBase(log), IDiagnosticModule, ICancellableScan, IStressSuiteModule // IDiagnosticModule relisted so IncludeInRunAll below reimplements it
 {
     public const string ModuleName = ModuleSlugs.GpuMemory;
     private readonly object _scanGate = new();
@@ -30,6 +31,43 @@ public sealed class GpuMemoryModule(
 
     /// <summary>Quick or Extended. Set before the run starts.</summary>
     public GpuMemoryMode Mode { get; set; } = GpuMemoryMode.Quick;
+
+    private TimeSpan? _suiteTime;
+
+    /// <summary>How long the whole run takes. Started on its own, each chip gets the mode's full time (Quick 1.5 min, Extended 10 min);
+    /// the stress suite sets it to its time per test, and the chips share it (never under <see cref="MinPerChip"/> each).</summary>
+    public TimeSpan Duration
+    {
+        get => _suiteTime ?? PerChip(null) * Math.Max(1, LastAdapters?.Count ?? 1);
+        set => _suiteTime = value;
+    }
+
+    /// <summary>The shortest time a chip gets when the suite's time is shared: enough for at least one pass of every quick pattern.</summary>
+    public static readonly TimeSpan MinPerChip = TimeSpan.FromSeconds(30);
+
+    private TimeSpan PerChip(int? chips) =>
+        _suiteTime is { } total && chips is > 0 ? TimeSpan.FromTicks(Math.Max(MinPerChip.Ticks, total.Ticks / chips.Value))
+        : options?.Duration ?? GpuMemoryOptions.DefaultDuration(Mode);
+
+    // ---- The stress suite ----------------------------------------------------------------------------------------------
+
+    public string SuiteName => "Graphics memory";
+    public void Stop() => Cancel();
+    public object SaveSuiteSettings() => (Mode, _suiteTime);
+    public void RestoreSuiteSettings(object saved) { if (saved is ValueTuple<GpuMemoryMode, TimeSpan?> s) { Mode = s.Item1; _suiteTime = s.Item2; } }
+
+    /// <summary>Quick in the short run, Extended in the long run, for the suite's time per test.</summary>
+    public void ApplySuiteMode(StressSuiteMode mode)
+    {
+        Mode = mode == StressSuiteMode.Extended ? GpuMemoryMode.Extended : GpuMemoryMode.Quick;
+        _suiteTime = StressSuiteDurations.PerTest(mode);
+    }
+
+    public bool IsUnavailableResult(DiagnosticResult result) => result.Report() is AreaReport { NotOnThisPc: true };
+    public bool IsOverheatedResult(DiagnosticResult result) =>
+        result.Report() is AreaReport && LastResults is { } rs && rs.Any(r => r.Outcome == GpuMemoryOutcome.Overheated);
+    public bool IsCouldNotRunResult(DiagnosticResult result) => result.Report() is AreaReport { CouldNotRunReason: not null } or Exception;
+    public bool IsStoppedByUserResult(DiagnosticResult result) => result.Cancelled || result.Report() is AreaReport { Cancelled: true };
 
     /// <summary>The graphics chips as last listed (the page's preview, and each run). Null before the first read.</summary>
     public IReadOnlyList<GpuMemoryAdapter>? LastAdapters { get; private set; }
@@ -68,6 +106,7 @@ public sealed class GpuMemoryModule(
         LastResults = null;
         if (adapters.Count == 0)
             return new AreaReport([], "Not supported: Windows made no graphics chip available to this app (Basic Render Driver or Remote Desktop only)", DiagnosticStatus.Warning) { NotOnThisPc = true };
+        if (_suiteTime is not null) opts = opts with { Duration = PerChip(adapters.Count) };
 
         using var scan = CancellationTokenSource.CreateLinkedTokenSource(ct);
         lock (_scanGate) _scan = scan;
