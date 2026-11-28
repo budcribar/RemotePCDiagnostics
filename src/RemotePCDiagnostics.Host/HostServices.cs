@@ -102,6 +102,10 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IDefenderConfig>(sp => sp.GetRequiredService<IMemorySystem>());
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IAppManagementSystem>(sp => sp.GetRequiredService<IMemorySystem>());
         // Last retrim per SSD volume: Windows' Defrag event 258 plus this app's own record (retrim.json), so Drive health only offers it when needed.
+        // Drive self-test: every request goes to the Agent (raw disk access). Registered here so RPCD_LOG / RPCD_REPLAY can record and replay it.
+        services.AddSingleton<RemotePCDiagnostics.Core.Storage.IDriveSelfTestSource>(sp => new RemotePCDiagnostics.Core.Storage.AgentDriveSelfTestSource(sp.GetRequiredService<SystemCommandRunner>()));
+        // Windows boot memory test: every request goes to the Agent (bcdedit). Registered here so RPCD_LOG / RPCD_REPLAY can record and replay it.
+        services.AddSingleton<RemotePCDiagnostics.Core.Stress.IMemoryDiagnosticSource>(sp => new RemotePCDiagnostics.Core.Stress.AgentMemoryDiagnosticSource(sp.GetRequiredService<SystemCommandRunner>()));
         services.AddSingleton(_ => new RetrimLog(RetrimLog.DefaultPath(), L<RetrimLog>()));
         services.AddSingleton<IRetrimHistory>(sp => new RetrimHistory(sp.GetRequiredService<RetrimLog>(), new WindowsRetrimEvents(L<WindowsRetrimEvents>()), L<RetrimHistory>()));
         services.AddSingleton<RemotePCDiagnostics.Core.Areas.IDriveHealthHistoryStore>(_ => new RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore(RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore.DefaultPath(), L<RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore>()));
@@ -125,11 +129,19 @@ public static class HostServices
             sp.GetRequiredService<IMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(), L<UndoService>(), logEvent));
         // Audio tests (speaker→mic, mic→speaker): on-demand only, own pages, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioIo>(_ => new WasapiAudioIo(L<WasapiAudioIo>()));
+        // The Wi-Fi connect test changes the app's own Wi-Fi connection and reads the Interactive tests page's picks, so it runs in the app.
+        services.AddSingleton<RemotePCDiagnostics.Core.Areas.IWifiConnector>(_ => new RemotePCDiagnostics.Core.Areas.WlanConnector());
+        // The Ethernet port test reads the Interactive tests page's picks (port, cable or loopback plug), so it runs in the app.
+        services.AddSingleton<RemotePCDiagnostics.Core.Areas.IEthernetPortIo>(_ => new RemotePCDiagnostics.Core.Areas.SystemEthernetPortIo());
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(_ => new WasapiAudioStateSource(L<WasapiAudioStateSource>()));
+        // Disk surface scan: the Agent reads the raw disk (admin); the app only asks it to start, report and stop.
+        services.AddSingleton<RemotePCDiagnostics.Core.Storage.IDiskScanSource>(sp => new RemotePCDiagnostics.Core.Storage.AgentDiskScanSource(sp.GetRequiredService<SystemCommandRunner>()));
         // NPU test: on-demand only, own page, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(L<WindowsNpuIo>()));
         // GPU stress test: Direct3D 11 compute devices.
         services.AddSingleton<IGpuDeviceFactory>(_ => new RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory(L<RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory>()));
+        // Graphics memory (VRAM) test: Direct3D 11 compute over the graphics chips' memory. Registered here so RPCD_LOG / RPCD_REPLAY can record and replay it.
+        services.AddSingleton<RemotePCDiagnostics.Core.GpuMemory.IGpuMemorySource>(_ => new RemotePCDiagnostics.Host.Gpu.D3D11GpuMemorySource(L<RemotePCDiagnostics.Host.Gpu.D3D11GpuMemorySource>()));
         // Webcam test: cameras through Windows MediaCapture (a preview window only at the PC itself).
         services.AddSingleton<RemotePCDiagnostics.Core.Webcam.IWebcamIo>(_ => new MediaCaptureWebcamIo(L<MediaCaptureWebcamIo>(), showPreview: session.Mode == SessionMode.Local));
         // Vendor-independent BIOS update orchestrator, probes, and all 9 built-in vendor providers (additional providers register via AddBiosUpdateProvider<T>).

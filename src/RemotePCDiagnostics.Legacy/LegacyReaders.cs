@@ -12,7 +12,8 @@ public static class LegacyReaders
     /// <summary>Replaces the Agent-only readers (battery, drives, hardware, services, drivers, programs, security essentials, resource hogs, crash dumps) with Agent-or-legacy ones.</summary>
     public static IServiceCollection AddLegacyFallbacks(this IServiceCollection services) => services
         .AddSingleton<IBatteryPowerSource>(sp => new AgentOrFallbackBatteryPowerSource(sp.GetRequiredService<IElevatedCommandBridge>(),
-            new WmiBatteryPowerSource(sp.GetRequiredService<Core.DataSources.IWmiSource>()),
+            new WmiBatteryPowerSource(sp.GetRequiredService<Core.DataSources.IWmiSource>(),
+                events: new WindowsEventLog(sp.GetRequiredService<SystemCommandRunner>(), moduleName: ModuleSlugs.BatteryPower)),
             new OsqueryBatteryPowerSource(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>())))
         .AddSingleton<IDriveSource>(sp => new AgentOrFallbackDriveSource(sp.GetRequiredService<IElevatedCommandBridge>(),
             new WmiDriveSource(sp.GetRequiredService<Core.DataSources.IWmiSource>()),
@@ -72,6 +73,10 @@ public sealed class OsqueryBatteryPowerSource(OsqueryRunner osquery, SystemComma
         var pr = await commands.RunAsync(PowerCfg, ["/getactivescheme"], ct).ConfigureAwait(false);
         return pr is { ExitCode: 0 } ? ParsePowerPlan(pr.StdOut) : null;
     }
+
+    /// <summary>The charger's power events only: its devices are read through the Agent's WMI, so without the Agent they say "Needs the Agent".</summary>
+    public async Task<ChargerReading?> ReadChargerAsync(CancellationToken ct) =>
+        await ChargerCheck.ReadAsync(null, commands is null ? null : new WindowsEventLog(commands, moduleName: ModuleSlugs.BatteryPower), ct).ConfigureAwait(false);
 
     public static string? ParsePowerPlan(string? stdout)
     {

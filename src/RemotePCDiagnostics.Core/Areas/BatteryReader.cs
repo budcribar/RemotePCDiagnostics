@@ -13,6 +13,14 @@ public static class BatteryReader
     public const string FullChargeSql = "SELECT InstanceName, FullChargedCapacity FROM BatteryFullChargedCapacity";
     public const string CycleCountSql = "SELECT InstanceName, CycleCount FROM BatteryCycleCount";
     public const string StatusSql = "SELECT InstanceName, PowerOnline, Charging, Discharging, RemainingCapacity, DischargeRate, ChargeRate FROM BatteryStatus";
+    // Condition details, asked separately so the four questions above stay as recorded PCs answered them. Each one may be missing.
+    public const string StatusDetailSql = "SELECT InstanceName, Voltage, Critical FROM BatteryStatus";
+    public const string IdentitySql = "SELECT InstanceName, SerialNumber, ManufactureDate FROM BatteryStaticData";
+    public const string TemperatureSql = "SELECT InstanceName, Temperature FROM BatteryTemperature";
+    public const string Win32Namespace = @"root\cimv2";
+    public const string Win32Sql = "SELECT DeviceID, DesignVoltage, EstimatedChargeRemaining, Status FROM Win32_Battery";
+    /// <summary>Lenovo's battery information (asked only on a Lenovo; it answers only an administrator, so the Agent).</summary>
+    public const string LenovoSql = "SELECT InstanceName, CurrentSetting FROM Lenovo_BatteryInformation";
     public const string ProcessorPerformanceNamespace = @"root\cimv2";
     public const string ProcessorPerformanceSql = "SELECT Name, PercentPerformanceLimit, PercentofMaximumFrequency FROM Win32_PerfFormattedData_Counters_ProcessorInformation WHERE Name = '_Total'";
 
@@ -24,7 +32,11 @@ public static class BatteryReader
     /// <summary>What a battery driver reports for a charge/discharge rate it doesn't know (BATTERY_UNKNOWN_RATE).</summary>
     public const long UnknownRate = 0x80000000;
 
-    public static async Task<IReadOnlyList<BatteryStatus>?> ReadWmiAsync(IWmiSource wmi, CancellationToken ct)
+    public static async Task<IReadOnlyList<BatteryStatus>?> ReadWmiAsync(IWmiSource wmi, CancellationToken ct) =>
+        await ReadWmiAsync(wmi, isLenovo: false, ct).ConfigureAwait(false);
+
+    /// <param name="isLenovo">Also ask Lenovo's battery information class.</param>
+    public static async Task<IReadOnlyList<BatteryStatus>?> ReadWmiAsync(IWmiSource wmi, bool isLenovo, CancellationToken ct)
     {
         var stat = await wmi.QueryAsync(WmiNamespace, StaticSql, ct).ConfigureAwait(false);
         // A PC without a battery has no instances of these classes: WMI answers "Not supported" rather than an empty list.
@@ -32,10 +44,16 @@ public static class BatteryReader
         var full = await wmi.QueryAsync(WmiNamespace, FullChargeSql, ct).ConfigureAwait(false);
         var cycles = await wmi.QueryAsync(WmiNamespace, CycleCountSql, ct).ConfigureAwait(false);
         var status = await wmi.QueryAsync(WmiNamespace, StatusSql, ct).ConfigureAwait(false);
+        var detail = await wmi.QueryAsync(WmiNamespace, StatusDetailSql, ct).ConfigureAwait(false);
+        var identity = await wmi.QueryAsync(WmiNamespace, IdentitySql, ct).ConfigureAwait(false);
+        var temperature = await wmi.QueryAsync(WmiNamespace, TemperatureSql, ct).ConfigureAwait(false);
+        var win32 = await wmi.QueryAsync(Win32Namespace, Win32Sql, ct).ConfigureAwait(false);
+        var lenovo = isLenovo ? await wmi.QueryAsync(WmiNamespace, LenovoSql, ct).ConfigureAwait(false) : null;
 
         var list = new List<BatteryStatus>();
-        foreach (var s in stat.Rows!)
+        for (var index = 0; index < stat.Rows!.Count; index++)
         {
+            var s = stat.Rows[index];
             var caps = s.Long("Capabilities");
             if (caps is { } c && ((c & SystemBatteryFlag) == 0 || (c & ShortTermFlag) != 0)) continue;
             var name = s.Str("InstanceName");
@@ -45,13 +63,31 @@ public static class BatteryReader
             var max = Capacity(f?.Long("FullChargedCapacity"));
             var remaining = Capacity(st?.Long("RemainingCapacity"));
             var cycle = Match(cycles, name)?.Long("CycleCount");
+            var d = Match(detail, name);
+            var id = Match(identity, name);
+            // Win32_Battery has no instance name: matched by position (and so only when both list the same number of batteries).
+            var w = win32.Rows is { } wr && wr.Count == stat.Rows.Count ? wr[index] : null;
             list.Add(new(s.Str("DeviceName"), s.Str("ManufactureName"), Chemistry(s.Long("Chemistry")), State(st),
                 Percent(remaining, max), ToInt(design), ToInt(max), cycle is > 0 and <= 100_000 ? (int)cycle.Value : null,
                 PowerOnline: st?.Bool("PowerOnline"),
                 IsCharging: st?.Bool("Charging"),
                 IsDischarging: st?.Bool("Discharging"),
                 DischargeRateMw: RateMw(st?.Long("DischargeRate")),
-                ChargeRateMw: RateMw(st?.Long("ChargeRate"))));
+                ChargeRateMw: RateMw(st?.Long("ChargeRate")))
+            {
+                InstanceName = name,
+                RemainingMwh = ToInt(remaining),
+                ReportedFullChargeMwh = f?.Long("FullChargedCapacity"),
+                VoltageMv = Millivolts(d?.Long("Voltage")),
+                Critical = d?.Bool("Critical"),
+                DesignVoltageMv = Millivolts(w?.Long("DesignVoltage")),
+                WindowsPercent = w?.Long("EstimatedChargeRemaining") is >= 0 and <= 100 and var wp ? (int)wp : null,
+                DeviceStatus = w?.Str("Status").Trim() ?? "",
+                TemperatureC = Celsius(Match(temperature, name)?.Long("Temperature")),
+                SerialNumber = Clean(id?.Str("SerialNumber")),
+                ManufactureDate = Date(id?.Str("ManufactureDate")),
+                VendorDetail = Vendor(lenovo, name),
+            });
         }
         return list;
     }
@@ -82,6 +118,42 @@ public static class BatteryReader
 
     /// <summary>A charge/discharge rate in mW, or null when 0, negative, or BATTERY_UNKNOWN_RATE.</summary>
     public static int? RateMw(long? mW) => mW is > 0 and < UnknownRate and <= int.MaxValue ? (int)mW.Value : null;
+
+    /// <summary>A voltage in mV, or null when 0 or unknown (BATTERY_UNKNOWN_VOLTAGE is 0xFFFFFFFF).</summary>
+    public static int? Millivolts(long? mV) => mV is > 0 and < 100_000 ? (int)mV.Value : null;
+
+    /// <summary>BatteryTemperature is in tenths of a kelvin (as IOCTL_BATTERY_QUERY_INFORMATION's BatteryTemperature); null outside -40..150 °C.</summary>
+    public static double? Celsius(long? tenthsKelvin) =>
+        tenthsKelvin is > 0 && Math.Round(tenthsKelvin.Value / 10.0 - 273.15, 1) is var c && c is >= -40 and <= 150 ? c : null;
+
+    /// <summary>A CIM datetime ("20230115000000.000000-000") or a date string as yyyy-MM-dd; empty when unreadable.</summary>
+    public static string Date(string? value)
+    {
+        var v = (value ?? "").Trim();
+        if (v.Length >= 8 && v.Take(8).All(char.IsAsciiDigit)
+            && DateTime.TryParseExact(v[..8], "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var cim))
+            return cim.Year >= 1990 ? cim.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) : "";
+        return DateTime.TryParse(v, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal, out var dt) && dt.Year >= 1990
+            ? dt.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) : "";
+    }
+
+    private static string Clean(string? s)
+    {
+        var t = (s ?? "").Trim();
+        return t.Length is > 0 and <= 64 && !t.Any(char.IsControl) ? t : "";
+    }
+
+    /// <summary>Lenovo's CurrentSetting strings for this battery, as rows (what it holds varies by model, so it is shown as given).</summary>
+    private static IReadOnlyList<KeyValuePair<string, string>> Vendor(WmiQueryResult? lenovo, string instanceName)
+    {
+        if (lenovo?.Rows is not { Count: > 0 } rows) return [];
+        var mine = rows.Where(r => string.Equals(r.Str("InstanceName"), instanceName, StringComparison.OrdinalIgnoreCase)).ToList();
+        return (mine.Count > 0 ? mine : rows)
+            .Select(r => r.Str("CurrentSetting").Trim())
+            .Where(v => v.Length is > 0 and <= 200 && !v.Any(char.IsControl))
+            .Distinct().Take(8)
+            .Select(v => new KeyValuePair<string, string>("Lenovo battery information", v)).ToList();
+    }
 
     private static int? ToInt(long? v) => v is { } l ? (int)l : null;
 

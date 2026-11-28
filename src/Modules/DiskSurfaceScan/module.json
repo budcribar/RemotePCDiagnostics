@@ -1,0 +1,14 @@
+{
+  "id": "46272fdc-6e61-4e3b-bf6f-bec95e0be7eb",
+  "slug": "DiskSurfaceScan",
+  "displayName": "Disk surface scan",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.DiskSurfaceScan.DiskSurfaceScanPlugin",
+  // The raw disk reads need administrator: the Agent makes them (disk_read_scan); the app only starts, follows and stops the scan.
+  "needsAdmin": false,
+  "hasUi": true,
+  "outOfProcess": false,
+  "detailsReplaceReport": false,
+  // One run per physical disk.
+  "perDevice": true
+}
