@@ -288,21 +288,13 @@ else
                             var at = pos;
                             <label>
                                 @PositionName(at)
-                                @if (at == 0)
-                                {
-                                    <input inputmode="numeric" maxlength="3" autocomplete="off" data-testid="display-answer-@at"
-                                           @ref="_firstAnswerRef" value="@_typed[at]" @oninput="e => _typed[at] = e.Value?.ToString()" />
-                                }
-                                else
-                                {
-                                    <input inputmode="numeric" maxlength="3" autocomplete="off" data-testid="display-answer-@at"
-                                           value="@_typed[at]" @oninput="e => _typed[at] = e.Value?.ToString()" />
-                                }
+                                <input inputmode="numeric" maxlength="3" autocomplete="off" data-testid="display-answer-@at"
+                                       @ref="_answerRefs[at]" value="@_typed[at]" @oninput="e => OnAnswerInput(at, e.Value?.ToString())" />
                             </label>
                         }
                     </div>
                     <div class="display-qa-hud-actions" @onkeydown="OnNumbersActionKeyDown" @onkeydown:stopPropagation="true">
-                        <button type="button" class="btn-small btn-primary" data-testid="display-numbers-submit" @onclick="SubmitNumbers">Check numbers</button>
+                        <button type="button" class="btn-small btn-primary" data-testid="display-numbers-submit" @ref="_submitRef" @onclick="SubmitNumbers">Check numbers</button>
                         <button type="button" class="btn-small" data-testid="display-overlay-exit" @onclick="CloseDisplayOverlay">Exit</button>
                     </div>
                 </div>
@@ -328,8 +320,15 @@ else
                 <div class="display-qa-hud-sub">Click anywhere, Space, or → for next pattern · ← previous · Touch with multiple fingers · Esc to exit · After the last pattern, type the three color numbers</div>
                 <div class="display-qa-hud-actions">
                     <button type="button" class="btn-small" data-testid="display-overlay-prev" @onclick="PrevPattern">Prev</button>
-                    <button type="button" class="btn-small" data-testid="display-overlay-next" @onclick="NextPattern">Next</button>
-                    <button type="button" class="btn-small btn-primary" data-testid="display-overlay-numbers" @onclick="ShowNumbers">Color numbers</button>
+                    @if (_patternIndex >= Patterns.Length - 1)
+                    {
+                        @* The numbers come after every color, so this replaces Next only on the last pattern. *@
+                        <button type="button" class="btn-small btn-primary" data-testid="display-overlay-numbers" @onclick="ShowNumbers">Color numbers</button>
+                    }
+                    else
+                    {
+                        <button type="button" class="btn-small" data-testid="display-overlay-next" @onclick="NextPattern">Next</button>
+                    }
                     <button type="button" class="btn-small" data-testid="display-overlay-exit" @onclick="CloseDisplayOverlay">Exit</button>
                 </div>
             </div>
@@ -385,7 +384,10 @@ else
     private IReadOnlyList<int> _shown = [0, 0, 0];
     private int[] _order = [0, 1, 2];
     private readonly string?[] _typed = new string?[3];
-    private ElementReference _firstAnswerRef;
+    private readonly ElementReference[] _answerRefs = new ElementReference[3];
+    private ElementReference _submitRef;
+    // The answer box (0-2) to focus after the next render, or 3 for Check numbers; -1 for none.
+    private int _focusNext = -1;
     private bool _shouldFocusAnswer;
     private bool _blanking;
     private bool _askBlank;
@@ -501,7 +503,13 @@ else
         {
             _shouldFocusAnswer = false;
             _shouldFocusOverlay = false;
-            try { await _firstAnswerRef.FocusAsync(); } catch { }
+            try { await _answerRefs[0].FocusAsync(); } catch { }
+        }
+        if (_focusNext >= 0 && _displayOverlayOpen && _numbersStep)
+        {
+            var next = _focusNext;
+            _focusNext = -1;
+            try { await (next < _answerRefs.Length ? _answerRefs[next] : _submitRef).FocusAsync(); } catch { }
         }
         if (_shouldFocusOverlay && _displayOverlayOpen)
         {
@@ -768,6 +776,16 @@ else
         var shown = _shown;
         ActiveService.Update(s => s.WithScreen((ResultFor(s, screen) ?? new DisplayScreenResult(screen.Id, screen.Name, screen.Primary))
             with { ShownNumbers = shown, Answers = null, CheckedUtc = null }));
+    }
+
+    /// <summary>
+    /// Keeps what was typed in one box and, once it holds two digits (every number shown has two), moves on to the next box, or to
+    /// Check numbers after the last one.
+    /// </summary>
+    private void OnAnswerInput(int pos, string? value)
+    {
+        _typed[pos] = value;
+        if ((value ?? "").Count(char.IsAsciiDigit) >= 2) _focusNext = pos + 1;
     }
 
     /// <summary>Grades the typed numbers for this screen, then moves to the next screen or ends the run.</summary>

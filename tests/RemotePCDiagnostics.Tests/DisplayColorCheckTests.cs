@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Components;
 using System.Text.Json;
 using Bunit;
 using Microsoft.AspNetCore.Components.Web;
@@ -157,10 +158,61 @@ public class DisplayColorCheckTests : BunitContext
         return (card, qa, full);
     }
 
+    /// <summary>Steps through every color with Next, then opens the numbers with Color numbers (only offered on the last color).</summary>
+    private static void ToNumbers(IRenderedComponent<PhysicalBenchQaCard> card)
+    {
+        while (card.FindAll("[data-testid='display-overlay-numbers']").Count == 0)
+            card.Find("[data-testid='display-overlay-next']").Click();
+        card.Find("[data-testid='display-overlay-numbers']").Click();
+    }
+
+    [Fact]
+    public void Color_numbers_is_offered_only_on_the_last_color()
+    {
+        var (card, _, _) = RenderCard(new FakeScreens(Laptop));
+        card.Find("[data-testid='display-test-launch']").Click();
+        var nexts = 0;
+        while (card.FindAll("[data-testid='display-overlay-numbers']").Count == 0)
+        {
+            Assert.Equal("patterns", card.Find("[data-testid='display-test-overlay']").GetAttribute("data-step"));
+            card.Find("[data-testid='display-overlay-next']").Click();
+            nexts++;
+        }
+        Assert.Equal(5, nexts); // six colors: Next on the first five, Color numbers on the last
+        Assert.Contains("Pattern 6 of 6", card.Find(".display-qa-hud-title").TextContent);
+        Assert.Empty(card.FindAll("[data-testid='display-overlay-next']"));
+        card.Find("[data-testid='display-overlay-prev']").Click();
+        Assert.Empty(card.FindAll("[data-testid='display-overlay-numbers']"));
+    }
+
+    [Fact]
+    public void Two_digits_move_focus_to_the_next_box_then_to_Check_numbers()
+    {
+        var (card, _, _) = RenderCard(new FakeScreens(Laptop));
+        card.Find("[data-testid='display-test-launch']").Click();
+        ToNumbers(card);
+        // The component's own element references, so each focus call can be matched to the box it moved to.
+        var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        var boxes = (ElementReference[])typeof(PhysicalBenchQaCard).GetField("_answerRefs", flags)!.GetValue(card.Instance)!;
+        string Id(string testId) => testId == "display-numbers-submit"
+            ? ((ElementReference)typeof(PhysicalBenchQaCard).GetField("_submitRef", flags)!.GetValue(card.Instance)!).Id
+            : boxes[int.Parse(testId["display-answer-".Length..])].Id;
+        void Expect(string testId) => card.WaitForAssertion(() =>
+            Assert.Equal(Id(testId), ((ElementReference)JSInterop.Invocations.Last(i => i.Identifier == "Blazor._internal.domWrapper.focus").Arguments[0]!).Id));
+        Expect("display-answer-0");
+        card.Find("[data-testid='display-answer-0']").Input("4");
+        card.Find("[data-testid='display-answer-0']").Input("42");
+        Expect("display-answer-1");
+        card.Find("[data-testid='display-answer-1']").Input("17");
+        Expect("display-answer-2");
+        card.Find("[data-testid='display-answer-2']").Input("88");
+        Expect("display-numbers-submit");
+    }
+
     /// <summary>Steps through every pattern on the current screen, then types the numbers (wrong for <paramref name="wrong"/>).</summary>
     private static void PassScreen(IRenderedComponent<PhysicalBenchQaCard> card, string? wrong = null)
     {
-        card.Find("[data-testid='display-overlay-numbers']").Click();
+        ToNumbers(card);
         Assert.Equal("numbers", card.Find("[data-testid='display-test-overlay']").GetAttribute("data-step"));
         // Read each number by its position, as the person would.
         var numbers = card.FindAll(".display-qa-number").ToList();
@@ -219,7 +271,7 @@ public class DisplayColorCheckTests : BunitContext
     {
         var (card, qa, full) = RenderCard(new FakeScreens(Laptop));
         card.Find("[data-testid='display-test-launch']").Click();
-        card.Find("[data-testid='display-overlay-numbers']").Click();
+        ToNumbers(card);
         Assert.Equal(ColorCheckState.WaitingForAnswers, qa.Current.DisplayScreens![0].ColorCheck);
         card.Find("[data-testid='display-overlay-exit']").Click();
         Assert.Equal(ColorCheckState.NotRun, qa.Current.DisplayScreens![0].ColorCheck);
@@ -269,7 +321,7 @@ public class DisplayColorCheckTests : BunitContext
     {
         var (card, qa, full) = RenderCard(new FakeScreens(Laptop));
         card.Find("[data-testid='display-test-launch']").Click();
-        card.Find("[data-testid='display-overlay-numbers']").Click();
+        ToNumbers(card);
         Assert.Equal(ColorCheckState.WaitingForAnswers, qa.Current.DisplayScreens![0].ColorCheck);
 
         card.Instance.Dispose();
