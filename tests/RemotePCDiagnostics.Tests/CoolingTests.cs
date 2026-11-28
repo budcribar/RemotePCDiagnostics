@@ -39,6 +39,8 @@ public sealed class CoolingTests
             [CoolingModes.MakerKind] = (null, []),
         };
         public HashSet<string> Sticky { get; } = [];
+        /// <summary>The maker's profile follows the Windows power mode: Best performance makes it Performance, the others Balanced.</summary>
+        public bool Follow { get; set; }
         public List<string> Requests { get; } = [];
         public Action<string>? OnRequest { get; init; }
 
@@ -53,6 +55,8 @@ public sealed class CoolingTests
             if (NoAgent) return Task.FromResult(CoolingModesReply.Failed("The Agent isn't connected.", noAgent: true));
             if (args[0] == CoolingModesAction.Set && !Sticky.Contains(args[2]))
                 Modes[args[1]] = (args[2], Modes[args[1]].Options);
+            if (Follow && args[0] == CoolingModesAction.Set && args[1] == CoolingModes.WindowsKind)
+                Modes[CoolingModes.MakerKind] = (args[2] == WindowsPowerMode.BestPerformance.ToString() ? "0" : "1", Modes[CoolingModes.MakerKind].Options);
             if (args[0] == CoolingModesAction.Restore)
                 Modes[CoolingModes.WindowsKind] = (WindowsPowerMode.Balanced.ToString(), Modes[CoolingModes.WindowsKind].Options);
             var groups = Modes.Select(m => new CoolingModeGroup(m.Key, m.Key == CoolingModes.WindowsKind ? "Windows power mode" : "Maker thermal mode",
@@ -94,12 +98,12 @@ public sealed class CoolingTests
         Assert.Equal(AreaLevel.Ok, Card(r, CoolingJudge.IdleCard).Level);
         var fans = Card(r, CoolingJudge.FansCard);
         Assert.Equal(AreaLevel.Ok, fans.Level);
-        Assert.Contains("fans rose from 2,000 RPM to 4,000 RPM", fans.Headline);
-        Assert.Contains("leveled off at 75°C", fans.Headline);
+        Assert.Contains("fans rose from 2,000 RPM to 4,000 RPM", CoolingJudge.Verdict(fans));
+        Assert.Contains("leveled off at 75°C", CoolingJudge.Verdict(fans));
         Assert.Equal(AreaLevel.Neutral, Card(r, CoolingJudge.FanControlCard).Level);
         var modes = Card(r, CoolingJudge.ModesCard);
         Assert.Equal(AreaLevel.Ok, modes.Level);
-        Assert.Equal("Passed: 3 modes set and read back, then put back", modes.Headline);
+        Assert.Equal("Passed: 2 modes switched and read back, then put back", CoolingJudge.Verdict(modes));
         Assert.Equal(CoolingModesAction.Restore, pc.Requests[^1]);
         Assert.Equal(1, load.Started);
         Assert.Equal(1, load.Stopped);
@@ -119,10 +123,10 @@ public sealed class CoolingTests
         var r = await Run(m);
         var idle = Card(r, CoolingJudge.IdleCard);
         Assert.Equal(AreaLevel.Error, idle.Level);
-        Assert.StartsWith("Hot at low load: above 90°C", idle.Headline);
+        Assert.StartsWith("Hot at low load: above 90°C", CoolingJudge.Verdict(idle));
         Assert.Contains("Tj max 100°C reported by the CPU", idle.Meta);
         Assert.Equal(DiagnosticStatus.Error, r.Status);
-        Assert.Equal(idle.Headline, r.Summary);
+        Assert.Equal(CoolingJudge.Verdict(idle), r.Summary);
     }
 
     [Fact]
@@ -132,7 +136,7 @@ public sealed class CoolingTests
         var (m, _, _) = Make((i, loaded) => loaded ? new(95, null, 99, 5000, 1) : new(93, null, 80, 3000, 1));
         var idle = Card(await Run(m), CoolingJudge.IdleCard);
         Assert.Equal(AreaLevel.Warning, idle.Level);
-        Assert.Contains("stayed busy", idle.Headline);
+        Assert.Contains("stayed busy", CoolingJudge.Verdict(idle));
     }
 
     [Fact]
@@ -153,7 +157,7 @@ public sealed class CoolingTests
         var (m, _, _) = Make((i, loaded) => loaded ? new(Math.Min(85, 45 + i), null, 99, 2050, 1) : new(45, null, 5, 2000, 1));
         var fans = Card(await Run(m), CoolingJudge.FansCard);
         Assert.Equal(AreaLevel.Error, fans.Level);
-        Assert.StartsWith("Fan not responding: it stayed at about 2,050 RPM while the CPU heated from 45°C to 85°C", fans.Headline);
+        Assert.StartsWith("Fan not responding: it stayed at about 2,050 RPM while the CPU heated from 45°C to 85°C", CoolingJudge.Verdict(fans));
     }
 
     [Fact]
@@ -162,7 +166,7 @@ public sealed class CoolingTests
         var (m, _, _) = Make((i, loaded) => loaded ? new(Math.Min(85, 45 + i), null, 99, 0, 1) : new(45, null, 5, 0, 1));
         var fans = Card(await Run(m), CoolingJudge.FansCard);
         Assert.Equal(AreaLevel.Error, fans.Level);
-        Assert.StartsWith("Fan not responding: it read 0 RPM the whole time", fans.Headline);
+        Assert.StartsWith("Fan not responding: it read 0 RPM the whole time", CoolingJudge.Verdict(fans));
     }
 
     [Fact]
@@ -171,18 +175,18 @@ public sealed class CoolingTests
         var (m, _, _) = Make((i, loaded) => loaded ? new(Math.Min(70, 40 + i), null, 99, i > 10 ? 3200 : 0, 1) : new(40, null, 3, 0, 1));
         var fans = Card(await Run(m), CoolingJudge.FansCard);
         Assert.Equal(AreaLevel.Ok, fans.Level);
-        Assert.Contains("fans started and reached 3,200 RPM", fans.Headline);
+        Assert.Contains("fans started and reached 3,200 RPM", CoolingJudge.Verdict(fans));
     }
 
     [Fact]
-    public async Task No_fan_readings_is_a_warning()
+    public async Task No_fan_readings_is_not_supported_not_a_warning()
     {
         var (m, _, _) = Make((i, loaded) => loaded ? new(Math.Min(70, 40 + i), null, 99, null) : new(40, null, 3, null));
         var r = await Run(m);
         var fans = Card(r, CoolingJudge.FansCard);
-        Assert.Equal(AreaLevel.Warning, fans.Level);
-        Assert.StartsWith("No fan readings", fans.Headline);
-        Assert.Equal(DiagnosticStatus.Warning, r.Status);
+        Assert.Equal(AreaLevel.Neutral, fans.Level);
+        Assert.StartsWith("No fan readings", CoolingJudge.Verdict(fans));
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
     }
 
     [Fact]
@@ -191,7 +195,7 @@ public sealed class CoolingTests
         var (m, _, _) = Make((i, loaded) => loaded ? new(45 + i * 0.4, null, 99, 4500, 1) : new(45, null, 5, 2000, 1));
         var fans = Card(await Run(m), CoolingJudge.FansCard);
         Assert.Equal(AreaLevel.Warning, fans.Level);
-        Assert.Contains("still heating at the end of the load", fans.Headline);
+        Assert.StartsWith("Still heating:", CoolingJudge.Verdict(fans));
     }
 
     [Fact]
@@ -201,23 +205,61 @@ public sealed class CoolingTests
         var r = await Run(m);
         var fans = Card(r, CoolingJudge.FansCard);
         Assert.Equal(AreaLevel.Warning, fans.Level);
-        Assert.Contains("the load was stopped early", fans.Headline);
+        Assert.Contains("the load was stopped early", CoolingJudge.Verdict(fans));
         Assert.Equal(1, load.Stopped);
         // 60 + 2i >= 97 at the 19th loaded sample: far fewer than 90.
         Assert.True(m.LiveSamples.Count(s => s.Phase == CoolingRules.Load) < 25);
     }
 
     [Fact]
-    public async Task A_mode_that_doesnt_read_back_fails_profile_wont_set_and_the_rest_are_still_put_back()
+    public async Task A_mode_that_doesnt_read_back_warns_profile_wont_set_and_the_rest_are_still_put_back()
     {
         var (m, pc, _) = Make(Healthy);
         pc.Sticky.Add(WindowsPowerMode.BestPerformance.ToString());
         var r = await Run(m);
         var modes = Card(r, CoolingJudge.ModesCard);
-        Assert.Equal(AreaLevel.Error, modes.Level);
-        Assert.StartsWith("Profile won't set: Best performance (reads Balanced)", modes.Headline);
-        Assert.Equal(DiagnosticStatus.Error, r.Status);
+        // A setting that won't switch isn't a cooling fault: a warning, never Critical.
+        Assert.Equal(AreaLevel.Warning, modes.Level);
+        Assert.StartsWith("Profile won't set: Best performance (reads Balanced)", CoolingJudge.Verdict(modes));
+        Assert.Equal(DiagnosticStatus.Warning, r.Status);
         Assert.Equal(CoolingModesAction.Restore, pc.Requests[^1]);
+    }
+
+    /// <summary>VH1 (HP OmniBook X): Windows modes switch, but the HP profile reads Performance whatever is set.</summary>
+    [Fact]
+    public async Task A_maker_profile_that_reads_the_same_whatever_is_set_is_not_switchable_here_not_a_failure()
+    {
+        var (m, pc, _) = Make(Healthy);
+        pc.Modes[CoolingModes.MakerKind] = ("0", [.. HpThermalProfileSetting.Profiles]);
+        pc.Sticky.UnionWith(["1", "2", "3"]);
+        var r = await Run(m);
+        var modes = Card(r, CoolingJudge.ModesCard);
+        Assert.Equal(AreaLevel.Ok, modes.Level);
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+        Assert.Contains("Not switchable here: Maker thermal mode stays at Performance", modes.Meta);
+        Assert.DoesNotContain(modes.Rows, row => row.Level is AreaLevel.Error or AreaLevel.Warning);
+        // Windows goes to Balanced before the maker's profile is tried, so Best performance can't hold it.
+        var makerFirst = pc.Requests.FindIndex(q => q.StartsWith("set maker", StringComparison.Ordinal));
+        Assert.Equal($"set windows {WindowsPowerMode.Balanced}", pc.Requests[makerFirst - 1]);
+
+        // With no Windows modes to switch either, the card says the profile isn't switchable here.
+        var (m2, pc2, _) = Make(Healthy);
+        pc2.Modes[CoolingModes.WindowsKind] = (null, []);
+        pc2.Modes[CoolingModes.MakerKind] = ("0", [.. HpThermalProfileSetting.Profiles]);
+        pc2.Sticky.UnionWith(["1", "2", "3"]);
+        var modes2 = Card(await Run(m2), CoolingJudge.ModesCard);
+        Assert.Equal(AreaLevel.Neutral, modes2.Level);
+        Assert.Equal("Not switchable here", modes2.Headline);
+    }
+
+    [Fact]
+    public async Task A_maker_profile_that_follows_the_windows_power_mode_is_noted()
+    {
+        var (m, pc, _) = Make(Healthy, onRequest: null);
+        pc.Modes[CoolingModes.MakerKind] = ("1", [.. HpThermalProfileSetting.Profiles]);
+        pc.Follow = true;
+        var modes = Card(await Run(m), CoolingJudge.ModesCard);
+        Assert.Contains("follows that setting", modes.Note);
     }
 
     [Fact]
@@ -227,7 +269,7 @@ public sealed class CoolingTests
         var r = await Run(m);
         var modes = Card(r, CoolingJudge.ModesCard);
         Assert.Equal(AreaLevel.Neutral, modes.Level);
-        Assert.StartsWith("Skipped: Needs the Agent", modes.Headline);
+        Assert.StartsWith("Skipped: Needs the Agent", CoolingJudge.Verdict(modes));
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
         Assert.Equal([CoolingModesAction.List], pc.Requests);
     }
@@ -286,7 +328,7 @@ public sealed class CoolingTests
         var (m, _, _) = Make((i, loaded) => loaded ? new(Math.Min(45, 38 + i * 0.5), null, 99, 0, 1) : new(38, null, 5, 0, 1));
         var fans = Card(await Run(m), CoolingJudge.FansCard);
         Assert.Equal(AreaLevel.Ok, fans.Level);
-        Assert.DoesNotContain("Fan not responding", fans.Headline);
+        Assert.DoesNotContain("Fan not responding", CoolingJudge.Verdict(fans));
     }
 
     [Fact]
@@ -295,7 +337,7 @@ public sealed class CoolingTests
         var (m, _, _) = Make((i, loaded) => loaded ? new(Math.Min(75, 45 + i), null, 99, 3200, 1) : new(45, null, 5, null, 0));
         var fans = Card(await Run(m), CoolingJudge.FansCard);
         Assert.Equal(AreaLevel.Warning, fans.Level);
-        Assert.DoesNotContain("Fan not responding", fans.Headline);
+        Assert.DoesNotContain("Fan not responding", CoolingJudge.Verdict(fans));
     }
 
     [Fact]
@@ -392,6 +434,34 @@ public sealed class CoolingTests
             maker.Refuse = false;
             Assert.True(CoolingModesAnswer.Parse(agent.Run(new CoolingModesAction("restore")).StdOut)!.Restored);
             Assert.Equal("1", maker.Current);
+        }
+        finally { dir.Delete(true); }
+    }
+
+    /// <summary>A setting that shows the new mode a moment after the set (firmware, the maker's service) is read again until it does.</summary>
+    private sealed class LateSetting(string kind, string current, int readsLate, params string[] options) : IThermalModeSetting
+    {
+        private string _current = current, _pending = current;
+        private int _late;
+        public string Kind => kind;
+        public CoolingModeGroup? Read()
+        {
+            if (_late > 0 && --_late == 0) _current = _pending;
+            return new(kind, kind, _current, options.Select(o => new CoolingModeOption(o, o)).ToList());
+        }
+        public string? Set(string id) { _pending = id; _late = readsLate; return null; }
+    }
+
+    [Fact]
+    public void The_agent_reads_a_set_again_until_it_shows()
+    {
+        var dir = Directory.CreateTempSubdirectory("cooling-");
+        try
+        {
+            var late = new LateSetting(CoolingModes.MakerKind, "1", 3, "0", "1", "2");
+            var agent = new AgentCoolingModes([late], Path.Combine(dir.FullName, CoolingModes.JournalFile), settle: TimeSpan.FromSeconds(2));
+            var set = agent.Run(new CoolingModesAction("set", CoolingModes.MakerKind, "2"));
+            Assert.Equal("2", CoolingModesAnswer.Parse(set.StdOut)!.Group(CoolingModes.MakerKind)!.Current);
         }
         finally { dir.Delete(true); }
     }
