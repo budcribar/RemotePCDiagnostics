@@ -52,7 +52,7 @@ public sealed class CoolingTestModule(
     Func<string?>? maker = null,
     ILogger? log = null,
     CoolingRules? rules = null,
-    IStressClock? clock = null) : AreaModuleBase(log), ICancellableScan
+    IStressClock? clock = null) : AreaModuleBase(log), IDiagnosticModule, ICancellableScan // relisted so IncludeInRunAll below reimplements it
 {
     public const string ModuleName = ModuleSlugs.Cooling;
     public const string NeedsAgentText = "Needs the Agent: switching thermal modes needs administrator rights, which only the Agent has.";

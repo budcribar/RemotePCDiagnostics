@@ -426,6 +426,22 @@ public sealed class CoolingTests
         Assert.Equal(ModuleGroups.Hardware, d.Group);
         Assert.False(new CoolingTestModule(new FakePc(new FakeLoad(), Healthy), new FakeLoad()).IncludeInRunAll);
     }
+
+    [Fact]
+    public void The_cooling_test_lives_on_the_stress_tests_page()
+    {
+        var store = new ResultStore();
+        var cooling = new CoolingTestModule(new FakePc(new FakeLoad(), Healthy), new FakeLoad());
+        var diag = new DiagnosticsService(store, [cooling]);
+        var screen = new ChecksScreenState(diag, store);
+        // Through the interface, as Run all and the catalog see it (a plain property on the class would not reimplement it).
+        Assert.False(((IDiagnosticModule)cooling).IncludeInRunAll);
+        Assert.Equal(ModuleKind.OnDemand, diag.Catalog.Get(cooling.Id)?.Kind);
+        Assert.Equal(ChecksScreenState.StressRoute, screen.PageFor(cooling.Name));
+        Assert.Equal(CheckGroup.Stress, screen.GroupOf(cooling.Name));
+        Assert.Contains(screen.StressModules, m => m.Name == cooling.Name);
+        Assert.Empty(screen.ChecksModules);
+    }
 }
 
 /// <summary>The cooling test's page part: the next run's choices, and the chart from the last run's samples card.</summary>

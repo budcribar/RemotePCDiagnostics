@@ -1,7 +1,6 @@
 @using RemotePCDiagnostics.Core.Sensors
 @inherits ModuleDetailsBase
 @implements IAsyncDisposable
-@inject NavigationManager Nav
 @{
     var r = Shown();
     var report = r.Payload as SensorReport;
@@ -33,8 +32,10 @@
         <strong>Cooling test</strong>:
         @if (last.Status is DiagnosticStatus.NotRun) { <span>checks that the PC isn't hot at low load and that the fans speed up under a full CPU load (about 4 minutes).</span> }
         else { <span class="@DotClass(last.Status)"></span> <span data-testid="lhm-cooling-verdict">@last.Message</span> }
-        <button class="btn-small status-action" data-testid="lhm-cooling-run" data-action="run-check" data-check-id="@cooling.Name" disabled="@coolingBusy"
-                @onclick="() => RunCooling(cooling)">@(coolingBusy ? "Running…" : last.Status is DiagnosticStatus.NotRun ? "Test the cooling" : "Test again")</button>
+        @* A link, not NavigationManager: this page injects nothing (resultOnlyUi). The click starts the test and the link opens the
+           Stress tests page, where on-demand tests (Cooling too) show their progress, choices and chart. *@
+        <a class="btn-small status-action" href="@ChecksScreenState.StressRoute" data-testid="lhm-cooling-run" data-action="run-check" data-check-id="@cooling.Name"
+           aria-disabled="@(coolingBusy ? "true" : "false")" @onclick="() => RunCooling(cooling)">@(coolingBusy ? "Running…" : last.Status is DiagnosticStatus.NotRun ? "Test the cooling" : "Test again")</a>
     </div>
 }
 
@@ -162,11 +163,10 @@
     private PeriodicTimer? _timer;
     private CancellationTokenSource? _cts;
 
-    /// <summary>Starts the cooling test and goes to the Checks page, where its progress, choices and chart show.</summary>
+    /// <summary>Starts the cooling test unless it is already running; the link itself then opens the Stress tests page.</summary>
     private void RunCooling(IDiagnosticModule cooling)
     {
-        _ = Diagnostics.RunAsync(cooling.Name);
-        Nav.NavigateTo("checks");
+        if (Store.Get(cooling.Name).Status != DiagnosticStatus.Running) _ = Diagnostics.RunAsync(cooling.Name);
     }
 
     private async Task Refresh()
