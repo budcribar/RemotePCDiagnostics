@@ -21,13 +21,29 @@ public sealed record PhysicalBenchQaSnapshot(
     string? DisplayNotes = null,
     DateTimeOffset? UpdatedUtc = null,
     int IgnoredKeys = 0,
-    bool KeysVerified = false)
+    bool KeysVerified = false,
+    /// <summary>The display test on each screen it ran on (patterns and the color number check), in the order tested.</summary>
+    IReadOnlyList<Display.DisplayScreenResult>? DisplayScreens = null,
+    Display.BlankScreenOutcome BlankScreen = Display.BlankScreenOutcome.NotRun,
+    /// <summary>Why the screen off and on check couldn't run (with <see cref="Display.BlankScreenOutcome.NotSupported"/>).</summary>
+    string? BlankScreenReason = null)
 {
+    /// <summary>Replaces (or adds) one screen's display result, keeping the order screens were tested in.</summary>
+    public PhysicalBenchQaSnapshot WithScreen(Display.DisplayScreenResult screen)
+    {
+        var list = new List<Display.DisplayScreenResult>(DisplayScreens ?? []);
+        var at = list.FindIndex(s => string.Equals(s.ScreenId, screen.ScreenId, StringComparison.OrdinalIgnoreCase));
+        if (at >= 0) list[at] = screen; else list.Add(screen);
+        return this with { DisplayScreens = list };
+    }
+
     public bool HasAny =>
         KeyboardOutcome != PhysicalCheckOutcome.NotRun
         || DisplayOutcome != PhysicalCheckOutcome.NotRun
         || UniqueKeysPressed > 0
-        || SolidColorsInspected > 0;
+        || SolidColorsInspected > 0
+        || DisplayScreens is { Count: > 0 }
+        || BlankScreen != Display.BlankScreenOutcome.NotRun;
 }
 
 /// <summary>

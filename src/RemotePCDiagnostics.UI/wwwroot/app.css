@@ -1849,3 +1849,16 @@ body:has(.ptr-overlay) [class*="rbwv-"] { display: none !important; }
 .ad-dev > .meta { margin: 6px 0 0; }
 .ad-meter { height: 8px; border-radius: 4px; background: var(--badge-bg); margin: 8px 0 2px; overflow: hidden; }
 .ad-meter span { display: block; height: 100%; background: var(--accent); transition: width .1s linear; }
+/* Display test: each screen's row, Screen off and on, and the color number step (#296). */
+.display-screens { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.display-screen-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; }
+.display-screen-name { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.display-blank { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.display-qa-overlay-numbers { align-items: center; cursor: default; }
+.display-qa-numbers { display: flex; flex-direction: column; align-items: center; gap: 32px; width: min(900px, 94vw); }
+.display-qa-number-row { display: flex; justify-content: space-around; width: 100%; gap: 24px; }
+.display-qa-number { font: 700 clamp(64px, 16vh, 200px)/1 system-ui, sans-serif; min-width: 2.2ch; text-align: center; font-variant-numeric: tabular-nums; }
+.display-qa-number-form { display: flex; flex-direction: column; gap: 10px; font-size: 13.5px; color: #9ca3af; background: #000; border: 1px solid #333; border-radius: 12px; padding: 12px 16px; max-width: 100%; box-sizing: border-box; }
+.display-qa-answers { display: flex; gap: 12px; flex-wrap: wrap; }
+.display-qa-answers label { display: flex; flex-direction: column; gap: 4px; }
+.display-qa-answers input { width: 6ch; font-size: 20px; padding: 4px 8px; background: #111; color: #e5e7eb; border: 1px solid #555; border-radius: 6px; }

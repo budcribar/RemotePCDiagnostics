@@ -263,6 +263,8 @@ public static class HostServices
         services.AddSingleton(sp => new DesktopSessionRelauncher(sp.GetRequiredService<ISessionContext>(), L<DesktopSessionRelauncher>()));
         services.AddSingleton<ISessionRelauncher>(sp => sp.GetRequiredService<DesktopSessionRelauncher>());
         services.AddSingleton<IFullscreenService, FullscreenService>();
+        // The display test's screens (each monitor) and its screen off and on check: the app's own window, no administrator rights.
+        services.AddSingleton<RemotePCDiagnostics.Core.Display.IScreenControl>(_ => new WindowsScreenControl(L<WindowsScreenControl>()));
         services.AddSingleton<IStoreUpdateBackend>(_ => new StoreAppUpdateBackend(L<StoreAppUpdateBackend>()));
         services.AddSingleton<IAppUpdateService>(sp => new AppUpdateService(
             installedVersion: AppBuildInfo.Version,
@@ -308,7 +310,8 @@ public static class HostServices
             sp.GetService<IBiosUpdateService>(),
             sp.GetService<RemotePCDiagnostics.Agent.Core.AgentModeMonitor>(),
             sp.GetService<RemotePCDiagnostics.Core.Input.IPhysicalInputMonitor>(),
-            sp.GetService<RemotePCDiagnostics.Core.Input.PointerTestService>()));
+            sp.GetService<RemotePCDiagnostics.Core.Input.PointerTestService>(),
+            sp.GetService<RemotePCDiagnostics.Core.Display.IScreenControl>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
         // RPCD_REPLAY (Debug builds): the checks read a recording instead of this PC. RPCD_LOG: they also record what they read.
