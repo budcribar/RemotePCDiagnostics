@@ -41,8 +41,8 @@ public static class CheckProfiles
         new(
             Office,
             "Office worker",
-            "Wi-Fi, clock sync, printers/services, sound & mic, and sleep",
-            [ModuleSlugs.Network, ModuleSlugs.Sound, ModuleSlugs.WindowsMaintenance, ModuleSlugs.Services, ModuleSlugs.SleepWake],
+            "Wi-Fi, clock sync, printers/services, sound & mic, docks & USB, and sleep",
+            [ModuleSlugs.Network, ModuleSlugs.Sound, ModuleSlugs.WindowsMaintenance, ModuleSlugs.Services, ModuleSlugs.SleepWake, ModuleSlugs.UsbPorts],
             "/stress",
             "Mic, speaker & webcam tests →"),
         new(

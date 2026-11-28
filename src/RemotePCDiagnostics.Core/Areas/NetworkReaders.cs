@@ -81,6 +81,8 @@ public interface INetworkSource
     Task<IpConfigSnapshot?> ReadIpConfigAsync(CancellationToken ct);
     /// <summary>Whether the check can run (the legacy reader needs osqueryi.exe).</summary>
     Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => Task.FromResult(ModuleAvailability.Available);
+    /// <summary>Wi-Fi cards with a Device Manager problem code; null when this source can't read them (the Store edition without the Agent).</summary>
+    Task<IReadOnlyList<WifiDeviceProblem>?> ReadWifiDeviceProblemsAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<WifiDeviceProblem>?>(null);
 }
 
 /// <summary>
@@ -100,6 +102,8 @@ public sealed class WmiNetworkSource(IWmiSource wmi, IRegistrySource registry) :
     /// <summary>The adapters as Get-NetAdapter lists them, which names every adapter that is up. Win32_NetworkAdapter can leave one out: on an
     /// HP OmniBook X (arm64) its Wi-Fi adapter has no connection name or status there.</summary>
     public const string NetAdaptersSql = "SELECT Name, InterfaceDescription, DeviceID, InterfaceOperationalStatus, Hidden FROM MSFT_NetAdapter";
+    /// <summary>Network devices Device Manager shows with a problem (a Wi-Fi card whose driver failed has no WLAN interface at all).</summary>
+    public const string ProblemDevicesSql = "SELECT Name, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE PNPClass = 'Net' AND ConfigManagerErrorCode <> 0";
     public const string ConfigSql =
         "SELECT Index, SettingID, Description, IPAddress, DefaultIPGateway, DNSServerSearchOrder FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE";
 
@@ -108,6 +112,18 @@ public sealed class WmiNetworkSource(IWmiSource wmi, IRegistrySource registry) :
         new(RegistryRoot.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces", ["NameServer"], SubKeys: true);
     public static readonly RegistryRead ProxyRead =
         new(RegistryRoot.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Internet Settings", ["ProxyEnable", "ProxyServer"]);
+
+    public async Task<IReadOnlyList<WifiDeviceProblem>?> ReadWifiDeviceProblemsAsync(CancellationToken ct)
+    {
+        var q = await wmi.QueryAsync(WmiHardwareInventorySource.Cimv2, ProblemDevicesSql, ct).ConfigureAwait(false);
+        if (!q.Success) return null;
+        return q.Rows!.Where(r => IsWifiName(r.Str("Name")) && r.Long("ConfigManagerErrorCode") is > 0)
+            .Select(r => new WifiDeviceProblem(r.Str("Name"), (int)r.Long("ConfigManagerErrorCode")!.Value)).ToList();
+    }
+
+    /// <summary>Whether a network device's name says it is a Wi-Fi card ("Intel(R) Wi-Fi 6E AX211", "Realtek RTL8822CE 802.11ac PCIe Adapter").</summary>
+    public static bool IsWifiName(string name) =>
+        new[] { "Wi-Fi", "WiFi", "Wireless", "WLAN", "802.11" }.Any(k => name.Contains(k, StringComparison.OrdinalIgnoreCase));
 
     public async Task<IReadOnlyList<NetworkAdapter>?> ReadAdaptersAsync(CancellationToken ct)
     {
@@ -236,4 +252,5 @@ public sealed class AgentOrFallbackNetworkSource(Session.IElevatedCommandBridge 
     public Task<IReadOnlyList<NetworkAdapter>?> ReadAdaptersAsync(CancellationToken ct) => Current.ReadAdaptersAsync(ct);
     public Task<IpConfigSnapshot?> ReadIpConfigAsync(CancellationToken ct) => Current.ReadIpConfigAsync(ct);
     public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => Current.CheckAvailabilityAsync(ct);
+    public Task<IReadOnlyList<WifiDeviceProblem>?> ReadWifiDeviceProblemsAsync(CancellationToken ct) => Current.ReadWifiDeviceProblemsAsync(ct);
 }

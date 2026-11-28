@@ -36,6 +36,8 @@ public sealed record AppServices(
     CheckSettingsService? CheckSettings = null,
     IBiosUpdateService? Bios = null,
     RemotePCDiagnostics.Agent.Core.AgentModeMonitor? AgentLink = null,
+    RemotePCDiagnostics.Core.Input.IPhysicalInputMonitor? PhysicalInput = null,
+    RemotePCDiagnostics.Core.Input.PointerTestService? PointerTest = null,
     RemotePCDiagnostics.Core.Display.IScreenControl? Screens = null)
 {
     /// <summary>

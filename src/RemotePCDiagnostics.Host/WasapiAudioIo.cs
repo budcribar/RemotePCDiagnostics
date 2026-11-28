@@ -152,6 +152,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
                     }, toneTime + TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
                     await Task.Delay(request.Tail, ct).ConfigureAwait(false);
                     micCap?.Stop(); loopCap?.Stop();
+                    micCap?.ThrowIfFaulted();
                     if (mic) { _micRaw = micCap!.RawApplied; _mic = micCap.Samples(); _micRate = micCap.SampleRate; }
                     return loopCap;
                 }
@@ -202,6 +203,46 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
         catch (Exception ex) when (ex is not OperationCanceledException) { throw Map(ex); }
     }, ct);
 
+    public Task<RecordResult> RecordAsync(RecordRequest request, CancellationToken ct) => Task.Run(async () =>
+    {
+        try
+        {
+            // As apps hear it: shared mode with Windows' effects, mute and level as they are (a muted mic records silence: the finding).
+            using var en = new MMDeviceEnumerator();
+            using var inDev = Device(en, request.InputId, DataFlow.Capture);
+            using var mic = Capture.Open(inDev, loopback: false, raw: false, log,
+                request.OnLevel is { } onLevel ? block => { try { onLevel(AudioMath.ToDbfs(AudioMath.Rms(block))); } catch { } } : null);
+            mic.Start();
+            try { await Task.Delay(request.Duration, ct).ConfigureAwait(false); }
+            finally { mic.Stop(); }
+            mic.ThrowIfFaulted();
+            var samples = mic.Samples();
+            Log($"recorded {samples.Length} samples at {mic.SampleRate} Hz from '{inDev.FriendlyName}'");
+            return new RecordResult(samples, mic.SampleRate);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { throw Map(ex); }
+    }, ct);
+
+    public Task PlaySamplesAsync(PlaySamplesRequest request, CancellationToken ct) => Task.Run(async () =>
+    {
+        try
+        {
+            using var en = new MMDeviceEnumerator();
+            using var outDev = Device(en, request.OutputId, DataFlow.Render);
+            var all = request.Samples.ToArray();
+            AudioMath.ApplyFadeIn(all, Math.Max(1, request.SampleRate / 20));
+            var pos = 0;
+            await PlayAsync(outDev, request.SampleRate, span =>
+            {
+                var n = Math.Min(span.Length, all.Length - pos);
+                all.AsSpan(pos, n).CopyTo(span);
+                pos += n;
+                return n;
+            }, TimeSpan.FromSeconds((double)all.Length / Math.Max(1, request.SampleRate)) + TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { throw Map(ex); }
+    }, ct);
+
     // Per-call state for PlayAndCaptureAsync (calls never overlap: DiagnosticsService runs a module once at a time).
     private float[] _mic = [];
     private int _micRate;
@@ -241,6 +282,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
                 try { await Task.Delay(request.Duration, linked.Token).ConfigureAwait(false); } catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
                 mic.Stop();
                 ct.ThrowIfCancellationRequested();
+                mic.ThrowIfFaulted();
                 var all = keep!.SelectMany(b => b).ToArray();
                 AudioMath.ApplyFadeIn(all, mic.SampleRate / 5);
                 var pos = 0;
@@ -298,6 +340,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
                 mic.Stop();
                 ct.ThrowIfCancellationRequested();
+                mic.ThrowIfFaulted();
             }
             return new MonitorResult(mic.SampleRate, mic.RawApplied, stoppedEarly, RestoreLevels(speakerChange, micChange));
             }
@@ -402,6 +445,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
         private readonly List<float>? _samples;
         private CancellationTokenSource? _stop;
         private Task? _loop;
+        private Exception? _fault;
         public bool RawApplied { get; }
         public int SampleRate => _fmt.SampleRate;
 
@@ -416,25 +460,33 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
         public static Capture Open(MMDevice dev, bool loopback, bool raw, ILogger? log, Action<float[]>? onBlock = null, bool keepSamples = true)
         {
             var client = dev.CreateAudioClient();
-            var rawApplied = false;
-            if (raw && !loopback && client.SupportsAudioClient2)
+            try
             {
-                try { client.SetClientProperties(AudioStreamCategory.Other, AudioClientStreamOptions.Raw); rawApplied = true; }
-                catch (Exception ex) { log.Info($"raw mode not supported on '{dev.FriendlyName}': {ex.Message}"); }
+                var rawApplied = false;
+                if (raw && !loopback && client.SupportsAudioClient2)
+                {
+                    try { client.SetClientProperties(AudioStreamCategory.Other, AudioClientStreamOptions.Raw); rawApplied = true; }
+                    catch (Exception ex) { log.Info($"raw mode not supported on '{dev.FriendlyName}': {ex.Message}"); }
+                }
+                var fmt = client.MixFormat;
+                const long bufferHns = 2_000_000; // 200 ms
+                try { client.Initialize(AudioClientShareMode.Shared, loopback ? AudioClientStreamFlags.Loopback : AudioClientStreamFlags.None, bufferHns, 0, fmt, Guid.Empty); }
+                catch (Exception ex) when (rawApplied && ex is COMException ce && ce.HResult != E_ACCESSDENIED)
+                {
+                    log.Warn($"initialize with raw mode failed on '{dev.FriendlyName}' ({ex.Message}), retrying without");
+                    client.Dispose();
+                    client = dev.CreateAudioClient();
+                    rawApplied = false;
+                    fmt = client.MixFormat;
+                    client.Initialize(AudioClientShareMode.Shared, AudioClientStreamFlags.None, bufferHns, 0, fmt, Guid.Empty);
+                }
+                return new Capture(client, fmt, rawApplied, onBlock, keepSamples);
             }
-            var fmt = client.MixFormat;
-            const long bufferHns = 2_000_000; // 200 ms
-            try { client.Initialize(AudioClientShareMode.Shared, loopback ? AudioClientStreamFlags.Loopback : AudioClientStreamFlags.None, bufferHns, 0, fmt, Guid.Empty); }
-            catch (Exception ex) when (rawApplied && ex is COMException ce && ce.HResult != E_ACCESSDENIED)
+            catch
             {
-                log.Warn($"initialize with raw mode failed on '{dev.FriendlyName}' ({ex.Message}), retrying without");
-                client.Dispose();
-                client = dev.CreateAudioClient();
-                rawApplied = false;
-                fmt = client.MixFormat;
-                client.Initialize(AudioClientShareMode.Shared, AudioClientStreamFlags.None, bufferHns, 0, fmt, Guid.Empty);
+                try { client.Dispose(); } catch { }
+                throw;
             }
-            return new Capture(client, fmt, rawApplied, onBlock, keepSamples);
         }
 
         public void Start()
@@ -482,10 +534,17 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
         {
             if (_stop is null) return;
             _stop.Cancel();
-            try { _loop?.Wait(TimeSpan.FromSeconds(2), CancellationToken.None); } catch { }
+            try { _loop?.Wait(TimeSpan.FromSeconds(2), CancellationToken.None); }
+            catch (AggregateException ae) { _fault ??= ae.InnerExceptions.FirstOrDefault(e => e is not OperationCanceledException); }
+            catch { }
             try { _client.Stop(); } catch { }
             _stop.Dispose();
             _stop = null;
+        }
+
+        public void ThrowIfFaulted()
+        {
+            if (_fault is { } ex) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(ex);
         }
 
         public float[] Samples() => _samples?.ToArray() ?? [];

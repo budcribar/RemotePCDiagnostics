@@ -1,0 +1,11 @@
+{
+  "id": "0541d464-e4d7-4efe-8d0a-3b8357e4110e",
+  "slug": "AudioDevices",
+  "displayName": "Every speaker and microphone",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.AudioDevices.AudioDevicesPlugin",
+  "needsAdmin": false,
+  // Its controls live on the Interactive tests page.
+  "hasUi": false,
+  "inProcessOnly": "it uses the app's audio adapter"
+}

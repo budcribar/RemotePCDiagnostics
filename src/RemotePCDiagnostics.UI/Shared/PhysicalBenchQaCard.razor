@@ -1,5 +1,6 @@
 @using Microsoft.JSInterop
 @using RemotePCDiagnostics.Core.Workflow
+@using RemotePCDiagnostics.Core.Input
 @using RemotePCDiagnostics.Core.Display
 @implements IDisposable
 @inject AppServices App
@@ -86,6 +87,10 @@
                     @if (!string.IsNullOrEmpty(_lastKeyDisplay))
                     {
                         <span> · Last: <code>@_lastKeyDisplay</code></span>
+                    }
+                    @if (snap.IgnoredKeys > 0)
+                    {
+                        <span> · <strong data-testid="keyboard-ignored-count">@snap.IgnoredKeys</strong> not counted (not typed on this PC's keyboard)</span>
                     }
                 </div>
             </div>
@@ -339,6 +344,11 @@ else
     [Parameter] public bool IsRemoteDisplay { get; set; }
     [Parameter] public bool AutoLaunchDisplay { get; set; }
     [Parameter] public Action<string, PhysicalCheckOutcome>? OnOutcomeChanged { get; set; }
+    /// <summary>A remote session is connected: when keys can't be checked against the keyboard, none count.</summary>
+    [Parameter] public bool RemoteSessionActive { get; set; }
+
+    // Keys count only when Windows saw this PC's keyboard press one (a remote viewer's keys never reach it).
+    private PhysicalInputGate? _keyGate;
 
     private readonly PhysicalBenchQaService _fallbackService = new();
     private PhysicalBenchQaService? _subscribedService;
@@ -463,6 +473,9 @@ else
             _peakRollover = snap.PeakKeyRollover;
         }
 
+        _keyGate ??= new PhysicalInputGate(App.PhysicalInput);
+        _keyGate.RemoteSessionActive = RemoteSessionActive;
+
         if (FilterSection is null or "keyboard" && !IsRemoteDisplay && !_capturingKeys)
         {
             _capturingKeys = true;
@@ -477,6 +490,8 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (_capturingKeys) _keyGate?.Start();
+        else _keyGate?.Stop();
         if (_shouldFocusKeyZone)
         {
             _shouldFocusKeyZone = false;
@@ -512,6 +527,12 @@ else
         _hudTimerCts?.Cancel();
         _hudTimerCts?.Dispose();
         _hudTimerCts = null;
+        _keyGate?.Dispose();
+        if (_displayOverlayOpen)
+        {
+            _displayOverlayOpen = false;
+            App.Fullscreen?.RequestFullscreen(false);
+        }
         _blankCts?.Cancel();
         _blankCts?.Dispose();
         _blankCts = null;
@@ -556,12 +577,20 @@ else
         _heldKeys.Clear();
     }
 
-    private void OnKeyDown(KeyboardEventArgs e)
+    private async Task OnKeyDown(KeyboardEventArgs e)
     {
         if (!_capturingKeys) return;
 
         var id = NormalizeKeyCode(e);
         if (string.IsNullOrEmpty(id)) return;
+        if (_keyGate is { } gate)
+        {
+            _keyGate.Start();
+            var counted = await gate.AcceptAsync(PhysicalInputKind.Key);
+            var ignored = gate.Ignored;
+            ActiveService.Update(s => s with { IgnoredKeys = Math.Max(s.IgnoredKeys, ignored), KeysVerified = gate.Verified });
+            if (!counted) return;
+        }
 
         _pressedKeys.Add(id);
         _heldKeys.Add(id);
@@ -632,7 +661,9 @@ else
             UniqueKeysPressed = 0,
             PeakKeyRollover = 0,
             KeyboardNotes = null,
+            IgnoredKeys = 0,
         });
+        _keyGate?.ResetCounts();
     }
 
     /// <summary>Opens the full-screen test on <paramref name="only"/>, or on every connected screen in turn when null.</summary>

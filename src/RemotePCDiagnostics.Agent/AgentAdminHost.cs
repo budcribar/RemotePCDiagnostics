@@ -173,6 +173,7 @@ internal static class AgentAdminHost
 
                 var machineTweaks = OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null;
                 StartDevBenchmarkSweep(machineTweaks, log);
+                RemotePCDiagnostics.Core.Battery.AgentBatteryDrainPower.RecoverAtStart(log);
                 using var updater = NewUpdater(log);
 
                 var launcher = new SystemProcessLauncher();
@@ -248,6 +249,10 @@ internal static class AgentAdminHost
         using (parent)
         {
             TryBindKillOnParentCloseJob(parentPid);
+            // Power settings a drive self-test changed before this helper (or an earlier one) was ended go back once no drive is testing.
+            if (OperatingSystem.IsWindows()) RemotePCDiagnostics.Core.Storage.AgentDriveSelfTestHost.RecoverAtStart();
+            // Thermal modes a cooling test changed before this helper (or an earlier one) was ended go back.
+            if (OperatingSystem.IsWindows()) RemotePCDiagnostics.Core.Cooling.AgentCoolingModesHost.RecoverAtStart();
 
             using var cts = new CancellationTokenSource();
             _ = WatchParentExitAsync(parent, cts);
@@ -278,6 +283,7 @@ internal static class AgentAdminHost
                 {
                     var machineTweaks = OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null;
                     StartDevBenchmarkSweep(machineTweaks, log);
+                    RemotePCDiagnostics.Core.Battery.AgentBatteryDrainPower.RecoverAtStart(log);
                     using var updater = NewUpdater(log);
                     var serverOptions = new AdminPipeServerOptions
                     {
