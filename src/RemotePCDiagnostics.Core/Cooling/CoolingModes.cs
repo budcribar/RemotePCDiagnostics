@@ -56,7 +56,7 @@ public sealed record CoolingModesReply(CoolingModesAnswer? Answer, string? Error
     }
 }
 
-/// <summary><see cref="AgentScripts.CoolingModes"/>: <c>list</c>; <c>set windows|maker VALUE</c>; <c>restore</c>.</summary>
+/// <summary><see cref="AgentScripts.CoolingModes"/>: <c>list</c>; <c>set windows|maker|fanmax VALUE</c>; <c>restore</c>.</summary>
 public sealed record CoolingModesAction(string Verb, string? Kind = null, string? Value = null) : AgentNativeAction
 {
     public const string List = "list", Set = "set", Restore = "restore";
@@ -66,11 +66,12 @@ public sealed record CoolingModesAction(string Verb, string? Kind = null, string
     public static CoolingModesAction? Parse(IReadOnlyList<string> a)
     {
         if (a.Count == 1 && a[0] is List or Restore) return new(a[0]);
-        if (a.Count != 3 || a[0] != Set || a[1] is not (CoolingModes.WindowsKind or CoolingModes.MakerKind)) return null;
+        if (a.Count != 3 || a[0] != Set || a[1] is not (CoolingModes.WindowsKind or CoolingModes.MakerKind or CoolingModes.FanMaxKind)) return null;
         var v = a[2];
         if (string.IsNullOrWhiteSpace(v) || v.Length > MaxValueLength || v.Any(char.IsControl)) return null;
         // Windows' power mode is one of its three overlay GUIDs; a maker value is checked against the list the setting itself gives.
         if (a[1] == CoolingModes.WindowsKind && !WindowsPowerMode.IsKnown(v)) return null;
+        if (a[1] == CoolingModes.FanMaxKind && v is not (HpFanMaxSetting.Auto or HpFanMaxSetting.Max)) return null;
         return new(Set, a[1], v);
     }
 
@@ -94,6 +95,8 @@ public sealed record CoolingModesJournal(Dictionary<string, string> Originals, D
 public static class CoolingModes
 {
     public const string WindowsKind = "windows", MakerKind = "maker";
+    /// <summary>The maker's "fans at max" switch (HP Omen and Victus): "0" automatic, "1" every fan at full speed.</summary>
+    public const string FanMaxKind = "fanmax";
     public const string JournalFile = "cooling-modes.json";
 }
 

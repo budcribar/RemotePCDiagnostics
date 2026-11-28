@@ -13,10 +13,10 @@
             </select>
         </label>
         <label class="meta"><input type="checkbox" data-testid="cooling-switch-modes" disabled="@Running" checked="@(Module?.SwitchModes != false)" @onchange="SetSwitch" />
-            Switch thermal modes and put them back (Agent)</label>
+            Switch thermal modes (and HP Omen fans to max), then put them back (Agent)</label>
     </div>
     <p class="meta">Watches the CPU's temperature and load, then runs 90 seconds of full CPU load and checks that the fans speed up and the
-        temperature levels off, then lets it cool for 30 seconds. It fails when the CPU stays within 10 °C of its Tj max for a minute while
+        temperature levels off, then lets it cool for 30 seconds. On HP Omen and Victus laptops it then runs the fans at max for 20 seconds. It fails when the CPU stays within 10 °C of its Tj max for a minute while
         under 30 % busy, or when the fans don't speed up while it heats. The load stops early near Tj max. Close other apps first.</p>
     @if (Points.Count > 1)
     {

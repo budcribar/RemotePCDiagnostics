@@ -44,8 +44,15 @@ public sealed class CoolingTests
         public List<string> Requests { get; } = [];
         public Action<string>? OnRequest { get; init; }
 
-        public Task<CoolingReading> SampleAsync(CancellationToken ct) =>
-            Task.FromResult(load.Running ? reading(_loaded++, true) : reading(_idle++, false));
+        /// <summary>The fan speed while HP's fans at max is on (null: the fans don't change).</summary>
+        public double? MaxFanRpm { get; set; }
+
+        public Task<CoolingReading> SampleAsync(CancellationToken ct)
+        {
+            var r = load.Running ? reading(_loaded++, true) : reading(_idle++, false);
+            if (MaxFanRpm is { } max && Modes.TryGetValue(CoolingModes.FanMaxKind, out var fm) && fm.Current == HpFanMaxSetting.Max) r = r with { FanRpm = max };
+            return Task.FromResult(r);
+        }
 
         public Task<CoolingModesReply> ModesAsync(IReadOnlyList<string> args, CancellationToken ct)
         {
@@ -58,8 +65,11 @@ public sealed class CoolingTests
             if (Follow && args[0] == CoolingModesAction.Set && args[1] == CoolingModes.WindowsKind)
                 Modes[CoolingModes.MakerKind] = (args[2] == WindowsPowerMode.BestPerformance.ToString() ? "0" : "1", Modes[CoolingModes.MakerKind].Options);
             if (args[0] == CoolingModesAction.Restore)
+            {
                 Modes[CoolingModes.WindowsKind] = (WindowsPowerMode.Balanced.ToString(), Modes[CoolingModes.WindowsKind].Options);
-            var groups = Modes.Select(m => new CoolingModeGroup(m.Key, m.Key == CoolingModes.WindowsKind ? "Windows power mode" : "Maker thermal mode",
+                if (Modes.ContainsKey(CoolingModes.FanMaxKind)) Modes[CoolingModes.FanMaxKind] = (HpFanMaxSetting.Auto, [.. HpFanMaxSetting.Options]);
+            }
+            var groups = Modes.Select(m => new CoolingModeGroup(m.Key, m.Key == CoolingModes.WindowsKind ? "Windows power mode" : m.Key == CoolingModes.FanMaxKind ? "HP fans at max" : "Maker thermal mode",
                 m.Value.Current, m.Value.Options, m.Value.Options.Count == 0 ? "No maker modes here." : null)).ToList();
             return Task.FromResult(new CoolingModesReply(new CoolingModesAnswer(groups, Restored: args[0] == CoolingModesAction.Restore ? true : null), null));
         }
@@ -384,6 +394,8 @@ public sealed class CoolingTests
         Assert.Equal(new CoolingModesAction("set", "maker", "2"), Plan("set", "maker", "2"));
         Assert.Null(Plan("set", "windows", Guid.NewGuid().ToString()));
         Assert.Null(Plan("set", "fan", "100"));
+        Assert.Equal(new CoolingModesAction("set", "fanmax", "1"), Plan("set", "fanmax", "1"));
+        Assert.Null(Plan("set", "fanmax", "2"));
         Assert.Null(Plan("set", "maker", "x\ny"));
         Assert.Null(Plan("list", "extra"));
         Assert.Null(Plan());
@@ -479,13 +491,80 @@ public sealed class CoolingTests
     private sealed class FakeHpBios(int readCode, byte current) : IHpBiosCalls
     {
         public byte Current = current;
+        public List<(int Command, int Query, byte[] Input)> Calls { get; } = [];
         public (int, byte[]?) Call(int command, int query, byte[] input)
         {
+            Calls.Add((command, query, input));
+            if (query is HpFanMaxSetting.GetQuery or HpFanMaxSetting.SetQuery)
+            {
+                Assert.Equal(HpFanMaxSetting.GamingCommand, command);
+                if (readCode != 0) return (readCode, null);
+                if (query == HpFanMaxSetting.SetQuery) Current = input[0];
+                return (0, [Current, 0, 0, 0]);
+            }
             Assert.Equal(HpThermalProfileSetting.Query, query);
             if (readCode != 0) return (readCode, null);
             if (command == HpThermalProfileSetting.WriteCommand) Current = input[0];
             return (0, [Current, 0, 0, 0]);
         }
+    }
+
+    [Fact]
+    public void Hp_fans_at_max_reads_and_sets_with_the_gaming_command_and_other_hps_offer_none()
+    {
+        var bios = new FakeHpBios(0, 0);
+        var fan = new HpFanMaxSetting(bios);
+        Assert.Equal(HpFanMaxSetting.Auto, fan.Read()!.Current);
+        Assert.Null(fan.Set(HpFanMaxSetting.Max));
+        Assert.Equal((HpFanMaxSetting.GamingCommand, HpFanMaxSetting.SetQuery), (bios.Calls[^1].Command, bios.Calls[^1].Query));
+        Assert.Equal([1, 0, 0, 0], bios.Calls[^1].Input);
+        Assert.Equal(HpFanMaxSetting.Max, fan.Read()!.Current);
+        Assert.NotNull(fan.Set("100"));
+        Assert.Null(new HpFanMaxSetting(new FakeHpBios(4, 0)).Read());
+    }
+
+    private static (CoolingTestModule, FakePc) Omen(double? maxRpm)
+    {
+        var (m, pc, _) = Make(Healthy);
+        pc.Modes[CoolingModes.FanMaxKind] = (HpFanMaxSetting.Auto, [.. HpFanMaxSetting.Options]);
+        pc.MaxFanRpm = maxRpm;
+        return (m, pc);
+    }
+
+    [Fact]
+    public async Task On_an_omen_the_fans_go_to_max_and_back_and_must_speed_up()
+    {
+        var (m, pc) = Omen(6000);
+        var r = await Run(m);
+        var fan = Card(r, CoolingJudge.FanControlCard);
+        Assert.Equal(AreaLevel.Ok, fan.Level);
+        Assert.Equal("Passed: fans went from 2,000 RPM to 6,000 RPM at max", CoolingJudge.Verdict(fan));
+        Assert.Contains(m.LiveSamples, s => s.Phase == CoolingRules.FanMax);
+        var setMax = pc.Requests.IndexOf("set fanmax 1");
+        Assert.True(setMax >= 0);
+        Assert.Equal(CoolingModesAction.Restore, pc.Requests[pc.Requests.FindIndex(setMax, q => q != "set fanmax 1")]);
+        Assert.Equal(HpFanMaxSetting.Auto, pc.Modes[CoolingModes.FanMaxKind].Current);
+        // Fans at max is the fan control card's, not one of the thermal modes.
+        Assert.DoesNotContain(Card(r, CoolingJudge.ModesCard).Rows, row => row.Values[0] == "HP fans at max");
+    }
+
+    [Fact]
+    public async Task On_an_omen_fans_that_dont_speed_up_at_max_warn()
+    {
+        var (m, _) = Omen(null);
+        var fan = Card(await Run(m), CoolingJudge.FanControlCard);
+        Assert.Equal(AreaLevel.Warning, fan.Level);
+        Assert.Equal("Fans didn't speed up at max", fan.Headline);
+    }
+
+    [Fact]
+    public async Task Without_fans_at_max_the_fan_control_card_says_not_supported()
+    {
+        var (m, pc, _) = Make(Healthy);
+        var fan = Card(await Run(m), CoolingJudge.FanControlCard);
+        Assert.Equal(AreaLevel.Neutral, fan.Level);
+        Assert.Equal("Not supported", fan.Headline);
+        Assert.DoesNotContain(pc.Requests, q => q.Contains("fanmax", StringComparison.Ordinal));
     }
 
     [Fact]

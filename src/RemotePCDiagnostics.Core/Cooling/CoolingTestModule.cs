@@ -197,15 +197,26 @@ public sealed class CoolingTestModule(
         {
             CoolingJudge.IdleVerdict(idle, tjMax, approximate, _r),
             CoolingJudge.FanVerdict(idle, load, stoppedAt, _r),
-            CoolingJudge.FanControl(maker?.Invoke()),
         };
 
-        // Phase 4: thermal modes through the Agent, each switched and read back, then the originals put back.
+        // Phase 4: the maker's "fans at max" switch where there is one (HP Omen and Victus), then the thermal modes, both through the
+        // Agent: each switched and read back, then the originals put back.
+        AreaCard? fanMax = null;
+        CoolingModesReply? listed = null;
+        if (SwitchModes)
+        {
+            listed = await source.ModesAsync([CoolingModesAction.List], ct).ConfigureAwait(false);
+            List<CoolingSample> cool;
+            lock (_samples) cool = _samples.Where(x => x.Phase == CoolingRules.Cool).ToList();
+            var loadPeakFan = load.Where(x => x.FanRpm is not null).Select(x => x.FanRpm!.Value).DefaultIfEmpty(double.NaN).Max();
+            fanMax = await FanMaxAsync(listed, Take, Report, cool, double.IsNaN(loadPeakFan) ? null : loadPeakFan, clk, touched, ct).ConfigureAwait(false);
+        }
+        cards.Add(fanMax ?? CoolingJudge.FanControl(maker?.Invoke()));
         if (SwitchModes)
         {
             progress.ReportStep((int)total, (int)total, "Switching thermal modes…");
             RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, "Switching thermal modes…", started, 100));
-            cards.Add(await ModesAsync(clk, touched, onRestored, ct).ConfigureAwait(false));
+            cards.Add(await ModesAsync(listed!, clk, touched, onRestored, ct).ConfigureAwait(false));
         }
         List<CoolingSample> all;
         lock (_samples) all = [.. _samples];
@@ -213,11 +224,10 @@ public sealed class CoolingTestModule(
         return Build(cards, idle, load);
     }
 
-    private async Task<AreaCard> ModesAsync(IStressClock clk, Action touched, Action onRestored, CancellationToken ct)
+    private async Task<AreaCard> ModesAsync(CoolingModesReply listed, IStressClock clk, Action touched, Action onRestored, CancellationToken ct)
     {
         const string title = "Thermal modes";
         var columns = new[] { "Setting", "Mode", "Result" };
-        var listed = await source.ModesAsync([CoolingModesAction.List], ct).ConfigureAwait(false);
         if (listed.NoAgent)
             return new(CoolingJudge.ModesCard, title, AreaLevel.Neutral, "Skipped: " + NeedsAgentText, "Windows power mode and the maker's thermal profile", columns, [],
                 EmptyText: "Install the Agent (or turn on Admin Repair Mode) and run the test again to switch them.");
@@ -230,7 +240,7 @@ public sealed class CoolingTestModule(
         var switched = 0;
         var tookTotal = 0;                    // modes that changed a setting (not the one it already had)
         var notes = new List<string>();
-        var groups = listed.Answer!.Groups;
+        var groups = listed.Answer!.Groups.Where(g => g.Kind != CoolingModes.FanMaxKind).ToList();
         var windows = groups.FirstOrDefault(g => g.Kind == CoolingModes.WindowsKind && g.Options.Count > 0);
         // The other settings as each Windows power mode left them: one that changes with it follows the Windows power mode.
         var seenWithWindows = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
@@ -318,6 +328,43 @@ public sealed class CoolingTestModule(
         return new(CoolingJudge.ModesCard, title, restored ? AreaLevel.Ok : AreaLevel.Warning,
             $"Passed: {AreaModuleBase.Plural(tookTotal, "mode")} switched and read back{(restored ? ", then put back" : "; the old modes couldn't all be put back")}", meta, columns, rows,
             Note: note, PreserveRowOrder: true);
+    }
+
+    /// <summary>
+    /// Sets the maker's fans to max for <see cref="CoolingRules.FanMaxFor"/> with the CPU idle, watching their speed, then puts them back.
+    /// Null when this PC has no such switch (the fan control card then says so) or the Agent isn't there.
+    /// </summary>
+    private async Task<AreaCard?> FanMaxAsync(CoolingModesReply listed, Func<string, Task<CoolingSample>> take, Action<string, CoolingSample> report, IReadOnlyList<CoolingSample> before,
+        double? loadPeakFan, IStressClock clk, Action touched, CancellationToken ct)
+    {
+        if (!listed.Ok || listed.Answer!.Group(CoolingModes.FanMaxKind) is not { Options.Count: > 0 } group) return null;
+        var original = group.Current ?? HpFanMaxSetting.Auto;
+        var maxName = group.NameOf(HpFanMaxSetting.Max);
+        touched();
+        var set = await source.ModesAsync([CoolingModesAction.Set, CoolingModes.FanMaxKind, HpFanMaxSetting.Max], ct).ConfigureAwait(false);
+        var setError = !set.Ok ? set.Error : set.Answer!.SetError;
+        var readBack = setError is null && string.Equals(set.Answer!.Group(CoolingModes.FanMaxKind)?.Current, HpFanMaxSetting.Max, StringComparison.Ordinal);
+        var atMax = new List<CoolingSample>();
+        try
+        {
+            if (setError is null)
+            {
+                var start = clk.Elapsed;
+                while (clk.Elapsed - start < _r.FanMaxFor)
+                {
+                    await clk.DelayAsync(_r.SampleEvery, ct).ConfigureAwait(false);
+                    var s = await take(CoolingRules.FanMax).ConfigureAwait(false);
+                    atMax.Add(s);
+                    report($"Fans at max: {Clock((clk.Elapsed - start).TotalSeconds)} of {Clock(_r.FanMaxFor.TotalSeconds)}", s);
+                }
+            }
+        }
+        finally
+        {
+            // Back to how it was (automatic) straight away, from the journal, so the thermal modes after this start from a fresh one.
+            if (!await RestoreAsync().ConfigureAwait(false)) LogWarn($"[cooling] fans at max not put back to {group.NameOf(original)}");
+        }
+        return CoolingJudge.FanMaxVerdict(maxName, setError, readBack, before, atMax, loadPeakFan, _r);
     }
 
     private async Task<bool> RestoreAsync()
