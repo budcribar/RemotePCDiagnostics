@@ -125,6 +125,19 @@ internal static class AgentSelfUpdater
 
         try
         {
+            // Checked again right before Setup starts: the files sat in the staging folder since the download.
+            await UpdatePublisher.VerifyAsync(installerPath, ct).ConfigureAwait(false);
+            if (msiPath is not null)
+                await UpdatePublisher.VerifyAsync(msiPath, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.Warn($"[agent-update] Publisher check failed: {ex.Message}");
+            return new AppUpdateResult(false, Error: ex.Message);
+        }
+
+        try
+        {
             var arguments = AppUpdateInstaller.BuildSetupArguments(verySilent: true, msiPath, relaunch);
             log.Info($"[agent-update] Launching silent installer '{installerPath}' (agent MSI: {msiPath ?? "none"}; relaunch: {(relaunch is not null ? "by Setup" : serviceRelaunch is not null ? "by the agent service" : "no")}).");
             var proc = StartInstaller(installerPath, arguments, stagingDir, log, out var started);

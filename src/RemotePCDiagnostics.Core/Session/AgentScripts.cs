@@ -55,6 +55,24 @@ public static class AgentScripts
     /// <summary>Args: the setting's name and the value to set (the Agent checks the setting lists it).</summary>
     public const string HpBatterySet = "hp_battery_set";
     /// <summary>
+    /// Args: "status", "cancel" or "clear"; or "schedule" and "standard" or "extended". The Windows boot memory test
+    /// (<see cref="Stress.AgentMemoryDiagnostic"/>); prints <see cref="Stress.MemoryDiagnosticAnswer"/> JSON.
+    /// </summary>
+    public const string MemoryDiagnostic = "memory_diagnostic";
+    /// <summary>
+    /// Args: "start", disk number, "quick" or "full", time limit in minutes (0 for none); or "status"/"stop" and the disk number. The
+    /// read-only surface scan of one physical disk (<see cref="Storage.AgentDiskScans"/>). Prints the scan's status as JSON.
+    /// </summary>
+    public const string DiskReadScan = "disk_read_scan";
+    /// <summary>
+    /// Args: "list"; "status" or "abort" and a disk number; or "start", a disk number and "short" or "extended". The drive's own
+    /// self-test (<see cref="Storage.AgentDriveSelfTest"/>); prints <see cref="Storage.SelfTestAnswer"/> JSON.
+    /// </summary>
+    public const string DriveSelfTest = "drive_selftest";
+    /// <summary>Args: "list"; "set", "windows" or "maker" and the mode's id; or "restore". Windows' power mode and the PC maker's thermal
+    /// profile for the cooling test (<see cref="Cooling.AgentCoolingModes"/>); prints <see cref="Cooling.CoolingModesAnswer"/> JSON.</summary>
+    public const string CoolingModes = "cooling_modes";
+    /// <summary>
     /// Args: "apply", "renew", "restore", "shutdown" or "status". The battery drain test's power settings and its shutdown at 5 %
     /// (<see cref="Battery.AgentBatteryDrainPower"/>); prints <see cref="Battery.BatteryDrainPowerAnswer"/> JSON.
     /// </summary>
@@ -173,6 +191,20 @@ public static class AgentScripts
                 return a.Count == 2 && Battery.HpBatteryCharge.IsSetting(Arg(0)) && Battery.HpBatteryCharge.IsValue(Arg(1))
                     ? Native(new Battery.HpBatterySetAction(Arg(0)!, Arg(1)!)) : Refuse("That isn't an HP battery setting this app changes.");
 
+            case MemoryDiagnostic:
+                if (a.Count == 0 || !Stress.AgentMemoryDiagnostic.IsVerb(Arg(0))) return Refuse("That isn't a memory test request.");
+                if (Arg(0) == "schedule")
+                    return a.Count == 2 && Stress.AgentMemoryDiagnostic.ParseMix(Arg(1)) is { } mix
+                        ? Native(new Stress.MemoryDiagnosticAction("schedule", mix)) : Refuse("Choose the standard or extended test.");
+                return a.Count == 1 ? Native(new Stress.MemoryDiagnosticAction(Arg(0)!, null)) : Refuse("That isn't a memory test request.");
+            case DiskReadScan:
+                return Storage.DiskReadScanAction.Parse(a) is { } scan ? Native(scan) : Refuse("That isn't a disk surface scan this app runs.");
+
+            case DriveSelfTest:
+                return DriveSelfTestPlan(a) is { } selfTest ? Native(selfTest) : Refuse("That isn't a drive self-test request.");
+            case CoolingModes:
+                return Cooling.CoolingModesAction.Parse(a) is { } cooling ? Native(cooling) : Refuse("That isn't a thermal mode request this app sends.");
+
             case BatteryDrainPower:
                 return a.Count == 1 && Battery.BatteryDrainPowerAction.IsVerb(Arg(0))
                     ? Native(new Battery.BatteryDrainPowerAction(Arg(0)!)) : Refuse("That isn't a battery drain test request.");
@@ -180,6 +212,18 @@ public static class AgentScripts
             default:
                 return Refuse($"Unknown script '{request.Name}'.");
         }
+    }
+
+    /// <summary>The self-test request in <paramref name="a"/>, or null when it isn't exactly one this app sends.</summary>
+    private static Storage.DriveSelfTestAction? DriveSelfTestPlan(IReadOnlyList<string> a)
+    {
+        if (a.Count == 0 || !Storage.AgentDriveSelfTest.IsVerb(a[0])) return null;
+        var verb = a[0];
+        if (verb == "list") return a.Count == 1 ? new(verb, null, null) : null;
+        if (a.Count < 2 || !Storage.AgentDriveSelfTest.IsDisk(a[1], out var disk)) return null;
+        if (verb == "start")
+            return a.Count == 3 && Storage.AgentDriveSelfTest.ParseKind(a[2]) is { } kind ? new(verb, disk, kind) : null;
+        return a.Count == 2 ? new(verb, disk, null) : null;
     }
 
     public static string? TaskName(string? kind) => kind switch

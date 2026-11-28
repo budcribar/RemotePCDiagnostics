@@ -6,7 +6,8 @@ namespace RemotePCDiagnostics.Modules.BatteryPower;
 public sealed class BatteryPowerPlugin : IModulePlugin
 {
     public void Register(IServiceCollection services, IPluginContext context) =>
-        services.AddModule(context, sp => new BatteryPowerModule(sp.GetRequiredService<IBatteryPowerSource>(), context.Log),
+        services.AddModule(context, sp => new BatteryPowerModule(sp.GetRequiredService<IBatteryPowerSource>(), context.Log,
+                history: sp.GetService<RemotePCDiagnostics.Core.History.IHistoryStore>()),
             ModuleIds.BatteryPower, typeof(BatteryDetails));
 }
 

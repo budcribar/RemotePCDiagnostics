@@ -559,6 +559,13 @@ tr.history-day.clickable:hover td { background: var(--surface-hover); }
 .bench-hero-title { font-size: 15px; font-weight: 700; color: var(--text-strong); }
 .bench-restart-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-muted); }
 .bench-hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* Drive self-test: Short or Extended, and which drives (Stress tests page, before a run). */
+.selftest-options { margin: 8px 0 12px; display: flex; flex-direction: column; gap: 10px; }
+.selftest-mode { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.selftest-mode legend { font-weight: 600; color: var(--text-strong); margin-bottom: 4px; }
+.selftest-mode label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.selftest-drives { width: 100%; border-collapse: collapse; font-size: 0.92em; display: block; overflow-x: auto; }
+.selftest-drives th, .selftest-drives td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .bench-customize { margin-bottom: 12px; padding: 0; overflow: hidden; }
 .bench-upload { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
 .bench-customize-summary { list-style: none; cursor: pointer; padding: 12px 16px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; color: var(--text-strong); user-select: none; }
@@ -1781,6 +1788,13 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
 .sc-step-text b { color: var(--text-strong); }
 .sc-step-text .meta { margin: 2px 0 0; }
 
+/* Graphics memory (VRAM) test: the mode choice and the chips it will test (GpuMemoryOptions). */
+.gpumem-options { margin: 8px 0 12px; display: flex; flex-direction: column; gap: 10px; }
+.gpumem-mode { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.gpumem-mode legend { font-weight: 600; color: var(--text-strong); margin-bottom: 4px; }
+.gpumem-mode label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.gpumem-adapters { width: 100%; border-collapse: collapse; font-size: 0.92em; display: block; overflow-x: auto; }
+.gpumem-adapters th, .gpumem-adapters td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 /* Battery drain & runtime test: the load choice, the shutdown confirmation and the live readings (BatteryDrainPanel). */
 .drain-options { margin: 8px 0 12px; display: flex; flex-direction: column; gap: 10px; }
 .drain-mode { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; }
