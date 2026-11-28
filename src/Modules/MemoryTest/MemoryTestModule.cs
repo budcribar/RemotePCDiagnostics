@@ -14,6 +14,9 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.MemoryTest;
     public override string DisplayName => "Memory test";
+    protected override LiveProgress? DescribeProgress(MemoryTestProgress p) => new(LiveProgress.OfTotal(p), p.Fraction,
+        [$"Testing {Osquery.HardwareInventory.FormatBytes(p.TestBytes)}", p.Pass == 1 ? "1 full round done" : $"{p.Pass} full rounds done"],
+        p.Errors > 0 ? $"Problems found so far: {p.Errors:N0}" : null);
     string IStressSuiteModule.SuiteName => "Memory";
     object IStressSuiteModule.SaveSuiteSettings() => (Mode, Duration);
     void IStressSuiteModule.RestoreSuiteSettings(object saved) { var (m, d) = ((MemoryTestMode, TimeSpan))saved; Mode = m; Duration = d; }

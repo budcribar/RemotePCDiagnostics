@@ -34,7 +34,7 @@
                     </select>
                 </label>
             </div>
-            <p class="meta">@(Module.Clip is { } c ? $"Test video: {c.Label}{(c.HasAudio ? " with audio" : "")}." : "The test video is missing from this install.") The videos play offscreen, so nothing covers the screen, and it works from a remote session. You can add or remove streams while it runs. Cancel stops every stream.</p>
+            <p class="meta">@(Module.Clip is { } c ? $"Test video: {c.Label}{(c.HasAudio ? " with audio" : "")}." : "The test video is missing from this install.") Plays offscreen, so it works remotely. Add or remove streams while it runs.</p>
         }
         else
         {
