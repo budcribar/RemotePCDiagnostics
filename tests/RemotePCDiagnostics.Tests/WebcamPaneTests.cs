@@ -67,6 +67,13 @@ public class WebcamPaneTests : BunitContext
         return (store, Render<InteractiveTestsPage>());
     }
 
+    /// <summary>
+    /// Presses Start test and waits for its handler to finish. The page renders again when the run's task completes, after the result
+    /// that shows the report, and that render gives every button a new event handler: a button found before it can't be clicked.
+    /// </summary>
+    private static Task StartAsync(IRenderedComponent<InteractiveTestsPage> page) =>
+        page.Find("[data-testid='webcam-start-btn']").ClickAsync(new());
+
     private static JsonElement CamExport(IRenderedComponent<InteractiveTestsPage> page)
     {
         var json = page.Find("[data-testid='interactive-data']").GetAttribute("data-report")!;
@@ -75,10 +82,10 @@ public class WebcamPaneTests : BunitContext
     }
 
     [Fact]
-    public void A_camera_run_shows_its_own_result_with_formats_controls_and_the_question()
+    public async Task A_camera_run_shows_its_own_result_with_formats_controls_and_the_question()
     {
         var (store, page) = Render(new Io(Vga));
-        page.Find("[data-testid='webcam-start-btn']").Click();
+        await StartAsync(page);
         page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-testid='webcam-table']")));
 
         // The run was per camera (the module's own result only lists cameras): the pane still shows the camera's report.
@@ -105,10 +112,10 @@ public class WebcamPaneTests : BunitContext
     }
 
     [Fact]
-    public void Answering_no_on_an_instance_result_updates_the_module_summary_and_raises_Changed()
+    public async Task Answering_no_on_an_instance_result_updates_the_module_summary_and_raises_Changed()
     {
         var (store, page) = Render(new Io(Vga));
-        page.Find("[data-testid='webcam-start-btn']").Click();
+        await StartAsync(page);
         page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-testid='webcam-table']")));
         Assert.Equal(DiagnosticStatus.Warning, store.Get(ModuleSlugs.Webcam).Status);
 
@@ -130,10 +137,10 @@ public class WebcamPaneTests : BunitContext
     }
 
     [Fact]
-    public void A_busy_camera_names_the_app_and_offers_Close_or_says_it_needs_the_Agent()
+    public async Task A_busy_camera_names_the_app_and_offers_Close_or_says_it_needs_the_Agent()
     {
         var (_, page) = Render(new Io(_ => throw new WebcamBusyException("in use")));
-        page.Find("[data-testid='webcam-start-btn']").Click();
+        await StartAsync(page);
         page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-testid='webcam-holders']")));
         Assert.Equal("Zoom", page.Find("[data-testid='webcam-close-holder']").GetAttribute("data-process"));
         Assert.Contains("Zoom.exe", page.Find("[data-testid='webcam-status']").TextContent);
@@ -147,10 +154,10 @@ public class WebcamPaneTests : BunitContext
     }
 
     [Fact]
-    public void Without_the_Agent_the_holder_is_named_but_Close_is_marked_as_needing_it()
+    public async Task Without_the_Agent_the_holder_is_named_but_Close_is_marked_as_needing_it()
     {
         var (_, page) = Render(new Io(_ => throw new WebcamBusyException("in use")), agent: false);
-        page.Find("[data-testid='webcam-start-btn']").Click();
+        await StartAsync(page);
         page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-testid='webcam-close-needs-agent']")));
         Assert.Empty(page.FindAll("[data-testid='webcam-close-holder']"));
     }
@@ -164,11 +171,11 @@ public class WebcamPaneTests : BunitContext
     }
 
     [Fact]
-    public void An_IR_camera_hides_the_Do_you_see_yourself_question()
+    public async Task An_IR_camera_hides_the_Do_you_see_yourself_question()
     {
         var (store, page) = Render(new Io(Vga));
         page.Find("[data-testid='webcam-device-select']").Change(WebcamDevice.InfraredPrefix + "g1");
-        page.Find("[data-testid='webcam-start-btn']").Click();
+        await StartAsync(page);
         page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-testid='webcam-table']")));
 
         var own = store.InstancesOf(ModuleSlugs.Webcam).Single();

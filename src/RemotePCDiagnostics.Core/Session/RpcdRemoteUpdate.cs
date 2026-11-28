@@ -400,7 +400,21 @@ public sealed class RpcdUpdateSession
                 var same = string.Equals(AppVersionComparer.Normalize(target), AppVersionComparer.Normalize(oldVersion), StringComparison.OrdinalIgnoreCase);
                 if (newer is null && !same)
                 {
-                    Fail(current, oldVersion, $"Cannot tell whether {target} is newer than {oldVersion}. The update was not installed.");
+                    // Not a failure: installing a release that doesn't name its build over a CI build could go back in time.
+                    var error = !AppVersionComparer.IsCiBuild(target) && AppVersionComparer.IsCiBuild(oldVersion)
+                        ? $"RPCD {oldVersion} is a CI build, and the {channel} release {target} does not say which build it is, so it may be older. Nothing was installed."
+                            + (channel == "stable" ? " Choose the prerelease channel to get the newest build." : "")
+                        : $"Cannot tell whether {target} is newer than {oldVersion}. Nothing was installed.";
+                    Set(current with
+                    {
+                        Stage = RpcdUpdateStages.Refused,
+                        Terminal = true,
+                        OldVersion = oldVersion,
+                        NewVersion = target,
+                        Error = error,
+                        Detail = error,
+                        UpdatedUtc = DateTimeOffset.UtcNow,
+                    });
                     return;
                 }
                 // A newer app on the PC is not replaced with an older release, even when its agent is behind.
