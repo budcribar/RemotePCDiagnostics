@@ -122,11 +122,30 @@ public interface IStressReport : IRunEnd
 }
 
 /// <summary>
+/// A running test's progress in one shape, so the Stress tests page shows every test's progress in the same place (the test's header
+/// card): a headline ("0:12 of 1:00"), a bar when the share done is known, a few short facts and a problem found so far.
+/// </summary>
+public sealed record LiveProgress(string Headline, double? Fraction = null, IReadOnlyList<string>? Facts = null, string? Problem = null)
+{
+    /// <summary>m:ss, as the stress pages show times ("0:12", "12:05").</summary>
+    public static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
+    public static string OfTotal(IStressProgress p) => $"{Clock(p.Elapsed)} of {Clock(p.Duration)}";
+}
+
+/// <summary>A module that reports <see cref="LiveProgress"/> while it runs.</summary>
+public interface ILiveProgressSource
+{
+    /// <summary>The current run's progress, or null before its first report.</summary>
+    LiveProgress? LiveProgress { get; }
+    event EventHandler? LiveProgressChanged;
+}
+
+/// <summary>
 /// What every on-demand stress test module shares: the Stop token, progress forwarding, the <see cref="StressCleanup"/> registry that
 /// <see cref="CleanupAsync"/> drains, and the module plumbing (never in Run All, default 1 minute). A concrete module only says how to run
 /// its test (<see cref="RunTestAsync"/>) and how to describe a finished report (<see cref="Describe"/>).
 /// </summary>
-public abstract class StressModuleBase<TProgress, TReport>(ILogger? log) : IStressSuiteModule
+public abstract class StressModuleBase<TProgress, TReport>(ILogger? log) : IStressSuiteModule, ILiveProgressSource
     where TProgress : class
 {
     private CancellationTokenSource? _stop;
@@ -147,6 +166,11 @@ public abstract class StressModuleBase<TProgress, TReport>(ILogger? log) : IStre
     public event EventHandler<TProgress>? ProgressChanged;
     /// <summary>The most recent progress of the current or last run (null before the first report).</summary>
     public TProgress? LastProgress { get; private set; }
+
+    public event EventHandler? LiveProgressChanged;
+    public LiveProgress? LiveProgress => LastProgress is { } p ? DescribeProgress(p) : null;
+    /// <summary>The header card's progress for a report. Default: "0:12 of 1:00" and the share of the time done.</summary>
+    protected virtual LiveProgress? DescribeProgress(TProgress p) => p is IStressProgress s ? new(LiveProgress.OfTotal(s), s.Fraction) : null;
 
     protected virtual TimeSpan DefaultDuration => TimeSpan.FromMinutes(1);
     public TimeSpan Duration { get => _duration ?? DefaultDuration; set => _duration = value; }
@@ -176,8 +200,9 @@ public abstract class StressModuleBase<TProgress, TReport>(ILogger? log) : IStre
         try
         {
             LastProgress = null;
+            LiveProgressChanged?.Invoke(this, EventArgs.Empty);
             var cleanup = _cleanup = new StressCleanup(log);
-            var p = new InlineProgress(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); });
+            var p = new InlineProgress(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); LiveProgressChanged?.Invoke(this, EventArgs.Empty); });
             var report = await RunTestAsync(cleanup, p, stop.Token).ConfigureAwait(false);
             var (status, headline) = Describe(report);
             return new DiagnosticResult<TReport>(Name, status, headline, DateTimeOffset.Now, report);

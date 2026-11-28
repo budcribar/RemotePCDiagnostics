@@ -92,7 +92,7 @@ public class InteractiveTestsTests
 
         const string expectedTooltip = "Interactive tests must run locally on the physical machine";
         Assert.Contains(expectedTooltip, content);
-        Assert.Contains("disabled=\"@(_selected.Count == 0 || _isRemoteDisplay)\"", content);
+        Assert.Contains("disabled=\"@(_selected.Count == 0 || _isRemoteDisplay || anyRunning)\"", content);
         Assert.Contains("disabled=\"@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)\"", content);
         Assert.Contains("Remote technician has control. Release control to the local user", content);
         Assert.Contains("Local user has control of the session", content);

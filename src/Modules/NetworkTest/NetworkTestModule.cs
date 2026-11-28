@@ -11,6 +11,8 @@ public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, 
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.NetworkTest;
     public override string DisplayName => "Network stability test";
+    protected override LiveProgress? DescribeProgress(NetworkTestProgress p) => new(LiveProgress.OfTotal(p), p.Fraction,
+        string.IsNullOrWhiteSpace(p.Step) ? null : [p.Step]);
     string IStressSuiteModule.SuiteName => "Network";
 
     public NetworkTestOptions? Options { get; set; }

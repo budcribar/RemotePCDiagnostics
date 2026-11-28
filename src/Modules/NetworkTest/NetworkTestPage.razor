@@ -26,7 +26,7 @@
         <button data-testid="nettest-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
     }
 </div>
-<p class="meta">Checks how steady your connection is by contacting your router and the internet every second, measures your download and upload speed once (using a limited amount of data), and looks for new network errors. Video calls or downloads may be a little slower while it runs.</p>
+<p class="meta">Pings the router and the internet every second, measures speed once and looks for network errors.</p>
 
 <p data-testid="nettest-status" class="status-line @(running ? "is-running" : "")">
     <span class="@DotClass(r.Status)"></span>
