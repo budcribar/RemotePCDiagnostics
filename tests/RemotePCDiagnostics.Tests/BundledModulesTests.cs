@@ -47,6 +47,8 @@ public sealed class BundledModulesTests : IDisposable
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Audio.IAudioIo>());
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Webcam.IWebcamIo>());
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Npu.INpuIo>());
+        services.AddSingleton(Stub<RemotePCDiagnostics.Core.Areas.IWifiConnector>());
+        services.AddSingleton(Stub<RemotePCDiagnostics.Core.Areas.IEthernetPortIo>());
         loader.LoadBundled(services);
         return (loader, registrar, services);
     }
@@ -68,8 +70,9 @@ public sealed class BundledModulesTests : IDisposable
     public static readonly Guid[] AdminModules = [ModuleIds.DismScanHealth, ModuleIds.SfcVerifyOnly, ModuleIds.SecurityAudit];
 
     /// <summary>Modules whose class is the app's Core type (other parts of the app use it too), so only their plugin is the DLL's. The
-    /// last four used to need administrator; in user mode they ask the app for those reads (host queries).</summary>
-    public static readonly Guid[] CoreTypeModules = [.. AdminModules, ModuleIds.Sensors, ModuleIds.DriveHealth, ModuleIds.Services, ModuleIds.Crashes, ModuleIds.DiskSpace, ModuleIds.DuplicateFiles, ModuleIds.GpuMemory];
+    /// last four used to need administrator; in user mode they ask the app for those reads (host queries). The surface scan's raw reads are
+    /// the Agent's (disk_read_scan).</summary>
+    public static readonly Guid[] CoreTypeModules = [.. AdminModules, ModuleIds.Sensors, ModuleIds.DriveHealth, ModuleIds.Services, ModuleIds.Crashes, ModuleIds.DiskSpace, ModuleIds.DuplicateFiles, ModuleIds.DiskSurfaceScan, ModuleIds.DriveSelfTest, ModuleIds.GpuMemory];
 
     [Fact]
     public void Every_built_in_module_ships_as_its_own_dll()

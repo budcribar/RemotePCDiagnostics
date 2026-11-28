@@ -47,6 +47,8 @@ var files = new FileRecorder(recorder);
 // Core Audio (endpoints, defaults, mute, volume, formats, app sessions), read as the app does in the signed-in user's session.
 var audio = new RecordingAudioStateSource(new RemotePCDiagnostics.Host.WasapiAudioStateSource(), recorder);
 // Security Center's antivirus list (third-party antivirus and Defender), as the app's Security essentials reads it.
+// The Wi-Fi radio switches and a fresh scan (WLAN API), with network names replaced by "Network 1"… before they are kept.
+var wifi = new RecordingWifiRadioSource(new WlanRadioSource(), recorder);
 var antivirus = new RecordingAntivirusProductSource(new RemotePCDiagnostics.Host.WindowsAntivirusProductSource(), recorder);
 if (!osquery.Exists) Console.WriteLine($"osqueryi.exe not found ({osqueryPath}); the old osquery path won't be recorded. Pass --osquery <path>.");
 
@@ -72,7 +74,9 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     ("Programs & updates (WMI + registry)", new ProgramsModule(new WmiProgramsSource(wmi, registry, packages))),
     ("Programs & updates (legacy: osquery)", new ProgramsModule(new OsqueryProgramsSource(osquery))),
     // Without netsh and the event logs (Wi-Fi and event names hold the network's name and its router's address) and offline (no probes or DNS timing).
-    ("Network (WMI + registry)", new NetworkModule(new WmiNetworkSource(wmi, registry), includeWifiAndIpConfig: true, offline: true)),
+    // The Wi-Fi radio and scan are recorded scrubbed (see RecordingWifiRadioSource); the adapter hardware card's WMI answers are recorded offline.
+    ("Network (WMI + registry)", new NetworkModule(new WmiNetworkSource(wmi, registry), includeWifiAndIpConfig: true, offline: true,
+        radio: wifi, hardware: new WmiNicHardwareSource(wmi))),
     ("Network (legacy: osquery + PowerShell)", new NetworkModule(new OsqueryNetworkSource(osquery, commands), includeWifiAndIpConfig: true, offline: true)),
     ("Security essentials (WMI + registry + tpmtool)", new SecurityEssentialsModule(new WmiSecurityEssentialsSource(wmi, registry, commands, antivirus))),
     ("Security essentials (legacy: PowerShell + tpmtool)", new SecurityEssentialsModule(new PowerShellSecurityEssentialsSource(commands))),

@@ -597,6 +597,11 @@
                 <div id="ct-trend-@m.Name"><CheckTrendPanel Module="@m.Name" Entries="@_trendEntries" Days="TrendDays" HistoryHref="@history" /></div>
             }
         </div>
+        @* The drive self-test's choices (Short or Extended, which drives, the drives' own estimates), shown until a run starts. *@
+        @if (m is RemotePCDiagnostics.Core.Storage.DriveSelfTestModule selfTest && kind != RowKind.Running)
+        {
+            <DriveSelfTestOptions Module="selfTest" Disabled="@(!canRun)" />
+        }
         @* The graphics memory test's choices (Quick or Extended, the chips it will test), shown until a run starts. *@
         @if (m is RemotePCDiagnostics.Core.GpuMemory.GpuMemoryModule gpuMemory && kind != RowKind.Running)
         {
