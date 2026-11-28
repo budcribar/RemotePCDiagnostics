@@ -38,6 +38,7 @@
     /// <summary>Extra classes on the card (is-running, card-with-visual, clickable...).</summary>
     [Parameter] public string? Class { get; set; }
     [Parameter] public RenderFragment? ChildContent { get; set; }
+    /// <summary>Other attributes (aria-label, role, @onclick...) go on the card. Not title: Title is the card's heading.</summary>
     [Parameter(CaptureUnmatchedValues = true)] public IReadOnlyDictionary<string, object>? Attributes { get; set; }
 
     private RowKind EffectiveRow => Result is { } r ? CheckRows.KindOf(r) : ResultBadge.RowFor(Status ?? DiagnosticStatus.NotRun);

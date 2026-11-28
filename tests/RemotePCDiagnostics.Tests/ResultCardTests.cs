@@ -102,11 +102,11 @@ public sealed class ResultCardTests : BunitContext
             .Add(c => c.BadgeText, "Listening")
             .Add(c => c.BadgeKind, "run")
             .Add(c => c.BadgeTestId, "left-state")
-            .AddUnmatched("title", "Left speaker"));
+            .AddUnmatched("aria-label", "Left speaker"));
 
         var card = cut.Find(".result-card");
         Assert.Contains("is-running", card.ClassList);
-        Assert.Equal("Left speaker", card.GetAttribute("title"));
+        Assert.Equal("Left speaker", card.GetAttribute("aria-label"));
         Assert.Contains("dot-running", cut.Find(".dot").ClassList);
         var badge = cut.Find("[data-testid='left-state']");
         Assert.Equal("Listening", badge.TextContent);
