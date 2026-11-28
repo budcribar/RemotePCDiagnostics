@@ -163,9 +163,11 @@
     private PeriodicTimer? _timer;
     private CancellationTokenSource? _cts;
 
-    /// <summary>Starts the cooling test unless it is already running; the link itself then opens the Stress tests page.</summary>
+    /// <summary>Selects the cooling test on the Stress tests page and starts it unless it is already running; the link itself then
+    /// opens that page. The screen state comes from Services, not [Inject]: this page injects nothing (resultOnlyUi).</summary>
     private void RunCooling(IDiagnosticModule cooling)
     {
+        if (Services.GetService(typeof(ChecksScreenState)) is ChecksScreenState screen) screen.SelectedModule = cooling.Name;
         if (Store.Get(cooling.Name).Status != DiagnosticStatus.Running) _ = Diagnostics.RunAsync(cooling.Name);
     }
 

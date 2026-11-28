@@ -25,6 +25,8 @@ public sealed record CoolingRules
     public double FanRiseRatio { get; init; } = 1.2;
     /// <summary>The CPU "climbs" when it warms at least this much under load.</summary>
     public double ClimbC { get; init; } = 5;
+    /// <summary>The CPU must reach at least this temperature under load before a flat or stopped fan fails (avoids false fails on cool zero-RPM PCs).</summary>
+    public double FanFailMinTempC { get; init; } = 60;
     /// <summary>The temperature has leveled off when it rose no more than this over <see cref="SettleSeconds"/> at the end of the load.</summary>
     public double SettledRiseC { get; init; } = 2;
     public double SettleSeconds { get; init; } = 30;
@@ -138,6 +140,7 @@ public static class CoolingJudge
         var avgLoad = load.Where(s => s.LoadPercent is not null).Select(s => s.LoadPercent!.Value).DefaultIfEmpty().Average();
         var hasTemp = idleTemp is not null && !double.IsNaN(peakTemp);
         var climbed = hasTemp && peakTemp - idleTemp!.Value >= r.ClimbC;
+        var hotEnoughForFan = hasTemp && peakTemp >= r.FanFailMinTempC;
         var tail = load.Where(s => s.At >= settleFrom && s.CpuC is not null).ToList();
         double? endRise = tail.Count >= 2 ? tail[^1].CpuC!.Value - tail.Min(s => s.CpuC!.Value) : null;
 
@@ -154,31 +157,51 @@ public static class CoolingJudge
         if (stoppedAtC is { } stop) rows.Add(Row(AreaLevel.Warning, "Load stopped early", $"at {C(stop)}, to protect the PC"));
 
         var heat = hasTemp ? $"the CPU heated from {C(idleTemp!.Value)} to {C(peakTemp)}" : "no CPU temperature was readable";
-        if (loadFans.Count == 0)
+        if (peakFan is not { } loadPeakFan)
+        {
+            if (stoppedAtC is { } stopNoFan)
+                return new(FansCard, title, AreaLevel.Warning, $"Runs hot under load: the CPU reached {C(stopNoFan)} and the load was stopped early (no fan readings were reported)",
+                    meta, columns, rows, Note: "The cooling couldn't keep up with a full load. Clean the vents and heatsink, check the thermal paste, and listen for the fan.");
             return new(FansCard, title, AreaLevel.Warning, $"No fan readings: this PC reports no fan speed, so the fan response can't be checked ({heat})",
                 meta, columns, rows, Note: "Listen for the fan getting louder under load, or check it in the maker's own tool or BIOS.");
+        }
 
-        var rose = idleFan is { } i && peakFan is { } p && (i <= 0 ? p > 0 : p >= i * r.FanRiseRatio);
         var allZero = loadFans.All(v => v <= 0);
-        if (allZero && (climbed || !hasTemp))
+        if (allZero && ((climbed && hotEnoughForFan) || !hasTemp))
             return new(FansCard, title, AreaLevel.Error, $"Fan not responding: it read 0 RPM the whole time while {heat}", meta, columns, rows,
                 Note: "The fan may be stuck, unplugged or failed. Check it spins; a laptop that runs without its fan will slow down and can shut down hot.");
-        if (!rose && climbed)
-            return new(FansCard, title, AreaLevel.Error, $"Fan not responding: it stayed at about {Rpm(peakFan ?? 0)} while {heat}", meta, columns, rows,
+        if (idleFan is not { } idleRpm)
+        {
+            if (stoppedAtC is { } stopNoIdle)
+                return new(FansCard, title, AreaLevel.Warning, $"Runs hot under load: fans reached {Rpm(loadPeakFan)} (no low-load fan reading to compare), but the CPU reached {C(stopNoIdle)} and the load was stopped early",
+                    meta, columns, rows, Note: "The cooling couldn't keep up with a full load. Clean the vents and heatsink; check the thermal paste.");
+            return new(FansCard, title, AreaLevel.Warning, $"No low-load fan reading: fans reached {Rpm(loadPeakFan)} under load ({heat}), so the fan rise couldn't be checked",
+                meta, columns, rows);
+        }
+
+        var rose = idleRpm <= 0 ? loadPeakFan > 0 : loadPeakFan >= idleRpm * r.FanRiseRatio;
+        if (!rose && climbed && hotEnoughForFan)
+            return new(FansCard, title, AreaLevel.Error, $"Fan not responding: it stayed at about {Rpm(loadPeakFan)} while {heat}", meta, columns, rows,
                 Note: "The fan didn't speed up for the heat. It may be failing, or the PC's fan control isn't working. Check the maker's BIOS fan settings, then the fan.");
         if (!rose && !hasTemp)
-            return new(FansCard, title, AreaLevel.Warning, $"Fans didn't speed up under load (about {Rpm(peakFan ?? 0)}), and no CPU temperature was readable to compare", meta, columns, rows);
+            return new(FansCard, title, AreaLevel.Warning, $"Fans didn't speed up under load (about {Rpm(loadPeakFan)}), and no CPU temperature was readable to compare", meta, columns, rows);
         if (!rose)
+        {
+            if (stoppedAtC is { } stopFlat)
+                return new(FansCard, title, AreaLevel.Warning, $"Runs hot under load: the CPU reached {C(stopFlat)} and the load was stopped early (fan stayed at about {Rpm(loadPeakFan)})",
+                    meta, columns, rows, Note: "The cooling couldn't keep up with a full load. Clean the vents and heatsink; check the thermal paste.");
             return new(FansCard, title, AreaLevel.Ok, $"Passed: {heat}, little enough that the fans didn't need to speed up", meta, columns, rows);
+        }
 
-        var fanText = idleFan is > 0 ? $"fans rose from {Rpm(idleFan.Value)} to {Rpm(peakFan!.Value)}" : $"fans started and reached {Rpm(peakFan!.Value)}";
+        var fanText = idleRpm > 0 ? $"fans rose from {Rpm(idleRpm)} to {Rpm(loadPeakFan)}" : $"fans started and reached {Rpm(loadPeakFan)}";
         if (stoppedAtC is { } s2)
             return new(FansCard, title, AreaLevel.Warning, $"Runs hot under load: {fanText}, but the CPU reached {C(s2)} and the load was stopped early", meta, columns, rows,
                 Note: "The fans respond, but the cooling can't keep up with a full load. Clean the vents and heatsink; check the thermal paste.");
         if (endRise is { } rise && rise > r.SettledRiseC && climbed)
             return new(FansCard, title, AreaLevel.Warning, $"{Cap(fanText)}, but the CPU was still heating at the end of the load (+{rise.ToString("0.#", CultureInfo.InvariantCulture)} °C in the last {Secs(r.SettleSeconds)})",
                 meta, columns, rows, Note: "Healthy cooling levels the temperature off within a minute or so of full load.");
-        return new(FansCard, title, AreaLevel.Ok, $"Passed: {fanText} and the CPU leveled off at {C(double.IsNaN(peakTemp) ? 0 : peakTemp)}", meta, columns, rows);
+        var levelText = double.IsNaN(peakTemp) ? "" : $" and the CPU leveled off at {C(peakTemp)}";
+        return new(FansCard, title, AreaLevel.Ok, $"Passed: {fanText}{levelText}", meta, columns, rows);
     }
 
     /// <summary>The maker's fan control: no maker this app knows lets Windows apps set fan speeds, so it is reported, not run.</summary>
@@ -187,15 +210,22 @@ public static class CoolingJudge
             $"Not supported: {(maker is { Length: > 0 } ? maker + " doesn't" : "this PC's maker doesn't")} let Windows apps set the fan speed, so the 20% to 100% steps weren't run",
             "Fan steps need the maker's fan control", ["Measure", "Value"], [], EmptyText: "Fan response under load shows how the fans follow the heat on their own.");
 
-    /// <summary>The temperature-and-load chart's points, one per <see cref="CoolingRules.ChartEverySeconds"/>.</summary>
+    /// <summary>The temperature-and-load chart's points, one per <see cref="CoolingRules.ChartEverySeconds"/> (widened when needed to fit <see cref="AreaReportExport.MaxRowsPerCard"/>).</summary>
     public static AreaCard Samples(IReadOnlyList<CoolingSample> samples, CoolingRules r)
     {
+        var stride = Math.Max(1, r.ChartEverySeconds);
+        if (samples.Count > AreaReportExport.MaxRowsPerCard)
+        {
+            var span = samples[^1].At - samples[0].At;
+            if (span > 0)
+                stride = Math.Max(stride, (int)Math.Ceiling(span / (AreaReportExport.MaxRowsPerCard - 2)));
+        }
         var rows = new List<AreaRow>();
         double next = 0;
         foreach (var s in samples)
         {
             if (s.At + 1e-6 < next && !ReferenceEquals(s, samples[^1])) continue;
-            next = s.At + r.ChartEverySeconds;
+            next = s.At + stride;
             rows.Add(new(AreaLevel.Neutral,
                 [s.At.ToString("0", CultureInfo.InvariantCulture), PhaseName(s.Phase), N(s.CpuC), N(s.LoadPercent), N(s.FanRpm)],
                 SortKeys: [s.At.ToString("00000", CultureInfo.InvariantCulture), null, null, null, null], Key: s.Phase));
@@ -203,7 +233,7 @@ public static class CoolingJudge
         var hottest = samples.Where(s => s.CpuC is not null).Select(s => s.CpuC!.Value).DefaultIfEmpty(double.NaN).Max();
         return new(SamplesCard, "Temperature and load", AreaLevel.Neutral,
             double.IsNaN(hottest) ? $"{samples.Count} samples, no CPU temperature" : $"{samples.Count} samples, hottest {C(hottest)}",
-            $"One row every {r.ChartEverySeconds} s: CPU °C, CPU load %, fastest fan RPM", ["Seconds", "Phase", "CPU °C", "CPU load %", "Fan RPM"], rows,
+            $"One row every {stride} s: CPU °C, CPU load %, fastest fan RPM", ["Seconds", "Phase", "CPU °C", "CPU load %", "Fan RPM"], rows,
             PreserveRowOrder: true);
     }
 

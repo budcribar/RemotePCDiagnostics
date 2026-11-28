@@ -52,8 +52,8 @@ public sealed partial class WindowsPowerModeSetting : IThermalModeSetting
         Guid? plan = null, overlay = null;
         if (PowerGetActiveScheme(IntPtr.Zero, out var p) == 0 && p != IntPtr.Zero)
         {
-            plan = Marshal.PtrToStructure<Guid>(p);
-            LocalFree(p);
+            try { plan = Marshal.PtrToStructure<Guid>(p); }
+            finally { LocalFree(p); }
         }
         if (PowerGetEffectiveOverlayScheme(out var o) == 0) overlay = o;
         return WindowsPowerMode.Describe(plan, overlay);
@@ -62,7 +62,7 @@ public sealed partial class WindowsPowerModeSetting : IThermalModeSetting
     public string? Set(string id)
     {
         if (!Guid.TryParse(id, out var g)) return "That isn't a Windows power mode.";
-        var rc = PowerSetActiveOverlayScheme(g);
+        var rc = PowerSetActiveOverlayScheme(in g);
         return rc == 0 ? null : $"Windows refused the power mode (error {rc}).";
     }
 
@@ -73,7 +73,7 @@ public sealed partial class WindowsPowerModeSetting : IThermalModeSetting
     private static partial uint PowerGetEffectiveOverlayScheme(out Guid effectiveOverlayGuid);
 
     [LibraryImport("powrprof.dll")]
-    private static partial uint PowerSetActiveOverlayScheme(Guid overlaySchemeGuid);
+    private static partial uint PowerSetActiveOverlayScheme(in Guid overlaySchemeGuid);
 
     [LibraryImport("kernel32.dll")]
     private static partial IntPtr LocalFree(IntPtr mem);
@@ -275,24 +275,29 @@ public sealed class DellThermalManagementSetting : IThermalModeSetting
 
     public string? Set(string id)
     {
-        using var searcher = new ManagementObjectSearcher(new ManagementScope(Namespace), new ObjectQuery("SELECT * FROM BIOSAttributeInterface"));
-        using var results = searcher.Get();
-        foreach (ManagementObject o in results)
+        try
         {
-            using (o)
+            using var searcher = new ManagementObjectSearcher(new ManagementScope(Namespace), new ObjectQuery("SELECT * FROM BIOSAttributeInterface"));
+            using var results = searcher.Get();
+            foreach (ManagementObject o in results)
             {
-                using var args = o.GetMethodParameters("SetAttribute");
-                args["SecType"] = 0u;
-                args["SecHndCount"] = 0u;
-                args["SecHandle"] = Array.Empty<byte>();
-                args["AttributeName"] = Attribute;
-                args["AttributeValue"] = id;
-                using var outArgs = o.InvokeMethod("SetAttribute", args, null);
-                var status = Convert.ToUInt32(outArgs?["Status"] ?? 1u, System.Globalization.CultureInfo.InvariantCulture);
-                return status == 0 ? null : $"Dell's BIOS refused the mode (status {status}).";
+                using (o)
+                {
+                    using var args = o.GetMethodParameters("SetAttribute");
+                    args["SecType"] = 0u;
+                    args["SecHndCount"] = 0u;
+                    args["SecHandle"] = Array.Empty<byte>();
+                    args["AttributeName"] = Attribute;
+                    args["AttributeValue"] = id;
+                    using var outArgs = o.InvokeMethod("SetAttribute", args, null);
+                    var status = Convert.ToUInt32(outArgs?["Status"] ?? 1u, System.Globalization.CultureInfo.InvariantCulture);
+                    return status == 0 ? null : $"Dell's BIOS refused the mode (status {status}).";
+                }
             }
+            return "Dell's BIOS settings interface isn't on this PC.";
         }
-        return "Dell's BIOS settings interface isn't on this PC.";
+        catch (ManagementException ex) { return $"Dell's BIOS settings interface failed ({ex.Message.Trim()})."; }
+        catch (COMException ex) { return $"Dell's BIOS settings interface failed ({ex.Message.Trim()})."; }
     }
 }
 

@@ -96,23 +96,24 @@ public sealed class CoolingTestModule(
         var clk = clock ?? new StopwatchStressClock();
         var started = DateTimeOffset.Now;
         var modesTouched = false;
+        var modesRestored = false;
         try
         {
-            return await RunAsync(clk, started, progress, () => modesTouched = true, scan.Token).ConfigureAwait(false);
+            return await RunAsync(clk, started, progress, () => modesTouched = true, () => modesRestored = true, scan.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (scan.IsCancellationRequested)
         {
-            if (modesTouched) await RestoreAsync().ConfigureAwait(false);
             if (ct.IsCancellationRequested) throw;
             return AreaReport.ScanCancelled() with { Summary = "Cooling test cancelled" + (modesTouched ? "; thermal modes put back" : "") };
         }
         finally
         {
+            if (modesTouched && !modesRestored) await RestoreAsync().ConfigureAwait(false);
             lock (_scanGate) { if (ReferenceEquals(_scan, scan)) _scan = null; }
         }
     }
 
-    private async Task<AreaReport> RunAsync(IStressClock clk, DateTimeOffset started, IProgress<string>? progress, Action touched, CancellationToken ct)
+    private async Task<AreaReport> RunAsync(IStressClock clk, DateTimeOffset started, IProgress<string>? progress, Action touched, Action onRestored, CancellationToken ct)
     {
         var t0 = clk.Elapsed;
         double? tjMax = null;
@@ -154,31 +155,41 @@ public sealed class CoolingTestModule(
         // Phase 2: full CPU load, stopped early when the CPU nears Tj max.
         var load = new List<CoolingSample>();
         double? stoppedAt = null;
-        var loadEnd = idleEnd + _r.LoadFor.TotalSeconds;
+        var idleLastAt = idle[^1].At;
+        var loadEnd = idleLastAt + _r.LoadFor.TotalSeconds;
         var stopAbove = (tjMax ?? _r.DefaultTjMaxC) - _r.StopMarginC;
-        Log($"[cooling] idle done ({idle.Count} samples, tjMax={tjMax?.ToString() ?? "unknown"}); starting {_r.LoadFor.TotalSeconds:0} s of full load");
-        var running = cpuLoad.Start();
-        try
+        if (idle[^1].CpuC is { } preTemp && preTemp >= stopAbove)
         {
-            while (true)
-            {
-                await clk.DelayAsync(_r.SampleEvery, ct).ConfigureAwait(false);
-                var s = await Take(CoolingRules.Load).ConfigureAwait(false);
-                load.Add(s);
-                Report($"Fan response under full load: {Clock(s.At - idleEnd)} of {Clock(_r.LoadFor.TotalSeconds)}", s);
-                if (s.CpuC is { } c && c >= stopAbove) { stoppedAt = c; LogWarn($"[cooling] load stopped at {c:0.0}°C (limit {stopAbove:0})"); break; }
-                if (s.At >= loadEnd - 1e-6) break;
-            }
+            stoppedAt = preTemp;
+            LogWarn($"[cooling] load skipped at {preTemp:0.0}°C (limit {stopAbove:0})");
         }
-        finally { await running.DisposeAsync().ConfigureAwait(false); }
+        else
+        {
+            Log($"[cooling] idle done ({idle.Count} samples, tjMax={tjMax?.ToString() ?? "unknown"}); starting {_r.LoadFor.TotalSeconds:0} s of full load");
+            var running = cpuLoad.Start();
+            try
+            {
+                while (true)
+                {
+                    await clk.DelayAsync(_r.SampleEvery, ct).ConfigureAwait(false);
+                    var s = await Take(CoolingRules.Load).ConfigureAwait(false);
+                    load.Add(s);
+                    Report($"Fan response under full load: {Clock(s.At - idleLastAt)} of {Clock(_r.LoadFor.TotalSeconds)}", s);
+                    if (s.CpuC is { } c && c >= stopAbove) { stoppedAt = c; LogWarn($"[cooling] load stopped at {c:0.0}°C (limit {stopAbove:0})"); break; }
+                    if (s.At >= loadEnd - 1e-6) break;
+                }
+            }
+            finally { await running.DisposeAsync().ConfigureAwait(false); }
+        }
 
         // Phase 3: cooling down (shown on the chart; the temperature should fall once the load stops).
-        var coolEnd = load[^1].At + _r.CoolFor.TotalSeconds;
+        var coolStart = load.Count > 0 ? load[^1].At : idleLastAt;
+        var coolEnd = coolStart + _r.CoolFor.TotalSeconds;
         while (true)
         {
             await clk.DelayAsync(_r.SampleEvery, ct).ConfigureAwait(false);
             var s = await Take(CoolingRules.Cool).ConfigureAwait(false);
-            Report($"Cooling down: {Clock(s.At - load[^1].At)} of {Clock(_r.CoolFor.TotalSeconds)}", s);
+            Report($"Cooling down: {Clock(s.At - coolStart)} of {Clock(_r.CoolFor.TotalSeconds)}", s);
             if (s.At >= coolEnd - 1e-6) break;
         }
 
@@ -194,15 +205,15 @@ public sealed class CoolingTestModule(
         {
             progress.ReportStep((int)total, (int)total, "Switching thermal modes…");
             RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, "Switching thermal modes…", started, 100));
-            cards.Add(await ModesAsync(clk, touched, ct).ConfigureAwait(false));
+            cards.Add(await ModesAsync(clk, touched, onRestored, ct).ConfigureAwait(false));
         }
         List<CoolingSample> all;
         lock (_samples) all = [.. _samples];
         cards.Add(CoolingJudge.Samples(all, _r));
-        return Build(cards, idle, load, tjMax);
+        return Build(cards, idle, load);
     }
 
-    private async Task<AreaCard> ModesAsync(IStressClock clk, Action touched, CancellationToken ct)
+    private async Task<AreaCard> ModesAsync(IStressClock clk, Action touched, Action onRestored, CancellationToken ct)
     {
         const string title = "Thermal modes";
         var columns = new[] { "Setting", "Mode", "Result" };
@@ -251,9 +262,13 @@ public sealed class CoolingTestModule(
             }
         }
 
-        var restored = switched + failed.Count == 0 || await RestoreAsync().ConfigureAwait(false);
+        var restored = true;
         if (switched + failed.Count > 0)
+        {
+            restored = await RestoreAsync().ConfigureAwait(false);
+            onRestored();
             rows.Add(new(restored ? AreaLevel.Ok : AreaLevel.Warning, ["All", "Before the test", restored ? "Put back" : "Couldn't be put back; the Agent tries again when it next starts"]));
+        }
         if (!restored) notes.Add("The modes in use before the test couldn't all be put back. Check Settings, System, Power (Power mode) and the maker's app.");
 
         var meta = string.Join(" · ", listed.Answer.Groups.Select(g => $"{g.Title}: {g.NameOf(g.Current)}"));
@@ -278,7 +293,7 @@ public sealed class CoolingTestModule(
         catch (Exception ex) when (ex is not OutOfMemoryException) { LogWarn($"[cooling] restore failed: {ex.Message}"); return false; }
     }
 
-    private static AreaReport Build(List<AreaCard> cards, IReadOnlyList<CoolingSample> idle, IReadOnlyList<CoolingSample> load, double? tjMax)
+    private AreaReport Build(List<AreaCard> cards, IReadOnlyList<CoolingSample> idle, IReadOnlyList<CoolingSample> load)
     {
         var status = AreaReport.Worst(cards.Select(c => c.Level));
         var judged = cards.Where(c => c.Id is CoolingJudge.IdleCard or CoolingJudge.FansCard or CoolingJudge.ModesCard).ToList();
@@ -286,7 +301,7 @@ public sealed class CoolingTestModule(
         var passed = judged.Where(c => c.Level == AreaLevel.Ok).Select(c => c.Headline.StartsWith("Passed: ", StringComparison.Ordinal) ? c.Headline["Passed: ".Length..] : c.Headline).ToList();
         var summary = worst is not null ? worst.Headline : passed.Count > 0 ? "Passed: " + string.Join(" · ", passed) : "Cooling test finished";
         var metrics = new List<KeyMetric>();
-        if (CoolingJudge.Median(idle.Where(s => s.CpuC is not null && s.LoadPercent is not >= 30).Select(s => s.CpuC!.Value)) is { } it)
+        if (CoolingJudge.Median(idle.Where(s => s.CpuC is not null && (s.LoadPercent is not { } l || l < _r.LowLoadPercent)).Select(s => s.CpuC!.Value)) is { } it)
             metrics.Add(new("cooling.idle-cpu", "CPU temperature at low load", Math.Round(it), "°C", MetricTrend.LowerIsBetter));
         if (load.Where(s => s.CpuC is not null).Select(s => s.CpuC!.Value).DefaultIfEmpty(double.NaN).Max() is var lt && !double.IsNaN(lt))
             metrics.Add(new("cooling.load-cpu", "Hottest CPU temperature under load", Math.Round(lt), "°C", MetricTrend.LowerIsBetter));
