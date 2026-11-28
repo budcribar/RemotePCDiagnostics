@@ -31,17 +31,20 @@
     var soundReading = soundResult.Status == DiagnosticStatus.Running;
     var scSteps = soundRep is null || _soundHelp is null ? [] : _soundHelp == "one-side" ? SoundCheck.OneSideSteps(soundRep) : SoundCheck.CantHearSteps(soundRep);
     var scServicesOk = soundRep is not null && SoundCheck.ServicesOk(soundRep);
+    var wfResult = Store.Get(ModuleSlugs.WifiConnect);
+    var wfRep = wfResult.Payload as WifiConnectReport;
+    var wfRunning = wfResult.Status == DiagnosticStatus.Running;
 
     var kbSnap = ActivePhysicalQa.Current;
     var senSnap = ActiveSensorTest.Current;
-    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning || scRunning || senSnap.Verdict == SensorTestVerdict.Running;
+    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning || scRunning || senSnap.Verdict == SensorTestVerdict.Running || wfRunning;
 
     var allSelected = _selected.Count == AllTestIds.Length;
     var mixedSelected = _selected.Count > 0 && _selected.Count < AllTestIds.Length;
 }
 
 <div class="ct-page">
-    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), senSnap)" />
+    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult, scResult, new InteractiveExport.SoundCheckHelp(_soundHelp, soundReading, scSteps, scServicesOk), senSnap, wfResult)" />
     <div class="toolbar">
         <span class="icon-badge page-icon"><Icon Name="eye" Size="20" /></span>
         <h1 data-rpcd-page="interactive" data-rpcd-contract="@BrowserContract.Interactive" data-testid="interactive-title">Interactive tests</h1>
@@ -289,6 +292,31 @@
                         </div>
                         <div class="ct-row-side">
                             <span class="chip chip-@senChip" data-testid="interactive-status-devicesensors">@SensorLabel(senSnap.Verdict)</span>
+                        </div>
+                    </div>
+                    @* 8. Wi-Fi connect: join a network, ping, go back *@
+                    @{
+                        var wfIsSel = _selectedTestId == "wifi";
+                        var wfNa = wfRep?.RunEnd == RunEnd.CouldNotRun;
+                        var wfChip = wfNa ? "na" : OutcomeChip(wfResult.Status);
+                        var wfLabel = wfNa ? "Not run" : OutcomeLabel(wfResult.Status);
+                        var wfSummary = wfResult.Status == DiagnosticStatus.NotRun ? "Connect to a network, ping for 30 s, then go back" : wfResult.Message;
+                    }
+                    <div class="ct-row @(wfIsSel ? "selected" : "") @(wfRunning ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(wfIsSel ? "true" : "false")"
+                         data-testid="interactive-row-wifi" @onclick='() => SelectTest("wifi")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("wifi") ? "true" : "false")"
+                                aria-label="Include Wi-Fi connect test"
+                                data-testid="interactive-check-wifi"
+                                @onclick='() => ToggleItem("wifi")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("wifi") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@(wfNa ? "na" : DotKind(wfResult.Status))"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">Wi-Fi connect</div>
+                            <div class="ct-row-summary meta" title="@wfSummary">@wfSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@wfChip" data-testid="interactive-status-wifi">@wfLabel</span>
                         </div>
                     </div>
                 </div>
@@ -749,6 +777,91 @@
                     </div>
                 </div>
             }
+            else if (_selectedTestId == "wifi")
+            {
+                var wfNaPane = wfRep?.RunEnd == RunEnd.CouldNotRun;
+                var wfPicked = WifiPicked;
+                var wfNeedsPassword = wfPicked is { HasProfile: false, CanTypePassword: true } && wfPicked.Security is not (WifiRadio.Open or WifiRadio.Owe);
+                var wfCantTest = wfPicked is { HasProfile: false, CanTypePassword: false };
+                <div class="phys-qa-pane" data-testid="interactive-wifi-pane">
+                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                        <strong>Wi-Fi connect</strong>
+                        <span class="chip chip-@(wfNaPane ? "na" : OutcomeChip(wfResult.Status))" data-testid="wifi-status-chip">@(wfNaPane ? "Not run" : OutcomeLabel(wfResult.Status))</span>
+                        @if (wfRunning)
+                        {
+                            <button type="button" class="btn-small" data-testid="wifi-cancel-btn" @onclick="CancelWifi">Cancel</button>
+                        }
+                    </div>
+                    <p class="meta" style="margin-top: 0">
+                        Pick a network and press Start. RPCD disconnects the Wi-Fi, connects to that network, pings the router and the internet for
+                        @WifiConnect.PingTime.TotalSeconds.ToString("0") seconds, then goes back to the network the PC was on. A typed password is used once and never saved.
+                    </p>
+                    @if (_wifiDropsSession)
+                    {
+                        <p class="notice" data-testid="wifi-session-warning">This PC reaches the internet only through this Wi-Fi, so a remote session drops for about a minute while the test runs, and reconnects by itself afterwards.</p>
+                    }
+                    <div class="toolbar" style="flex-wrap: wrap; gap: 8px">
+                        <select data-testid="wifi-network-select" aria-label="Network to connect to" disabled="@(wfRunning || _wifiScanning)"
+                                @onchange="e => PickWifi(e.Value?.ToString())">
+                            @if (_wifiNetworks.Count == 0)
+                            {
+                                <option value="">@(_wifiScanning ? "Scanning…" : "No networks found yet")</option>
+                            }
+                            @foreach (var n in _wifiNetworks)
+                            {
+                                <option value="@n.Ssid" selected="@(n.Ssid == wfPicked?.Ssid)">@WifiOptionText(n)</option>
+                            }
+                        </select>
+                        <button type="button" class="btn-small" data-testid="wifi-scan-btn" disabled="@(wfRunning || _wifiScanning)" @onclick="ScanWifiAsync">@(_wifiScanning ? "Scanning…" : "Find networks")</button>
+                    </div>
+                    @if (wfNeedsPassword)
+                    {
+                        <label class="phys-qa-note">
+                            <span class="meta">Password for @wfPicked!.Ssid (used once, never saved)</span>
+                            <input type="password" autocomplete="off" data-testid="wifi-password" maxlength="64" value="@_wifiPassword"
+                                   @oninput="e => _wifiPassword = e.Value?.ToString() ?? string.Empty" disabled="@wfRunning" />
+                        </label>
+                    }
+                    @if (wfCantTest)
+                    {
+                        <p class="meta" data-testid="wifi-needs-profile">@wfPicked!.Security networks need a saved profile: connect to it once from Windows, then test it here.</p>
+                    }
+                    <div class="toolbar">
+                        <button type="button" class="btn-small btn-primary" data-testid="wifi-start-btn"
+                                disabled="@(wfRunning || Diagnostics.IsStressSuiteRunning || _isRemoteDisplay || wfPicked is null || wfCantTest || (wfNeedsPassword && !WifiConnect.IsValidPassphrase(_wifiPassword)))"
+                                title="@(_isRemoteDisplay ? "The person at the PC starts this test: the remote session can drop while the Wi-Fi switches" : null)" @onclick="StartWifiAsync">
+                            ▶ @(wfResult.Status == DiagnosticStatus.NotRun ? "Start Wi-Fi test" : "Run again")
+                        </button>
+                    </div>
+                    @if (wfRunning)
+                    {
+                        <p class="notice" data-testid="wifi-step" aria-live="polite"><b>@wfResult.Message</b></p>
+                    }
+                    else
+                    {
+                        <p data-testid="wifi-status" class="status-line"><span class="@DotClass(wfResult.Status)"></span><span>@(wfResult.Status == DiagnosticStatus.NotRun ? "Not run. Pick a network and press Start Wi-Fi test." : wfResult.Message)</span></p>
+                    }
+                    @if (!wfRunning && wfRep is { } wr && !wfNaPane)
+                    {
+                        <ul class="meta" data-testid="wifi-measured">
+                            <li data-testid="wifi-connect-time">Connected: @(wr.ConnectSeconds is { } cs ? $"after {cs:0.#} s ({wr.Mode})" : "no")</li>
+                            @if (wr.GatewayPings is { } gp)
+                            {
+                                <li data-testid="wifi-router-pings">Router: @gp.Received of @gp.Sent replies (@gp.LossPercent.ToString("0.#")% lost)@(gp.AverageMs is { } ga ? $", {ga:0} ms average, {gp.MaxMs:0} ms worst" : "")</li>
+                            }
+                            @if (wr.InternetPings is { } ip)
+                            {
+                                <li data-testid="wifi-internet-pings">Internet: @ip.Received of @ip.Sent replies (@ip.LossPercent.ToString("0.#")% lost)@(ip.AverageMs is { } ia ? $", {ia:0} ms average" : "")</li>
+                            }
+                            @if (wr.RssiMin is { } lo)
+                            {
+                                <li data-testid="wifi-rssi">Signal: @lo to @wr.RssiMax dBm (@wr.RssiAverage?.ToString("0") dBm average)</li>
+                            }
+                            <li data-testid="wifi-restore">Afterwards: @(wr.Restore switch { WifiRestoreOutcome.Restored => $"back on {wr.OriginalSsid ?? wr.Ssid}", WifiRestoreOutcome.Disconnected => "disconnected again, as before", WifiRestoreOutcome.Failed => "still reconnecting to the original network (Windows keeps trying)", _ => "nothing was changed" })</li>
+                        </ul>
+                    }
+                </div>
+            }
         </section>
     </div>
 </div>
@@ -760,8 +873,23 @@
     private DeviceSensorTestService? _fallbackSensorTest;
     private DeviceSensorTestService ActiveSensorTest => App.SensorTest ?? (_fallbackSensorTest ??= new DeviceSensorTestService());
 
-    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "devicesensors"];
-    private readonly HashSet<string> _selected = new(["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "devicesensors"], StringComparer.OrdinalIgnoreCase);
+    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "devicesensors", "wifi"];
+    private readonly HashSet<string> _selected = new(["keyboard", "display", "webcam", "speakertomic", "mictospeaker", "soundcheck", "devicesensors", "wifi"], StringComparer.OrdinalIgnoreCase);
+
+    // The Wi-Fi connect pane: the last scan's networks, the one picked (null = the network the PC is on), and the typed password.
+    private IReadOnlyList<WifiNetworkSeen> _wifiNetworks = [];
+    private string? _wifiPickedSsid;
+    private string _wifiPassword = "";
+    private bool _wifiScanning;
+    private bool _wifiScanned;
+    private bool _wifiDropsSession;
+    private string? _wifiInterfaceId;
+
+    private WifiNetworkSeen? WifiPicked =>
+        _wifiNetworks.FirstOrDefault(n => n.Ssid == _wifiPickedSsid) ?? _wifiNetworks.FirstOrDefault(n => n.Connected) ?? _wifiNetworks.FirstOrDefault(n => n.HasProfile);
+
+    private static string WifiOptionText(WifiNetworkSeen n) =>
+        $"{(n.Ssid.Length > 0 ? n.Ssid : "(hidden)")} · {n.Security} · {WifiRadio.FormatRssi(n.Rssi)}{(n.Connected ? " · connected" : n.HasProfile ? " · saved" : "")}";
 
     /// <summary>Opens a test's pane from a link ("interactive?test=soundcheck"); help=cant-hear also opens the Can't hear sound list.</summary>
     [SupplyParameterFromQuery(Name = "test")] public string? TestQuery { get; set; }
@@ -790,10 +918,11 @@
 
     /// <summary>The page's state for browser agents (interactive-data): measured evidence and person-entered verdicts kept apart.</summary>
     private string InteractiveJson(RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaSnapshot kb, DiagnosticResult cam, DiagnosticResult s2m, DiagnosticResult m2s,
-        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, SensorTestSnapshot sensors) =>
+        DiagnosticResult sc, InteractiveExport.SoundCheckHelp help, SensorTestSnapshot sensors, DiagnosticResult wifi) =>
         InteractiveExport.ToJson(
             new InteractiveExport.PageState(_selectedTestId, _selected, _isBatchRunning, _isRemoteDisplay, Session.Mode == SessionMode.Remote || _hasRemoteSession, _technicianHasControl),
-            kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help, sensors);
+            kb, PersonState(cam), PersonState(s2m), PersonState(m2s), PersonState(sc), help, sensors, wifi,
+            new InteractiveExport.WifiPane(_wifiNetworks, WifiPicked?.Ssid, _wifiPassword.Length > 0, _wifiDropsSession, _wifiScanning));
 
     private IReadOnlyList<AudioDevice> _outputs = [];
     private IReadOnlyList<AudioDevice> _inputs = [];
@@ -825,6 +954,7 @@
         ActiveSensorTest.Changed += OnSensorTestChanged;
         if (TestQuery is { Length: > 0 } t && AllTestIds.Contains(t, StringComparer.OrdinalIgnoreCase)) _selectedTestId = t.ToLowerInvariant();
         if (_selectedTestId == "soundcheck" && HelpQuery == "cant-hear") _ = OpenCantHearAsync();
+        if (_selectedTestId == "wifi") _ = ScanWifiAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -886,7 +1016,57 @@
     private void SelectTest(string id)
     {
         _selectedTestId = id;
+        if (id == "wifi" && !_wifiScanned) _ = ScanWifiAsync();
     }
+
+    private IWifiConnectModule? GetWifiModule() =>
+        Diagnostics.Modules.OfType<IWifiConnectModule>().FirstOrDefault()
+        ?? (Diagnostics.Catalog.Find(ModuleSlugs.WifiConnect) is { } d ? Diagnostics.Catalog.ModuleFor(d.Id) as IWifiConnectModule : null);
+
+    private async Task ScanWifiAsync()
+    {
+        if (_wifiScanning || GetWifiModule() is not { } m) return;
+        _wifiScanning = true;
+        _wifiScanned = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var reading = await m.ScanAsync(CancellationToken.None);
+            var adapter = reading.Interfaces.FirstOrDefault(i => i.RadioOn);
+            _wifiInterfaceId = adapter?.Id;
+            _wifiNetworks = adapter?.Networks.Where(n => n.Ssid.Length > 0)
+                .OrderByDescending(n => n.Connected).ThenByDescending(n => n.HasProfile).ThenByDescending(n => n.Rssi ?? int.MinValue).ToList() ?? [];
+            _wifiDropsSession = adapter is { IsConnected: true } && m.DropsSession(adapter.Id);
+        }
+        catch (Exception) { _wifiNetworks = []; }
+        finally
+        {
+            _wifiScanning = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void PickWifi(string? ssid)
+    {
+        _wifiPickedSsid = string.IsNullOrEmpty(ssid) ? null : ssid;
+        _wifiPassword = "";
+    }
+
+    private async Task StartWifiAsync()
+    {
+        if (Diagnostics.IsStressSuiteRunning || _isRemoteDisplay) return;
+        if (GetWifiModule() is { } m)
+        {
+            m.Settings.InterfaceId = _wifiInterfaceId;
+            m.Settings.Ssid = WifiPicked?.Ssid;
+            m.Settings.Password = _wifiPassword.Length > 0 ? _wifiPassword : null;
+        }
+        _wifiPassword = "";
+        await Diagnostics.RunAsync(ModuleSlugs.WifiConnect);
+        if (_selectedTestId == "wifi") await ScanWifiAsync();
+    }
+
+    private void CancelWifi() => (GetWifiModule() as OnDemandModuleBase)?.Cancel();
 
     private void ToggleItem(string id)
     {
@@ -1040,6 +1220,9 @@
                     case "devicesensors":
                         await WaitForSensorTestAsync(ct);
                         break;
+                    case "wifi":
+                        await StartWifiAsync();
+                        break;
                 }
             }
         }
@@ -1062,6 +1245,7 @@
         CancelMicToSpeaker();
         CancelSoundCheck();
         ActiveSensorTest.Cancel();
+        CancelWifi();
         Diagnostics.CancelStressSuite();
     }
 

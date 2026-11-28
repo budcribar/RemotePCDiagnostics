@@ -120,6 +120,8 @@ public static class HostServices
             sp.GetRequiredService<IMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(), L<UndoService>(), logEvent));
         // Audio tests (speaker→mic, mic→speaker): on-demand only, own pages, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioIo>(_ => new WasapiAudioIo(L<WasapiAudioIo>()));
+        // The Wi-Fi connect test changes the app's own Wi-Fi connection and reads the Interactive tests page's picks, so it runs in the app.
+        services.AddSingleton<RemotePCDiagnostics.Core.Areas.IWifiConnector>(_ => new RemotePCDiagnostics.Core.Areas.WlanConnector());
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioStateSource>(_ => new WasapiAudioStateSource(L<WasapiAudioStateSource>()));
         // Motion, light and presence sensors (the Windows Sensor API), read in the app: no administrator rights needed. The Sensor test on
         // the Interactive tests page polls them only while it runs.

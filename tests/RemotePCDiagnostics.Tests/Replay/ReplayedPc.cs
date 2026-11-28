@@ -75,9 +75,12 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
         _faults?.FileAsync(name, () => Replay.FileText(name), ct) ?? Task.FromResult(Replay.FileText(name));
 
     /// <summary>The check as the app runs it (WMI, through the Agent).</summary>
-    public BatteryPowerModule BatteryPower() => new(new WmiBatteryPowerSource(Wmi, readPowerPolicy: () => null, isHp: () => false));
+    public BatteryPowerModule BatteryPower() => new(new WmiBatteryPowerSource(Wmi, readPowerPolicy: () => null, isHp: () => false, isLenovo: () => false),
+        delay: NoWait);
     /// <summary>The Store edition without an Agent (osquery and powercfg).</summary>
-    public BatteryPowerModule BatteryPowerOld() => new(new OsqueryBatteryPowerSource(Osquery, Commands));
+    public BatteryPowerModule BatteryPowerOld() => new(new OsqueryBatteryPowerSource(Osquery, Commands), delay: NoWait);
+    /// <summary>A recording answers the same every time, so waiting between readings only slows the test.</summary>
+    private static Task NoWait(TimeSpan _, CancellationToken __) => Task.CompletedTask;
 
     /// <summary>DriveHealth on WMI (in the app, the Agent's). The clock is the recording's, and nothing is saved.</summary>
     public DriveHealthModule DriveHealth() => Drives(new WmiDriveSource(Wmi));
@@ -135,8 +138,12 @@ internal sealed class ReplayedPc(MachineRecording recording, FaultPlan? faults =
     public EventLogModule EventLog() => new(Commands, excludeCrashEvents: true, clock: Clock);
     public SleepWakeModule SleepWake() => new(Commands, batteryReport: new ReplayedBatteryReport(this), clock: Clock);
 
-    /// <summary>Network adapters and IP configuration on WMI and the registry, offline (the live probes aren't replayed).</summary>
-    public NetworkModule Network() => new(new WmiNetworkSource(Wmi, Registry), includeWifiAndIpConfig: true, offline: true);
+    /// <summary>
+    /// Network adapters and IP configuration on WMI and the registry, offline (the live probes aren't replayed). The Wi-Fi radio and scan
+    /// come from the recording when it holds them (recorder v11 on).
+    /// </summary>
+    public NetworkModule Network() => new(new WmiNetworkSource(Wmi, Registry), includeWifiAndIpConfig: true, offline: true,
+        radio: Has(c => c.Kind == RecordedCall.WifiKind) ? Replay.Wifi : null);
     /// <summary>The Store edition without an Agent: osquery interface_details and the NetAdapterStatistics and IpConfig scripts.</summary>
     public NetworkModule NetworkOld() => new(new OsqueryNetworkSource(Osquery, Commands), includeWifiAndIpConfig: true, offline: true);
 

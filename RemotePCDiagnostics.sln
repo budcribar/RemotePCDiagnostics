@@ -122,6 +122,7 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules.SoundCheck", "src\Modules\SoundCheck\RemotePCDiagnostics.Modules.SoundCheck.csproj", "{52C1F701-1E79-49F6-B5CF-782F3021358D}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules.DeviceSensors", "src\Modules\DeviceSensors\RemotePCDiagnostics.Modules.DeviceSensors.csproj", "{03E03BFD-F93A-477B-970E-7916FD4418CC}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules.WifiConnect", "src\Modules\WifiConnect\RemotePCDiagnostics.Modules.WifiConnect.csproj", "{0A76E3FF-67FD-48C9-9B89-57419FF1846A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -733,6 +734,18 @@ Global
 		{03E03BFD-F93A-477B-970E-7916FD4418CC}.Release|x64.Build.0 = Release|Any CPU
 		{03E03BFD-F93A-477B-970E-7916FD4418CC}.Release|x86.ActiveCfg = Release|Any CPU
 		{03E03BFD-F93A-477B-970E-7916FD4418CC}.Release|x86.Build.0 = Release|Any CPU
+		{0A76E3FF-67FD-48C9-9B89-57419FF1846A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0A76E3FF-67FD-48C9-9B89-57419FF1846A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0A76E3FF-67FD-48C9-9B89-57419FF1846A}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{0A76E3FF-67FD-48C9-9B89-57419FF1846A}.Debug|x64.Build.0 = Debug|Any CPU
+		{0A76E3FF-67FD-48C9-9B89-57419FF1846A}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{0A76E3FF-67FD-48C9-9B89-57419FF1846A}.Debug|x86.Build.0 = Debug|Any CPU
+		{0A76E3FF-67FD-48C9-9B89-57419FF1846A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0A76E3FF-67FD-48C9-9B89-57419FF1846A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0A76E3FF-67FD-48C9-9B89-57419FF1846A}.Release|x64.ActiveCfg = Release|Any CPU
+		{0A76E3FF-67FD-48C9-9B89-57419FF1846A}.Release|x64.Build.0 = Release|Any CPU
+		{0A76E3FF-67FD-48C9-9B89-57419FF1846A}.Release|x86.ActiveCfg = Release|Any CPU
+		{0A76E3FF-67FD-48C9-9B89-57419FF1846A}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -793,5 +806,6 @@ Global
 		{3B19A9AF-C47F-4F1C-858E-A99C0C8234D4} = {C58ADAED-1906-52A5-4532-2557220AA294}
 		{52C1F701-1E79-49F6-B5CF-782F3021358D} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
 		{03E03BFD-F93A-477B-970E-7916FD4418CC} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
+		{0A76E3FF-67FD-48C9-9B89-57419FF1846A} = {CA253913-39DE-BFD0-C9A3-4B7EC6FBDF17}
 	EndGlobalSection
 EndGlobal

@@ -47,6 +47,7 @@ public class ModuleIdsTests
         ["WindowsMaintenance"] = "f2a4c718-9d3e-4b65-a108-7c5e3f9b2d41",
         ["SoundCheck"] = "b81b0a57-43d2-4ad4-8572-1480fbe6cf0f",
         ["DeviceSensors"] = "07dc23a6-391f-4404-8151-a59781088800",
+        ["WifiConnect"] = "3f0c2b8e-5d71-4a9e-b6c4-2e8d9a7f1c35",
     };
 
     [Fact]

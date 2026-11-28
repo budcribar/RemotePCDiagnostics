@@ -33,12 +33,16 @@ public interface IDriveSource
 public sealed record DriveList(IReadOnlyList<DriveHealth> Drives, string? Notice = null);
 
 /// <param name="isHp">Whether this PC is an HP, so HP's battery settings are asked for (default: the SMBIOS manufacturer in the registry).</param>
-public sealed class WmiBatteryPowerSource(IWmiSource wmi, Func<PowerPolicySnapshot?>? readPowerPolicy = null, ILogger? log = null, Func<bool>? isHp = null) : IBatteryPowerSource
+/// <param name="isLenovo">Whether this PC is a Lenovo, so Lenovo's battery information is asked for (default: the SMBIOS manufacturer).</param>
+public sealed class WmiBatteryPowerSource(IWmiSource wmi, Func<PowerPolicySnapshot?>? readPowerPolicy = null, ILogger? log = null, Func<bool>? isHp = null,
+    Func<bool>? isLenovo = null) : IBatteryPowerSource
 {
     public const string PowerPlanNamespace = @"root\cimv2\power";
     public const string ActivePlanSql = "SELECT ElementName FROM Win32_PowerPlan WHERE IsActive = TRUE";
 
-    public Task<IReadOnlyList<BatteryStatus>?> ReadBatteriesAsync(CancellationToken ct) => BatteryReader.ReadWmiAsync(wmi, ct);
+    private readonly Lazy<bool> _lenovo = new(isLenovo ?? BatteryCondition.IsLenovoPc);
+
+    public Task<IReadOnlyList<BatteryStatus>?> ReadBatteriesAsync(CancellationToken ct) => BatteryReader.ReadWmiAsync(wmi, _lenovo.Value, ct);
 
     public async Task<string?> ReadActivePlanAsync(CancellationToken ct)
     {

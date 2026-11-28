@@ -6,7 +6,8 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// Battery health (wear level, cycle count, charge state) and the active Windows power plan, read from <paramref name="source"/>: WMI through
 /// the Agent in the app, and in the Store edition the legacy osquery + powercfg reader when no Agent is connected.
 /// </summary>
-public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log = null, Func<TimeSpan, CancellationToken, Task>? delay = null) : AreaModuleBase(log)
+public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log = null, Func<TimeSpan, CancellationToken, Task>? delay = null,
+    History.IHistoryStore? history = null) : AreaModuleBase(log)
 {
     public const string ModuleName = ModuleSlugs.BatteryPower;
     public const int LowBatteryHealthPercent = BatteryStatus.LowHealthPercent;
@@ -22,28 +23,37 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        progress.ReportStep(1, 2, "Checking battery health…");
+        progress.ReportStep(1, 3, "Checking battery health…");
         var batteries = await source.ReadBatteriesAsync(ct).ConfigureAwait(false);
         var perf = await source.ReadProcessorPerformanceAsync(ct).ConfigureAwait(false);
+        IReadOnlyList<Battery.HpBatterySetting> hp = [];
+        if (batteries is { Count: > 0 })
+        {
+            try { hp = await source.ReadHpChargeSettingsAsync(ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex) { LogWarn($"{Name}: HP battery settings unreadable: {ex.Message}"); }
+        }
 
         var onAc1 = IsOnAcPower(batteries);
         var discharging1 = batteries is { Count: > 0 } && batteries.Any(b => b.IsDischargingOnAc);
         var heldBack1 = onAc1 && perf?.PerformanceLimitPercent is > 0 and < PerformanceLimitWarningThreshold;
+        // A fault in one reading can be a moment's glitch (plugging in, a driver update): it counts only if the next reading has it too.
+        var faulty1 = batteries is { Count: > 0 } && batteries.Any(b => BatteryCondition.Faults(b).Any(f => f.Level == AreaLevel.Error));
 
         var confirmedDischargingOnAc = false;
         var confirmedHeldBackOnAc = false;
 
         // Fast path: only wait 5 s for a second confirmation sample when the first sample looks suspicious.
-        if (discharging1 || heldBack1)
+        if (discharging1 || heldBack1 || faulty1)
         {
-            progress.ReportStep(1, 2, "Confirming power and processor limit…");
+            progress.ReportStep(1, 3, "Confirming power and processor limit…");
             await _delay(ConfirmationDelay, ct).ConfigureAwait(false);
 
-            if (discharging1)
+            if (discharging1 || faulty1)
             {
                 var batteries2 = await source.ReadBatteriesAsync(ct).ConfigureAwait(false);
                 if (batteries2 is not null) batteries = batteries2;
-                confirmedDischargingOnAc = batteries2 is { Count: > 0 } && batteries2.Any(b => b.IsDischargingOnAc);
+                confirmedDischargingOnAc = discharging1 && batteries2 is { Count: > 0 } && batteries2.Any(b => b.IsDischargingOnAc);
             }
 
             if (heldBack1)
@@ -55,19 +65,72 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
             }
         }
 
-        progress.ReportStep(2, 2, "Checking active power plan…");
+        BatteryConditionInput? condition = null;
+        if (batteries is { Count: > 0 })
+        {
+            var (input, latest) = await CheckConditionAsync(batteries, hp, progress, ct).ConfigureAwait(false);
+            condition = input;
+            if (latest is not null) batteries = latest;
+        }
+
+        progress.ReportStep(3, 3, "Checking active power plan…");
         var plan = await source.ReadActivePlanAsync(ct).ConfigureAwait(false);
         var policy = await source.ReadPowerPolicyAsync(ct).ConfigureAwait(false);
         if (batteries is null && plan is null) return AreaReport.Failed(FailedMessage);
-        IReadOnlyList<Battery.HpBatterySetting> hp = [];
-        if (batteries is { Count: > 0 })
-        {
-            try { hp = await source.ReadHpChargeSettingsAsync(ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception ex) { LogWarn($"{Name}: HP battery settings unreadable: {ex.Message}"); }
-        }
-        return Build(batteries, plan, confirmedDischargingOnAc, confirmedHeldBackOnAc, perf, policy, hp);
+        return Build(batteries, plan, confirmedDischargingOnAc, confirmedHeldBackOnAc, perf, policy, hp, condition);
     }
+
+    /// <summary>
+    /// The charging check and the History comparison. When one reading can't tell whether a battery on AC charges, reads every
+    /// <see cref="BatteryCondition.ChargeSampleEvery"/> for up to <see cref="BatteryCondition.ChargeWatch"/>, stopping as soon as it charges.
+    /// Read-only, so safe in Run all; cancelling stops the wait.
+    /// </summary>
+    private async Task<(BatteryConditionInput Input, IReadOnlyList<BatteryStatus>? Latest)> CheckConditionAsync(
+        IReadOnlyList<BatteryStatus> first, IReadOnlyList<Battery.HpBatterySetting> hp, IProgress<string>? progress, CancellationToken ct)
+    {
+        var limit = BatteryCondition.ChargeLimitPercent(hp);
+        var last = first;
+        var watched = TimeSpan.Zero;
+        var watchedBatteries = first.Select((b, i) => (b, i)).Where(x => BatteryCondition.NeedsChargeWatch(x.b, limit)).ToList();
+        if (watchedBatteries.Count > 0)
+        {
+            while (watched < BatteryCondition.ChargeWatch)
+            {
+                progress.ReportStep(2, 3, $"Checking that the battery charges ({(int)watched.TotalSeconds} of {(int)BatteryCondition.ChargeWatch.TotalSeconds} s)…");
+                await _delay(BatteryCondition.ChargeSampleEvery, ct).ConfigureAwait(false);
+                watched += BatteryCondition.ChargeSampleEvery;
+                if (await source.ReadBatteriesAsync(ct).ConfigureAwait(false) is not { Count: > 0 } next) break;
+                last = next;
+                // Unplugged meanwhile, or every watched battery now shows charge going in: nothing more to wait for.
+                var w = watched;
+                if (!next.Any(b => b.IsOnAc) || watchedBatteries.Select(x => BatteryCondition.JudgeCharging(x.b, Same(next, x.b, x.i) ?? x.b, w, limit))
+                        .All(c => c.Outcome is not (ChargeOutcome.NotCharging or ChargeOutcome.HeldBelowFull)))
+                    break;
+            }
+        }
+        var charging = first.Select((b, i) => Same(last, b, i) is { } now
+            ? BatteryCondition.JudgeCharging(b, now, BatteryCondition.NeedsChargeWatch(b, limit) ? watched : TimeSpan.Zero, limit)
+            : null).ToList();
+
+        IReadOnlyList<PreviousCapacity?>? previous = null;
+        if (history is not null)
+        {
+            try
+            {
+                var read = await Task.Run(() => history.Read(HistoryWindow), ct).ConfigureAwait(false);
+                previous = BatteryCondition.PreviousCapacities(read.Entries, last.Count, DateTimeOffset.UtcNow.AddMinutes(-1));
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex) { LogWarn($"{Name}: History unreadable: {ex.Message}"); }
+        }
+        return (new BatteryConditionInput(charging, previous), ReferenceEquals(last, first) ? null : last);
+    }
+
+    /// <summary>How far back History is searched for the last full charge capacity.</summary>
+    public static readonly TimeSpan HistoryWindow = TimeSpan.FromDays(180);
+
+    private static BatteryStatus? Same(IReadOnlyList<BatteryStatus> list, BatteryStatus b, int index) =>
+        list.FirstOrDefault(x => x.InstanceName.Length > 0 && x.InstanceName == b.InstanceName) ?? (index < list.Count ? list[index] : null);
 
     /// <summary>
     /// HP's charge limit: a neutral card (it never changes the check's result) saying whether charging stops at about 80%, with the fix when
@@ -99,7 +162,8 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
         bool heldBackOnAc = false,
         ProcessorPerformanceSample? processorPerf = null,
         PowerPolicySnapshot? policy = null,
-        IReadOnlyList<Battery.HpBatterySetting>? hpCharge = null)
+        IReadOnlyList<Battery.HpBatterySetting>? hpCharge = null,
+        BatteryConditionInput? condition = null)
     {
         if (batteries is null && powerPlan is null) return AreaReport.Failed("Couldn't read battery and power settings on this PC.");
         var cards = new List<AreaCard>();
@@ -117,49 +181,23 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
         }
         else
         {
-            var b = batteries[0];
-            var health = b.HealthPercent;
-            var worn = health is < LowBatteryHealthPercent;
-            // Health the battery didn't report is no reason to call it good.
-            var healthLevel = worn ? AreaLevel.Warning : health is null ? AreaLevel.Neutral : AreaLevel.Ok;
-            var level = dischargingOnAc ? AreaLevel.Warning : healthLevel;
-            var headline = dischargingOnAc
-                ? "Plugged in, but battery is discharging"
-                : health is { } h ? $"{h}% battery health" : (b.State.Length > 0 ? b.State : "Battery present");
-            var metaParts = new List<string>();
-            if (b.CycleCount is > 0) metaParts.Add($"{b.CycleCount} cycles");
-            var model = string.Join(" ", new[] { b.Manufacturer, b.Model }.Where(x => x.Length > 0));
-            if (model.Length > 0) metaParts.Add(model);
-            else if (b.Chemistry.Length > 0) metaParts.Add(b.Chemistry);
-
-            var rows = new List<AreaRow>();
-            void Add(string l, string? v, AreaLevel lv = AreaLevel.Neutral) { if (!string.IsNullOrWhiteSpace(v)) rows.Add(new(lv, [l, v])); }
-            Add("Power state", b.State, dischargingOnAc ? AreaLevel.Warning : AreaLevel.Neutral);
-            if (dischargingOnAc)
-                Add("Charger warning", b.DischargeRateMw is > 0
-                    ? $"Battery is draining ({b.DischargeRateMw.Value / 1000.0:0.0} W) while plugged in"
-                    : "Battery is draining while plugged in", AreaLevel.Warning);
-            Add("Current charge", b.PercentRemaining is { } p ? $"{p}%" : null);
-            Add("Estimated battery health", health is { } hp ? $"{hp}% of original capacity ({b.WearPercent}% wear)" : "Not reported", healthLevel);
-            Add("Design capacity", b.DesignCapacity is > 0 ? $"{b.DesignCapacity.Value.ToString("N0", CultureInfo.InvariantCulture)} mWh" : null);
-            Add("Full charge capacity", b.MaxCapacity is > 0 ? $"{b.MaxCapacity.Value.ToString("N0", CultureInfo.InvariantCulture)} mWh" : null);
-            Add("Cycle count", b.CycleCount is > 0 ? b.CycleCount.Value.ToString("N0", CultureInfo.InvariantCulture) : "Not reported");
-            Add("Battery model", string.Join(" ", new[] { b.Manufacturer, b.Model }.Where(x => x.Length > 0)));
-            Add("Chemistry", b.Chemistry);
-
-            var notes = new List<string>();
-            if (dischargingOnAc)
-                notes.Add("This PC is plugged in, yet the battery is still draining. Check the charger wattage or USB-C dock — an under-wattage adapter can cause severe slowdowns.");
-            if (worn)
-                notes.Add("A battery below 70% health holds significantly less charge than when new and may need replacement.");
-
-            cards.Add(new("battery", "Battery health", level, headline, string.Join(" · ", metaParts), ["Detail", "Value"], rows,
-                Note: notes.Count > 0 ? string.Join(" ", notes) : null));
-            // Tracked over time: health falling (or capacity dropping) faster than normal is the early sign of a battery to replace.
-            metrics.AddRange(CheckKeyMetrics.Battery(b));
-            parts.Add(dischargingOnAc
-                ? "Plugged in, discharging"
-                : health is { } h2 ? $"Battery health {h2}%" + (b.PercentRemaining is { } pr ? $" · {pr}% charged" : "") : "Battery present");
+            for (var i = 0; i < batteries.Count; i++)
+            {
+                var b = batteries[i];
+                // The confirmed drain is the PC's; with several batteries it belongs to the ones that drain.
+                var draining = dischargingOnAc && (batteries.Count == 1 || b.IsDischargingOnAc);
+                var charging = condition?.Charging is { } c && i < c.Count ? c[i] : null;
+                var previous = condition?.Previous is { } pv && i < pv.Count ? pv[i] : null;
+                cards.Add(BatteryCondition.Card(b, i, batteries.Count, draining, charging, previous));
+                // Tracked over time: health falling (or capacity dropping) faster than normal is the early sign of a battery to replace.
+                metrics.AddRange(CheckKeyMetrics.Battery(b, i));
+            }
+            var b0 = batteries[0];
+            var errorCard = cards.TakeLast(batteries.Count).FirstOrDefault(c => c.Level == AreaLevel.Error);
+            parts.Add(errorCard is not null ? errorCard.Headline
+                : dischargingOnAc ? "Plugged in, discharging"
+                : b0.HealthPercent is { } h2 ? $"Battery health {h2}%" + (b0.PercentRemaining is { } pr ? $" · {pr}% charged" : "") : "Battery present");
+            if (batteries.Count > 1) parts.Add($"{batteries.Count} batteries");
         }
 
         var planName = string.IsNullOrWhiteSpace(powerPlan) ? "Not reported" : powerPlan.Trim();

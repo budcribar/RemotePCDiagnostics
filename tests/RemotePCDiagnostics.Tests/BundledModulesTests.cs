@@ -48,6 +48,7 @@ public sealed class BundledModulesTests : IDisposable
         services.AddSingleton<RemotePCDiagnostics.Core.DeviceSensors.IDeviceSensorSource>(new RemotePCDiagnostics.Core.DeviceSensors.NullDeviceSensorSource());
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Webcam.IWebcamIo>());
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Npu.INpuIo>());
+        services.AddSingleton(Stub<RemotePCDiagnostics.Core.Areas.IWifiConnector>());
         loader.LoadBundled(services);
         return (loader, registrar, services);
     }

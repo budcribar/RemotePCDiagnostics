@@ -55,6 +55,49 @@
     },
     {
       "kind": "wmi",
+      "namespace": "root\\wmi",
+      "query": "SELECT InstanceName, Voltage, Critical FROM BatteryStatus",
+      "rows": [
+        {
+          "InstanceName": "ACPI\\PNP0C0A\\1_0",
+          "Voltage": 12820,
+          "Critical": false
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\wmi",
+      "query": "SELECT InstanceName, SerialNumber, ManufactureDate FROM BatteryStaticData",
+      "rows": [
+        {
+          "InstanceName": "ACPI\\PNP0C0A\\1_0",
+          "SerialNumber": "<serial:5a5a5a>",
+          "ManufactureDate": null
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\wmi",
+      "query": "SELECT InstanceName, Temperature FROM BatteryTemperature",
+      "rows": []
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT DeviceID, DesignVoltage, EstimatedChargeRemaining, Status FROM Win32_Battery",
+      "rows": [
+        {
+          "DeviceID": "1SampleCoSAMPLE-BAT",
+          "DesignVoltage": 11550,
+          "EstimatedChargeRemaining": 100,
+          "Status": "OK"
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
       "namespace": "root\\cimv2",
       "query": "SELECT Name, PercentPerformanceLimit, PercentofMaximumFrequency FROM Win32_PerfFormattedData_Counters_ProcessorInformation WHERE Name = '_Total'",
       "rows": [
