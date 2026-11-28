@@ -93,6 +93,45 @@ public class AutoRunTests
         Assert.DoesNotContain(absentSvc.Modules, m => m.Name == "SlowDetect");
     }
 
+    /// <summary>Bud, Nov 28: the Dashboard header said "Querying hardware…" until someone ran the checks. The hardware inventory is read
+    /// right away, even with auto-run off.</summary>
+    [Fact]
+    public async Task StartHardwareInventory_RunsOsquery_EvenWithAutoRunOff()
+    {
+        var m = new FakeModule(ModuleSlugs.Osquery, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.Osquery)));
+        var store = new ResultStore();
+        var svc = new DiagnosticsService(store, [m]);
+        Assert.False(AutoRun.IsEnabled(_ => null));
+
+        var run = AutoRun.StartHardwareInventory(svc, store, null);
+
+        Assert.NotNull(run);
+        await run.WaitAsync(Wait);
+        Assert.Equal(DiagnosticStatus.Ok, store.Get(ModuleSlugs.Osquery).Status);
+    }
+
+    [Fact]
+    public async Task StartHardwareInventory_SkipsWhenItHasAResultOrIsRunning()
+    {
+        var gate = new TaskCompletionSource();
+        var calls = 0;
+        var m = new FakeModule(ModuleSlugs.Osquery, async _ => { Interlocked.Increment(ref calls); await gate.Task; return FakeModule.Ok(ModuleSlugs.Osquery); });
+        var store = new ResultStore();
+        var svc = new DiagnosticsService(store, [m]);
+
+        var first = AutoRun.StartHardwareInventory(svc, store, null);
+        Assert.NotNull(first);
+        Assert.Null(AutoRun.StartHardwareInventory(svc, store, null)); // still running
+        gate.SetResult();
+        await first.WaitAsync(Wait);
+        Assert.Null(AutoRun.StartHardwareInventory(svc, store, null)); // has a result
+        Assert.Equal(1, calls);
+
+        // No Osquery module here (or it can't run): nothing starts and nothing throws.
+        var empty = new ResultStore();
+        Assert.Null(AutoRun.StartHardwareInventory(new DiagnosticsService(empty, []), empty, null));
+    }
+
     [Fact]
     public void Start_Disabled_DoesNothing()
     {

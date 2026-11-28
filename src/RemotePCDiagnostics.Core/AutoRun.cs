@@ -33,6 +33,30 @@ public static class AutoRun
     }
 
     /// <summary>
+    /// Reads the hardware inventory (<see cref="ModuleSlugs.Osquery"/>) in the background, whatever <see cref="EnvironmentVariable"/> says:
+    /// the Dashboard header (model, processor, memory) shows it, so it is read when the app starts and when a page that shows it opens,
+    /// not only when someone runs the checks. Does nothing when it already has a result, is running, or can't run here.
+    /// Returns the run, or null when nothing was started. Never throws.
+    /// </summary>
+    public static Task<DiagnosticResult>? StartHardwareInventory(DiagnosticsService service, ResultStore store, ILogger? log)
+    {
+        const string name = ModuleSlugs.Osquery;
+        try
+        {
+            if (store.Get(name).Status != DiagnosticStatus.NotRun || service.IsRunning(name) || !service.CanRun(name)) return null;
+            log.Info("Reading the hardware inventory for the Dashboard header");
+            var t = service.RunAsync(name, isBackgroundAutoRun: true);
+            _ = t.ContinueWith(r => log.Info($"Hardware inventory finished: {(r.IsCompletedSuccessfully ? r.Result.Status.ToString() : r.Exception?.GetBaseException().Message)}"), TaskScheduler.Default);
+            return t;
+        }
+        catch (Exception ex)
+        {
+            log.Info($"Hardware inventory could not start: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Starts all enabled read-only checks (<see cref="IDiagnosticModule.IncludeInRunAll"/>) in the background, prioritizing
     /// <see cref="ModuleSlugs.Osquery"/> and <see cref="Sensors.LibreHardwareMonitorModule.ModuleName"/> first and throttling
     /// concurrency so older PCs stay responsive. When <paramref name="slowChecksDelay"/> is set, the remaining (longer) system
