@@ -31,6 +31,39 @@ public sealed record WebcamDevice(string Id, string Name, WebcamBus Bus, WebcamK
     }
 }
 
+/// <summary>One IR source found in a frame source group, before duplicates are removed.</summary>
+/// <param name="SensorKey">What identifies the physical sensor: its device interface id, or the device path in the source id; null if neither.</param>
+/// <param name="SourceCount">How many sources the group has (an IR-only group has 1 or 2).</param>
+/// <param name="HasColor">The group also has a color stream: a combined sensor group or a camera profile, not the IR camera's own group.</param>
+public sealed record WebcamIrCandidate(WebcamDevice Device, string? SensorKey, int SourceCount, bool HasPanel, bool HasColor = false);
+
+public static class WebcamIrSources
+{
+    /// <summary>
+    /// One entry per IR sensor. Windows lists the same Windows Hello sensor in several frame source groups (its own group, a combined
+    /// color + IR sensor group, a Studio Effects profile), so two groups with the same sensor or the same name are one camera. The kept entry
+    /// is the one Windows says more about (a known panel), then the smallest group. A group that also streams color is only kept when no
+    /// IR-only group exists (a depth camera like RealSense), since otherwise it is the same sensor under another name.
+    /// </summary>
+    public static IReadOnlyList<WebcamDevice> Distinct(IEnumerable<WebcamIrCandidate> candidates)
+    {
+        var all = candidates.ToList();
+        if (all.Any(c => !c.HasColor)) all = all.Where(c => !c.HasColor).ToList();
+        var kept = new List<WebcamIrCandidate>();
+        foreach (var c in all.OrderByDescending(c => c.HasPanel).ThenBy(c => c.SourceCount))
+        {
+            var same = kept.Any(k => (c.SensorKey is not null && string.Equals(k.SensorKey, c.SensorKey, StringComparison.OrdinalIgnoreCase))
+                || string.Equals(k.Device.Name.Trim(), c.Device.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (!same) kept.Add(c);
+        }
+        return kept.Select(k => k.Device).ToList();
+    }
+
+    /// <summary>The device path in a frame source id ("Source#0@\\?\USB#VID…"), or null.</summary>
+    public static string? DevicePathOf(string? sourceId) =>
+        sourceId is { } id && id.IndexOf('@') is >= 0 and var at && at < id.Length - 1 ? id[(at + 1)..] : null;
+}
+
 /// <summary>Windows blocked the camera (privacy settings, E_ACCESSDENIED).</summary>
 public sealed class WebcamAccessDeniedException(string message, Exception? inner = null) : Exception(message, inner);
 /// <summary>The camera is in use by another app (exclusive control not available).</summary>
